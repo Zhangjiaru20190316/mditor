@@ -1,0 +1,35 @@
+/* Claude 主题 — 暖米色纸质质感，灵感来自 claude.ai。
+ * 当 <html data-theme="claude"> 时生效。
+ * 变量名与 light/dark/sepia 完全一致，可直接替换。
+ */
+[data-theme="claude"] {
+  /* 背景层：暖米色，略带纸感 */
+  --bg: #faf9f5;
+  --fg: #2c2a26;            /* 深棕黑主文字 */
+  --fg-muted: #6b6862;      /* 次级文字 */
+  --border: #e8e5dd;
+  --hover: #f0ede5;
+  --code-bg: #e6dfd0; /* 代码块底色（暖米灰，明显有别于米色背景） */
+  --code-border: #dcd5c8; /* 代码块边框 */
+  --card-bg: #ffffff;       /* 卡片用纯白，与背景形成层次 */
+  --sidebar-bg: #f5f4ed;    /* 侧边栏略深于主背景 */
+  --tabbar-bg: #f0ede5;     /* 侧边栏切换条 */
+  --titlebar-bg: #f0ede5;   /* 自绘标题栏（与 tabbar 同级暖米色） */
+  --toolbar-bg: #f0ede5;    /* 编辑器工具栏 */
+  --statusbar-bg: #f5f4ed;
+  --accent: #c96442;        /* Claude 橙棕 */
+  --accent-soft: #f3e7df;   /* 强调色浅底 */
+  --shadow: 0 4px 14px rgba(60, 50, 40, 0.08);
+  --shadow-lg: 0 12px 40px rgba(60, 50, 40, 0.14);
+  color-scheme: light;
+}
+
+/* 暖色背景下让 Milkdown 表面融入：编辑区与工具栏跟随主题色板，
+   否则会留出一块与应用暖米色背景脱节的冷灰区域。 */
+[data-theme="claude"] .mditor-milkdown,
+[data-theme="claude"] .mditor-source {
+  background: var(--bg);
+}
+[data-theme="claude"] .mditor-milkdown .milkdown-toolbar {
+  background: var(--toolbar-bg);
+}

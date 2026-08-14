@@ -1,0 +1,59 @@
+[package]
+name = "mditor"
+version = "3.4.1"
+description = "A local-first Markdown editor inspired by Typora"
+authors = ["Mditor"]
+edition = "2021"
+rust-version = "1.77"
+
+# The library name is used by Tauri's `lib` config in tauri.conf.json.
+[lib]
+name = "mditor_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-store = "2"
+# Auto-update: checks a remote endpoint for a newer signed update package and,
+# if found, downloads + installs it on next launch. The matching private key
+# (kept OUT of the repo) signs each release bundle; the pubkey below verifies it.
+tauri-plugin-updater = "2"
+# Used by the updater flow to relaunch the app after an update is installed.
+tauri-plugin-process = "2"
+# Desktop-only: intercepts a second launch (e.g. double-clicking a .md while
+# the app is already running) so the file path is forwarded to the live process
+# instead of spawning another instance.
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# AI chat: OpenAI-compatible HTTP client. rustls-tls avoids a native OpenSSL
+# dependency on Windows (the bundled reqwest uses native-tls by default).
+# `stream` enables resp.bytes_stream() for SSE streaming in ai_chat_stream.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# StreamExt::next over the reqwest byte stream while parsing SSE chunks.
+futures-util = "0.3"
+
+[features]
+# This feature is used for production builds or when a dev server is not
+# specified, DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]
+
+# Release profile — agressively optimize the final binary.
+#   lto=true         : cross-crate link-time optimization (inlines across crates)
+#   codegen-units=1  : whole-program optimization at the cost of compile time
+#   strip=true       : discard debug symbols (much smaller .exe)
+#   panic="abort"    : no unwind tables (smaller binary, slight startup win)
+# Trade-off: the FIRST release build is slower, but the resulting app is
+# markedly smaller and faster. Only paid once per clean build.
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

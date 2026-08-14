@@ -1,0 +1,32 @@
+/* Claude Dark 主题 — 深色暖调，保留品牌橙棕强调色。
+ * 当 <html data-theme="claude-dark"> 时生效。
+ */
+[data-theme="claude-dark"] {
+  --bg: #1f1e1d;
+  --fg: #e8e5dd;
+  --fg-muted: #a8a39b;
+  --border: #3a3835;
+  --hover: #2e2c2a;
+  --code-bg: #2c2a27; /* 代码块底色（暖深灰） */
+  --code-border: #44403a; /* 代码块边框 */
+  --card-bg: #262624;
+  --sidebar-bg: #262624;
+  --tabbar-bg: #1f1e1d;
+  --titlebar-bg: #1f1e1d; /* 自绘标题栏（与 tabbar 同级深暖色） */
+  --toolbar-bg: #262624;
+  --statusbar-bg: #262624;
+  --accent: #d97757;        /* 品牌橙棕，暗底下提亮 */
+  --accent-soft: #3a2a22;
+  --mark-bg: rgba(250, 204, 21, 0.32); /* ==高光== 背景色（深色主题，提亮） */
+  --shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
+}
+
+[data-theme="claude-dark"] .mditor-milkdown,
+[data-theme="claude-dark"] .mditor-source {
+  background: var(--bg);
+}
+[data-theme="claude-dark"] .mditor-milkdown .milkdown-toolbar {
+  background: var(--toolbar-bg);
+}

@@ -1,0 +1,29 @@
+/* Light theme — default.
+ * Applied when <html data-theme="light">.
+ */
+:root,
+[data-theme="light"] {
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --fg-muted: #6b7280;
+  --border: #e5e7eb;
+  --hover: #f3f4f6;
+  --code-bg: #dde1e8; /* 代码块底色（加深，明显有别于 #fff 正文背景） */
+  --code-border: #c4c9d4; /* 代码块边框（同步加深） */
+  --card-bg: #ffffff;
+  --sidebar-bg: #fbfbfc;
+  --tabbar-bg: #f6f7f9;
+  --titlebar-bg: #f6f7f9; /* 自绘标题栏（接近白，与 tabbar 同级） */
+  --toolbar-bg: #fafbfc;
+  --statusbar-bg: #fafbfc;
+  --accent: #4f46e5; /* indigo-600 */
+  --accent-soft: #eef2ff;
+  --mark-bg: rgba(255, 213, 79, 0.55); /* ==高光== 背景色（亮色主题） */
+  --shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.16);
+}
+
+/* color-scheme hint so form controls render light */
+[data-theme="light"] {
+  color-scheme: light;
+}

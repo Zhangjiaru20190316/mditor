@@ -1,0 +1,1783 @@
+// Milkdown (Crepe) lifecycle + configuration factory.
+//
+// Replaces useVditor.ts with an editor whose engine is pure JS/ProseMirror
+// (no GopherJS lute), so the heap that grew monotonically and survived destroy
+// is gone. The exposed handle preserves the imperative surface the rest of the
+// app (Editor.tsx's EditorHandle) relied on from Vditor.
+//
+//   * Crepe provides commonmark + gfm (incl. footnotes), history, clipboard,
+//     indent, trailing, upload, plus opt-in features: CodeMirror code blocks,
+//     KaTeX (latex), image block, slash (block-edit), table, link tooltip.
+//   * Mode switching: Milkdown is a live WYSIWYG, so wysiwyg and ir share one
+//     Crepe instance (only the label differs); sv ("source") is a textarea that
+//     round-trips through getMarkdown()/replaceAll. The Crepe instance stays
+//     alive (hidden) in sv so getHTML()/exports keep working synchronously.
+//   * Annotations live as native `[^anno-N]` footnotes. Milkdown emits
+//     <sup data-type="footnote_reference" data-label="anno-N"> and
+//     <dl data-type="footnote_definition" data-label="anno-N">, which CSS restyle
+//     into badges / hide outright (see styles/annotation.css) — no per-render
+//     DOM stamping needed, unlike the Vditor MutationObserver approach.
+//   * Heading ids: we override Milkdown's headingIdGenerator with the same
+//     slug as lib/outline.ts so Outline → getElementById jumps resolve.
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { RefObject } from "react";
+import { Crepe } from "@milkdown/crepe";
+import { replaceAll, insert, getHTML, replaceRange, insertPos } from "@milkdown/utils";
+import { editorViewCtx } from "@milkdown/core";
+import { toggleMark, setBlockType as pmSetBlockType, wrapIn, lift } from "@milkdown/prose/commands";
+import { wrapInList, liftListItem } from "@milkdown/prose/schema-list";
+import {
+  addRowBefore,
+  addRowAfter,
+  addColumnBefore,
+  addColumnAfter,
+  deleteRow,
+  deleteColumn,
+} from "@milkdown/prose/tables";
+import { TextSelection } from "@milkdown/prose/state";
+import type { EditorView } from "@milkdown/prose/view";
+import type { Mark, Node as PMNode, ResolvedPos } from "@milkdown/prose/model";
+import { headingIdGenerator } from "@milkdown/kit/preset/commonmark";
+import { highlightPlugins } from "../lib/highlightMark";
+import { textColorPlugins } from "../lib/textColorMark";
+import "@milkdown/crepe/theme/common/style.css";
+import "@milkdown/crepe/theme/nord.css";
+import type { EditMode, Settings, BlockInfo, BlockTargetKind } from "../types";
+import { persistImage, resolveImgSrc } from "../lib/imageManager";
+import { isBigDoc, getHeapUsage } from "../lib/memory";
+import { logMemory } from "../lib/diagnostics";
+import { headingSlugBase } from "../lib/outline";
+import { stampAnnotationMarkers } from "./useAnnotationMarkers";
+import { stampEditorImageLazyAttrs } from "../lib/imageLazy";
+import { bumpLeakCounter } from "../lib/leakCounters";
+
+/** Imperative ops Editor.tsx composes its EditorHandle from. Mirrors the subset
+ *  of the Vditor instance Editor.tsx called (getValue/setValue/getHTML/
+ *  getSelection/insertValue/updateValue/focus). */
+export interface MilkdownFacade {
+  getValue: () => string;
+  setValue: (md: string, clearStack?: boolean) => void;
+  getHTML: () => string;
+  getSelection: () => string;
+  insertValue: (md: string) => void;
+  /** Replace the current selection with parsed `md` (inserts at cursor if none). */
+  updateValue: (md: string) => void;
+  /** Insert parsed `md` immediately AFTER the current selection (cursor stays
+   *  after the inserted block). Used by the AI panel's "insert after selection". */
+  insertAfter: (md: string) => void;
+  /** Live selection's document positions {from,to}, or null when collapsed.
+   *  Captured while the selection is alive so a caller can later insert at that
+   *  exact range (e.g. anchoring an annotation) without relying on plain text. */
+  getSelectionRange: () => { from: number; to: number } | null;
+  /** Insert parsed `md` at an explicit document position, independent of the
+   *  current (possibly collapsed) selection. */
+  insertAtPos: (md: string, pos: number) => void;
+  /** Place a `[^id]` annotation marker near the anchor described by `range` /
+   *  `anchorText`, as close as the schema allows. When the anchor sits inside a
+   *  block that can't hold an inline footnote_reference (code_block, math_block,
+   *  …), the marker is dropped into a fresh marker paragraph immediately AFTER
+   *  that block instead of inside it (an inside insert is silently rejected by
+   *  the schema, which is why annotating code blocks used to leave a dangling
+   *  definition with no badge). Returns true when a marker was placed, false
+   *  when no usable spot was found so the caller can fall back to the tail. */
+  insertAnnoMarker: (
+    id: string,
+    range: { from: number; to: number } | null,
+    anchorText?: string
+  ) => boolean;
+  /** Plain text spanning document positions [from,to]. Used to validate that a
+   *  range captured earlier still corresponds to anchorText (the document may
+   *  have been edited between capture and use). */
+  getTextAt: (from: number, to: number) => string;
+  /** End document position of the first occurrence of `needle` inside a single
+   *  text node, or -1 if not found. Searching the document tree (not the
+   *  markdown source) yields a position where an inserted footnote_reference
+   *  lands as a sibling inline node — never inside bold/code/link syntax
+   *  markers (which is what made AI annotations fail to render). */
+  findTextPos: (needle: string) => number;
+  /** Toggle bold (strong) on the current selection. Rich mode runs the
+   *  ProseMirror toggleMark; sv mode wraps/unwraps the textarea with `**`. */
+  toggleBold: () => void;
+  /** Toggle ==highlight== on the current selection. Rich mode runs the
+   *  highlight toggleMark; sv mode wraps/unwraps the textarea with `==`. */
+  toggleHighlight: () => void;
+  /** Apply a text color to the current selection (replaces any existing color).
+   *  Rich mode runs a removeMark+addMark transaction; sv mode wraps the textarea
+   *  selection with `<span style="color:…">…</span>`. */
+  setTextColor: (color: string) => void;
+  /** Remove any text color from the current selection. */
+  clearTextColor: () => void;
+  /** Whether the current selection/caret already carries bold / highlight /
+   *  a text color — drives the active state of the toolbar buttons/swatches. */
+  getActiveMarks: () => { bold: boolean; highlight: boolean; color: string | null };
+  /* ---- 块级右键菜单（BlockContextMenu）----------------------------------
+   * 仅富文本模式有效（sv 返回 null / no-op，由调用方避免弹出）。点击坐标来自
+   * contextmenu 事件的 clientX/Y。 */
+  /** 解析屏幕坐标处的块信息并把光标规范到该块（右键不移动 PM 选区，若不
+   *  规范，后续命令会作用于右键前光标所在的无关块）。返回 null 表示坐标
+   *  不在文档内或编辑器未就绪。 */
+  getBlockInfoAt: (x: number, y: number) => BlockInfo | null;
+  /** 把当前块切换为目标类型（带 toggle 语义：同款标题/列表再点一次还原为
+   *  段落；blockquote 为包裹/解包裹；hr 为在当前顶层块后插入分割线）。 */
+  setBlockType: (kind: BlockTargetKind, level?: number) => void;
+  /** 当前块上移/下移一格（跳过空段落；列表内以整个列表项为单位）。
+   *  返回是否真的移动了（到边界返回 false）。 */
+  moveBlock: (dir: "up" | "down") => boolean;
+  /** 在当前块下方插入其副本，光标移入副本。 */
+  duplicateBlock: () => void;
+  /** 删除当前块，光标落到相邻块。 */
+  deleteBlock: () => void;
+  /** 表格行/列操作（点击处已规范到表格内某个单元格）。 */
+  tableOp: (op: "rowBefore" | "rowAfter" | "colBefore" | "colAfter" | "delRow" | "delCol") => void;
+  /** 改写 [from,to] 链接的 href；href 为空串则移除链接（保留文字）。 */
+  updateLinkHref: (from: number, to: number, href: string) => void;
+  /** 删除 `pos` 处的节点（用于图片）。 */
+  deleteNodeAt: (pos: number) => void;
+  /** 改写 `pos` 处图片的 src（用于「更换图片」，写入可移植的 markdown 引用）。 */
+  setImageSrc: (pos: number, src: string) => void;
+  focus: () => void;
+}
+
+export interface MilkdownHandle {
+  /** Imperative facade; null until the editor is ready. */
+  editor: MilkdownFacade | null;
+  ready: boolean;
+  mode: EditMode;
+  /** Current doc exceeds the big-doc cutoff (CodeMirror/KaTeX disabled). */
+  bigDoc: boolean;
+  /** Switch edit mode. Content is preserved; undo history is cleared on the
+   *  sv ⇄ rich transition (replaceAll flush). wysiwyg ⇄ ir is a label change. */
+  switchMode: (m: EditMode) => void;
+  /** Destroy + rebuild the Crepe instance in place (memory-guard escape hatch). */
+  recreate: () => void;
+  /** Re-apply font/size/spacing vars when settings change. */
+  applyTheme: (s: Settings) => void;
+}
+
+interface Options {
+  hostRef: RefObject<HTMLDivElement | null>;
+  sourceRef: RefObject<HTMLTextAreaElement | null>;
+  docPath: () => string | null;
+  onInput: (md: string) => void;
+  onReady?: () => void;
+  settings: Settings;
+  initialMode?: EditMode;
+  initialContent?: string;
+}
+
+// ---- T6: proactive history reclaim ---------------------------------------
+// ProseMirror/Milkdown keep nearly every edit step on the undo stack, which is
+// the main "only grows within a single document" memory source. There is no
+// public API to PARTIALLY trim it, and the memory guard already reclaims it via
+// a soft recreate once usage crosses the threshold. To reduce how often that
+// escalates to a full page reload, we PROACTIVELY reclaim history on idle for
+// big documents that have been heavily edited AND whose heap is already in the
+// warning band — by far the cheapest safe move (it reuses the trusted recreate
+// path; the alternative, hand-rolled EditorState surgery, risks editor
+// corruption on exactly the big docs we can least afford to break).
+//
+// The gate is intentionally strict so this never disturbs normal editing: only
+// big docs, only after a long idle (user stepped away), only with many edits
+// accumulated, and only when the heap is genuinely elevated. The caret/scroll
+// reset that recreate implies is acceptable on a long idle and is strictly
+// better than the hard reload this prevents.
+const IDLE_HISTORY_TRIM_MS = 180_000; // 3 min of no edits
+const IDLE_HISTORY_TRIM_EDITS = 1000; // accumulated edits since last reclaim
+const IDLE_HISTORY_TRIM_HEAP_RATIO = 0.8; // heap ≥ 80% of the guard threshold
+
+export function useMilkdown(opts: Options): MilkdownHandle {
+  const { hostRef, sourceRef } = opts;
+  const crepeRef = useRef<Crepe | null>(null);
+  const [ready, setReady] = useState(false);
+  const [mode, setModeState] = useState<EditMode>(opts.initialMode ?? "wysiwyg");
+  const [bigDoc, setBigDoc] = useState(false);
+  const [recreateToken, setRecreateToken] = useState(0);
+
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const bigDocRef = useRef(false);
+  // Content used to SEED a freshly (re)built Crepe. Updated from initialContent
+  // at mount and from getValue() right before every destroy/recreate.
+  const contentRef = useRef<string>(opts.initialContent ?? "");
+  // Live mirror of the textarea text in sv mode (for getValue before the ref is
+  // attached / during transitions).
+  const sourceTextRef = useRef<string>("");
+  // True while we are applying a programmatic replaceAll, so the markdownUpdated
+  // listener does not echo the change back up as user input.
+  const suppressRef = useRef(false);
+  // The destroy() promise of the most recent Crepe instance, carried across
+  // effect runs so the next create awaits it before mounting a fresh view.
+  // Crepe.destroy() is async; without this serialization the new ProseMirror
+  // view mounts on the same host while the old one's plugin states / CodeMirror
+  // sub-editors / KaTeX are still releasing, so each recreate leaks one editor's
+  // worth of state — the memory guard's own recreate loop turns that into
+  // monotonic heap growth.
+  const prevDestroyRef = useRef<Promise<void>>(Promise.resolve());
+
+  // T6: edits since the last proactive history reclaim + the pending idle timer
+  // that, when it fires, may trigger a recreate to drop the undo stack.
+  const editsSinceTrimRef = useRef(0);
+  const idleTrimTimerRef = useRef<number | null>(null);
+
+  const settingsRef = useRef(opts.settings);
+  settingsRef.current = opts.settings;
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
+  const onInputRef = useRef(opts.onInput);
+  onInputRef.current = opts.onInput;
+
+  // ---- create / recreate ------------------------------------------------
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    let destroyed = false;
+    let instance: Crepe | null = null;
+    // Pending double-rAF for annotation stamping. Coalesced (only one walk
+    // queued at a time) and cancellable, so a typing burst doesn't queue a walk
+    // per keystroke and teardown can cancel any in-flight walk before destroy.
+    let pendingRaf: number | null = null;
+    const scheduleStamp = () => {
+      if (pendingRaf != null) return;
+      // Milkdown finalizes footnote node attrs over a couple of frames after the
+      // transaction, so double-rAF walks the settled DOM.
+      pendingRaf = requestAnimationFrame(() => {
+        pendingRaf = requestAnimationFrame(() => {
+          pendingRaf = null;
+          stampAnnotationMarkers();
+          // T0: lazy-load off-screen editor images (idempotent, no-op w/o imgs).
+          stampEditorImageLazyAttrs();
+        });
+      });
+    };
+
+    // Serialize destroy→create: wait for the PREVIOUS instance to finish tearing
+    // down before mounting a fresh view. Crepe.destroy() is async; without this,
+    // the new ProseMirror view mounts on the same host while the old one's plugin
+    // states / CodeMirror sub-editors / KaTeX are still releasing, so each
+    // recreate leaks one editor's worth of state. The memory guard's own
+    // recreate loop turns that into monotonic heap growth — this is the primary
+    // fix for "JS heap keeps rising". (React effects can't be async, so we kick
+    // the chain off and guard with `destroyed`; the cleanup records its destroy
+    // promise on prevDestroyRef for the next run to await.)
+    const build = prevDestroyRef.current.then(async () => {
+      if (destroyed) return; // cleanup ran while we waited for the prev destroy
+
+      const seed = contentRef.current;
+      const big = isBigDoc(seed);
+      bigDocRef.current = big;
+      setBigDoc(big);
+
+      const crepe = new Crepe({
+        root: host,
+        defaultValue: "",
+        features: {
+          [Crepe.Feature.CodeMirror]: !big,
+          [Crepe.Feature.Latex]: !big,
+          [Crepe.Feature.TopBar]: false,
+          [Crepe.Feature.AI]: false,
+        },
+        featureConfigs: {
+          // 公式块（$$...$$）默认只显示 KaTeX 渲染结果，隐藏 LaTeX 源码；
+          // 点击代码块上的切换按钮可回到源码编辑。仅影响 latex 代码块——
+          // 普通代码块没有 preview，code-block 不会对其加 hidden 类，照常显示。
+          [Crepe.Feature.CodeMirror]: {
+            previewOnlyByDefault: true,
+          },
+          [Crepe.Feature.ImageBlock]: {
+            // Return the portable markdown ref (relative `assets/…`); proxyDomURL
+            // below rewrites it to asset:// only for display, so the saved
+            // markdown stays portable.
+            onUpload: async (file: File) => {
+              const r = await persistImage(file, optsRef.current.docPath());
+              return r.ref;
+            },
+            proxyDomURL: (url: string) =>
+              resolveImgSrc(url, optsRef.current.docPath()),
+          },
+          [Crepe.Feature.Placeholder]: {
+            text: "开始书写…  (Ctrl+S 保存，Ctrl+F 查找)",
+            mode: "doc",
+          },
+        },
+      });
+
+      // T6: schedule a proactive history reclaim after a long idle. Re-armed on
+      // every real (non-suppressed) doc change, so it only fires once typing has
+      // truly paused. Cleared on teardown below.
+      const scheduleIdleTrim = () => {
+        if (idleTrimTimerRef.current != null) {
+          window.clearTimeout(idleTrimTimerRef.current);
+        }
+        idleTrimTimerRef.current = window.setTimeout(() => {
+          idleTrimTimerRef.current = null;
+          if (destroyed) return;
+          if (!bigDocRef.current) return;
+          if (editsSinceTrimRef.current < IDLE_HISTORY_TRIM_EDITS) return;
+          const heap = getHeapUsage();
+          const thresholdBytes =
+            settingsRef.current.memoryGuardThresholdMb * 1024 * 1024;
+          // Only reclaim when the heap is genuinely elevated — otherwise this
+          // would disturb big-doc users whose memory is perfectly fine.
+          if (!heap || heap.used < thresholdBytes * IDLE_HISTORY_TRIM_HEAP_RATIO) {
+            return;
+          }
+          editsSinceTrimRef.current = 0;
+          void logMemory("heal", { tier: "idle-history-trim" });
+          setRecreateToken((t) => t + 1);
+        }, IDLE_HISTORY_TRIM_MS);
+      };
+
+      crepe.on((l) =>
+        l.markdownUpdated((_c, md) => {
+          bumpLeakCounter("docChanges");
+          // Only echo user-visible input when we aren't applying a programmatic
+          // replaceAll (setValue/seed/switchMode) — those notify the caller
+          // themselves. Annotation stamping, however, must run on EVERY doc
+          // change (including programmatic ones like file load) so the badges/
+          // hidden defs stay correct regardless of how the DOM came to be.
+          if (!suppressRef.current) {
+            contentRef.current = md;
+            onInputRef.current(md);
+            // T6: count real edits toward the proactive history-reclaim gate.
+            editsSinceTrimRef.current++;
+            scheduleIdleTrim();
+          }
+          scheduleStamp();
+        })
+      );
+
+      // Register the ==highlight== mark (schema + command + input rule +
+      // Mod-Shift-h keymap + the shared ==mark== remark plugin) BEFORE the
+      // schema is built during create(). commonmark's `strong` mark is already
+      // shipped by Crepe, so bold needs no extra registration.
+      crepe.editor.use(highlightPlugins);
+
+      // Register the text-color mark (`<span style="color:…">`) the same way:
+      // schema + remark parse/serialize wiring, before create() builds the schema.
+      crepe.editor.use(textColorPlugins);
+
+      try {
+        await crepe.create();
+      } catch (e) {
+        try {
+          await crepe.destroy();
+        } catch {
+          /* already gone */
+        }
+        // eslint-disable-next-line no-console
+        console.error("[mditor] Milkdown create failed:", e);
+        return;
+      }
+      if (destroyed) {
+        // Cleanup ran before create resolved — tear the orphan down.
+        try {
+          await crepe.destroy();
+        } catch {
+          /* already gone */
+        }
+        return;
+      }
+      // Override the heading-id generator to match lib/outline.ts. The
+      // sync-heading-id plugin reads this slice dynamically on every doc
+      // update, so setting it now affects all subsequently-created headings.
+      try {
+        crepe.editor.ctx.update(headingIdGenerator.key, () => (node: unknown) => {
+          const text = (node as { textContent?: string } | null)?.textContent ?? "";
+          return headingSlugBase(text);
+        });
+      } catch {
+        /* generator slice missing — keep Milkdown's default */
+      }
+      // Seed content with flush=true so headings pick up the generator AND the
+      // undo history starts clean for this document.
+      if (seed) {
+        suppressRef.current = true;
+        try {
+          crepe.editor.action(replaceAll(seed, true));
+        } catch {
+          /* editor not fully ready — content will be re-pushed by Editor */
+        }
+        suppressRef.current = false;
+        contentRef.current = seed;
+      }
+      instance = crepe;
+      crepeRef.current = crepe;
+      applyProseVars(settingsRef.current);
+      setReady(true);
+      optsRef.current.onReady?.();
+    });
+    // Defensive: never let an unexpected late rejection surface as unhandled.
+    // The create-failure path above already logs; this only swallows surprises.
+    void build.catch(() => {
+      /* handled inside build where actionable */
+    });
+
+    return () => {
+      destroyed = true;
+      crepeRef.current = null;
+      // Cancel any in-flight annotation stamp so it doesn't run against the
+      // about-to-be-destroyed DOM.
+      if (pendingRaf != null) cancelAnimationFrame(pendingRaf);
+      // T6: cancel any pending proactive history-reclaim timer.
+      if (idleTrimTimerRef.current != null) {
+        window.clearTimeout(idleTrimTimerRef.current);
+        idleTrimTimerRef.current = null;
+      }
+      // Kick off destroy and RECORD its promise so the next create awaits it
+      // before mounting a new view (see prevDestroyRef / build above).
+      prevDestroyRef.current = (async () => {
+        try {
+          await instance?.destroy();
+        } catch {
+          /* already gone */
+        }
+      })();
+      setReady(false);
+    };
+    // Only re-run on a deliberate recreate. Mode switching does NOT rebuild
+    // (wysiwyg/ir share the instance; sv just toggles visibility).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recreateToken, hostRef, sourceRef]);
+
+  // ---- textarea (sv) input forwarding -----------------------------------
+  useEffect(() => {
+    const ta = sourceRef.current;
+    if (!ta) return;
+    const onInput = () => {
+      if (suppressRef.current) return;
+      sourceTextRef.current = ta.value;
+      contentRef.current = ta.value;
+      onInputRef.current(ta.value);
+    };
+    ta.addEventListener("input", onInput);
+    // Tab inserts a tab rather than leaving the field; matches a source editor.
+    // Ctrl/Cmd+B and Ctrl/Cmd+Shift+H toggle bold / highlight by wrapping the
+    // selection in `**…**` / `==…==` (rich modes are handled by Milkdown's own
+    // keymaps + the highlight keymap registered in lib/highlightMark.ts).
+    const onKeyDown = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const s = ta.selectionStart;
+        const en = ta.selectionEnd;
+        ta.value = ta.value.slice(0, s) + "  " + ta.value.slice(en);
+        ta.selectionStart = ta.selectionEnd = s + 2;
+        onInput();
+        return;
+      }
+      if (mod && !e.altKey && (e.key === "b" || e.key === "B")) {
+        e.preventDefault();
+        toggleWrapTextarea(ta, "**", "**");
+        onInput();
+        return;
+      }
+      if (mod && e.shiftKey && (e.key === "h" || e.key === "H")) {
+        e.preventDefault();
+        toggleWrapTextarea(ta, "==", "==");
+        onInput();
+      }
+    };
+    ta.addEventListener("keydown", onKeyDown);
+    return () => {
+      ta.removeEventListener("input", onInput);
+      ta.removeEventListener("keydown", onKeyDown);
+    };
+  }, [sourceRef]);
+
+  // ---- the imperative facade (stable; reads live state via refs) --------
+  const facade = useMemo<MilkdownFacade>(() => {
+    const rawMarkdown = (): string => {
+      if (modeRef.current === "sv") {
+        return sourceRef.current?.value ?? sourceTextRef.current ?? contentRef.current;
+      }
+      try {
+        return crepeRef.current?.getMarkdown() ?? contentRef.current;
+      } catch {
+        return contentRef.current;
+      }
+    };
+
+    return {
+      getValue: () => rawMarkdown(),
+      setValue: (md, clearStack) => {
+        if (modeRef.current === "sv") {
+          if (sourceRef.current) sourceRef.current.value = md;
+          sourceTextRef.current = md;
+          contentRef.current = md;
+          if (clearStack) maybeRecreateForBigDoc(md);
+          return;
+        }
+        const crepe = crepeRef.current;
+        if (!crepe) {
+          contentRef.current = md;
+          return;
+        }
+        suppressRef.current = true;
+        try {
+          crepe.editor.action(replaceAll(md, clearStack === true));
+        } catch {
+          /* not ready */
+        }
+        suppressRef.current = false;
+        contentRef.current = md;
+        if (clearStack) maybeRecreateForBigDoc(md);
+      },
+      getHTML: () => {
+        const crepe = crepeRef.current;
+        if (!crepe) return "";
+        if (modeRef.current === "sv") {
+          // Keep the (hidden, alive) Crepe in sync with the textarea so the
+          // serialized HTML reflects source-mode edits. getHTML is sync in the
+          // EditorHandle contract, so we cannot await a remark render here.
+          const md = sourceRef.current?.value ?? sourceTextRef.current ?? contentRef.current;
+          suppressRef.current = true;
+          try {
+            crepe.editor.action(replaceAll(md, true));
+          } catch {
+            /* ignore */
+          }
+          suppressRef.current = false;
+        }
+        try {
+          return crepe.editor.action(getHTML());
+        } catch {
+          return "";
+        }
+      },
+      getSelection: () => {
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return "";
+          return ta.value.slice(ta.selectionStart, ta.selectionEnd);
+        }
+        try {
+          return crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const { from, to } = view.state.selection;
+            return view.state.doc.textBetween(from, to, "\n");
+          });
+        } catch {
+          return "";
+        }
+      },
+      insertValue: (md) => {
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return;
+          insertIntoTextarea(ta, md);
+          sourceTextRef.current = ta.value;
+          contentRef.current = ta.value;
+          onInputRef.current(ta.value);
+          return;
+        }
+        const crepe = crepeRef.current;
+        if (!crepe) return;
+        suppressRef.current = true;
+        try {
+          crepe.editor.action(insert(md));
+        } catch {
+          /* not ready */
+        }
+        suppressRef.current = false;
+      },
+      updateValue: (md) => {
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return;
+          replaceTextareaSelection(ta, md);
+          sourceTextRef.current = ta.value;
+          contentRef.current = ta.value;
+          onInputRef.current(ta.value);
+          return;
+        }
+        const crepe = crepeRef.current;
+        if (!crepe) return;
+        suppressRef.current = true;
+        try {
+          crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const { from, to } = view.state.selection;
+            replaceRange(md, { from, to })(ctx);
+          });
+        } catch {
+          /* not ready */
+        }
+        suppressRef.current = false;
+      },
+      insertAfter: (md) => {
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return;
+          const en = ta.selectionEnd;
+          const insert = `${md}`;
+          ta.value = ta.value.slice(0, en) + insert + ta.value.slice(en);
+          ta.selectionStart = ta.selectionEnd = en + insert.length;
+          sourceTextRef.current = ta.value;
+          contentRef.current = ta.value;
+          onInputRef.current(ta.value);
+          return;
+        }
+        const crepe = crepeRef.current;
+        if (!crepe) return;
+        suppressRef.current = true;
+        try {
+          crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const { to } = view.state.selection;
+            // Insert parsed markdown at the end of the selection (position `to`),
+            // leaving the original selection intact.
+            insertPos(md, to)(ctx);
+          });
+        } catch {
+          /* not ready */
+        }
+        suppressRef.current = false;
+      },
+      getSelectionRange: () => {
+        // Returns the live selection's document positions {from,to}, or null
+        // when collapsed. Captured while the selection is still alive (before a
+        // popover/panel steals focus) so a caller can later insert at exactly
+        // that range instead of guessing from plain text.
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return null;
+          const from = ta.selectionStart;
+          const to = ta.selectionEnd;
+          return from === to ? null : { from, to };
+        }
+        try {
+          return crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const { from, to } = view.state.selection;
+            return from === to ? null : { from, to };
+          });
+        } catch {
+          return null;
+        }
+      },
+      insertAtPos: (md, pos) => {
+        // Insert parsed markdown at an EXPLICIT document position — independent
+        // of the current (possibly collapsed) selection. Used to anchor an
+        // annotation marker at a range captured earlier. Mirrors insertAfter,
+        // but takes the position as an argument instead of reading it from the
+        // live selection.
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return;
+          ta.value = ta.value.slice(0, pos) + md + ta.value.slice(pos);
+          ta.selectionStart = ta.selectionEnd = pos + md.length;
+          sourceTextRef.current = ta.value;
+          contentRef.current = ta.value;
+          onInputRef.current?.(ta.value);
+          return;
+        }
+        const crepe = crepeRef.current;
+        if (!crepe) return;
+        suppressRef.current = true;
+        try {
+          crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            // The annotation marker `[^anno-N]` is a single inline
+            // footnote_reference atom. insertPos parses the string then
+            // round-trips it through DOM (markdownToSlice), which for a bare
+            // token yields a closed paragraph slice that can't be placed inline
+            // — it ends up rendered as literal `[^anno-N]` text instead of a
+            // badge. Create the node directly from the schema and insert it
+            // inline at `pos`, bypassing the markdown/DOM round-trip entirely.
+            // (insertAfter at line ~559 stays block-level on purpose.)
+            const m = /^\[\^([^\]]+)\]\s*$/.exec(md.trim());
+            const node = m
+              ? view.state.schema.nodes.footnote_reference?.create({ label: m[1] })
+              : null;
+            if (node) {
+              view.dispatch(view.state.tr.insert(pos, node));
+              return;
+            }
+            insertPos(md, pos, true)(ctx);
+          });
+        } catch {
+          /* not ready */
+        }
+        suppressRef.current = false;
+      },
+      insertAnnoMarker: (id, range, anchorText) => {
+        // Place a [^id] footnote_reference marker near the anchor described by
+        // `range`/`anchorText`. If the anchor is inside a block that can't hold
+        // an inline footnote_reference (code_block, math_block, …), the marker
+        // goes in a fresh marker paragraph right after that block — inserting
+        // inside would be silently rejected by the schema, leaving a dangling
+        // definition with no badge. Returns true if placed, false to let the
+        // caller fall back to appending at the document tail.
+        const token = `[^${id}]`;
+        if (modeRef.current === "sv") {
+          // Source mode edits raw markdown. A [^id] inside a fenced code block
+          // is literal text (not a footnote), so if the target sits inside a
+          // fence, move the insertion to just after the closing fence.
+          const ta = sourceRef.current;
+          if (!ta) return false;
+          let pos = -1;
+          if (range && range.to > range.from) {
+            const t = ta.value.slice(range.from, range.to);
+            if (t && (!anchorText || t.trim() === anchorText.trim()))
+              pos = range.to;
+          }
+          if (pos < 0 && anchorText) {
+            const i = ta.value.indexOf(anchorText.trim());
+            pos = i >= 0 ? i + anchorText.trim().length : -1;
+          }
+          if (pos < 0) return false;
+          pos = svPosOutsideCodeFence(ta.value, pos);
+          ta.value = ta.value.slice(0, pos) + token + ta.value.slice(pos);
+          ta.selectionStart = ta.selectionEnd = pos + token.length;
+          sourceTextRef.current = ta.value;
+          contentRef.current = ta.value;
+          onInputRef.current?.(ta.value);
+          return true;
+        }
+        const crepe = crepeRef.current;
+        if (!crepe) return false;
+        suppressRef.current = true;
+        try {
+          return crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const doc = view.state.doc;
+            const schema = view.state.schema;
+            const fnType = schema.nodes.footnote_reference;
+            if (!fnType) return false;
+            // 1) Candidate position: prefer a still-valid captured range, else
+            //    the first occurrence of anchorText in the document tree.
+            let pos = -1;
+            if (range && range.to > range.from) {
+              const t = doc.textBetween(range.from, range.to, "\n");
+              if (t && (!anchorText || t.trim() === anchorText.trim()))
+                pos = range.to;
+            }
+            if (pos < 0 && anchorText) {
+              const needle = anchorText.trim();
+              doc.descendants((n, p) => {
+                if (pos >= 0) return false;
+                if (n.isText && n.text) {
+                  const i = n.text.indexOf(needle);
+                  if (i >= 0) {
+                    pos = p + i + needle.length;
+                    return false;
+                  }
+                }
+                return true;
+              });
+            }
+            if (pos < 0) return false;
+            // 2) Inline insert when the current textblock allows it.
+            const $pos = doc.resolve(pos);
+            if ($pos.parent.type.contentMatch.matchType(fnType) != null) {
+              view.dispatch(
+                view.state.tr.insert(pos, fnType.create({ label: id }))
+              );
+              return true;
+            }
+            // 3) Anchor is inside a block that can't hold the marker
+            //    (code_block / math_block / …). Drop a marker paragraph right
+            //    after that block (its parent is a block container: doc /
+            //    list_item / blockquote, all of which accept a paragraph).
+            if ($pos.depth >= 1) {
+              const after = $pos.after($pos.depth);
+              const fn = fnType.create({ label: id });
+              const paraType = schema.nodes.paragraph;
+              const para = paraType ? paraType.create(null, fn) : fn;
+              view.dispatch(view.state.tr.insert(after, para));
+              return true;
+            }
+            return false;
+          });
+        } catch {
+          return false;
+        } finally {
+          suppressRef.current = false;
+        }
+      },
+      getTextAt: (from, to) => {
+        // Plain text spanning [from,to]. Validates that a range captured
+        // earlier still matches anchorText (the document may have been edited
+        // between capture and use, making {from,to} stale or out of bounds).
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          return ta ? ta.value.slice(from, to) : "";
+        }
+        try {
+          return crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            return view.state.doc.textBetween(from, to, "\n");
+          });
+        } catch {
+          return "";
+        }
+      },
+      findTextPos: (needle) => {
+        // End document position of the first occurrence of `needle` inside a
+        // single text node (-1 if not found). Searching the document tree
+        // (rather than the markdown source) returns a position within a text
+        // node, so an inserted footnote_reference lands as a sibling inline
+        // node — never inside bold/code/link syntax markers. Cross-mark
+        // selections aren't matched (-1) and fall back to the document tail.
+        if (!needle) return -1;
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return -1;
+          const idx = ta.value.indexOf(needle);
+          return idx >= 0 ? idx + needle.length : -1;
+        }
+        try {
+          return crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            let result = -1;
+            view.state.doc.descendants((node, pos) => {
+              if (result >= 0) return false;
+              if (node.isText && node.text) {
+                const idx = node.text.indexOf(needle);
+                if (idx >= 0) {
+                  result = pos + idx + needle.length;
+                  return false;
+                }
+              }
+              return true;
+            });
+            return result;
+          });
+        } catch {
+          return -1;
+        }
+      },
+      focus: () => {
+        if (modeRef.current === "sv") {
+          sourceRef.current?.focus();
+          return;
+        }
+        try {
+          crepeRef.current?.editor.action((ctx) => {
+            ctx.get(editorViewCtx).focus();
+          });
+        } catch {
+          /* ignore */
+        }
+      },
+      toggleBold: () => {
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return;
+          toggleWrapTextarea(ta, "**", "**");
+          sourceTextRef.current = ta.value;
+          contentRef.current = ta.value;
+          onInputRef.current(ta.value);
+          return;
+        }
+        try {
+          crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const mt = view.state.schema.marks.strong;
+            if (mt) toggleMark(mt)(view.state, view.dispatch);
+          });
+        } catch {
+          /* not ready */
+        }
+      },
+      toggleHighlight: () => {
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return;
+          toggleWrapTextarea(ta, "==", "==");
+          sourceTextRef.current = ta.value;
+          contentRef.current = ta.value;
+          onInputRef.current(ta.value);
+          return;
+        }
+        try {
+          crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const mt = view.state.schema.marks.highlight;
+            if (mt) toggleMark(mt)(view.state, view.dispatch);
+          });
+        } catch {
+          /* not ready */
+        }
+      },
+      getActiveMarks: () => {
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return { bold: false, highlight: false, color: null };
+          return textareaActiveMarks(ta);
+        }
+        try {
+          return crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const { from, empty } = view.state.selection;
+            // For a caret, use the marks that would be applied to newly typed
+            // text (storedMarks, falling back to the resolved position's marks).
+            // For a range, report the marks present at the start of the range —
+            // the standard toolbar behaviour.
+            const marks = empty
+              ? (view.state.storedMarks ??
+                view.state.doc.resolve(from).marks())
+              : view.state.doc.resolve(from).marks();
+            const colorMark = marks.find((m) => m.type.name === "textColor");
+            return {
+              bold: marks.some((m) => m.type.name === "strong"),
+              highlight: marks.some((m) => m.type.name === "highlight"),
+              color: (colorMark?.attrs.color as string | undefined) ?? null,
+            };
+          });
+        } catch {
+          return { bold: false, highlight: false, color: null };
+        }
+      },
+      setTextColor: (color: string) => {
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return;
+          wrapTextareaColor(ta, color);
+          sourceTextRef.current = ta.value;
+          contentRef.current = ta.value;
+          onInputRef.current(ta.value);
+          return;
+        }
+        try {
+          crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const mt = view.state.schema.marks.textColor;
+            if (!mt) return;
+            const { from, to } = view.state.selection;
+            // Replace any existing color on the range, then apply the new one —
+            // so picking a different swatch swaps color rather than stacking.
+            const tr = view.state.tr
+              .removeMark(from, to, mt)
+              .addMark(from, to, mt.create({ color }));
+            view.dispatch(tr);
+          });
+        } catch {
+          /* not ready */
+        }
+      },
+      clearTextColor: () => {
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return;
+          unwrapTextareaColor(ta);
+          sourceTextRef.current = ta.value;
+          contentRef.current = ta.value;
+          onInputRef.current(ta.value);
+          return;
+        }
+        try {
+          crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const mt = view.state.schema.marks.textColor;
+            if (!mt) return;
+            const { from, to } = view.state.selection;
+            view.dispatch(view.state.tr.removeMark(from, to, mt));
+          });
+        } catch {
+          /* not ready */
+        }
+      },
+      /* ---- 块级右键菜单命令（富文本模式；sv 由调用方拦截，不弹菜单） ---- */
+      getBlockInfoAt: (x, y) => {
+        if (modeRef.current === "sv") return null;
+        try {
+          return crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const hit = view.posAtCoords({ left: x, top: y });
+            if (!hit) return null;
+            const doc = view.state.doc;
+            const pos = Math.max(
+              0,
+              Math.min(hit.inside > -1 ? hit.inside : hit.pos, doc.content.size)
+            );
+            const $pos = doc.resolve(pos);
+            // 右键本身不移动 PM 选区；把光标规范到点击处，后续菜单命令才会
+            // 作用于被右键的块。若已有选区覆盖点击点（跨块拖选后右键）则保留。
+            const { from, to, empty } = view.state.selection;
+            if (empty || pos < from || pos > to) {
+              view.dispatch(
+                view.state.tr.setSelection(TextSelection.near($pos, 1))
+              );
+            }
+            const unit = movableUnit($pos);
+            if (!unit) return null;
+            const parentDepth = unit.depth - 1;
+            const parent = $pos.node(parentDepth);
+            const idx = $pos.index(parentDepth);
+            // 相邻块探测：跳过空段落（Markdown 的“空行”），移动时读作跨过视觉间隔。
+            const prevIdx = nearestSibling(parent, idx, -1);
+            const nextIdx = nearestSibling(parent, idx, 1);
+            let inTable = false;
+            for (let d = 1; d <= $pos.depth; d++) {
+              const n = $pos.node(d).type.name;
+              if (n === "table" || n === "table_row" || n === "table_cell" || n === "table_header") {
+                inTable = true;
+                break;
+              }
+            }
+            return {
+              kind: classifyUnit(unit.node, parent.type.name),
+              headingLevel:
+                unit.node.type.name === "heading"
+                  ? ((unit.node.attrs.level as number) ?? 1)
+                  : null,
+              from: $pos.before(unit.depth),
+              to: $pos.after(unit.depth),
+              canMoveUp: prevIdx >= 0,
+              canMoveDown: nextIdx < parent.childCount,
+              inTable,
+              link: linkRangeAt(doc, pos),
+              image: imageAt($pos, pos),
+            };
+          });
+        } catch {
+          return null;
+        }
+      },
+      setBlockType: (kind, level) => {
+        if (modeRef.current === "sv") return;
+        try {
+          crepeRef.current!.editor.action((ctx) => {
+            applyBlockTarget(ctx.get(editorViewCtx), kind, level);
+          });
+        } catch {
+          /* not ready */
+        }
+      },
+      moveBlock: (dir) => {
+        if (modeRef.current === "sv") return false;
+        try {
+          return crepeRef.current!.editor.action((ctx) =>
+            moveBlockCommand(ctx.get(editorViewCtx), dir)
+          );
+        } catch {
+          return false;
+        }
+      },
+      duplicateBlock: () => {
+        if (modeRef.current === "sv") return;
+        try {
+          crepeRef.current!.editor.action((ctx) => {
+            duplicateBlockCommand(ctx.get(editorViewCtx));
+          });
+        } catch {
+          /* not ready */
+        }
+      },
+      deleteBlock: () => {
+        if (modeRef.current === "sv") return;
+        try {
+          crepeRef.current!.editor.action((ctx) => {
+            deleteBlockCommand(ctx.get(editorViewCtx));
+          });
+        } catch {
+          /* not ready */
+        }
+      },
+      tableOp: (op) => {
+        if (modeRef.current === "sv") return;
+        const cmds = {
+          rowBefore: addRowBefore,
+          rowAfter: addRowAfter,
+          colBefore: addColumnBefore,
+          colAfter: addColumnAfter,
+          delRow: deleteRow,
+          delCol: deleteColumn,
+        } as const;
+        try {
+          crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            cmds[op](view.state, view.dispatch);
+          });
+        } catch {
+          /* not ready */
+        }
+      },
+      updateLinkHref: (from, to, href) => {
+        if (modeRef.current === "sv") return;
+        try {
+          crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const linkType = view.state.schema.marks.link;
+            if (!linkType) return;
+            if (!href) {
+              view.dispatch(view.state.tr.removeMark(from, to, linkType));
+              return;
+            }
+            // 保留原 title（若有）
+            let title: string | undefined;
+            view.state.doc.nodesBetween(from, to, (n) => {
+              if (title !== undefined) return false;
+              const lm = n.marks.find((m) => m.type.name === "link");
+              if (lm) title = lm.attrs.title as string | undefined;
+              return title === undefined;
+            });
+            view.dispatch(
+              view.state.tr.addMark(from, to, linkType.create({ href, title }))
+            );
+          });
+        } catch {
+          /* not ready */
+        }
+      },
+      deleteNodeAt: (pos) => {
+        if (modeRef.current === "sv") return;
+        try {
+          crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const n = view.state.doc.nodeAt(pos);
+            if (!n) return;
+            const tr = view.state.tr.delete(pos, pos + n.nodeSize);
+            tr.setSelection(
+              TextSelection.near(
+                tr.doc.resolve(Math.min(pos, tr.doc.content.size)),
+                -1
+              )
+            );
+            view.dispatch(tr);
+          });
+        } catch {
+          /* not ready */
+        }
+      },
+      setImageSrc: (pos, src) => {
+        if (modeRef.current === "sv") return;
+        try {
+          crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const n = view.state.doc.nodeAt(pos);
+            if (!n || n.type.name !== "image") return;
+            view.dispatch(
+              view.state.tr.setNodeMarkup(pos, undefined, { ...n.attrs, src })
+            );
+          });
+        } catch {
+          /* not ready */
+        }
+      },
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Recreate the instance when big-doc state flips after a full document load
+  // (CodeMirror/KaTeX are create-time feature flags and can't be toggled live).
+  const maybeRecreateForBigDoc = (md: string) => {
+    const big = isBigDoc(md);
+    if (big !== bigDocRef.current) {
+      contentRef.current = md;
+      bigDocRef.current = big;
+      setBigDoc(big);
+      setRecreateToken((t) => t + 1);
+    }
+  };
+
+  // ---- mode switching / recreate / theme --------------------------------
+  const switchMode = useCallback(
+    (m: EditMode) => {
+      contentRef.current =
+        modeRef.current === "sv"
+          ? sourceRef.current?.value ?? sourceTextRef.current ?? contentRef.current
+          : (crepeRef.current?.getMarkdown() ?? contentRef.current);
+
+      if (m === "sv") {
+        sourceTextRef.current = contentRef.current;
+        if (sourceRef.current) sourceRef.current.value = contentRef.current;
+        setModeState("sv");
+        return;
+      }
+      // Leaving sv: push the textarea back into the Crepe (flush clears undo).
+      if (modeRef.current === "sv") {
+        const crepe = crepeRef.current;
+        if (crepe) {
+          suppressRef.current = true;
+          try {
+            crepe.editor.action(replaceAll(contentRef.current, true));
+          } catch {
+            /* ignore */
+          }
+          suppressRef.current = false;
+        }
+      }
+      setModeState(m);
+    },
+    [sourceRef]
+  );
+
+  const recreate = useCallback(() => {
+    contentRef.current =
+      modeRef.current === "sv"
+        ? sourceRef.current?.value ?? sourceTextRef.current ?? contentRef.current
+        : (crepeRef.current?.getMarkdown() ?? contentRef.current);
+    setRecreateToken((t) => t + 1);
+  }, [sourceRef]);
+
+  const applyTheme = useCallback((s: Settings) => {
+    applyProseVars(s);
+  }, []);
+
+  return useMemo<MilkdownHandle>(
+    () => ({
+      editor: ready ? facade : null,
+      ready,
+      mode,
+      bigDoc,
+      switchMode,
+      recreate,
+      applyTheme,
+    }),
+    [ready, mode, bigDoc, facade, switchMode, recreate, applyTheme]
+  );
+}
+
+/** Insert `text` at the textarea caret (no selection overwrite). */
+function insertIntoTextarea(ta: HTMLTextAreaElement, text: string): void {
+  const s = ta.selectionStart;
+  const en = ta.selectionEnd;
+  ta.value = ta.value.slice(0, s) + text + ta.value.slice(en);
+  const pos = s + text.length;
+  ta.selectionStart = ta.selectionEnd = pos;
+}
+
+/** If `pos` (a textarea caret offset) lies inside a fenced code block, return
+ *  the offset immediately after that block's closing fence line, so a markdown
+ *  token inserted there is NOT swallowed as literal code. Otherwise return
+ *  `pos` unchanged. Recognises ``` and ~~~ fences with up to 3 leading spaces.
+ *  Used by the annotation marker in source mode. */
+function svPosOutsideCodeFence(value: string, pos: number): number {
+  const FENCE_RE = /^\s{0,3}(`{3,}|~{3,})/;
+  // Fence state up to the START of the line containing `pos`.
+  const lineStart = value.lastIndexOf("\n", pos - 1) + 1;
+  let inFence = false;
+  let fenceChar = ""; // "`" or "~" — only the same char closes the fence
+  for (const ln of value.slice(0, lineStart).split("\n")) {
+    const m = ln.match(FENCE_RE);
+    if (!m) continue;
+    if (!inFence) {
+      inFence = true;
+      fenceChar = m[1][0];
+    } else if (m[1][0] === fenceChar) {
+      inFence = false;
+      fenceChar = "";
+    }
+  }
+  if (!inFence) return pos;
+  // Inside a fence: find its closing fence at/after the current line and
+  // return the offset at the start of the line AFTER it.
+  let offset = lineStart;
+  for (const ln of value.slice(lineStart).split("\n")) {
+    const m = ln.match(FENCE_RE);
+    offset += ln.length + 1; // +1 for the "\n"
+    if (m && m[1][0] === fenceChar) {
+      return Math.min(offset, value.length);
+    }
+  }
+  // Unclosed fence (user mid-typing): fall back to end of document.
+  return value.length;
+}
+
+/** Replace the textarea's current selection with `text` (inserts at caret if
+ *  the selection is collapsed). */
+function replaceTextareaSelection(ta: HTMLTextAreaElement, text: string): void {
+  const s = ta.selectionStart;
+  const en = ta.selectionEnd;
+  ta.value = ta.value.slice(0, s) + text + ta.value.slice(en);
+  const pos = s + text.length;
+  ta.selectionStart = ta.selectionEnd = pos;
+}
+
+/** Wrap (or unwrap, if already wrapped) the textarea selection with `open` and
+ *  `close` delimiters — a toggle, so pressing the shortcut twice is a no-op
+ *  rather than nesting `****`. */
+function toggleWrapTextarea(
+  ta: HTMLTextAreaElement,
+  open: string,
+  close: string
+): void {
+  const s = ta.selectionStart;
+  const en = ta.selectionEnd;
+  const val = ta.value;
+  const before = val.slice(Math.max(0, s - open.length), s);
+  const after = val.slice(en, en + close.length);
+  const wrapped = before === open && after === close;
+  if (wrapped) {
+    // Strip the surrounding delimiters; keep the selection on the inner text.
+    ta.value =
+      val.slice(0, s - open.length) + val.slice(s, en) + val.slice(en + close.length);
+    ta.selectionStart = s - open.length;
+    ta.selectionEnd = en - open.length;
+  } else {
+    ta.value =
+      val.slice(0, s) + open + val.slice(s, en) + close + val.slice(en);
+    ta.selectionStart = s + open.length;
+    ta.selectionEnd = en + open.length;
+  }
+}
+
+/** Whether the textarea selection/caret currently sits inside `**…**` / `==…==`
+ *  / a `<span style="color:…">…</span>`. Drives the toolbar active state in
+ *  source mode. */
+function textareaActiveMarks(ta: HTMLTextAreaElement): {
+  bold: boolean;
+  highlight: boolean;
+  color: string | null;
+} {
+  const s = ta.selectionStart;
+  const en = ta.selectionEnd;
+  const val = ta.value;
+  const bold =
+    val.slice(Math.max(0, s - 2), s) === "**" && val.slice(en, en + 2) === "**";
+  const highlight =
+    val.slice(Math.max(0, s - 2), s) === "==" && val.slice(en, en + 2) === "==";
+  return { bold, highlight, color: textareaColorAt(ta) };
+}
+
+// Match a color span opening tag and capture its declared color. Tolerant of
+// extra attributes and either quote style.
+const SPAN_OPEN_RE = /<span\b[^>]*\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*>\s*$/i;
+const SPAN_CLOSE_RE = /^\s*<\/span>/i;
+const STYLE_COLOR_RE = /(?:^|;)\s*color\s*:\s*([^;]+)/i;
+// Matches a `color:` declaration within an inline style string (for rewrite).
+const COLOR_DECL_RE = /color\s*:\s*[^;]+/i;
+
+/** Read the `color:` value from an inline style string, or null. */
+function colorFromStyle(style: string): string | null {
+  const m = STYLE_COLOR_RE.exec(style);
+  return m ? m[1].trim() : null;
+}
+
+/** If the textarea selection/caret is wrapped by `<span style=color>…</span>`,
+ *  return that color; otherwise null. Scans a small window around the selection
+ *  so it works for both a caret and a range. */
+function textareaColorAt(ta: HTMLTextAreaElement): string | null {
+  const s = ta.selectionStart;
+  const en = ta.selectionEnd;
+  const val = ta.value;
+  // Look back up to ~120 chars for an opening color span not yet closed.
+  const winStart = Math.max(0, s - 120);
+  const before = val.slice(winStart, s);
+  const after = val.slice(en, en + 12);
+  // Must be immediately followed by </span> for a tight range match; for a
+  // collapsed caret we still require the close to be right after the caret.
+  if (!SPAN_CLOSE_RE.test(after)) {
+    // Allow the close to sit a couple chars ahead (trailing spaces are rare
+    // inside a span, but tolerate them).
+    if (!/^\s{0,2}<\/span>/i.test(after)) return null;
+  }
+  const open = SPAN_OPEN_RE.exec(before);
+  if (!open) return null;
+  const style = open[1] ?? open[2] ?? "";
+  return colorFromStyle(style);
+}
+
+/** Wrap (or re-color, or unwrap if same color) the textarea selection with a
+ *  `<span style="color:…">…</span>`. Toggling: if the selection already carries
+ *  the SAME color span it is unwrapped; if it carries a DIFFERENT color the span
+ *  is replaced (open tag rewritten) so colors don't nest. */
+function wrapTextareaColor(ta: HTMLTextAreaElement, color: string): void {
+  const s = ta.selectionStart;
+  const en = ta.selectionEnd;
+  const val = ta.value;
+  const before = val.slice(Math.max(0, s - 120), s);
+  const after = val.slice(en, en + 12);
+
+  const existingOpen = SPAN_OPEN_RE.exec(before);
+  const hasClose = SPAN_CLOSE_RE.test(after) || /^\s{0,2}<\/span>/i.test(after);
+  if (existingOpen && hasClose) {
+    const curStyle = existingOpen[1] ?? existingOpen[2] ?? "";
+    const curColor = colorFromStyle(curStyle);
+    const openStartInWin = existingOpen.index;
+    const openStart = Math.max(0, s - 120) + openStartInWin;
+    const openTag = existingOpen[0];
+    if (curColor && curColor.toLowerCase() === color.toLowerCase()) {
+      // Same color → unwrap (toggle off): strip open + close tags.
+      const closeLen = val.slice(en).match(/^<\/span>/i)?.[0].length ?? "</span>".length;
+      ta.value =
+        val.slice(0, openStart) +
+        val.slice(openStart + openTag.length, en) +
+        val.slice(en + closeLen);
+      const shrink = openTag.length;
+      ta.selectionStart = openStart;
+      ta.selectionEnd = en - shrink;
+    } else {
+      // Different color → rewrite the open tag's color (keeps the close).
+      const newStyle = curStyle.replace(COLOR_DECL_RE, `color: ${color}`);
+      const styleStr = curStyle.includes("color:") ? newStyle : `color: ${color}` + (curStyle.trim() ? `;${curStyle}` : "");
+      const newOpen = `<span style="${styleStr}">`;
+      ta.value =
+        val.slice(0, openStart) + newOpen + val.slice(openStart + openTag.length);
+      ta.selectionStart = s;
+      ta.selectionEnd = en;
+    }
+    return;
+  }
+  // Not yet wrapped: wrap fresh.
+  const open = `<span style="color:${color}">`;
+  const close = "</span>";
+  ta.value = val.slice(0, s) + open + val.slice(s, en) + close + val.slice(en);
+  ta.selectionStart = s + open.length;
+  ta.selectionEnd = en + open.length;
+}
+
+/** Remove the nearest enclosing color span around the textarea selection, if any. */
+function unwrapTextareaColor(ta: HTMLTextAreaElement): void {
+  const s = ta.selectionStart;
+  const en = ta.selectionEnd;
+  const val = ta.value;
+  const before = val.slice(Math.max(0, s - 120), s);
+  const after = val.slice(en, en + 12);
+  const existingOpen = SPAN_OPEN_RE.exec(before);
+  const hasClose = SPAN_CLOSE_RE.test(after) || /^\s{0,2}<\/span>/i.test(after);
+  if (!existingOpen || !hasClose) return;
+  const openStart = Math.max(0, s - 120) + existingOpen.index;
+  const openTag = existingOpen[0];
+  const closeLen = val.slice(en).match(/^<\/span>/i)?.[0].length ?? "</span>".length;
+  ta.value =
+    val.slice(0, openStart) +
+    val.slice(openStart + openTag.length, en) +
+    val.slice(en + closeLen);
+  const shrink = openTag.length;
+  ta.selectionStart = openStart;
+  ta.selectionEnd = en - shrink;
+}
+
+/** Apply font/size/spacing as CSS vars on :root (the prose CSS in global.css
+ *  consumes them on .ProseMirror). Mirrors the Vditor applyProseVars surface. */
+function applyProseVars(s: Settings) {
+  const root = document.documentElement;
+  root.style.setProperty("--font-prose", s.fontFamily);
+  root.style.setProperty("--font-mono", s.monoFontFamily);
+  root.style.setProperty("--font-size", `${s.fontSize}px`);
+  root.style.setProperty("--line-height", String(s.lineHeight));
+  root.style.setProperty("--para-spacing", `${s.paragraphSpacing}px`);
+}
+
+/* -------------------------------------------------------------------------- */
+/* 块级命令（BlockContextMenu）的纯 ProseMirror 辅助函数                        */
+/*                                                                            */
+/* “当前块”的判定：光标所在顶层块（doc 的直接子节点）。若该顶层块是列表，则取      */
+/* 光标所在的最外层 list_item（整项移动/复制，携带其嵌套内容）。表格、引用等       */
+/* 复合块整体作为单元处理（与 Notion 的块语义一致）。                            */
+/* -------------------------------------------------------------------------- */
+
+/** The "movable unit" at $pos: the top-level block, or — inside a top-level
+ *  list — the shallowest list_item (the visible whole item). */
+function movableUnit($pos: ResolvedPos): { depth: number; node: PMNode } | null {
+  if ($pos.depth < 1) return null;
+  const top = $pos.node(1);
+  if (top.type.name === "bullet_list" || top.type.name === "ordered_list") {
+    for (let d = 2; d <= $pos.depth; d++) {
+      if ($pos.node(d).type.name === "list_item") {
+        return { depth: d, node: $pos.node(d) };
+      }
+    }
+  }
+  return { depth: 1, node: top };
+}
+
+function isEmptyParagraph(n: PMNode): boolean {
+  return n.type.name === "paragraph" && n.childCount === 0;
+}
+
+/** Index of the nearest sibling of `idx` in direction `step`, skipping empty
+ *  paragraphs (the markdown “空行” — moving across one reads as jumping a
+ *  visual gap, so it should not block the move). Returns -1 / childCount when
+ *  the edge is reached. */
+function nearestSibling(parent: PMNode, idx: number, step: 1 | -1): number {
+  let i = idx + step;
+  while (i >= 0 && i < parent.childCount && isEmptyParagraph(parent.child(i))) {
+    i += step;
+  }
+  return i;
+}
+
+/** Semantic kind of a block node. A list_item is classified by its parent
+ *  list (task items carry a non-null `checked` attr — gfm preset). */
+function classifyUnit(node: PMNode, parentName: string): BlockInfo["kind"] {
+  switch (node.type.name) {
+    case "paragraph":
+      return "paragraph";
+    case "heading":
+      return "heading";
+    case "blockquote":
+      return "blockquote";
+    case "code_block":
+      return "code_block";
+    case "horizontal_rule":
+      return "hr";
+    case "table":
+      return "table";
+    case "image":
+      return "image";
+    case "math":
+    case "math_block":
+      return "math_block";
+    case "html":
+    case "html_block":
+      return "html";
+    case "list_item":
+      if (parentName === "bullet_list") {
+        return node.attrs.checked != null ? "task_list" : "bullet_list";
+      }
+      if (parentName === "ordered_list") return "ordered_list";
+      return "other";
+    default:
+      return "other";
+  }
+}
+
+/** The contiguous range of the link mark around `pos`, or null. Expansion
+ *  walks neighbour text nodes carrying an equal link mark — the standard
+ *  “mark range at caret” resolution. */
+function linkRangeAt(
+  doc: PMNode,
+  pos: number
+): { from: number; to: number; href: string } | null {
+  const $p = doc.resolve(pos);
+  const findLink = (marks: readonly Mark[] | undefined) =>
+    marks?.find((m) => m.type.name === "link");
+  const mark = findLink($p.marks()) ?? findLink($p.nodeBefore?.marks) ?? findLink($p.nodeAfter?.marks);
+  if (!mark) return null;
+  const hasLink = (n: PMNode | null | undefined): boolean =>
+    !!n && !!findLink(n.marks)?.eq(mark);
+  let from = pos;
+  let to = pos;
+  while (from > 0 && hasLink(doc.resolve(from - 1).nodeBefore)) from--;
+  while (to < doc.content.size && hasLink(doc.resolve(to).nodeAfter)) to++;
+  if (from >= to) return null;
+  return { from, to, href: ((mark.attrs.href as string | undefined) ?? "") };
+}
+
+/** The image node at (or immediately around) `pos` — clicked directly, or via
+ *  its caption/wrapper (the block image hosts the caption text). */
+function imageAt($pos: ResolvedPos, pos: number): { pos: number; src: string } | null {
+  // Caption / wrapper click: the image is an ancestor.
+  for (let d = $pos.depth; d >= 1; d--) {
+    if ($pos.node(d).type.name === "image") {
+      return {
+        pos: $pos.before(d),
+        src: (($pos.node(d).attrs.src as string | undefined) ?? ""),
+      };
+    }
+  }
+  // Direct hit: check the node starting at / adjacent to the click position.
+  for (const p of [pos, pos + 1, Math.max(0, pos - 1)]) {
+    const n = p <= $pos.doc.content.size ? $pos.doc.nodeAt(p) : null;
+    if (n && n.type.name === "image") {
+      return { pos: p, src: ((n.attrs.src as string | undefined) ?? "") };
+    }
+  }
+  return null;
+}
+
+/** Depth of the nearest ancestor of the given type names, or 0. */
+function ancestorDepth($pos: ResolvedPos, names: string[]): number {
+  for (let d = $pos.depth; d >= 1; d--) {
+    if (names.includes($pos.node(d).type.name)) return d;
+  }
+  return 0;
+}
+
+/** Whether the list_item containing the caret is a task item (checked != null). */
+function currentItemIsTask($pos: ResolvedPos): boolean {
+  const d = ancestorDepth($pos, ["list_item"]);
+  return d > 0 && $pos.node(d).attrs.checked != null;
+}
+
+/** Switch the nearest ancestor list's flavour: bullet ⇄ ordered, and plain ⇄
+ *  task (task state lives on the `list_item` children's `checked` attr). Used
+ *  both after wrapInList (to seed task items) and for in-place conversion —
+ *  converting the whole list matches the familiar editor behaviour. */
+function switchListKind(view: EditorView, kind: BlockTargetKind): void {
+  const state = view.state;
+  const N = state.schema.nodes;
+  const $from = state.selection.$from;
+  const listDepth = ancestorDepth($from, ["bullet_list", "ordered_list"]);
+  if (!listDepth) return;
+  const list = $from.node(listDepth);
+  const listPos = $from.before(listDepth);
+  const wantType = kind === "ordered_list" ? N.ordered_list : N.bullet_list;
+  const wantTask = kind === "task_list";
+  const tr = state.tr.setNodeMarkup(listPos, wantType ?? undefined, list.attrs);
+  const liType = N.list_item;
+  if (liType && liType.spec.attrs && "checked" in liType.spec.attrs) {
+    let p = listPos + 1;
+    for (let i = 0; i < list.childCount; i++) {
+      const c = list.child(i);
+      if (c.type.name === "list_item") {
+        tr.setNodeMarkup(p, undefined, {
+          ...c.attrs,
+          checked: wantTask ? false : null,
+        });
+      }
+      p += c.nodeSize;
+    }
+  }
+  view.dispatch(tr.scrollIntoView());
+}
+
+/** Apply a block-type target chosen from the context menu, with toggle
+ *  semantics (clicking the current flavour converts back to a paragraph). */
+function applyBlockTarget(
+  view: EditorView,
+  kind: BlockTargetKind,
+  level?: number
+): void {
+  const N = view.state.schema.nodes;
+  const $from = view.state.selection.$from;
+  const run = (cmd: (state: typeof view.state, dispatch?: typeof view.dispatch) => boolean) =>
+    cmd(view.state, view.dispatch);
+  const inQuote = ancestorDepth($from, ["blockquote"]) > 0;
+  const listName =
+    ancestorDepth($from, ["bullet_list"]) > 0
+      ? "bullet_list"
+      : ancestorDepth($from, ["ordered_list"]) > 0
+        ? "ordered_list"
+        : null;
+  const parent = $from.parent; // nearest textblock
+
+  switch (kind) {
+    case "paragraph":
+      if (listName && N.list_item) run(liftListItem(N.list_item));
+      else if (inQuote) run(lift);
+      else run(pmSetBlockType(N.paragraph));
+      break;
+    case "heading": {
+      const lv = Math.min(6, Math.max(1, level ?? 2));
+      if (parent.type.name === "heading" && parent.attrs.level === lv) {
+        run(pmSetBlockType(N.paragraph)); // same level again → back to paragraph
+        break;
+      }
+      // heading isn't valid inside list_item — lift out first, then apply.
+      if (listName && N.list_item) run(liftListItem(N.list_item));
+      run(pmSetBlockType(N.heading, { level: lv }));
+      break;
+    }
+    case "blockquote":
+      if (inQuote) run(lift);
+      else if (N.blockquote) run(wrapIn(N.blockquote));
+      break;
+    case "code_block":
+      if (parent.type.name === "code_block") {
+        run(pmSetBlockType(N.paragraph));
+        break;
+      }
+      if (listName && N.list_item) run(liftListItem(N.list_item));
+      run(pmSetBlockType(N.code_block));
+      break;
+    case "bullet_list":
+    case "ordered_list":
+    case "task_list": {
+      const curTask = listName === "bullet_list" && currentItemIsTask($from);
+      // Toggle off when already this exact flavour.
+      if (
+        (kind === "bullet_list" && listName === "bullet_list" && !curTask) ||
+        (kind === "ordered_list" && listName === "ordered_list") ||
+        (kind === "task_list" && curTask)
+      ) {
+        if (N.list_item) run(liftListItem(N.list_item));
+        break;
+      }
+      if (!listName) {
+        const wrapType = kind === "ordered_list" ? N.ordered_list : N.bullet_list;
+        if (wrapType) run(wrapInList(wrapType));
+        if (kind === "task_list") switchListKind(view, "task_list");
+        break;
+      }
+      // Different flavour / plain ⇄ task → convert the whole list in place.
+      switchListKind(view, kind);
+      break;
+    }
+    case "hr": {
+      const hrType = N.horizontal_rule;
+      if (!hrType) break;
+      // hr must live at the top level: insert after the current top-level block.
+      const after = $from.after(1);
+      const tr = view.state.tr.insert(after, hrType.create());
+      tr.setSelection(
+        TextSelection.near(tr.doc.resolve(Math.min(after + 1, tr.doc.content.size)), 1)
+      );
+      view.dispatch(tr.scrollIntoView());
+      break;
+    }
+  }
+  view.focus();
+}
+
+/** Swap the movable unit with its nearest (empty-paragraph-skipping) sibling.
+ *  Implemented as delete + insert in ONE transaction so undo collapses the
+ *  move into a single step and the caret travels with the block. */
+function moveBlockCommand(view: EditorView, dir: "up" | "down"): boolean {
+  const state = view.state;
+  const $from = state.selection.$from;
+  const unit = movableUnit($from);
+  if (!unit) return false;
+  const parentDepth = unit.depth - 1;
+  const parent = $from.node(parentDepth);
+  const start = $from.before(unit.depth);
+  const end = $from.after(unit.depth);
+  const step = dir === "down" ? 1 : -1;
+  const j = nearestSibling(parent, $from.index(parentDepth), step as 1 | -1);
+  if (j < 0 || j >= parent.childCount) return false;
+  // Doc range of the target sibling. start(parentDepth) is the content start
+  // of the parent, which equals the position of its FIRST child (0 for doc,
+  // Ls+1 for a list at Ls) — no extra offset needed.
+  let tStart = 0;
+  let tEnd = 0;
+  let p = $from.start(parentDepth);
+  for (let i = 0; i < parent.childCount; i++) {
+    if (i === j) tStart = p;
+    p += parent.child(i).nodeSize;
+    if (i === j) tEnd = p;
+  }
+  // NOTE: PM's node.copy() with no argument yields an EMPTY node (content
+  // defaults to null → Fragment.empty); the content must be passed explicitly.
+  const copy = unit.node.copy(unit.node.content);
+  // Caret offset inside the unit so it stays at the same reading spot.
+  const headOff = Math.max(
+    1,
+    Math.min(unit.node.nodeSize - 1, state.selection.head - start)
+  );
+  const tr = state.tr;
+  tr.delete(start, end);
+  const ins = tr.mapping.map(dir === "down" ? tEnd : tStart);
+  tr.insert(ins, copy);
+  tr.setSelection(TextSelection.near(tr.doc.resolve(ins + headOff), 1));
+  view.dispatch(tr.scrollIntoView());
+  return true;
+}
+
+/** Insert a copy of the movable unit right below itself; caret moves into the
+ *  copy (same reading offset, clamped to the copy's interior). */
+function duplicateBlockCommand(view: EditorView): void {
+  const state = view.state;
+  const $from = state.selection.$from;
+  const unit = movableUnit($from);
+  if (!unit) return;
+  const start = $from.before(unit.depth);
+  const end = $from.after(unit.depth);
+  const headOff = Math.max(
+    1,
+    Math.min(unit.node.nodeSize - 1, state.selection.head - start)
+  );
+  const tr = state.tr.insert(end, unit.node.copy(unit.node.content));
+  tr.setSelection(TextSelection.near(tr.doc.resolve(end + headOff), 1));
+  view.dispatch(tr.scrollIntoView());
+}
+
+/** Delete the movable unit; caret falls to the end of the preceding neighbour
+ *  (or the start of what follows when deleting the first block). */
+function deleteBlockCommand(view: EditorView): void {
+  const state = view.state;
+  const $from = state.selection.$from;
+  const unit = movableUnit($from);
+  if (!unit) return;
+  const start = $from.before(unit.depth);
+  const end = $from.after(unit.depth);
+  const tr = state.tr.delete(start, end);
+  tr.setSelection(
+    TextSelection.near(tr.doc.resolve(Math.min(start, tr.doc.content.size)), -1)
+  );
+  view.dispatch(tr.scrollIntoView());
+}

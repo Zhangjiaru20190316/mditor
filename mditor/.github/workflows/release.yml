@@ -1,0 +1,72 @@
+# Build + sign + publish a release with an auto-update manifest (latest.json).
+#
+# Trigger: push a tag like `v0.2.0`. The workflow then:
+#   1. Builds the Tauri bundle on Windows (+ macOS if you add the runner).
+#   2. Signs the updater artifacts with the private key stored in repo secrets.
+#   3. Generates `latest.json` describing the release.
+#   4. Creates a GitHub Release and uploads the installers + `latest.json`.
+#
+# Required GitHub repo secrets:
+#   TAURI_SIGNING_PRIVATE_KEY           — contents of ~/.tauri/mditor.key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  — (only if you set a password on the key)
+#
+# The public key matching this private key is already embedded in
+# src-tauri/tauri.conf.json → plugins.updater.pubkey, so clients verify
+# authenticity before installing.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          # Add macOS by uncommenting these — requires a code-signing cert
+          # for the updater signature to be trusted on macOS.
+          # - platform: macos-latest
+          #   args: "--target aarch64-apple-darwin"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mditor/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend deps
+        run: npm ci
+        working-directory: mditor
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: mditor
+          # Derive the version + release name from the pushed tag (e.g. v0.2.0).
+          tagName: ${{ github.ref_name }}
+          releaseName: "Mditor ${{ github.ref_name }}"
+          releaseBody: "See the assets below to download. Existing users will receive the update automatically."
+          releaseDraft: false
+          prerelease: false
+          # Generate the updater manifest (latest.json) from the built artifacts.
+          updaterJsonPreferNsis: true

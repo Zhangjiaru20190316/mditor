@@ -1,0 +1,33 @@
+/* Dark theme.
+ * Applied when <html data-theme="dark">.
+ */
+[data-theme="dark"] {
+  --bg: #1e1e1e;
+  --fg: #e5e7eb;
+  --fg-muted: #9ca3af;
+  --border: #2d2d30;
+  --hover: #2a2d2e;
+  --code-bg: #131619; /* 代码块底色（加深，明显有别于 #1e1e1e 正文背景） */
+  --code-border: #3a4148; /* 代码块边框（同步加深） */
+  --card-bg: #252526;
+  --sidebar-bg: #1e1e1e;
+  --tabbar-bg: #181818;
+  --titlebar-bg: #252526; /* 自绘标题栏（VSCode 深色标题栏惯例色） */
+  --toolbar-bg: #252526;
+  --statusbar-bg: #007acc0d;
+  --accent: #818cf8; /* indigo-400, brighter for dark bg */
+  --accent-soft: #312e8155;
+  --mark-bg: rgba(250, 204, 21, 0.32); /* ==高光== 背景色（深色主题，提亮） */
+  --shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
+}
+
+/* Adjust the Milkdown surface for dark mode */
+[data-theme="dark"] .mditor-milkdown,
+[data-theme="dark"] .mditor-source {
+  background: var(--bg);
+}
+[data-theme="dark"] .mditor-milkdown .milkdown-toolbar {
+  background: var(--toolbar-bg);
+}

@@ -1,0 +1,16 @@
+# Dependencies
+mditor/node_modules/
+
+# Build output
+mditor/dist/
+mditor/src-tauri/target/
+
+# Debug artifacts
+HeapSnapshot-*.json
+
+# Session/tool files
+.zcode/
+
+# OS junk
+Thumbs.db
+desktop.ini

@@ -1,0 +1,187 @@
+// Document lifecycle: new / open / save / saveAs, plus dirty tracking.
+//
+// The editor itself owns the live content (Vditor.getValue()); this hook owns
+// the *path* and the save workflow, and exposes a `setContent` callback the
+// Editor calls when it loads a file into Vditor.
+//
+// Performance: all callbacks use refs internally so they have EMPTY dependency
+// arrays — the returned object is memoised and referentially stable across
+// renders. This is critical: App passes `fileApi` to many memoised children,
+// and Editor's `setOnLoaded` effect depends on `fileApi`; an unstable object
+// would force both to re-run on every keystroke.
+
+import { useCallback, useMemo, useRef, useState } from "react";
+import { openMd, saveMd, saveMdAs, baseName } from "../lib/tauriFs";
+import { pushRecent } from "../lib/store";
+import type { DocState } from "../types";
+
+export interface FileApi {
+  doc: DocState;
+  // NOTE: `onLoaded` is intentionally NOT exposed here. It is a pure internal
+  // callback slot (written via setOnLoaded, read via onLoadedRef by open /
+  // openPath). Exposing it — and putting it in the useMemo dep array below —
+  // made fileApi change identity on every setOnLoaded call; coupled with
+  // Editor's setOnLoaded effect that formed a self-sustaining render storm that
+  // leaked the fileApi useMemo closure at ~MB/s. Callers that need loaded
+  // content register via setOnLoaded.
+  /** Set the callback the editor uses to receive freshly loaded content. */
+  setOnLoaded: (cb: ((content: string) => void) | null) => void;
+  newDoc: () => void;
+  open: () => Promise<boolean>;
+  openPath: (path: string, content: string) => Promise<void>;
+  save: (getContent: () => string) => Promise<boolean>;
+  /**
+   * Persist the buffer to disk WITHOUT touching the recent list. Used by
+   * autosave so the periodic write doesn't deserialize→rewrite the whole
+   * mditor.json every tick (the path is already recent from open/saveAs).
+   * Returns false if the buffer has no path (caller must have a path).
+   */
+  writeOnly: (getContent: () => string) => Promise<boolean>;
+  saveAs: (getContent: () => string) => Promise<boolean>;
+  /** Mark the buffer dirty (called by the editor on input). */
+  markDirty: () => void;
+  /** Clear the dirty flag (called after save). */
+  markClean: () => void;
+  /**
+   * Update the on-disk path of the current buffer without touching its content
+   * (called after the open file is renamed in the file tree). No-op if the
+   * current path doesn't match `oldPath`.
+   */
+  updatePath: (oldPath: string, newPath: string) => void;
+}
+
+export function useFile(): FileApi {
+  const [doc, setDoc] = useState<DocState>({
+    path: null,
+    content: "",
+    dirty: false,
+  });
+  const [onLoaded, setOnLoadedState] =
+    useState<((content: string) => void) | null>(null);
+
+  // Refs holding the latest state so callbacks can stay referentially stable
+  // (empty deps) while still reading fresh values at call time.
+  const docRef = useRef(doc);
+  docRef.current = doc;
+  const onLoadedRef = useRef(onLoaded);
+  onLoadedRef.current = onLoaded;
+
+  const setOnLoaded = useCallback((cb: ((content: string) => void) | null) => {
+    setOnLoadedState(() => cb); // wrap so React treats it as a value, not a thunk
+  }, []);
+
+  const newDoc = useCallback(() => {
+    setDoc({ path: null, content: "", dirty: false });
+    onLoadedRef.current?.("");
+  }, []);
+
+  const openPath = useCallback(
+    async (path: string, content: string) => {
+      setDoc({ path, content, dirty: false });
+      // CRITICAL ORDERING: push the content into the editor BEFORE awaiting the
+      // recent-list IPC chain. pushRecent does loadRecent + set + save (three
+      // serialized IPC roundtrips); running it first used to delay the visible
+      // content by that whole window. Now the editor paints the new document
+      // immediately, and the recent-list update (invisible to the user while
+      // they're looking at the editor) runs right after.
+      onLoadedRef.current?.(content);
+      await pushRecent({
+        path,
+        name: baseName(path),
+        openedAt: new Date().toISOString(),
+      });
+    },
+    []
+  );
+
+  const open = useCallback(async () => {
+    const r = await openMd();
+    if (!r) return false;
+    await openPath(r.path, r.content);
+    return true;
+  }, [openPath]);
+
+  const saveAs = useCallback(
+    async (getContent: () => string) => {
+      const d = docRef.current;
+      const content = getContent();
+      const suggest = d.path
+        ? baseName(d.path)
+        : d.content.split("\n")[0]?.slice(0, 40) || "untitled.md";
+      const path = await saveMdAs(content, suggest.endsWith(".md") ? suggest : `${suggest}.md`);
+      if (!path) return false;
+      setDoc({ path, content, dirty: false });
+      await pushRecent({
+        path,
+        name: baseName(path),
+        openedAt: new Date().toISOString(),
+      });
+      return true;
+    },
+    []
+  );
+
+  const save = useCallback(
+    async (getContent: () => string) => {
+      const d = docRef.current;
+      if (!d.path) return saveAs(getContent);
+      const content = getContent();
+      await saveMd(d.path, content);
+      setDoc((prev) => ({ ...prev, content, dirty: false }));
+      await pushRecent({
+        path: d.path,
+        name: baseName(d.path),
+        openedAt: new Date().toISOString(),
+      });
+      return true;
+    },
+    [saveAs]
+  );
+
+  // Lightweight disk write for autosave: skip the recent-list churn. The path
+  // is already in the recent list from open/saveAs, so re-serializing the whole
+  // store every 30s is pure waste — and over a long editing session that steady
+  // IPC/JSON churn is a leading cause of webview memory growth.
+  const writeOnly = useCallback(async (getContent: () => string) => {
+    const d = docRef.current;
+    if (!d.path) return false;
+    const content = getContent();
+    await saveMd(d.path, content);
+    setDoc((prev) => ({ ...prev, content, dirty: false }));
+    return true;
+  }, []);
+
+  const markDirty = useCallback(() => {
+    setDoc((d) => (d.dirty ? d : { ...d, dirty: true }));
+  }, []);
+
+  const markClean = useCallback(() => {
+    setDoc((d) => (d.dirty ? { ...d, dirty: false } : d));
+  }, []);
+
+  const updatePath = useCallback((oldPath: string, newPath: string) => {
+    setDoc((d) => (d.path === oldPath ? { ...d, path: newPath } : d));
+  }, []);
+
+  // Stable object: only changes identity when `doc` changes. setOnLoaded is a
+  // stable useCallback and onLoaded is deliberately NOT a dep (see FileApi) —
+  // it is read internally via onLoadedRef, so changing it must NOT rebuild
+  // fileApi. (Letting it rebuild is what previously coupled this hook to
+  // Editor's setOnLoaded effect into a render storm / heap leak.)
+  return useMemo(
+    () => ({
+      doc,
+      setOnLoaded,
+      newDoc,
+      open,
+      openPath,
+      save,
+      writeOnly,
+      saveAs,
+      markDirty,
+      markClean,
+      updatePath,
+    }),
+    [doc, setOnLoaded, newDoc, open, openPath, save, writeOnly, saveAs, markDirty, markClean, updatePath]
+  );
+}

@@ -1,0 +1,441 @@
+/* Annotation styles — marker badges, hidden definition blocks, popover.
+ *
+ * Annotations are footnote-syntax (`[^anno-N]`) so Milkdown renders the marker
+ * as <sup data-type="footnote_reference" data-label="anno-N"> and the definition
+ * as <dl data-type="footnote_definition" data-label="anno-N">. We restyle the
+ * marker into a compact numbered badge (the raw "anno-1" text is hidden via
+ * font-size:0 and the number is drawn from a `data-anno-num` attribute the
+ * useAnnotationMarkers hook stamps on each marker). The matching definition
+ * block at the end of the doc is hidden via [data-anno="1"]; its content is
+ * shown instead in a popover on click.
+ *
+ * Ordinary (non-anno) footnotes keep Milkdown's default look.
+ */
+
+/* ---------- the marker badge (single Milkdown WYSIWYG surface) ---------- */
+.mditor-milkdown sup[data-type="footnote_reference"][data-label^="anno-"] {
+  /* hide the raw "anno-1" literal text Milkdown writes inside the sup */
+  font-size: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  margin-left: 2px;
+  vertical-align: super;
+  line-height: 1;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.mditor-milkdown sup[data-type="footnote_reference"][data-label^="anno-"]::before {
+  /* the number comes from data-anno-num, stamped by useAnnotationMarkers */
+  content: attr(data-anno-num);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.mditor-milkdown sup[data-type="footnote_reference"][data-label^="anno-"]:hover {
+  transform: scale(1.12);
+  background: var(--accent);
+}
+.mditor-milkdown sup[data-type="footnote_reference"][data-label^="anno-"]:hover::before {
+  color: #fff;
+}
+
+/* ---------- hide annotation definition blocks in the editor ---------- */
+/* Milkdown sets data-label on the <dl> from the schema (stable across
+   re-renders), so we hide annotation defs purely via the label prefix — no
+   attribute stamping needed (and stamping wouldn't survive ProseMirror
+   re-rendering the definition block anyway). Ordinary footnotes are unaffected. */
+.mditor-milkdown dl[data-type="footnote_definition"][data-label^="anno-"] {
+  display: none;
+}
+
+/* ---------- the popover ---------- */
+.anno-popover {
+  position: fixed;
+  z-index: 70;
+  width: 380px;
+  max-width: 90vw;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: anno-in 0.16s cubic-bezier(0.16, 1, 0.3, 1) both;
+  /* 仅在打开期间存在，提升 transform 到合成层让入场动画更稳 */
+  will-change: transform;
+}
+@keyframes anno-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.anno-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+.anno-popover-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.anno-popover-title-icon {
+  flex-shrink: 0;
+}
+.anno-popover-close {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.anno-popover-close:hover {
+  background: var(--hover);
+}
+.anno-popover-body {
+  padding: 10px 12px;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--fg);
+  min-height: 48px;
+  max-height: min(60vh, 440px);
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* When the body holds rendered Markdown (MarkdownText), let block elements
+   flow normally instead of inheriting the pre-wrap above, and keep the type
+   compact so a rich annotation fits inside the popover. */
+.anno-popover-body .md-rendered {
+  white-space: normal;
+  font: inherit;
+  color: inherit;
+}
+.anno-popover-body .md-rendered {
+  font-size: 13.5px;
+  line-height: 1.65;
+  padding: 0;
+}
+.anno-popover-body .md-rendered p {
+  margin: 0 0 6px;
+}
+.anno-popover-body .md-rendered p:last-child {
+  margin-bottom: 0;
+}
+.anno-popover-body .md-rendered ul,
+.anno-popover-body .md-rendered ol {
+  margin: 4px 0 6px;
+  padding-left: 20px;
+}
+.anno-popover-body .md-rendered li {
+  margin: 2px 0;
+}
+.anno-popover-body .md-rendered li:last-child {
+  margin-bottom: 0;
+}
+.anno-popover-body .md-rendered code {
+  font-size: 12.5px;
+}
+.anno-popover-body .md-rendered pre {
+  margin: 6px 0;
+}
+.anno-popover-empty {
+  color: var(--fg-muted);
+  font-style: italic;
+}
+.anno-popover-actions {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.anno-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 6px;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.anno-btn:hover {
+  background: var(--hover);
+}
+.anno-btn.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.anno-btn.primary:hover {
+  filter: brightness(1.08);
+}
+.anno-btn.danger {
+  color: #c0392b;
+  border-color: #f5c6cb;
+}
+.anno-btn.danger:hover {
+  background: #fde8e8;
+}
+.anno-edit-area {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: var(--font-prose);
+  line-height: 1.55;
+}
+.anno-edit-area:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+/* edit mode swaps the body for a padded textarea wrapper */
+.anno-popover.editing .anno-popover-body {
+  padding: 10px 12px;
+}
+
+/* a faint marker hint shown in the AI action button while refining */
+.anno-btn.busy {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* ---------- selection-toolbar "add annotation" popout (multi-line) ----------
+   Overrides .sel-popout's row layout so the textarea stacks above the button. */
+.sel-popout-anno {
+  flex-direction: column;
+  width: 300px;
+}
+.sel-anno-area {
+  height: 72px;
+  resize: vertical;
+  line-height: 1.5;
+  font-family: var(--font-prose);
+}
+
+/* ---------- sidebar tab count badge ---------- */
+/* The 批注 tab shows how many annotations exist. Make every tab button a
+   positioning context so the badge can sit at its top-right corner. */
+.sb-tabs button {
+  position: relative;
+}
+.sb-tab-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  color: #fff;
+  /* 渐变 accent 底（135°） */
+  background: linear-gradient(135deg, var(--accent), var(--accent-soft));
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  animation: sb-badge-pop 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes sb-badge-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ---------- annotation list panel (sidebar) ---------- */
+.anno-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0 12px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+/* 卡片化：圆角 + 边框 + hover 轻微上浮（只动 transform/阴影，无布局动画） */
+.anno-item {
+  margin: 4px 8px;
+  padding: 9px 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.12s ease,
+    border-color 0.15s ease;
+}
+.anno-item:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow);
+}
+.anno-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.anno-item.editing {
+  cursor: default;
+  background: var(--accent-soft);
+}
+.anno-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.anno-item-badge {
+  flex: 0 0 auto;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent-soft));
+  border-radius: 9px;
+}
+.anno-item-anchor {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.anno-item-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.anno-item:hover .anno-item-actions,
+.anno-item.editing .anno-item-actions,
+.anno-item:focus-within .anno-item-actions {
+  opacity: 1;
+}
+.anno-item-btn {
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--fg);
+  border-radius: 5px;
+  padding: 1px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  line-height: 1.5;
+}
+.anno-item-btn:hover {
+  background: var(--hover);
+}
+.anno-item-btn.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.anno-item-btn.primary:hover {
+  filter: brightness(1.08);
+}
+.anno-item-btn.danger {
+  color: #c0392b;
+  border-color: #f5c6cb;
+}
+.anno-item-btn.danger:hover {
+  background: #fde8e8;
+}
+.anno-item-preview {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.anno-item-empty {
+  font-style: italic;
+}
+.anno-item-edit {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  font-family: var(--font-prose);
+  line-height: 1.55;
+}
+.anno-item-edit:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.anno-list-empty {
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+.anno-list-empty .anno-list-hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg-muted);
+  opacity: 0.85;
+}
+
+/* Make the sidebar head's count pill sit nicely next to the title. */
+.sb-head .sb-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 1px 9px;
+  line-height: 1.6;
+}

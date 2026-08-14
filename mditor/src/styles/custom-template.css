@@ -1,0 +1,113 @@
+/* ============================================================
+ *  Mditor — 用户自定义 CSS 模板
+ * ------------------------------------------------------------
+ *  这是参考模板。复制到任意位置（例如 ~/.mditor/custom.css），
+ *  在「设置 → 自定义 CSS 文件」中选择它即可生效。
+ *  样式会叠加在当前主题之上，可覆盖任意变量或编辑器类。
+ *
+ *  编辑器内核为 Milkdown：正文渲染在 .mditor-milkdown .ProseMirror；
+ *  源码模式在 .mditor-source；AI/批注的静态渲染在 .md-rendered。
+ *
+ *  类似 Typora：你可以改字体、配色、标题样式、引用块装饰等。
+ *  下面给出常用覆盖示例，按需取消注释或修改。
+ * ============================================================ */
+
+/* ---------- 1. 覆盖主题颜色变量（所有界面统一生效） ---------- */
+/*
+:root {
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --accent: #4f46e5;
+}
+*/
+
+/* ---------- 2. 正文字体 / 字号 / 行高 ---------- */
+/*
+.mditor-milkdown .ProseMirror {
+  font-family: "Source Han Serif SC", "Noto Serif SC", serif;
+  font-size: 17px;
+  line-height: 1.9;
+}
+.mditor-milkdown .ProseMirror p {
+  margin-bottom: 20px;
+}
+*/
+
+/* ---------- 3. 标题样式 ---------- */
+/*
+.mditor-milkdown .ProseMirror h1 {
+  font-size: 1.9em;
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 6px;
+}
+.mditor-milkdown .ProseMirror h2 {
+  font-size: 1.5em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+.mditor-milkdown .ProseMirror h3 { font-size: 1.25em; }
+*/
+
+/* ---------- 4. 引用块装饰 ---------- */
+/*
+.mditor-milkdown .ProseMirror blockquote {
+  border-left: 4px solid var(--accent);
+  background: var(--accent-soft);
+  padding: 8px 14px;
+  color: var(--fg-muted);
+}
+*/
+
+/* ---------- 5. 代码块 ---------- */
+/*
+.mditor-milkdown .ProseMirror pre {
+  background: #f6f8fa;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.mditor-milkdown .ProseMirror code {
+  background: rgba(175, 184, 193, 0.2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.mditor-milkdown .ProseMirror pre code {
+  background: transparent;
+  padding: 0;
+}
+*/
+
+/* ---------- 6. 表格 ---------- */
+/*
+.mditor-milkdown .ProseMirror table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.mditor-milkdown .ProseMirror th,
+.mditor-milkdown .ProseMirror td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+}
+.mditor-milkdown .ProseMirror th {
+  background: var(--hover);
+}
+*/
+
+/* ---------- 7. 行内数学/代码颜色 ---------- */
+/*
+.mditor-milkdown .ProseMirror .math-inline,
+.mditor-milkdown .ProseMirror code {
+  color: var(--accent);
+}
+*/
+
+/* ---------- 8. 链接 ---------- */
+/*
+.mditor-milkdown .ProseMirror a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--accent);
+}
+.mditor-milkdown .ProseMirror a:hover {
+  border-bottom-style: solid;
+}
+*/

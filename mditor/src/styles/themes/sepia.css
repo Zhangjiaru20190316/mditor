@@ -1,0 +1,23 @@
+/* Sepia (eye-care) theme.
+ * Warm paper-like palette. Applied when <html data-theme="sepia">.
+ */
+[data-theme="sepia"] {
+  --bg: #f5ecd9;
+  --fg: #4a3f2f;
+  --fg-muted: #8a7a5f;
+  --border: #e0d3b4;
+  --hover: #ede0c4;
+  --code-bg: #e3d4ad; /* 代码块底色（暖灰，明显有别于纸色背景） */
+  --code-border: #d3c39e; /* 代码块边框 */
+  --card-bg: #faf3e0;
+  --sidebar-bg: #efe3c8;
+  --tabbar-bg: #e9dcbb;
+  --titlebar-bg: #e9dcbb; /* 自绘标题栏（与 tabbar 同级暖纸色） */
+  --toolbar-bg: #f0e5cb;
+  --statusbar-bg: #f0e5cb;
+  --accent: #b45309; /* amber-700 */
+  --accent-soft: #f3e0c0;
+  --shadow: 0 4px 14px rgba(74, 63, 47, 0.12);
+  --shadow-lg: 0 12px 40px rgba(74, 63, 47, 0.2);
+  color-scheme: light;
+}
