@@ -72,7 +72,7 @@ const META_RE = /^<!--md:line (\d+)-(\d+) ([A-Za-z0-9+/=]+)-->/;
 export function stripCodeLineMeta(content: string): { content: string; meta: CodeLineMeta | null } {
   const m = META_RE.exec(content);
   if (!m) return { content, meta: null };
-  let firstLine = "";
+  let firstLine: string;
   try {
     firstLine = b64ToUtf8(m[3]);
   } catch {

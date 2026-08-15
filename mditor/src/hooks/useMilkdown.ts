@@ -1720,7 +1720,7 @@ function replaceTextareaSelection(ta: HTMLTextAreaElement, text: string): void {
 function taUndoableReplace(ta: HTMLTextAreaElement, from: number, to: number, text: string): boolean {
   ta.focus();
   ta.setSelectionRange(from, to);
-  let ok = false;
+  let ok: boolean;
   try {
     ok = document.execCommand("insertText", false, text);
   } catch {
