@@ -32,80 +32,12 @@ const LOG_FILE = "memory.log";
 /** Rotate the log once it exceeds this many bytes (one `.1` backup kept). */
 const LOG_MAX_BYTES = 2 * 1024 * 1024;
 
-// ---- TEMPORARY diagnostic probe switch ---------------------------------
-// Gates the heavy DOM-metric sampling + listener patch so normal use pays
-// nothing. Enabled by: Vite dev (IS_DEV), URL `?diag=1`, or
-// settings.diagnostics (App routes the setting in via setDiagnosticsEnabled).
-// Remove alongside leakCounters/useLeakProbe once the idle leak is located.
-let diagEnabled =
+// ---- heavy DOM-metric sampling switch -----------------------------------
+// Gates the heavier DOM-metric sampling (domNodes/cmEditors/katex counts) so
+// normal use pays nothing. Enabled by: Vite dev (IS_DEV) or URL `?diag=1`.
+const diagEnabled =
   IS_DEV ||
   (typeof location !== "undefined" && /[?&]diag=1\b/.test(location.search));
-
-/** Runtime toggle driven by settings.diagnostics (called from App). */
-export function setDiagnosticsEnabled(on: boolean): void {
-  diagEnabled = on;
-}
-/** Whether the heavy DOM-metric sampling should run. */
-export function isDiagnosticsEnabled(): boolean {
-  return diagEnabled;
-}
-
-// Detached-DOM probe registry: useMilkdown pushes the editor host's first
-// child on teardown; we count how many are still alive (WeakRef.deref non-null).
-// WeakRef deliberately does NOT extend the lifetime of the very node we probe —
-// a still-alive entry therefore means SOMETHING ELSE is holding it (a closure /
-// listener / plugin state), which is exactly the leak signature we're hunting.
-export const detachedRegistry: WeakRef<Element>[] = [];
-const DETACHED_CAP = 20;
-export function registerDetached(node: Element | null): void {
-  if (!diagEnabled || !node) return;
-  detachedRegistry.push(new WeakRef(node));
-  if (detachedRegistry.length > DETACHED_CAP) detachedRegistry.shift();
-}
-function countDetachedAlive(): number {
-  let n = 0;
-  for (const w of detachedRegistry) if (w.deref()) n++;
-  return n;
-}
-
-// Net active event-listener delta, maintained by installListenerProbe (patches
-// EventTarget.prototype at load). A steadily climbing value pinpoints an effect
-// that re-mounts listeners without removing them.
-let listenerNet = 0;
-/**
- * Patch add/removeEventListener to track a net listener count. Call very early
- * (main.tsx, before React mounts). No-op + never throws when diag is off.
- */
-export function installListenerProbe(): void {
-  if (!diagEnabled || typeof window === "undefined") return;
-  try {
-    const proto = EventTarget.prototype;
-    const origAdd = proto.addEventListener;
-    const origRemove = proto.removeEventListener;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    proto.addEventListener = function (
-      this: EventTarget,
-      type: string,
-      listener: EventListenerOrEventListenerObject,
-      options?: boolean | AddEventListenerOptions
-    ): void {
-      listenerNet++;
-      origAdd.call(this, type, listener, options);
-    } as typeof origAdd;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    proto.removeEventListener = function (
-      this: EventTarget,
-      type: string,
-      listener: EventListenerOrEventListenerObject,
-      options?: boolean | EventListenerOptions
-    ): void {
-      listenerNet--;
-      origRemove.call(this, type, listener, options);
-    } as typeof origRemove;
-  } catch {
-    /* never let the patch break the app */
-  }
-}
 
 export interface MemSample {
   /** epoch ms */
@@ -127,10 +59,6 @@ export interface MemSample {
   cmEditors?: number | null;
   /** Live `.katex` count; climbs => KaTeX render residue. */
   katexNodes?: number | null;
-  /** Detached nodes still held (WeakRef alive) — leak if climbing. */
-  detachedAlive?: number | null;
-  /** Net active event listeners added (debug patch). */
-  listeners?: number | null;
 }
 
 /** Live DOM-metric snapshot. null when diag is off (zero overhead). */
@@ -138,7 +66,6 @@ function sampleDomMetrics(): {
   domNodes: number;
   cmEditors: number;
   katexNodes: number;
-  detachedAlive: number;
 } | null {
   if (!diagEnabled) return null;
   try {
@@ -147,7 +74,6 @@ function sampleDomMetrics(): {
       domNodes: document.querySelectorAll("*").length,
       cmEditors: document.querySelectorAll(".cm-editor").length,
       katexNodes: document.querySelectorAll(".katex").length,
-      detachedAlive: countDetachedAlive(),
     };
   } catch {
     return null;
@@ -171,9 +97,7 @@ export function sampleMemory(): MemSample {
     s.domNodes = dm.domNodes;
     s.cmEditors = dm.cmEditors;
     s.katexNodes = dm.katexNodes;
-    s.detachedAlive = dm.detachedAlive;
   }
-  if (diagEnabled) s.listeners = listenerNet;
   return s;
 }
 

@@ -20,7 +20,6 @@
 // attribute when its value actually changes, to keep the DOM diff clean.)
 
 import { useEffect } from "react";
-import { bumpLeakCounter } from "../lib/leakCounters";
 
 const LABEL_NUM_RE = /^anno-(\d+)$/;
 
@@ -29,17 +28,19 @@ const DEF_SELECTOR = 'dl[data-type="footnote_definition"][data-label^="anno-"]';
 const MARKER_SELECTOR =
   'sup[data-type="footnote_reference"][data-label^="anno-"]';
 
-/** Walk the rendered editor DOM and stamp annotation attributes.
- *  Safe to call any time; no-ops if the editor isn't mounted yet. Idempotent +
- *  early-exiting: only writes an attribute when its value actually changes. */
-export function stampAnnotationMarkers(): void {
+/** True if any annotation marker/definition exists in the rendered DOM, false
+ *  when none do (callers can cache the "no annotations" verdict to skip later
+ *  rounds — see useAnnotationMarkers). Safe to call any time; no-ops if the
+ *  editor isn't mounted yet. Idempotent + early-exiting: only writes an
+ *  attribute when its value actually changes. */
+export function stampAnnotationMarkers(): boolean {
   try {
     // Early-exit when no annotation nodes exist — avoids touching the DOM.
     if (
       !document.querySelector(DEF_SELECTOR) &&
       !document.querySelector(MARKER_SELECTOR)
     ) {
-      return;
+      return false;
     }
 
     // Definition blocks are hidden purely by CSS on the stable [data-label]
@@ -55,9 +56,35 @@ export function stampAnnotationMarkers(): void {
         el.setAttribute("data-anno-num", m[1]);
       }
     });
+    return true;
   } catch {
     // DOM queries can race with editor teardown; never let this throw.
+    return false;
   }
+}
+
+/** Cheap scan of MutationObserver records (NOT the tree): could these mutations
+ *  have introduced or re-badged an annotation node? Used as the "resume now"
+ *  signal when the last stamp found no annotations:
+ *   * attributes — the observer's attributeFilter already limits these to
+ *     data-label/data-type writes (the follow-up pass that badges a bare
+ *     footnote <sup>/<dl> ProseMirror just created).
+ *   * childList — any ADDED <sup>/<dl> element (footnote marker/definition
+ *     containers; both are rare outside footnotes). Scoped to the added
+ *     fragments, far cheaper than the full-tree queries in stamp above.
+ *  Removals never matter here: this is only consulted when the document
+ *  currently has no annotations, so there is nothing to remove. */
+function recordsMayAffectAnnotations(records: MutationRecord[]): boolean {
+  for (const r of records) {
+    if (r.type === "attributes") return true;
+    for (const n of r.addedNodes) {
+      if (n.nodeType !== Node.ELEMENT_NODE) continue;
+      const el = n as Element;
+      if (el.tagName === "SUP" || el.tagName === "DL") return true;
+      if (el.querySelector("sup, dl")) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -71,20 +98,26 @@ export function useAnnotationMarkers(ready: boolean): void {
     let raf: number | null = null;
     let debounce: ReturnType<typeof setTimeout> | null = null;
     let observer: MutationObserver | null = null;
+    // T4 早退缓存：上一轮 stamp 是否发现过注解节点。为 false 且本轮 mutation
+    // 记录里也看不到任何 sup/dl/footnote 属性痕迹时，直接跳过这轮 DOM 查询
+    // —— 无注解文档的每次键入不再触发两次全树查询。一旦注解节点/属性重新
+    // 出现（或上一轮仍有注解），立即恢复完整 stamp 路径。
+    let hadAnnotations = false;
 
     const run = () => {
-      bumpLeakCounter("stamps");
       if (raf != null) cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         raf = null;
-        stampAnnotationMarkers();
+        hadAnnotations = stampAnnotationMarkers();
       });
     };
 
     const attach = (root: HTMLElement) => {
-      run(); // initial stamp
-      observer = new MutationObserver(() => {
-        bumpLeakCounter("domMutations");
+      run(); // initial stamp (also primes the hadAnnotations cache)
+      observer = new MutationObserver((records) => {
+        // T4: document currently has no annotations and these mutations can't
+        // have created one — skip the debounced DOM-query round entirely.
+        if (!hadAnnotations && !recordsMayAffectAnnotations(records)) return;
         // Debounce so a fast typist doesn't run a DOM walk on every keystroke.
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(run, 60);

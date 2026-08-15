@@ -29,10 +29,16 @@ interface Props {
 export function SettingsModal({ open, settings, workspace, onClose, onChange }: Props) {
   // local draft so typing is responsive; commit on blur / apply
   const [draft, setDraft] = useState<Settings>(settings);
-  useEffect(() => setDraft(settings), [settings, open]);
+  // Sync the draft ONCE when the dialog opens. Re-syncing on every `settings`
+  // change while open would clobber the user's in-progress edits whenever an
+  // external update lands (e.g. switching models from the AI panel writes
+  // aiActiveModelId mid-edit). The effect closure captures the `settings` of
+  // the render where `open` flipped, which is the latest value at that moment.
+  useEffect(() => {
+    if (open) setDraft(settings);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- draft 只在打开瞬间同步一次
+  }, [open]);
 
-  // Test the AI config against the current draft (applies draft first so the
-  // Rust command sees the just-typed values).
   // NOTE: all hooks MUST stay above the `if (!open) return null` early return.
   // Placing useState below it makes the hook count differ between closed/open
   // renders, which throws "Rendered more hooks than during the previous render"
@@ -130,11 +136,14 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
     onClose();
   };
 
+  // Test the AI config against the current draft. The request is built from
+  // the draft values directly — "测试连接" must NOT persist the draft (the user
+  // may still be mid-edit and hit 取消); success only shows a hint. Saving
+  // happens exclusively via 应用 (applyAll).
   const runTest = async () => {
     setTesting(true);
     setTestMsg("");
     try {
-      await onChange(draft); // persist draft so testConnection reads fresh values
       await testConnection(draft);
       setTestOk(true);
       setTestMsg("连接成功");

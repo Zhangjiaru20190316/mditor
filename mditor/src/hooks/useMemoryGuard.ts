@@ -23,7 +23,6 @@
 import { useEffect, useRef } from "react";
 import { logMemory, sampleMemory } from "../lib/diagnostics";
 import { getHeapUsage } from "../lib/memory";
-import { bumpLeakCounter } from "../lib/leakCounters";
 
 export interface MemoryGuardOptions {
   /** Master switch (settings.memoryGuard). */
@@ -75,6 +74,19 @@ export function useMemoryGuard(opts: MemoryGuardOptions) {
     if (!opts.enabled) return;
     const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
 
+    // Soft-tier recheck state. The 8s setTimeout used to be fire-and-forget:
+    // if the component unmounted or the guard was disabled in between, the
+    // callback could still fire and escalate into a window reload. Track the
+    // handle + a cancelled flag so effect teardown neutralizes it.
+    let cancelled = false;
+    let recheckTimer: number | null = null;
+    const clearRecheck = () => {
+      if (recheckTimer != null) {
+        window.clearTimeout(recheckTimer);
+        recheckTimer = null;
+      }
+    };
+
     const escalateReload = async (
       beforeUsed: number,
       beforeProsemirrorViews: number | null,
@@ -104,7 +116,6 @@ export function useMemoryGuard(opts: MemoryGuardOptions) {
     };
 
     const id = window.setInterval(async () => {
-      bumpLeakCounter("guardTicks");
       const o = optsRef.current;
       if (!o.enabled) return;
 
@@ -166,7 +177,14 @@ export function useMemoryGuard(opts: MemoryGuardOptions) {
         beforeProsemirrorViews: before.prosemirrorViews,
       });
 
-      window.setTimeout(() => {
+      // Defensive: a previous recheck can't still be pending here (cooldown
+      // 60s > recheck 8s), but clear before re-arming so timers can never stack.
+      clearRecheck();
+      recheckTimer = window.setTimeout(() => {
+        recheckTimer = null;
+        // The guard may have been disabled or the component unmounted since
+        // this was scheduled — a stale recheck must never trigger a reload.
+        if (cancelled || !optsRef.current.enabled) return;
         const after = sampleMemory();
         const u = after.used ?? 0;
         // Always log the recheck so memory.log shows whether recreate reclaimed
@@ -188,7 +206,11 @@ export function useMemoryGuard(opts: MemoryGuardOptions) {
       }, SOFT_RECHECK_MS);
     }, intervalMs);
 
-    return () => window.clearInterval(id);
+    return () => {
+      cancelled = true;
+      clearRecheck();
+      window.clearInterval(id);
+    };
     // Only re-subscribe when the master switch toggles. All other options are
     // read through optsRef.current on each tick, so they don't need to reset the
     // interval (and `opts` is a fresh object every render).

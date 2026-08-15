@@ -12,6 +12,8 @@
 //   * (The static render pipeline in lib/renderMarkdown.ts does NOT need this:
 //     it already passes raw HTML through via rehype-raw + allowDangerousHtml,
 //     so colored spans render natively in AI replies / exports.)
+
+import { STYLE_ATTR_RE, colorFromStyle } from "./colorSpan";
 //
 // PARSE side: remark-parse emits the tag boundaries as separate `html` mdast
 // nodes (`<span …>`, then the inner inline content, then `</span>`). We walk
@@ -36,17 +38,15 @@ interface MdastNode {
 const OPEN_SPAN_RE = /^<span\b([^>]*)>\s*$/i;
 // Match a closing </span> tag.
 const CLOSE_SPAN_RE = /^<\/span>\s*$/i;
-// From an attribute string, pull the `style` value, then the `color:` decl.
-const STYLE_RE = /\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
-const COLOR_RE = /(?:^|;)\s*color\s*:\s*([^;]+)/i;
 
-/** Extract the CSS color from a `<span>` attribute string, or null if none. */
+/** Extract the CSS color from a `<span>` attribute string, or null if none.
+ *  Style/color parsing atoms come from lib/colorSpan.ts — the same shared
+ *  source the editor's source-mode textarea helpers use, so the parse side
+ *  and the editor side can't disagree on what a color span is. */
 function colorFromAttrs(attrStr: string): string | null {
-  const sm = STYLE_RE.exec(attrStr);
+  const sm = STYLE_ATTR_RE.exec(attrStr);
   if (!sm) return null;
-  const style = sm[1] ?? sm[2] ?? "";
-  const cm = COLOR_RE.exec(style);
-  return cm ? cm[1].trim() : null;
+  return colorFromStyle(sm[1] ?? sm[2] ?? "");
 }
 
 /** Rebuild one parent's children, wrapping color-bearing span ranges in

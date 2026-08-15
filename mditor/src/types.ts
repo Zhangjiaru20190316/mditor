@@ -362,12 +362,29 @@ export interface RecentFile {
   openedAt: string;
 }
 
+/**
+ * One heading of the LIVE ProseMirror document, as extracted by the editor
+ * (useMilkdown). `id` is Milkdown's own attrs.id — i.e. exactly the id on the
+ * rendered <hN> — so outline jumps can never diverge from the DOM anchor.
+ */
+export interface FlatHeading {
+  level: number; // 1..6
+  /** Rendered heading text (node.textContent — inline syntax stripped). */
+  text: string;
+  /** Milkdown heading id — identical to the rendered <hN id>. Headings whose
+   *  id hasn't been stamped yet are not emitted. */
+  id: string;
+}
+
 export interface OutlineNode {
   level: number; // 1..6
   text: string;
-  /** Anchor id generated to match Vditor's heading ids (heading-text). */
+  /** Anchor id: Milkdown attrs.id (doc-derived) or source slug (sv fallback). */
   id: string;
   children: OutlineNode[];
+  /** 0-based source line of the heading text (source-parse path only; used
+   *  by sv-mode outline jumps to scroll the textarea). */
+  line?: number;
 }
 
 export interface DocState {

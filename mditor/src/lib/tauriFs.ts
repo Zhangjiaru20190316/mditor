@@ -12,10 +12,6 @@ import {
 } from "@tauri-apps/plugin-fs";
 import { dirname, basename, join, extname } from "./path-shim";
 
-const MD_FILTERS = [
-  { name: "Markdown", extensions: ["md", "markdown", "mdx", "mdown"] },
-];
-
 export interface TreeNode {
   name: string;
   path: string;
@@ -23,7 +19,16 @@ export interface TreeNode {
   children?: TreeNode[];
 }
 
-const MD_EXTS = new Set([".md", ".markdown", ".mdx", ".mdown"]);
+const MD_FILTERS = [
+  { name: "Markdown", extensions: ["md", "markdown", "mdx", "mdown"] },
+];
+
+/** 单一来源的 Markdown 扩展名集合。Rust lib.rs 的 MD_EXTS 与 tauri.conf.json
+ *  的 bundle.fileAssociations 是无法共享的镜像，改动时需三处同步。 */
+export const MD_EXTS = new Set([".md", ".markdown", ".mdx", ".mdown"]);
+
+/** 名字是否以 Markdown 扩展名结尾（导出文件名去后缀等场景）。 */
+export const MD_EXT_RE = /\.(md|markdown|mdx|mdown)$/i;
 
 export function isMarkdown(name: string): boolean {
   return MD_EXTS.has(extname(name).toLowerCase());
@@ -67,47 +72,14 @@ export async function saveMdAs(
 }
 
 /**
- * Recursively list markdown files under `root` as a tree. Hidden files/folders
- * (starting with `.`) and `node_modules` are skipped. Non-md files inside md
- * folders are kept so image assets remain navigable.
- */
-export async function readTree(root: string, exclude?: Set<string>): Promise<TreeNode[]> {
-  if (!(await exists(root))) return [];
-  const out: TreeNode[] = [];
-  const entries = await readDir(root);
-  // readDir returns unsorted; sort dirs first then alpha for a stable tree.
-  const sorted = [...entries].sort((a, b) =>
-    a.name.localeCompare(b.name, "en", { numeric: true })
-  );
-  for (const e of sorted) {
-    if (e.name.startsWith(".")) continue;
-    if (e.name === "node_modules") continue;
-    const fullPath = join(root, e.name);
-    // Skip paths the user removed from the workspace via「从工作区移除」.
-    // Skipping a directory prunes its entire subtree (no recursion into it).
-    if (exclude?.has(fullPath)) continue;
-    if (e.isDirectory) {
-      const children = await readTree(fullPath, exclude);
-      // only include folders that contain something useful
-      if (children.length > 0) {
-        out.push({ name: e.name, path: fullPath, isDir: true, children });
-      }
-    } else if (isMarkdown(e.name)) {
-      out.push({ name: e.name, path: fullPath, isDir: false });
-    }
-  }
-  return out;
-}
-
-/**
  * Read a SINGLE level of `dir` (non-recursive) for the lazy file tree.
  *
- * Same filtering as readTree (skip `.`-hidden, `node_modules`, excludedPaths,
- * keep only `.md` files + directories), but directories are returned with
- * `children: undefined` — their contents are loaded on demand when expanded
- * (see FileTree). Unlike readTree, directories are always included (even ones
- * that may be empty) so the user can expand them to find out; emptiness is
- * revealed at expand time rather than hiding the folder outright.
+ * Skips `.`-hidden entries, `node_modules`, and excludedPaths; keeps only `.md`
+ * files + directories. Directories are returned with `children: undefined` —
+ * their contents are loaded on demand when expanded (see FileTree). Directories
+ * are always included (even ones that may be empty) so the user can expand them
+ * to find out; emptiness is revealed at expand time rather than hiding the
+ * folder outright.
  */
 export async function readDirLevel(
   dir: string,
@@ -140,9 +112,9 @@ export async function readDirLevel(
 }
 
 /**
- * Collect every markdown file path under `path` from DISK (recursive). Unlike
- * collectMdPaths (which walks an in-memory TreeNode), this is correct even when
- * the tree is lazily loaded and a directory's children aren't in memory yet.
+ * Collect every markdown file path under `path` from DISK (recursive). Correct
+ * even when the tree is lazily loaded and a directory's children aren't in
+ * memory yet.
  *
  * Used before a delete so the App notification (close the buffer if the open
  * file vanished, prune the recent list) gets the COMPLETE set of removed md
@@ -177,8 +149,8 @@ export async function collectMdPathsFromDisk(
   }
 
   // Walk the directory tree iteratively (skip `.`-hidden + node_modules, same
-  // filtering as readTree, but NO excludedPaths — every md file actually being
-  // deleted must be reported so App can clean up).
+  // filtering as readDirLevel, but NO excludedPaths — every md file actually
+  // being deleted must be reported so App can clean up).
   const out: string[] = [];
   const stack: Array<{ dir: string; entries?: Awaited<ReturnType<typeof readDir>> }> = [
     { dir: path, entries: firstEntries },

@@ -71,7 +71,6 @@ pub mod menu_ids {
     pub const THEME_DARK: &str = "theme_dark";
     pub const THEME_SEPIA: &str = "theme_sepia";
     pub const SETTINGS: &str = "app_settings";
-    pub const CHECK_UPDATE: &str = "app_check_update";
 }
 
 // Glob import only feeds the (non-Windows) native menu builder above.
@@ -108,13 +107,13 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(PendingFile(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::append_log,
             commands::app_data_dir,
             commands::get_pending_file,
+            commands::fetch_image,
             ai::ai_chat,
             ai::ai_chat_stream,
         ])
@@ -167,7 +166,6 @@ pub fn run() {
 
                 let help_menu = SubmenuBuilder::new(app, "帮助")
                     .text(SETTINGS, "设置…")
-                    .text(CHECK_UPDATE, "检查更新…")
                     .separator()
                     .about(None)
                     .build()?;

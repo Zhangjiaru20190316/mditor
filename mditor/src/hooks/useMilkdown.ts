@@ -17,8 +17,10 @@
 //     <dl data-type="footnote_definition" data-label="anno-N">, which CSS restyle
 //     into badges / hide outright (see styles/annotation.css) — no per-render
 //     DOM stamping needed, unlike the Vditor MutationObserver approach.
-//   * Heading ids: we override Milkdown's headingIdGenerator with the same
-//     slug as lib/outline.ts so Outline → getElementById jumps resolve.
+//   * Heading ids: the outline's rich-mode ids are extracted straight from the
+//     live ProseMirror doc (attrs.id — the very ids on the rendered <hN>), so
+//     Outline → getElementById jumps always resolve. The headingIdGenerator
+//     override below merely keeps those ids predictable slugs.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
@@ -39,18 +41,21 @@ import { TextSelection } from "@milkdown/prose/state";
 import type { EditorView } from "@milkdown/prose/view";
 import type { Mark, Node as PMNode, ResolvedPos } from "@milkdown/prose/model";
 import { headingIdGenerator } from "@milkdown/kit/preset/commonmark";
+import { syntaxHighlighting } from "@codemirror/language";
+import { classHighlighter } from "@lezer/highlight";
 import { highlightPlugins } from "../lib/highlightMark";
 import { textColorPlugins } from "../lib/textColorMark";
 import "@milkdown/crepe/theme/common/style.css";
 import "@milkdown/crepe/theme/nord.css";
-import type { EditMode, Settings, BlockInfo, BlockTargetKind } from "../types";
-import { persistImage, resolveImgSrc } from "../lib/imageManager";
+import type { EditMode, Settings, BlockInfo, BlockTargetKind, FlatHeading } from "../types";
+import { persistImage, persistRemoteImage, resolveImgSrc } from "../lib/imageManager";
 import { isBigDoc, getHeapUsage } from "../lib/memory";
 import { logMemory } from "../lib/diagnostics";
 import { headingSlugBase } from "../lib/outline";
+import { normalizeAnchorText, findAnchorPos, nearestOccurrenceEnd } from "../lib/anchorSearch";
 import { stampAnnotationMarkers } from "./useAnnotationMarkers";
 import { stampEditorImageLazyAttrs } from "../lib/imageLazy";
-import { bumpLeakCounter } from "../lib/leakCounters";
+import { COLOR_DECL_RE, colorFromStyle } from "../lib/colorSpan";
 
 /** Imperative ops Editor.tsx composes its EditorHandle from. Mirrors the subset
  *  of the Vditor instance Editor.tsx called (getValue/setValue/getHTML/
@@ -160,10 +165,10 @@ interface Options {
   sourceRef: RefObject<HTMLTextAreaElement | null>;
   docPath: () => string | null;
   onInput: (md: string) => void;
-  onReady?: () => void;
+  /** Live document headings (rich modes). Emitted only when the heading
+   *  signature actually changes; the array ref is stable across no-op edits. */
+  onHeadings?: (flat: FlatHeading[]) => void;
   settings: Settings;
-  initialMode?: EditMode;
-  initialContent?: string;
 }
 
 // ---- T6: proactive history reclaim ---------------------------------------
@@ -186,26 +191,38 @@ const IDLE_HISTORY_TRIM_MS = 180_000; // 3 min of no edits
 const IDLE_HISTORY_TRIM_EDITS = 1000; // accumulated edits since last reclaim
 const IDLE_HISTORY_TRIM_HEAP_RATIO = 0.8; // heap ≥ 80% of the guard threshold
 
+/** 粘贴的纯文本恰好是一个远程图片 URL（可带查询串/锚点）时触发下载落盘。 */
+const REMOTE_IMG_URL_RE =
+  /^https?:\/\/\S+\.(png|jpe?g|gif|webp|svg|bmp)(?:[?#]\S*)?$/i;
+
 export function useMilkdown(opts: Options): MilkdownHandle {
   const { hostRef, sourceRef } = opts;
   const crepeRef = useRef<Crepe | null>(null);
   const [ready, setReady] = useState(false);
-  const [mode, setModeState] = useState<EditMode>(opts.initialMode ?? "wysiwyg");
+  const [mode, setModeState] = useState<EditMode>("wysiwyg");
   const [bigDoc, setBigDoc] = useState(false);
   const [recreateToken, setRecreateToken] = useState(0);
 
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const bigDocRef = useRef(false);
-  // Content used to SEED a freshly (re)built Crepe. Updated from initialContent
-  // at mount and from getValue() right before every destroy/recreate.
-  const contentRef = useRef<string>(opts.initialContent ?? "");
+  // Content used to SEED a freshly (re)built Crepe. Updated from getValue()
+  // right before every destroy/recreate.
+  const contentRef = useRef<string>("");
   // Live mirror of the textarea text in sv mode (for getValue before the ref is
   // attached / during transitions).
   const sourceTextRef = useRef<string>("");
   // True while we are applying a programmatic replaceAll, so the markdownUpdated
   // listener does not echo the change back up as user input.
   const suppressRef = useRef(false);
+  // One-entry cache for sv-mode getHTML (see facade.getHTML): the last
+  // source-mode markdown pushed into the hidden Crepe + its serialized HTML.
+  // Reset at the top of every (re)create so a new instance never serves a
+  // stale serialization.
+  const svHtmlCacheRef = useRef<{ md: string | null; html: string }>({
+    md: null,
+    html: "",
+  });
   // The destroy() promise of the most recent Crepe instance, carried across
   // effect runs so the next create awaits it before mounting a fresh view.
   // Crepe.destroy() is async; without this serialization the new ProseMirror
@@ -226,11 +243,15 @@ export function useMilkdown(opts: Options): MilkdownHandle {
   optsRef.current = opts;
   const onInputRef = useRef(opts.onInput);
   onInputRef.current = opts.onInput;
+  const onHeadingsRef = useRef(opts.onHeadings);
+  onHeadingsRef.current = opts.onHeadings;
 
   // ---- create / recreate ------------------------------------------------
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    // A fresh instance means the sv-mode HTML cache no longer describes it.
+    svHtmlCacheRef.current = { md: null, html: "" };
     let destroyed = false;
     let instance: Crepe | null = null;
     // Pending double-rAF for annotation stamping. Coalesced (only one walk
@@ -283,6 +304,12 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           // 普通代码块没有 preview，code-block 不会对其加 hidden 类，照常显示。
           [Crepe.Feature.CodeMirror]: {
             previewOnlyByDefault: true,
+            // basicSetup 自带的 defaultHighlightStyle 用 style-mod 注入一套
+            // 硬编码的浅色（主题无关，且类名是运行时生成的随机名，外层 CSS
+            // 无法接管）。这里注册 classHighlighter（非 fallback，优先级更高）
+            // 让 token 输出稳定的 tok-* 类，颜色交给 global.css 的 --tok-*
+            // 变量按主题渲染，与 AI 面板的 hljs 配色保持同源。
+            extensions: [syntaxHighlighting(classHighlighter)],
           },
           [Crepe.Feature.ImageBlock]: {
             // Return the portable markdown ref (relative `assets/…`); proxyDomURL
@@ -328,9 +355,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         }, IDLE_HISTORY_TRIM_MS);
       };
 
-      crepe.on((l) =>
+      crepe.on((l) => {
         l.markdownUpdated((_c, md) => {
-          bumpLeakCounter("docChanges");
           // Only echo user-visible input when we aren't applying a programmatic
           // replaceAll (setValue/seed/switchMode) — those notify the caller
           // themselves. Annotation stamping, however, must run on EVERY doc
@@ -344,8 +370,59 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             scheduleIdleTrim();
           }
           scheduleStamp();
-        })
-      );
+        });
+        // Feed the outline from the LIVE document: ids here are Milkdown's
+        // attrs.id — identical to the rendered <hN id> — so outline jumps
+        // can't diverge from the DOM the way source-slug parsing did (a
+        // heading holding a footnote/annotation marker, image, or inline
+        // HTML slugifies differently as raw source than as rendered text,
+        // and one divergence shifted every later duplicate's -#N dedup).
+        // `updated` fires for EVERY transaction: each keystroke, the
+        // sync-heading-id plugin's id-stamping transaction right after a
+        // structural edit, programmatic replaceAlls (file loads), and even
+        // selection-only updates — a full-doc walk on each used to cost
+        // 2× O(doc) per keystroke. Instead coalesce walks to at most one per
+        // microtask (the latest doc wins, so stamped ids are already in) and
+        // skip entirely when the doc reference didn't change.
+        let lastHeadingsSig: string | null = null;
+        let lastWalkedDoc: PMNode | null = null;
+        let pendingDoc: PMNode | null = null;
+        let headingsScheduled = false;
+        const walkHeadings = () => {
+          headingsScheduled = false;
+          const doc = pendingDoc;
+          pendingDoc = null;
+          if (!doc || doc === lastWalkedDoc) return;
+          lastWalkedDoc = doc;
+          const flat: FlatHeading[] = [];
+          doc.descendants((node) => {
+            if (node.type.name !== "heading") return;
+            const text = node.textContent;
+            // Mirror the sync plugin: empty headings carry no id. Headings
+            // whose id the stamping transaction hasn't landed yet (id "") are
+            // skipped too — they arrive with their final id on the next tick.
+            if (text.trim().length === 0 || !node.attrs.id) return false;
+            flat.push({ level: node.attrs.level, text, id: node.attrs.id });
+            // A heading's subtree holds no nested headings.
+            return false;
+          });
+          const sig = flat.map((h) => `${h.level}|${h.id}|${h.text}`).join("\n");
+          // Unchanged signature → don't re-emit; the stable array ref lets the
+          // memoized Outline skip re-rendering while the user edits prose.
+          // (Sentinel null start: an empty doc's sig is "" and must still be
+          // emitted once, or switching to an empty file would leave the
+          // previous file's headings on screen.)
+          if (sig === lastHeadingsSig) return;
+          lastHeadingsSig = sig;
+          onHeadingsRef.current?.(flat);
+        };
+        l.updated((_c, doc) => {
+          pendingDoc = doc as PMNode;
+          if (headingsScheduled) return;
+          headingsScheduled = true;
+          queueMicrotask(walkHeadings);
+        });
+      });
 
       // Register the ==highlight== mark (schema + command + input rule +
       // Mod-Shift-h keymap + the shared ==mark== remark plugin) BEFORE the
@@ -365,7 +442,6 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         } catch {
           /* already gone */
         }
-        // eslint-disable-next-line no-console
         console.error("[mditor] Milkdown create failed:", e);
         return;
       }
@@ -405,7 +481,6 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       crepeRef.current = crepe;
       applyProseVars(settingsRef.current);
       setReady(true);
-      optsRef.current.onReady?.();
     });
     // Defensive: never let an unexpected late rejection surface as unhandled.
     // The create-failure path above already logs; this only swallows surprises.
@@ -437,18 +512,29 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     };
     // Only re-run on a deliberate recreate. Mode switching does NOT rebuild
     // (wysiwyg/ir share the instance; sv just toggles visibility).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recreateToken, hostRef, sourceRef]);
 
   // ---- textarea (sv) input forwarding -----------------------------------
   useEffect(() => {
     const ta = sourceRef.current;
     if (!ta) return;
+    // The upstream notification (markDirty → outline + word count recompute)
+    // is debounced; the text mirrors below stay immediate so getValue /
+    // autosave / mode switches always read fresh content regardless of a
+    // pending notification. Flushed on teardown so a final burst isn't lost.
+    let notifyTimer: number | null = null;
+    const notifyInput = () => {
+      if (notifyTimer != null) window.clearTimeout(notifyTimer);
+      notifyTimer = window.setTimeout(() => {
+        notifyTimer = null;
+        onInputRef.current(ta.value);
+      }, 200);
+    };
     const onInput = () => {
       if (suppressRef.current) return;
       sourceTextRef.current = ta.value;
       contentRef.current = ta.value;
-      onInputRef.current(ta.value);
+      notifyInput();
     };
     ta.addEventListener("input", onInput);
     // Tab inserts a tab rather than leaving the field; matches a source editor.
@@ -482,6 +568,10 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     return () => {
       ta.removeEventListener("input", onInput);
       ta.removeEventListener("keydown", onKeyDown);
+      if (notifyTimer != null) {
+        window.clearTimeout(notifyTimer);
+        onInputRef.current(ta.value);
+      }
     };
   }, [sourceRef]);
 
@@ -513,6 +603,15 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           contentRef.current = md;
           return;
         }
+        // A full-document load that flips the big-doc cutoff would parse the
+        // doc twice: once for this replaceAll, then again when the recreate
+        // below seeds the new instance with the same content. Skip the doomed
+        // replaceAll — the recreate path seeds from contentRef — so a big
+        // file that crosses the cutoff is parsed exactly once.
+        if (clearStack === true && isBigDoc(md) !== bigDocRef.current) {
+          maybeRecreateForBigDoc(md);
+          return;
+        }
         suppressRef.current = true;
         try {
           crepe.editor.action(replaceAll(md, clearStack === true));
@@ -531,6 +630,13 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           // serialized HTML reflects source-mode edits. getHTML is sync in the
           // EditorHandle contract, so we cannot await a remark render here.
           const md = sourceRef.current?.value ?? sourceTextRef.current ?? contentRef.current;
+          // Export flows (copy-rich, export HTML/DOCX) call getHTML several
+          // times over the same text; each call is a full parse + serialize
+          // that also wipes the hidden instance's undo stack. Serve repeats
+          // from a one-entry signature cache instead (invalidated on every
+          // recreate — see the svHtmlCacheRef reset in the create effect).
+          const cached = svHtmlCacheRef.current;
+          if (cached.md === md) return cached.html;
           suppressRef.current = true;
           try {
             crepe.editor.action(replaceAll(md, true));
@@ -538,6 +644,13 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             /* ignore */
           }
           suppressRef.current = false;
+          try {
+            const html = crepe.editor.action(getHTML());
+            svHtmlCacheRef.current = { md, html };
+            return html;
+          } catch {
+            return "";
+          }
         }
         try {
           return crepe.editor.action(getHTML());
@@ -719,14 +832,21 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           let pos = -1;
           if (range && range.to > range.from) {
             const t = ta.value.slice(range.from, range.to);
-            if (t && (!anchorText || t.trim() === anchorText.trim()))
+            if (t && (!anchorText || normalizeAnchorText(t) === normalizeAnchorText(anchorText)))
               pos = range.to;
           }
           if (pos < 0 && anchorText) {
-            const i = ta.value.indexOf(anchorText.trim());
-            pos = i >= 0 ? i + anchorText.trim().length : -1;
+            // Repeated wording: the occurrence nearest the captured range wins
+            // over the first one — a stale range still says WHERE to look.
+            pos = nearestOccurrenceEnd(
+              ta.value,
+              anchorText.trim(),
+              range && range.from > 0 ? range.from : -1
+            );
           }
-          if (pos < 0) return false;
+          if (pos < 0 && range && range.to > range.from && range.from <= ta.value.length)
+            pos = Math.min(range.to, ta.value.length);
+          if (pos < 0) pos = ta.selectionStart;
           pos = svPosOutsideCodeFence(ta.value, pos);
           ta.value = ta.value.slice(0, pos) + token + ta.value.slice(pos);
           ta.selectionStart = ta.selectionEnd = pos + token.length;
@@ -745,29 +865,36 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             const schema = view.state.schema;
             const fnType = schema.nodes.footnote_reference;
             if (!fnType) return false;
-            // 1) Candidate position: prefer a still-valid captured range, else
-            //    the first occurrence of anchorText in the document tree.
+            // 1) Candidate position, most-to-least trusted:
+            //    a) a captured range whose text still matches the anchor
+            //       (whitespace-tolerantly — the anchor is the DOM selection
+            //       string, which separates paragraphs with "\n\n" while
+            //       textBetween joins blocks with "\n", so an exact compare
+            //       rejected every cross-paragraph selection);
+            //    b) the anchor's occurrence in the flattened document closest
+            //       to the captured range — handles the cross-paragraph /
+            //       cross-mark anchors the old single-text-node search could
+            //       never match, and disambiguates repeated wording using the
+            //       (possibly stale) range as a hint;
+            //    c) the stale range itself — its text was edited away, but the
+            //       spot is still a better guess than the document tail;
+            //    d) the cursor — full-document replies carry no anchor at all
+            //       (the「批注」tooltip promises「或在光标处」).
             let pos = -1;
+            const size = doc.content.size;
             if (range && range.to > range.from) {
-              const t = doc.textBetween(range.from, range.to, "\n");
-              if (t && (!anchorText || t.trim() === anchorText.trim()))
-                pos = range.to;
+              const from = Math.max(0, Math.min(range.from, size));
+              const to = Math.max(from, Math.min(range.to, size));
+              const t = doc.textBetween(from, to, "\n");
+              if (t && (!anchorText || normalizeAnchorText(t) === normalizeAnchorText(anchorText)))
+                pos = to;
+              if (pos < 0 && anchorText) pos = findAnchorPos(doc, anchorText, from);
+            } else if (anchorText) {
+              pos = findAnchorPos(doc, anchorText, -1);
             }
-            if (pos < 0 && anchorText) {
-              const needle = anchorText.trim();
-              doc.descendants((n, p) => {
-                if (pos >= 0) return false;
-                if (n.isText && n.text) {
-                  const i = n.text.indexOf(needle);
-                  if (i >= 0) {
-                    pos = p + i + needle.length;
-                    return false;
-                  }
-                }
-                return true;
-              });
-            }
-            if (pos < 0) return false;
+            if (pos < 0 && range && range.to > range.from && range.from < size)
+              pos = Math.min(range.to, size);
+            if (pos < 0) pos = view.state.selection.to;
             // 2) Inline insert when the current textblock allows it.
             const $pos = doc.resolve(pos);
             if ($pos.parent.type.contentMatch.matchType(fnType) != null) {
@@ -985,14 +1112,25 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         try {
           return crepeRef.current!.editor.action((ctx) => {
             const view = ctx.get(editorViewCtx);
-            const hit = view.posAtCoords({ left: x, top: y });
-            if (!hit) return null;
             const doc = view.state.doc;
-            const pos = Math.max(
-              0,
-              Math.min(hit.inside > -1 ? hit.inside : hit.pos, doc.content.size)
-            );
-            const $pos = doc.resolve(pos);
+            const hit = view.posAtCoords({ left: x, top: y });
+            // 右键落在 .ProseMirror 的 padding（页首 / 页末 40vh / 左右 gutter）
+            // 时 posAtCoords 会落空：按纵向位置回退到文档首/末，让菜单弹在
+            // 最近块上（Notion 式）。
+            let pos: number;
+            if (hit) {
+              pos = hit.inside > -1 ? hit.inside : hit.pos;
+            } else {
+              const rect = view.dom.getBoundingClientRect();
+              pos = y - rect.top > rect.height / 2 ? doc.content.size : 0;
+            }
+            pos = Math.max(0, Math.min(pos, doc.content.size));
+            let $pos = doc.resolve(pos);
+            // pos 解析到 doc 顶层（depth 0，如首尾边界）时 movableUnit 会拒绝；
+            // 用 TextSelection.near 规范进最近的文本块。
+            if ($pos.depth < 1) {
+              $pos = doc.resolve(TextSelection.near($pos, 1).from);
+            }
             // 右键本身不移动 PM 选区；把光标规范到点击处，后续菜单命令才会
             // 作用于被右键的块。若已有选区覆盖点击点（跨块拖选后右键）则保留。
             const { from, to, empty } = view.state.selection;
@@ -1161,6 +1299,34 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ---- 远程图片 URL 粘贴 → 下载落盘（Typora 行为）--------------------------
+  // 粘贴纯文本恰好是远程图片 URL 时，经 Rust 侧 fetch_image 下载（webview CSP
+  // 禁止直连外网）并落盘到 assets/，插入本地引用；下载失败退回为插入原始 URL。
+  // 剪贴板里是文件/图片时不拦截（交给 ImageBlock 的 onUpload 正常落盘）。
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const onPaste = (e: ClipboardEvent) => {
+      if (modeRef.current === "sv") return; // sv 的 textarea 保留原生粘贴
+      const items = e.clipboardData?.items;
+      if (items) {
+        for (const it of Array.from(items)) {
+          if (it.kind === "file") return; // 文件粘贴走 ImageBlock onUpload
+        }
+      }
+      const text = e.clipboardData?.getData("text/plain")?.trim() ?? "";
+      if (!REMOTE_IMG_URL_RE.test(text)) return;
+      e.preventDefault();
+      void (async () => {
+        const md = await persistRemoteImage(text, optsRef.current.docPath());
+        facade.insertValue(md ?? text);
+      })();
+    };
+    host.addEventListener("paste", onPaste);
+    return () => host.removeEventListener("paste", onPaste);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostRef]);
+
   // Recreate the instance when big-doc state flips after a full document load
   // (CodeMirror/KaTeX are create-time feature flags and can't be toggled live).
   const maybeRecreateForBigDoc = (md: string) => {
@@ -1176,6 +1342,9 @@ export function useMilkdown(opts: Options): MilkdownHandle {
   // ---- mode switching / recreate / theme --------------------------------
   const switchMode = useCallback(
     (m: EditMode) => {
+      // Re-selecting the current mode is a no-op — skip the whole-doc
+      // getMarkdown() serialization the transition would otherwise run.
+      if (m === modeRef.current) return;
       contentRef.current =
         modeRef.current === "sv"
           ? sourceRef.current?.value ?? sourceTextRef.current ?? contentRef.current
@@ -1334,18 +1503,12 @@ function textareaActiveMarks(ta: HTMLTextAreaElement): {
 }
 
 // Match a color span opening tag and capture its declared color. Tolerant of
-// extra attributes and either quote style.
+// extra attributes and either quote style. (Anchored at the END of a look-back
+// window: the textarea helpers below search backwards from the caret.) The
+// style/color-declaration atoms these pair with live in lib/colorSpan.ts,
+// shared with the remark round-trip so the two can't drift.
 const SPAN_OPEN_RE = /<span\b[^>]*\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*>\s*$/i;
 const SPAN_CLOSE_RE = /^\s*<\/span>/i;
-const STYLE_COLOR_RE = /(?:^|;)\s*color\s*:\s*([^;]+)/i;
-// Matches a `color:` declaration within an inline style string (for rewrite).
-const COLOR_DECL_RE = /color\s*:\s*[^;]+/i;
-
-/** Read the `color:` value from an inline style string, or null. */
-function colorFromStyle(style: string): string | null {
-  const m = STYLE_COLOR_RE.exec(style);
-  return m ? m[1].trim() : null;
-}
 
 /** If the textarea selection/caret is wrapped by `<span style=color>…</span>`,
  *  return that color; otherwise null. Scans a small window around the selection

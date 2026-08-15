@@ -29,6 +29,7 @@ import {
 } from "../lib/tauriFs";
 import { join } from "../lib/path-shim";
 import { prefetchFile } from "../lib/filePrefetch";
+import { confirmDialog } from "../lib/dialogs";
 import {
   deleteFile,
   deleteDirRecursive,
@@ -55,6 +56,45 @@ import {
 export type TreeChange =
   | { type: "deleted"; paths: string[] }
   | { type: "renamed"; from: string; to: string };
+
+/** Case-insensitive path equality — Windows subsystems (dialog, fs watcher,
+ *  tree reads) hand back the same path with drifting case, so exact ===
+ *  comparisons intermittently miss. */
+function samePath(a: string, b: string): boolean {
+  return a === b || a.toLowerCase() === b.toLowerCase();
+}
+
+/** Whether `p` equals `root` or lives underneath it — case-insensitive, with
+ *  a separator boundary so `C:\a` never matches `C:\ab`. Both sides are
+ *  normalized to posix before comparing. */
+function isUnderPath(p: string, root: string): boolean {
+  const pl = p.toLowerCase().replace(/\\/g, "/").replace(/\/+$/, "");
+  const rl = root.toLowerCase().replace(/\\/g, "/").replace(/\/+$/, "");
+  return pl === rl || pl.startsWith(rl + "/");
+}
+
+/** Shallow entry-list equality (identity, length, path/name/isDir per row) —
+ *  lets reload paths that found NO change keep the previous Map entry (and
+ *  the memo'd subtree references) instead of re-rendering the whole tree. */
+function sameEntries(a: TreeNode[], b: TreeNode[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (
+      a[i].path !== b[i].path ||
+      a[i].name !== b[i].name ||
+      a[i].isDir !== b[i].isDir
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Directories with more children than this mount incrementally (a「显示更
+ *  多」row reveals the next chunk). Guards the DOM explosion of expanding a
+ *  several-thousand-file directory in one shot. */
+const CHILD_CHUNK = 300;
 
 interface Props {
   root: string;
@@ -121,6 +161,10 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
     try {
       const entries = await readDirLevel(dir, excludedPathsRef.current);
       setChildrenMap((prev) => {
+        const old = prev.get(dir);
+        // Unchanged listing → keep the previous Map (and every memo'd subtree
+        // reference) instead of re-rendering the whole tree for a no-op.
+        if (old && sameEntries(old, entries)) return prev;
         const n = new Map(prev);
         n.set(dir, entries);
         return n;
@@ -131,24 +175,35 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
   }, []);
 
   // Refresh every currently-loaded level (used by the toolbar ↻ button).
+  // Reads run in PARALLEL (serializing N loaded dirs cost N sequential IPC
+  // round-trips), and a token guards against an older refresh's results
+  // landing after a newer one's and clobbering them.
+  const refreshTokenRef = useRef(0);
   const refreshAll = useCallback(() => {
     const dirs =
       childrenMapRef.current.size > 0
         ? Array.from(childrenMapRef.current.keys())
         : [root];
-    (async () => {
+    const token = ++refreshTokenRef.current;
+    void (async () => {
+      const results = await Promise.allSettled(
+        dirs.map((d) => readDirLevel(d, excludedPathsRef.current))
+      );
+      if (token !== refreshTokenRef.current) return; // superseded by a newer ↻
       const updates: Array<[string, TreeNode[]]> = [];
-      for (const d of dirs) {
-        try {
-          updates.push([d, await readDirLevel(d, excludedPathsRef.current)]);
-        } catch {
-          /* ignore */
-        }
-      }
+      results.forEach((r, i) => {
+        if (r.status === "fulfilled") updates.push([dirs[i], r.value]);
+      });
       setChildrenMap((prev) => {
+        let changed = false;
         const n = new Map(prev);
-        for (const [d, e] of updates) n.set(d, e);
-        return n;
+        for (const [d, e] of updates) {
+          const old = prev.get(d);
+          if (old && sameEntries(old, e)) continue;
+          changed = true;
+          n.set(d, e);
+        }
+        return changed ? n : prev;
       });
     })();
   }, [root]);
@@ -161,8 +216,7 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
   // never load the new one — leaving the tree empty/stale until a manual ↻.
   useEffect(() => {
     let cancelled = false;
-    const underRoot = (d: string): boolean =>
-      d === root || d.startsWith(root + "/") || d.startsWith(root + "\\");
+    const underRoot = (d: string): boolean => isUnderPath(d, root);
     (async () => {
       const updates: Array<[string, TreeNode[]]> = [];
       // Always load root first (covers both first mount and workspace switch).
@@ -214,17 +268,15 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
   // its parent to root: ensure each ancestor's parent level is loaded, then add
   // each ancestor to the expanded set.
   useEffect(() => {
-    if (!activePath || !activePath.startsWith(root)) return;
+    if (!activePath || !isUnderPath(activePath, root)) return;
     let cancelled = false;
     (async () => {
       const chain: string[] = [];
       let dir = dirOf(activePath);
-      while (
-        dir &&
-        dir !== root &&
-        dir.startsWith(root) &&
-        dir.length > root.length
-      ) {
+      // Walk up to (but excluding) root. samePath/isUnderPath are
+      // case-insensitive: the dialog and the watcher routinely return the
+      // same directory with different casing on Windows.
+      while (dir && !samePath(dir, root) && isUnderPath(dir, root)) {
         chain.unshift(dir);
         const parent = dirOf(dir);
         if (parent === dir) break; // reached a filesystem root
@@ -338,8 +390,13 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
     []
   );
   const isLoading = useCallback((p: string) => loadingDirsRef.current.has(p), []);
-
   // ---- selection (batch mode) ----
+  // Ref mirror + stable accessor: rows receive a plain `selected` boolean and
+  // compute their children's via isSelected — the previous whole-Set prop
+  // busted EVERY row's memo on every click (new Set identity per toggle).
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const isSelected = useCallback((p: string) => selectedRef.current.has(p), []);
   const toggleSelect = useCallback((path: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -401,7 +458,12 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
       const label = node.isDir
         ? `文件夹「${node.name}」${inside > 0 ? `（含 ${inside} 个 Markdown 文件）` : ""}`
         : `文件「${node.name}」`;
-      if (!confirm(`确定删除${label}？\n此操作不可恢复（永久删除，不进回收站）。`)) return;
+      if (
+        !(await confirmDialog(
+          `确定删除${label}？\n此操作不可恢复（永久删除，不进回收站）。`
+        ))
+      )
+        return;
       try {
         if (node.isDir) await deleteDirRecursive(node.path);
         else await deleteFile(node.path);
@@ -418,14 +480,16 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
   const excludeNode = useCallback(
     (node: TreeNode) => {
       const label = node.isDir ? `文件夹「${node.name}」` : `文件「${node.name}」`;
-      if (
-        !confirm(
-          `确定将${label}从文件树移除？\n（磁盘文件不会被删除，可在 设置 → 已从工作区移除的项目 中恢复）`
+      void (async () => {
+        if (
+          !(await confirmDialog(
+            `确定将${label}从文件树移除？\n（磁盘文件不会被删除，可在 设置 → 已从工作区移除的项目 中恢复）`
+          ))
         )
-      )
-        return;
-      onExcludeRef.current?.(node.path);
-      flash(`已移除${label}（可在设置中恢复）`);
+          return;
+        onExcludeRef.current?.(node.path);
+        flash(`已移除${label}（可在设置中恢复）`);
+      })();
     },
     [flash]
   );
@@ -455,9 +519,9 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
       }
     }
     if (
-      !confirm(
+      !(await confirmDialog(
         `确定删除选中的 ${nodes.length} 项（共 ${allMd.length} 个 Markdown 文件）？\n此操作不可恢复（永久删除，不进回收站）。`
-      )
+      ))
     )
       return;
     const failed: string[] = [];
@@ -634,8 +698,9 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
                 activePath={activePath}
                 onOpen={openFile}
                 batchMode={batchMode}
-                selectedSet={selected}
-                renaming={renamingPath === n.path}
+                selected={selected.has(n.path)}
+                isSelected={isSelected}
+                renamingPath={renamingPath}
                 expanded={isExpanded(n.path)}
                 childNodes={getChildNodes(n.path)}
                 loading={isLoading(n.path)}
@@ -685,8 +750,9 @@ const FileNode = memo(function FileNode({
   activePath,
   onOpen,
   batchMode,
-  selectedSet,
-  renaming,
+  selected,
+  isSelected,
+  renamingPath,
   expanded,
   childNodes,
   loading,
@@ -705,11 +771,16 @@ const FileNode = memo(function FileNode({
   activePath: string | null;
   onOpen: (p: string) => void;
   batchMode: boolean;
-  /** The whole selection set — each node checks its own membership. Passed
-   * down verbatim so deeply nested children compute their own state (a plain
-   * boolean would wrongly inherit the parent's value in the recursion). */
-  selectedSet: Set<string>;
-  renaming: boolean;
+  /** THIS row's own selection state (batch mode). Children compute theirs
+   *  through the stable `isSelected` accessor — passing the whole Set (as
+   *  this used to) busted every row's memo on every click. */
+  selected: boolean;
+  isSelected: (p: string) => boolean;
+  /** The path being renamed right now (primitive, so unrelated rows' memo
+   *  comparisons stay cheap and never propagate a parent's renaming state to
+   *  its descendants — the old boolean `renaming` prop gave every descendant
+   *  of a renamed directory its own autoFocus input). */
+  renamingPath: string | null;
   /** Whether THIS directory is expanded (from centralized state). */
   expanded: boolean;
   /** THIS directory's loaded children (undefined until first expansion). */
@@ -729,7 +800,10 @@ const FileNode = memo(function FileNode({
   onCancelRename: () => void;
 }) {
   const pad = { paddingLeft: `${depth * 12 + 8}px` };
-  const selected = selectedSet.has(node.path);
+  const renaming = renamingPath === node.path;
+  // Chunked mounting for huge directories (see CHILD_CHUNK): reveal more on
+  // demand instead of mounting thousands of rows the moment the dir expands.
+  const [visibleCount, setVisibleCount] = useState(CHILD_CHUNK);
 
   const handleRowClick = () => {
     if (batchMode) {
@@ -792,7 +866,7 @@ const FileNode = memo(function FileNode({
         </div>
         {expanded && childNodes && childNodes.length > 0 && (
           <ul role="group">
-            {childNodes.map((c) => (
+            {childNodes.slice(0, visibleCount).map((c) => (
               <FileNode
                 key={c.path}
                 node={c}
@@ -800,8 +874,9 @@ const FileNode = memo(function FileNode({
                 activePath={activePath}
                 onOpen={onOpen}
                 batchMode={batchMode}
-                selectedSet={selectedSet}
-                renaming={renaming}
+                selected={isSelected(c.path)}
+                isSelected={isSelected}
+                renamingPath={renamingPath}
                 expanded={isExpanded(c.path)}
                 childNodes={getChildNodes(c.path)}
                 loading={isLoading(c.path)}
@@ -816,6 +891,17 @@ const FileNode = memo(function FileNode({
                 onCancelRename={onCancelRename}
               />
             ))}
+            {childNodes.length > visibleCount && (
+              <li className="ft-more" role="presentation">
+                <button
+                  className="ft-more-btn"
+                  style={{ paddingLeft: `${(depth + 1) * 12 + 8}px` }}
+                  onClick={() => setVisibleCount((v) => v + CHILD_CHUNK)}
+                >
+                  显示更多（还有 {childNodes.length - visibleCount} 项）
+                </button>
+              </li>
+            )}
           </ul>
         )}
         {expanded && loading && <div className="ft-loading">…</div>}
@@ -823,7 +909,9 @@ const FileNode = memo(function FileNode({
     );
   }
 
-  const active = node.path === activePath;
+  // Case-insensitive: the tree's paths and App's activePath can differ in
+  // casing on Windows depending on which subsystem produced them.
+  const active = samePath(node.path, activePath ?? "");
   return (
     <li role="treeitem">
       <div

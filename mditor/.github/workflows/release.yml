@@ -1,18 +1,12 @@
-# Build + sign + publish a release with an auto-update manifest (latest.json).
+# Build + publish a release.
 #
-# Trigger: push a tag like `v0.2.0`. The workflow then:
-#   1. Builds the Tauri bundle on Windows (+ macOS if you add the runner).
-#   2. Signs the updater artifacts with the private key stored in repo secrets.
-#   3. Generates `latest.json` describing the release.
-#   4. Creates a GitHub Release and uploads the installers + `latest.json`.
+# Trigger: push a tag like `v3.5.0`. The workflow then:
+#   1. Builds the Tauri bundle (NSIS installer) on Windows.
+#   2. Creates a GitHub Release and uploads the installer as an asset.
 #
-# Required GitHub repo secrets:
-#   TAURI_SIGNING_PRIVATE_KEY           — contents of ~/.tauri/mditor.key
-#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  — (only if you set a password on the key)
-#
-# The public key matching this private key is already embedded in
-# src-tauri/tauri.conf.json → plugins.updater.pubkey, so clients verify
-# authenticity before installing.
+# Note: the auto-update plugin was removed in v3.5.0 (its endpoint was a
+# placeholder that could never succeed); releases are plain downloads. See
+# README.md ("自动更新的移除") for how to reintroduce it with real endpoints.
 
 name: Release
 
@@ -32,8 +26,7 @@ jobs:
         include:
           - platform: windows-latest
             args: ""
-          # Add macOS by uncommenting these — requires a code-signing cert
-          # for the updater signature to be trusted on macOS.
+          # Add macOS by uncommenting:
           # - platform: macos-latest
           #   args: "--target aarch64-apple-darwin"
 
@@ -51,6 +44,14 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Cache cargo registry + target dir — the release profile (lto=true,
+      # codegen-units=1) makes cold builds take 10-20 min; this keeps tags
+      # after the first one fast.
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: mditor/src-tauri
+
       - name: Install frontend deps
         run: npm ci
         working-directory: mditor
@@ -58,15 +59,11 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: mditor
-          # Derive the version + release name from the pushed tag (e.g. v0.2.0).
+          # Derive the version + release name from the pushed tag (e.g. v3.5.0).
           tagName: ${{ github.ref_name }}
           releaseName: "Mditor ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download. Existing users will receive the update automatically."
+          releaseBody: "See the assets below to download the NSIS installer (Mditor_x64-setup.exe)."
           releaseDraft: false
           prerelease: false
-          # Generate the updater manifest (latest.json) from the built artifacts.
-          updaterJsonPreferNsis: true

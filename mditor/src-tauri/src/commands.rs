@@ -2,18 +2,22 @@
 //!
 //! These exist because appending to the diagnostics log efficiently (open in
 //! append mode, no read-modify-write) is better from Rust than the JS fs plugin,
-//! and because the app-data dir path is needed by the store and is easiest from
-//! Rust.
-//!
-//! Note: converting filesystem paths to `asset://` URLs is done in the frontend
-//! via `@tauri-apps/api/core` `convertFileSrc`, which is the supported path.
+//! because the app-data dir path is needed by the store and is easiest from
+//! Rust, and because downloading remote images must bypass the webview CSP
+//! (`connect-src` deliberately blocks outbound fetches).
 
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::Duration;
 
+use crate::ai::http;
 use tauri::command;
 use tauri::{Manager, State};
+
+/// Upper bound for a single remote-image download (guard against pathological
+/// URLs pointed at huge files).
+const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 
 /// Append a single line to a log file, rotating it when it exceeds `max_bytes`.
 ///
@@ -66,4 +70,47 @@ pub fn app_data_dir(app: tauri::AppHandle) -> Result<String, String> {
 #[command]
 pub fn get_pending_file(state: State<'_, crate::PendingFile>) -> Option<String> {
     state.0.lock().ok().and_then(|mut g| g.take())
+}
+
+/// Download a remote image over HTTP(S) from the Rust side. The webview CSP
+/// (`connect-src 'self' ipc:`) deliberately blocks outbound fetches, so the
+/// "persist remote image locally" feature re-hosts files through this command
+/// instead. Returns the raw response bytes as a binary IPC response (capped at
+/// `MAX_IMAGE_BYTES`); the frontend sniffs the format from magic bytes and
+/// writes the file via the fs plugin (see imageManager.ts).
+#[command]
+pub async fn fetch_image(url: String) -> Result<tauri::ipc::Response, String> {
+    // Only http(s) — this command must never double as a local file reader.
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("仅支持 http/https 图片地址".into());
+    }
+    // Shared client (reuses the connection pool across calls). Its original
+    // 30s total timeout is preserved per request — the shared client itself
+    // deliberately carries none.
+    let resp = http()
+        .get(&url)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("下载失败：{e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("下载失败：HTTP {}", resp.status()));
+    }
+    if let Some(len) = resp.content_length() {
+        if len as usize > MAX_IMAGE_BYTES {
+            return Err(format!("图片过大（{len} 字节，上限 {MAX_IMAGE_BYTES}）"));
+        }
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("下载失败：{e}"))?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err(format!(
+            "图片过大（{} 字节，上限 {}）",
+            bytes.len(),
+            MAX_IMAGE_BYTES
+        ));
+    }
+    Ok(tauri::ipc::Response::new(bytes.to_vec()))
 }

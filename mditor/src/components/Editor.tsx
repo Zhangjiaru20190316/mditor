@@ -10,7 +10,15 @@
 //   * the in-editor find/replace via the SearchBar panel (find() just focuses
 //     the surface; the panel drives window.find on the contenteditable)
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import {
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { useMilkdown } from "../hooks/useMilkdown";
 import { useAnnotationMarkers } from "../hooks/useAnnotationMarkers";
 import { useFile } from "../hooks/useFile";
@@ -32,7 +40,7 @@ import {
 import { formatBytes, getHeapUsage, IS_DEV } from "../lib/memory";
 import { logMemory } from "../lib/diagnostics";
 import { saveHealSnapshot } from "../lib/session";
-import type { EditMode, Settings, BlockInfo } from "../types";
+import type { EditMode, Settings, BlockInfo, FlatHeading } from "../types";
 
 export interface EditorHandle {
   getValue: () => string;
@@ -44,6 +52,10 @@ export interface EditorHandle {
   replaceContent: (md: string) => void;
   /** The rendered preview element (for PNG snapshot). */
   previewEl: () => HTMLElement | null;
+  /** sv mode: scroll the source textarea so `line` (0-based) is in view and
+   *  place the caret at its start. No-op outside sv mode. Used by outline
+   *  jumps, which can't target the hidden Milkdown DOM there. */
+  jumpToSourceLine: (line: number) => void;
   /** Focus the editor surface (so find/replace highlights are visible). */
   find: () => void;
   /** Current text selection inside the editor, or "" if none. */
@@ -111,6 +123,8 @@ interface Props {
   fileApi: ReturnType<typeof useFile>;
   /** Live markdown change (for outline + word count). */
   onInput?: (md: string) => void;
+  /** Live document headings from the ProseMirror doc (rich-mode outline). */
+  onHeadings?: (flat: FlatHeading[]) => void;
   onAutosaved?: () => void;
   /** Status-line flash from the file watcher ("已从外部同步" etc). */
   onWatcherStatus?: (msg: string, kind: "sync" | "warn") => void;
@@ -120,10 +134,17 @@ interface Props {
 
 const EDITOR_ID = "mditor-editor";
 
-export const Editor = forwardRef<EditorHandle, Props>(function Editor(
-  { settings, fileApi, onInput, onAutosaved, onWatcherStatus, onModeChange },
-  ref
-) {
+// memo: App re-renders on every keystroke (word count / dirty state); Editor
+// is by far the heaviest child, and its props are all stable across those
+// re-renders (fileApi is memoised by useFile; the callbacks come from App as
+// useCallback refs), so skipping the reconcile of the whole Milkdown subtree
+// on every keystroke is the single biggest typing-path win. [handle] in the
+// imperative handle below still refreshes on editor rebuilds as before.
+export const Editor = memo(
+  forwardRef<EditorHandle, Props>(function Editor(
+    { settings, fileApi, onInput, onHeadings, onAutosaved, onWatcherStatus, onModeChange },
+    ref
+  ) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sourceRef = useRef<HTMLTextAreaElement | null>(null);
   const getContentRef = useRef<() => string>(() => "");
@@ -131,8 +152,11 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(
   onInputRef.current = onInput;
   const onModeChangeRef = useRef(onModeChange);
   onModeChangeRef.current = onModeChange;
-  // True while an autosave write is in flight, so the file watcher can ignore
-  // the modify event that our own write triggers.
+  // True while a save write is in flight, so the file watcher ignores events
+  // mid-write. Our own write's echo AFTER completion is recognized by content
+  // signature (watcherApi.noteSaved), not by this flag — so the flag resets
+  // exactly when the write settles instead of after a fixed grace period,
+  // which used to swallow a genuine external change landing within it.
   const isSavingRef = useRef(false);
   // Content that arrived via fileApi.onLoaded while Milkdown was still
   // initializing. Replayed into the editor once it becomes ready.
@@ -160,6 +184,7 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(
       getContentRef.current = () => md;
       onInputRef.current?.(md);
     },
+    onHeadings,
     settings,
   });
 
@@ -190,7 +215,6 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(
       onInputRef.current?.(content);
       void logMemory("file-load");
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handle.editor, handle.ready]);
 
   // Replay buffered content once Milkdown finishes initializing.
@@ -239,7 +263,7 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(
     const id = window.setInterval(() => {
       const h = getHeapUsage();
       if (!h) return;
-      // eslint-disable-next-line no-console
+       
       console.debug(
         `[mditor:mem] used=${formatBytes(h.used)} total=${formatBytes(h.total)} limit=${formatBytes(h.limit)}`
       );
@@ -279,7 +303,7 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(
         }
         return ok;
       } finally {
-        setTimeout(() => { isSavingRef.current = false; }, 600);
+        isSavingRef.current = false;
       }
     },
     onSaved: onAutosaved,
@@ -335,9 +359,10 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(
     null
   );
 
-  // 右键 → 解析点击处的块并弹菜单。只在 .ProseMirror 区域内拦截（阻止
-  // WebView2 原生菜单）；文档级监听沿用 SelectionToolbar 的 hit-test 范式。
-  // handle 仅在 ready/mode/bigDoc 变化时重建，监听器随其重挂。
+  // 右键 → 解析点击处的块并弹菜单。目标进入 .ProseMirror（且非输入框）即
+  // preventDefault：块解析失败只是不弹菜单，绝不让 WebView2 原生菜单从编辑
+  // 区漏出（其余区域的兜底见 main.tsx）。文档级监听沿用 SelectionToolbar 的
+  // hit-test 范式；handle 仅在 ready/mode/bigDoc 变化时重建，监听器随其重挂。
   useEffect(() => {
     const onContextMenu = (e: MouseEvent) => {
       if (handle.mode === "sv") return;
@@ -345,11 +370,11 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(
       if (!t || !t.closest(".ProseMirror")) return;
       // 输入框（如 Crepe link-tooltip 的链接输入框）保留原生复制/粘贴菜单。
       if (t.closest("input, textarea")) return;
+      e.preventDefault();
       const ed = handle.editor;
       if (!ed) return;
       const info = ed.getBlockInfoAt(e.clientX, e.clientY);
       if (!info) return;
-      e.preventDefault();
       setBlockMenu({ x: e.clientX, y: e.clientY, info });
     };
     document.addEventListener("contextmenu", onContextMenu);
@@ -563,6 +588,20 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(
           null
         );
       },
+      jumpToSourceLine: (line) => {
+        if (handle.mode !== "sv") return;
+        const ta = sourceRef.current;
+        if (!ta || line < 0) return;
+        // Char offset of the line's first character (split is count-limited,
+        // so this doesn't copy the whole doc per jump).
+        const pos =
+          line === 0 ? 0 : ta.value.split("\n", line).join("\n").length + 1;
+        ta.setSelectionRange(pos, pos);
+        // focus() scrolls the caret's line into view. The textarea soft-wraps,
+        // so line-height math can't align the heading to the viewport top —
+        // guaranteeing the line is visible is the contract here.
+        ta.focus();
+      },
       ready: () => handle.ready,
       switchMode: (m) => handle.switchMode(m),
       find: () => handle.editor?.focus(),
@@ -599,4 +638,5 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(
       )}
     </div>
   );
-});
+  })
+);

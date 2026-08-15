@@ -18,7 +18,7 @@ import { remarkMark } from "./remarkMark";
 const MARK_ID = "highlight";
 
 /// Highlight mark schema. `<mark>` round-trips through `==text==`.
-export const highlightSchema = $markSchema(MARK_ID, () => ({
+const highlightSchema = $markSchema(MARK_ID, () => ({
   parseDOM: [{ tag: "mark" }],
   toDOM: () => ["mark", 0],
   parseMarkdown: {
@@ -43,12 +43,12 @@ export const toggleHighlightCommand = $command("ToggleHighlight", (ctx) => () =>
 );
 
 /// Typing `==text==` applies the mark live (mirrors the strong/strike input rule).
-export const highlightInputRule = $inputRule((ctx) =>
+const highlightInputRule = $inputRule((ctx) =>
   markRule(/(?<![\w:/])(==)([^=\n]+?)(==)(?!\w|\/)$/, highlightSchema.type(ctx))
 );
 
 /// Ctrl/Cmd+Shift+H toggles highlight in the editor.
-export const highlightKeymap = $useKeymap("highlightKeymap", {
+const highlightKeymap = $useKeymap("highlightKeymap", {
   ToggleHighlight: {
     shortcuts: "Mod-Shift-h",
     command: (ctx) => {
@@ -61,7 +61,7 @@ export const highlightKeymap = $useKeymap("highlightKeymap", {
 /// Wires the `==text==` remark parse + stringify into Milkdown's transformer.
 /// (The composable's expected type is a strongly-generic remark Plugin; our
 /// shared `remarkMark` is loosely typed, so we satisfy the call with a cast.)
-export const highlightRemark = $remark("remarkMark", () => remarkMark as never);
+const highlightRemark = $remark("remarkMark", () => remarkMark as never);
 
 /// Register in this order: remark + schema (parser/serializer wiring) first,
 /// then the command / input-rule / keymap that depend on the schema.

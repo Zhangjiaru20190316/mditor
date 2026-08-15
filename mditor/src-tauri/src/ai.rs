@@ -15,13 +15,19 @@
 //! Compatible endpoints include OpenAI, DeepSeek, 智谱 GLM, Moonshot, OpenRouter,
 //! and local servers like Ollama (`http://localhost:11434/v1`) or LM Studio.
 
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tauri::{command, AppHandle, Emitter};
 
+/// Total-request timeout for the single-shot `ai_chat` call. Applied per
+/// request — the shared client itself carries no total timeout (see `http()`).
 const REQUEST_TIMEOUT_SECS: u64 = 120;
+
+/// Connect timeout on the shared client (covers the TCP + TLS handshake).
+const CONNECT_TIMEOUT_SECS: u64 = 10;
 
 /// Upper bound on the unparsed SSE buffer (leftover partial line with no
 /// newline yet). A well-formed SSE frame is tiny; if `buf` grows past this
@@ -42,8 +48,27 @@ pub struct ChatResult {
     pub content: String,
 }
 
+/// Truncate an upstream error body to at most 300 chars (plus an ellipsis when
+/// cut), slicing on char boundaries so multi-byte characters survive. Callers
+/// pass `resp.text()` output, which already decodes non-UTF-8 bodies lossily.
+fn truncate_error_body(body: &str) -> String {
+    const MAX_CHARS: usize = 300;
+    if body.chars().count() <= MAX_CHARS {
+        return body.to_string();
+    }
+    let cut = body
+        .char_indices()
+        .nth(MAX_CHARS)
+        .map(|(i, _)| i)
+        .unwrap_or(body.len());
+    format!("{}…", &body[..cut])
+}
+
 /// Error message aimed at being directly showable to a Chinese-speaking user.
 fn friendly_error(status: u16, body: &str) -> String {
+    // Cap the body before echoing it back: gateway error pages can be huge
+    // HTML blobs and may leak internal details.
+    let body = truncate_error_body(body);
     match status {
         401 | 403 => format!("鉴权失败（HTTP {status}）：API Key 无效或无权访问该模型。"),
         404 => format!("接口未找到（HTTP 404）：请检查 Base URL 是否正确（应类似 https://api.openai.com/v1）。响应：{body}"),
@@ -81,7 +106,7 @@ pub async fn ai_chat(
         thinking_strength.as_deref().unwrap_or("off"),
     );
 
-    let client = build_http_client()?;
+    let client = http();
     let body = build_request_body(
         &model,
         &messages,
@@ -92,7 +117,15 @@ pub async fn ai_chat(
         thinking.as_ref(),
     );
 
-    let resp = send_request(&client, &base_url, &api_key, body).await?;
+    let resp = send_request(
+        &client,
+        &base_url,
+        &api_key,
+        body,
+        // Non-streaming: keep the original 120s total timeout, per request.
+        Some(Duration::from_secs(REQUEST_TIMEOUT_SECS)),
+    )
+    .await?;
     let status = resp.status().as_u16();
     let text = resp.text().await.unwrap_or_default();
     if status >= 400 {
@@ -169,7 +202,7 @@ pub async fn ai_chat_stream(
         thinking_strength.as_deref().unwrap_or("off"),
     );
 
-    let client = build_http_client()?;
+    let client = http();
     let body = build_request_body(
         &model,
         &messages,
@@ -180,7 +213,9 @@ pub async fn ai_chat_stream(
         thinking.as_ref(),
     );
 
-    let resp = send_request(&client, &base_url, &api_key, body).await?;
+    // Streaming: NO total timeout — a slow but healthy stream may legitimately
+    // run for minutes; only the shared client's connect timeout applies.
+    let resp = send_request(&client, &base_url, &api_key, body, None).await?;
     let status = resp.status().as_u16();
     if status >= 400 {
         // Drain the body for a helpful message, then surface via event + Err.
@@ -194,7 +229,12 @@ pub async fn ai_chat_stream(
     // `[DONE]` (terminator) or a JSON chunk whose choices[0].delta.content
     // holds the incremental text.
     let mut stream = resp.bytes_stream();
-    let mut buf = String::new();
+    // Raw byte buffer with a read cursor: `pos` marks where parsed lines end.
+    // The consumed prefix is dropped once per chunk (below). Draining per line
+    // instead would memmove the remaining tail on every line — O(n²) when a
+    // burst of frames arrives inside one big chunk.
+    let mut buf: Vec<u8> = Vec::new();
+    let mut pos: usize = 0;
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = match chunk_result {
@@ -205,14 +245,17 @@ pub async fn ai_chat_stream(
                 return Err(msg);
             }
         };
-        // Append decoded bytes; SSE is text, lossy UTF-8 is fine for chunks.
-        buf.push_str(&String::from_utf8_lossy(&chunk));
+        buf.extend_from_slice(&chunk);
 
-        // Process complete lines (terminated by `\n`). Keep any trailing
-        // partial line in `buf` for the next iteration.
-        while let Some(newline) = buf.find('\n') {
-            let line = buf.split_at(newline).0.to_string();
-            buf.drain(..=newline); // remove the consumed line + its newline
+        // Process complete lines (terminated by `\n`). Decode lossily per LINE
+        // rather than per chunk: a multi-byte UTF-8 char split across a chunk
+        // boundary would otherwise turn into U+FFFD pairs (`\n` is ASCII, so a
+        // line never slices a multi-byte char in half). Any trailing partial
+        // line stays in `buf` for the next chunk.
+        while let Some(nl) = buf[pos..].iter().position(|&b| b == b'\n') {
+            let end = pos + nl;
+            let line = String::from_utf8_lossy(&buf[pos..end]);
+            pos = end + 1; // consume the line + its newline
 
             let trimmed = line.trim();
             if trimmed.is_empty() || trimmed.starts_with(':') {
@@ -260,10 +303,16 @@ pub async fn ai_chat_stream(
             if let Some(choice) = parsed.choices.into_iter().next() {
                 if let Some(delta) = choice.delta.content {
                     if !delta.is_empty() {
-                        let _ = app.emit(
+                        // Emit failure ⇒ the frontend receiver is gone (page
+                        // closed / request cancelled): stop pulling the stream
+                        // instead of burning tokens nobody sees.
+                        if !emit_to_frontend(
+                            &app,
                             "ai_stream_chunk",
                             StreamChunk { id: request_id.clone(), delta },
-                        );
+                        ) {
+                            return Ok(());
+                        }
                     }
                 }
                 // Reasoning / thinking tokens (o1 / deepseek-r1 / glm-z1 /
@@ -277,10 +326,14 @@ pub async fn ai_chat_stream(
                     .or(choice.delta.reasoning);
                 if let Some(delta) = reasoning {
                     if !delta.is_empty() {
-                        let _ = app.emit(
+                        // Frontend gone — same early exit as content above.
+                        if !emit_to_frontend(
+                            &app,
                             "ai_stream_reasoning",
                             StreamReasoning { id: request_id.clone(), delta },
-                        );
+                        ) {
+                            return Ok(());
+                        }
                     }
                 }
                 // Some providers signal end via finish_reason without [DONE].
@@ -289,6 +342,12 @@ pub async fn ai_chat_stream(
                     return Ok(());
                 }
             }
+        }
+
+        // Drop the consumed prefix in one go — amortised O(n) per chunk.
+        if pos > 0 {
+            buf.drain(..pos);
+            pos = 0;
         }
 
         // Guard: if the leftover partial line (no newline yet) exceeds the
@@ -311,11 +370,34 @@ pub async fn ai_chat_stream(
 
 // ---- shared helpers -------------------------------------------------------
 
-fn build_http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| format!("无法创建 HTTP 客户端：{e}"))
+/// Process-wide shared HTTP client. A `reqwest::Client` owns a connection
+/// pool; building one per call throws that pool away, so every call re-pays
+/// TCP + TLS handshakes. One client for the app's lifetime via `OnceLock`.
+///
+/// Deliberately NO total timeout here — long SSE streams are legitimate.
+/// Callers needing a total bound (`ai_chat`, image downloads) set one per
+/// request via `RequestBuilder::timeout`.
+static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
+
+/// Accessor for the shared client; also used by `commands::fetch_image`.
+pub(crate) fn http() -> &'static reqwest::Client {
+    HTTP.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+            // Only fails if the TLS backend fails to initialise — nothing
+            // sensible to degrade to, so crash loudly at first use.
+            .build()
+            .expect("failed to build reqwest client")
+    })
+}
+
+/// Emit a stream event; `false` means the frontend receiver is gone (page
+/// closed / request cancelled). In-loop callers stop pulling the upstream
+/// stream when this returns false — not an error path, whatever was already
+/// delivered stands. Terminal events (done/error) skip this check since the
+/// command returns right after them anyway.
+fn emit_to_frontend(app: &AppHandle, event: &str, payload: impl Serialize + Clone) -> bool {
+    app.emit(event, payload).is_ok()
 }
 
 /// Build the chat-completions JSON body. Optional sampling params are only
@@ -392,12 +474,15 @@ fn thinking_fields(provider: &str, strength: &str) -> Option<serde_json::Value> 
 }
 
 /// POST the body to `{base_url}/chat/completions` with bearer auth when a key
-/// is present. Centralises the timeout/connect error wording.
+/// is present. `total_timeout`, when `Some`, bounds the whole request via a
+/// per-request timeout (the shared client itself has none). Centralises the
+/// timeout/connect error wording.
 async fn send_request(
     client: &reqwest::Client,
     base_url: &str,
     api_key: &str,
     body: serde_json::Value,
+    total_timeout: Option<Duration>,
 ) -> Result<reqwest::Response, String> {
     let endpoint = if base_url.ends_with('/') {
         format!("{}chat/completions", base_url)
@@ -405,6 +490,9 @@ async fn send_request(
         format!("{}/chat/completions", base_url)
     };
     let mut req = client.post(&endpoint).json(&body);
+    if let Some(t) = total_timeout {
+        req = req.timeout(t);
+    }
     if !api_key.trim().is_empty() {
         req = req.bearer_auth(api_key);
     }

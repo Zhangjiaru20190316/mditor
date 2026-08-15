@@ -1,5 +1,5 @@
-// 「关于」迷你弹窗（帮助 → 关于）：logo + 版本 + 简介 + 检查更新入口。
-// 风格仿 UpdateModal（modal-backdrop / modal-card 体系）。
+// 「关于」迷你弹窗（帮助 → 关于）：logo + 版本 + 简介。
+// 风格仿 modal-backdrop / modal-card 体系。
 
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
@@ -8,11 +8,9 @@ import { LogoIcon } from "./icons";
 interface Props {
   open: boolean;
   onClose: () => void;
-  /** 跳转「检查更新」（复用 App 的手动更新检查路径）。 */
-  onCheckUpdate: () => void;
 }
 
-export function AboutModal({ open, onClose, onCheckUpdate }: Props) {
+export function AboutModal({ open, onClose }: Props) {
   const [version, setVersion] = useState("");
   useEffect(() => {
     if (!open) return;
@@ -49,17 +47,8 @@ export function AboutModal({ open, onClose, onCheckUpdate }: Props) {
           </p>
         </div>
         <footer className="modal-foot">
-          <button className="btn-ghost" onClick={onClose}>
+          <button className="btn-primary" onClick={onClose}>
             关闭
-          </button>
-          <button
-            className="btn-primary"
-            onClick={() => {
-              onClose();
-              onCheckUpdate();
-            }}
-          >
-            检查更新…
           </button>
         </footer>
       </div>

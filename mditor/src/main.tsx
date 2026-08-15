@@ -1,11 +1,7 @@
-// FIRST import: this module AUTO-INSTALLS the early timer probe on load (see
-// lib/leakCounters), patching globalThis.requestAnimationFrame/setInterval/
-// setTimeout before react-dom / @milkdown / any dependency can capture a
-// reference. TEMPORARY diagnostic — remove once the idle leak is found.
-import "./lib/leakCounters";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { dismissSplash } from "./lib/splash";
 // KaTeX + highlight.js styles power the static Markdown renderer (AI messages,
 // annotation previews, source-mode export) — rehype-katex / rehype-highlight
 // emit katex/hljs markup that needs these stylesheets to look right. (The
@@ -21,6 +17,20 @@ import "./styles/annotation.css";
 // themes are lazy-loaded on demand from useSettings (keeps the initial CSS
 // chunk small without a flash of unstyled content for the common case).
 import "./styles/themes/light.css";
+
+// WebView2 只要 contextmenu 事件未被取消就会弹出系统原生菜单。这里在捕获
+// 阶段全局兜底 preventDefault（各区域的自定义菜单在冒泡阶段照常打开，
+// preventDefault 不影响其它监听器）；input/textarea 豁免，保留原生复制/
+// 剪切/粘贴（sv 源码框、Crepe link-tooltip 输入框等）。
+window.addEventListener(
+  "contextmenu",
+  (e) => {
+    const t = e.target as HTMLElement | null;
+    if (t?.closest("input, textarea")) return;
+    e.preventDefault();
+  },
+  { capture: true }
+);
 
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("#root not found");
@@ -40,3 +50,7 @@ createRoot(rootEl).render(
     <App />
   </ErrorBoundary>
 );
+
+// 兜底：若 App 渲染抛错（ErrorBoundary 接管、App 的 effect 不执行），
+// 开屏也不会永远卡住盖住错误卡片。
+window.setTimeout(dismissSplash, 4000);

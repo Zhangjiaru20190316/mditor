@@ -35,6 +35,7 @@ import {
   resolveActiveModel,
   type ChatMessage,
 } from "../lib/ai";
+import { confirmDialog } from "../lib/dialogs";
 import { MarkdownText } from "./MarkdownText";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { AiIcon, TrashIcon, CloseIcon, ChevronRightIcon } from "./icons";
@@ -109,7 +110,7 @@ interface Msg {
 const MAX_MESSAGES = 100;
 
 export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
-  { open, settings, getNote, getSelection, onInsert, onReplace, onReplaceSelection, onInsertAfterSelection, onAnnotate, onOpenSettings, onSettingsChange, onClose },
+  { open, settings, getNote, onInsert, onReplace, onReplaceSelection, onInsertAfterSelection, onAnnotate, onOpenSettings, onSettingsChange, onClose },
   ref
 ) {
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -186,10 +187,17 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     [onAnnotate]
   );
 
-  // Auto-scroll to the latest message.
+  // Auto-scroll to the latest message — but only when the reader is already at
+  // (or near) the bottom. Streaming appends content every frame; following
+  // unconditionally would yank the user back down while they scroll up through
+  // history. 80px ≈ one line of text tolerance (virtual-list measurement can
+  // leave the last frame a few px short of the exact bottom).
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
+    const el = scrollRef.current;
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight >= 80) return;
+    el.scrollTo({
+      top: el.scrollHeight,
       behavior: "smooth",
     });
   }, [messages, loading]);
@@ -560,7 +568,11 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
                     theme={settings.theme}
                     onInsert={() => onInsert(m.content)}
                     onReplace={() => {
-                      if (confirm("用这条 AI 回复替换当前笔记全部内容？")) onReplace(m.content);
+                      void (async () => {
+                        if (await confirmDialog("用这条 AI 回复替换当前笔记全部内容？")) {
+                          onReplace(m.content);
+                        }
+                      })();
                     }}
                     onReplaceSelection={() => onReplaceSelection(m.content)}
                     onInsertAfterSelection={() => onInsertAfterSelection(m.content)}

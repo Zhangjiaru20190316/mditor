@@ -209,19 +209,37 @@ export const SelectionToolbar = memo(function SelectionToolbar({
       }
     };
 
+    // 挂 document 级委托：内存守护会整体重建 .mditor-editor-host 节点，挂在
+    // 旧宿主上的 mouseup/keyup 会随节点脱离文档而永久失效。改为监听 document
+    // 并在回调里用 closest 判定事件是否来自（任意代次的）编辑器宿主，重建后
+    // 无需重新挂载即可继续工作。
+    const editorHostFromNode = (node: Node | null): Element | null => {
+      if (!node) return null;
+      const el =
+        node.nodeType === Node.ELEMENT_NODE
+          ? (node as Element)
+          : node.parentElement;
+      return el?.closest(".mditor-editor-host") ?? null;
+    };
+    const onEditorMouseUp = (e: MouseEvent) => {
+      if (editorHostFromNode(e.target as Node | null)) scheduleUpdate();
+    };
+    const onEditorKeyUp = (e: KeyboardEvent) => {
+      if (editorHostFromNode(e.target as Node | null)) scheduleUpdate();
+    };
+
     const attach = () => {
       document.addEventListener("selectionchange", scheduleUpdate);
-      const editor = document.querySelector<HTMLElement>(".mditor-editor-host");
-      editor?.addEventListener("mouseup", scheduleUpdate);
-      editor?.addEventListener("keyup", scheduleUpdate);
+      document.addEventListener("mouseup", onEditorMouseUp);
+      document.addEventListener("keyup", onEditorKeyUp);
       window.addEventListener("resize", scheduleUpdate);
       window.addEventListener("keydown", onKey);
       cleanup = () => {
         if (rafId != null) cancelAnimationFrame(rafId);
         rafId = null;
         document.removeEventListener("selectionchange", scheduleUpdate);
-        editor?.removeEventListener("mouseup", scheduleUpdate);
-        editor?.removeEventListener("keyup", scheduleUpdate);
+        document.removeEventListener("mouseup", onEditorMouseUp);
+        document.removeEventListener("keyup", onEditorKeyUp);
         window.removeEventListener("resize", scheduleUpdate);
         window.removeEventListener("keydown", onKey);
       };

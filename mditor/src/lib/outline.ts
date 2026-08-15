@@ -1,17 +1,43 @@
 // Build a document outline (heading tree) from markdown source.
 //
+// This source-parse path is the FALLBACK: it feeds the outline in sv mode
+// (where the hidden ProseMirror doc is stale) and before the editor reports
+// its first headings. Rich modes use buildOutlineFromHeadings with headings
+// extracted from the live ProseMirror doc, whose ids come straight from
+// Milkdown's attrs.id — the same id the DOM carries — so anchor jumps can't
+// diverge from the rendered <hN id>.
+//
 // We parse ATX headings (`#`..`######`) and Setext headings (H1/H2 underlined
 // with `===`/`---`). Code-fenced blocks are skipped so `#` inside code doesn't
-// count. The generated ids mirror Milkdown's heading-id generator so anchor
-// jumps (Outline → getElementById) line up with the editor's rendered <hN id>.
+// count. The generated ids mirror Milkdown's heading-id generator closely
+// enough for React keys and display dedup; sv-mode jumps target source lines,
+// not these ids.
 
-import type { OutlineNode } from "../types";
+import type { FlatHeading, OutlineNode } from "../types";
 
 // `buildOutline` runs on every keystroke, so this cross-call slug memo grows for
 // every distinct heading text seen across the whole session. Slug computation is
 // cheap, so bound the map to keep long sessions from leaking memory unbounded.
 const SLUG_CACHE_MAX = 2000;
+/** When the cache reaches MAX, evict the oldest entries down to this size. */
+const SLUG_CACHE_KEEP = 1500;
 const slugCache = new Map<string, string>();
+
+/** Evict the OLDEST entries instead of clearing the whole map: a full clear()
+ *  on a huge document forces every heading's slug to be recomputed on each
+ *  build, turning the memo into pure overhead. Map preserves insertion order,
+ *  so the first keys are the oldest. Trade-off: an evicted entry is simply
+ *  recomputed on next use — the cache is a pure memo (text → base slug), and
+ *  the `-#N` collision counters live in the per-build `used` set in makeSlug,
+ *  so eviction can never corrupt in-flight dedup. */
+function evictOldestSlugs() {
+  let drop = slugCache.size - SLUG_CACHE_KEEP;
+  for (const key of slugCache.keys()) {
+    if (drop <= 0) break;
+    slugCache.delete(key);
+    drop -= 1;
+  }
+}
 
 /**
  * Base heading slug — MUST stay byte-identical to the headingIdGenerator we
@@ -32,8 +58,9 @@ export function headingSlugBase(text: string): string {
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
   if (!s) s = "heading";
-  // Drop the whole memo once in a while; correctness is intact either way.
-  if (slugCache.size >= SLUG_CACHE_MAX) slugCache.clear();
+  // Bound the memo by evicting the oldest entries (see evictOldestSlugs) —
+  // recomputation on a miss is cheap and correctness is unaffected either way.
+  if (slugCache.size >= SLUG_CACHE_MAX) evictOldestSlugs();
   slugCache.set(text, s);
   return s;
 }
@@ -52,10 +79,7 @@ function makeSlug(text: string, used: Set<string>): string {
 }
 
 export function buildOutline(markdown: string): OutlineNode[] {
-  const roots: OutlineNode[] = [];
-  const stack: OutlineNode[] = [];
-  const used = new Set<string>();
-
+  const builder = new TreeBuilder();
   const lines = markdown.split(/\r?\n/);
   let inFence = false;
   let fenceMarker = "";
@@ -78,7 +102,7 @@ export function buildOutline(markdown: string): OutlineNode[] {
     // ATX: optional 1-3 spaces, 1-6 hashes, a space, then text.
     const atx = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
     if (atx) {
-      pushHeading(atx[1].length, atx[2], roots, stack, used);
+      builder.push(atx[1].length, atx[2], makeSlug(atx[2], builder.used), i);
       continue;
     }
     // Setext: next line is === (H1) or --- (H2), and current line is non-blank text.
@@ -87,42 +111,43 @@ export function buildOutline(markdown: string): OutlineNode[] {
       const setext = next.match(/^\s{0,3}(=+|-{2,})\s*$/);
       if (setext && line.trim().length > 0 && !/^\s{0,3}(-|\*|_)\1\1+/.test(line)) {
         const level = setext[1].charAt(0) === "=" ? 1 : 2;
-        pushHeading(level, line.trim(), roots, stack, used);
+        builder.push(level, line.trim(), makeSlug(line.trim(), builder.used), i);
         i += 1; // consume the underline
       }
     }
   }
-  return roots;
+  return builder.roots;
 }
 
-function pushHeading(
-  level: number,
-  text: string,
-  roots: OutlineNode[],
-  stack: OutlineNode[],
-  used: Set<string>
-) {
-  const id = makeSlug(text, used);
-  const node: OutlineNode = { level, text, id, children: [] };
-  // pop until stack top is strictly shallower
-  while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
-  if (stack.length === 0) {
-    roots.push(node);
-  } else {
-    stack[stack.length - 1].children.push(node);
-  }
-  stack.push(node);
+/**
+ * Outline tree from headings extracted out of the live ProseMirror document
+ * (see FlatHeading). `line` is unknown on this path — sv-mode jumps don't use
+ * it, and rich-mode jumps go through the heading's DOM id.
+ */
+export function buildOutlineFromHeadings(flat: FlatHeading[]): OutlineNode[] {
+  const builder = new TreeBuilder();
+  for (const h of flat) builder.push(h.level, h.text, h.id);
+  return builder.roots;
 }
 
-/** Flatten a tree to a list for keyboard nav / counting. */
-export function flattenOutline(nodes: OutlineNode[]): OutlineNode[] {
-  const out: OutlineNode[] = [];
-  const walk = (ns: OutlineNode[]) => {
-    for (const n of ns) {
-      out.push(n);
-      walk(n.children);
+/** Shared nesting logic: attach each heading under the nearest shallower one. */
+class TreeBuilder {
+  readonly roots: OutlineNode[] = [];
+  readonly used = new Set<string>();
+  private readonly stack: OutlineNode[] = [];
+
+  push(level: number, text: string, id: string, line?: number): void {
+    const node: OutlineNode = { level, text, id, children: [] };
+    if (line != null) node.line = line;
+    // pop until stack top is strictly shallower
+    while (this.stack.length && this.stack[this.stack.length - 1].level >= level) {
+      this.stack.pop();
     }
-  };
-  walk(nodes);
-  return out;
+    if (this.stack.length === 0) {
+      this.roots.push(node);
+    } else {
+      this.stack[this.stack.length - 1].children.push(node);
+    }
+    this.stack.push(node);
+  }
 }

@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { watch, readTextFile } from "@tauri-apps/plugin-fs";
 import { dirname, basename, toPosix } from "../lib/path-shim";
-import { bumpLeakCounter } from "../lib/leakCounters";
+import { confirmDialog } from "../lib/dialogs";
 
 interface Options {
   /** Absolute path of the open file, or null for an untitled buffer. */
@@ -89,8 +89,9 @@ export function useFileWatcher(opts: Options) {
         }
         // 3) conflict resolution
         if (o.dirty) {
-          const ok = confirm(
-            "文件已被外部程序修改。\n是否放弃本地未保存的修改，加载磁盘上的最新版本？"
+          const ok = await confirmDialog(
+            "文件已被外部程序修改。\n是否放弃本地未保存的修改，加载磁盘上的最新版本？",
+            "Mditor"
           );
           if (!ok) {
             o.onStatus?.("文件已被外部修改", "warn");
@@ -116,7 +117,6 @@ export function useFileWatcher(opts: Options) {
     watch(
       dir,
       (event) => {
-        bumpLeakCounter("fsEvents");
         // Only react to writes/creates/removes on our target file.
         const t = event.type as { kind?: string };
         const kind = t.kind ?? "any";
@@ -143,7 +143,7 @@ export function useFileWatcher(opts: Options) {
       try { unwatch?.(); } catch { /* already gone */ }
     };
     // Re-subscribe only when the watched path changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [opts.path]);
 
   /**

@@ -21,7 +21,7 @@ const MARK_ID = "textColor";
 /// Text-color mark schema. `<span style="color:X">` round-trips through the
 /// `textColor` mdast node. parseDOM only claims a span when its inline style
 /// actually declares a `color` (returning false leaves plain spans alone).
-export const textColorSchema = $markSchema(MARK_ID, () => ({
+const textColorSchema = $markSchema(MARK_ID, () => ({
   attrs: {
     color: { default: null },
   },
@@ -57,7 +57,7 @@ export const textColorSchema = $markSchema(MARK_ID, () => ({
 /// transformer. (The composable's expected type is a strongly-generic remark
 /// Plugin; our `remarkTextColor` is loosely typed, so we satisfy the call with a
 /// cast — same pattern as highlightMark.ts.)
-export const textColorRemark = $remark("remarkTextColor", () => remarkTextColor as never);
+const textColorRemark = $remark("remarkTextColor", () => remarkTextColor as never);
 
 /// Register remark (parser/serializer wiring) before the schema is built.
 /// Milkdown's `$markSchema`/`$remark` composables are tuples `[ctxSlice, plugin]`;

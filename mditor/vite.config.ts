@@ -24,18 +24,11 @@ export default defineConfig(async () => ({
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   build: {
     target: "es2022",
-    // terser (vs default esbuild) lets us drop console.* in production for a
-    // smaller, quieter bundle. esbuild is faster but doesn't do dead-code
-    // elimination on console calls.
-    minify: "terser",
-    terserOptions: {
-      compress: {
-        drop_console: true,
-        drop_debugger: true,
-      },
-      format: {
-        comments: false,
-      },
+    // esbuild minify + drop console/debugger (same quietening the terser
+    // config gave, at a fraction of the build time).
+    minify: "esbuild",
+    esbuildOptions: {
+      drop: ["console", "debugger"],
     },
     sourcemap: false,
     // Tauri loads assets from disk, so the per-chunk warning is moot; raise it

@@ -593,6 +593,21 @@ body.is-resizing .sidebar {
 .ft-dir {
   font-weight: 500;
 }
+/* 「显示更多」行——超大目录分块挂载（见 FileTree.tsx 的 CHILD_CHUNK）。 */
+.ft-more-btn {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 26px;
+  text-align: left;
+  cursor: pointer;
+}
+.ft-more-btn:hover {
+  color: var(--fg);
+}
 .ft-empty,
 .ol-empty,
 .rc-empty {
@@ -1046,6 +1061,12 @@ body.is-resizing .sidebar {
 .mditor-milkdown .ProseMirror:focus {
   outline: none;
 }
+/* Outline/anchor jumps scroll headings to the host's top edge, where the
+   sticky .milkdown-toolbar (~41px) sits — reserve it so the landed heading
+   stays fully visible. */
+.mditor-milkdown .ProseMirror :is(h1, h2, h3, h4, h5, h6) {
+  scroll-margin-top: 48px;
+}
 .mditor-milkdown .ProseMirror p,
 .mditor-milkdown .ProseMirror li,
 .mditor-milkdown .ProseMirror blockquote {
@@ -1063,6 +1084,80 @@ body.is-resizing .sidebar {
 .mditor-milkdown .ProseMirror pre,
 .mditor-milkdown .ProseMirror .cm-editor {
   font-family: var(--font-mono);
+}
+/* CodeMirror 行号与代码行的度量必须严格同源：
+   - CM 基础主题把 font-family: monospace 写死在 .cm-scroller 上（自有声明
+     压过上面 .cm-editor 的继承），设置里的代码字体 --font-mono 此前从未
+     真正作用到代码块；
+   - 行号元素高度由 CM 写入测量值（如 22.3929px），代码行是自动行盒——
+     两侧字体回退 / 渲染取整只要有一丝不一致，就会逐行累积成"行号与代码
+     错位"。在两侧显式钉住同一字体与同一行高（1.4 = CM 默认值，不改变
+     现有观感），度量完全同源，杜绝发散。 */
+.mditor-milkdown .milkdown-code-block .cm-scroller,
+.mditor-milkdown .milkdown-code-block .cm-gutters,
+.mditor-milkdown .milkdown-code-block .cm-gutterElement {
+  font-family: var(--font-mono);
+}
+.mditor-milkdown .milkdown-code-block .cm-scroller,
+.mditor-milkdown .milkdown-code-block .cm-line,
+.mditor-milkdown .milkdown-code-block .cm-gutterElement {
+  line-height: 1.4;
+}
+/* CodeMirror 的基础布局规则由 style-mod 在运行时注入 <style>，不随应用
+   CSS 打包——在打包版里若该注入被 CSP 拦截（Tauri 默认给内联内容加
+   nonce/hash 时 'unsafe-inline' 会被浏览器忽略），行号 gutter 就会掉到
+   .cm-content 上方（上下堆叠）。字体/行高/配色既已钉在应用层，这里把
+   布局一并钉住（值与 CM 基础主题完全相同，基础主题在场时零影响；缺失
+   时由应用 CSS 兜底，排版不依赖运行时注入）。若将来启用 lineWrapping，
+   需同步移除 .cm-content 的 white-space 钉住。 */
+.mditor-milkdown .milkdown-code-block .cm-editor {
+  display: flex !important;
+  flex-direction: column;
+}
+.mditor-milkdown .milkdown-code-block .cm-scroller {
+  display: flex !important;
+  flex-direction: row;
+  align-items: flex-start !important;
+  height: 100%;
+  overflow-x: auto;
+  position: relative;
+  overflow-anchor: none;
+}
+.mditor-milkdown .milkdown-code-block .cm-content {
+  margin: 0;
+  flex-grow: 2;
+  flex-shrink: 0;
+  display: block;
+  white-space: pre;
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: 4px 0;
+  outline: none;
+}
+.mditor-milkdown .milkdown-code-block .cm-line {
+  display: block;
+  padding: 0 2px 0 6px;
+}
+.mditor-milkdown .milkdown-code-block .cm-gutters {
+  flex-shrink: 0;
+  display: flex;
+  height: 100%;
+  box-sizing: border-box;
+  z-index: 200;
+}
+.mditor-milkdown .milkdown-code-block .cm-gutter {
+  display: flex !important;
+  flex-direction: column;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  min-height: 100%;
+  overflow: hidden;
+}
+.mditor-milkdown .milkdown-code-block .cm-lineNumbers .cm-gutterElement {
+  padding: 0 3px 0 5px;
+  min-width: 20px;
+  text-align: right;
+  white-space: nowrap;
 }
 /* 让 Crepe/CodeMirror 代码块底色随主题走 --code-bg（默认 nord 的 #f8f9ff
    在浅底下太虚；暗底下又与正文冲突）。--code-bg 在各 theme 文件中定义。
@@ -2818,17 +2913,18 @@ body {
 }
 
 /* ===========================================================================
-   代码语法高亮配色 —— VSCode 风格
-   - 编辑器 CodeMirror 用 defaultHighlightStyle（@lezer/highlight 输出稳定的
-     tok-* 类名），原色偏灰；这里在所有主题下统一重染为 VSCode 风格。
-   - 静态渲染（rehype-highlight 输出 hljs-* 类）用同一套配色，让编辑器与
-     AI / 注解 / 导出预览保持一致，不再各自走 highlight.js 自带主题。
+   代码语法高亮配色（按主题的 --tok-* 变量统一驱动两条渲染路径）
+   - 编辑器 CodeMirror：useMilkdown 给 code-mirror feature 注册了
+     classHighlighter（@lezer/highlight），token 输出稳定的 tok-* 类名，
+     由下方规则映射到 --tok-* 变量 —— basicSetup 自带的 defaultHighlightStyle
+     是 style-mod 注入的硬编码浅色（主题无关），作为 fallback 不再生效。
+   - 静态渲染（rehype-highlight 输出 hljs-* 类，AI 面板 / 注解预览）用同一套
+     变量，让编辑器与静态预览的代码颜色完全一致。
    - light / sepia：VSCode Light+（白底 / 纸底，鲜艳色对比强）
    - dark：VSCode Dark+
-   - claude / claude-dark：暖米底/暖深底上 Light+/Dark+ 的纯蓝纯红纯绿显得
-     刺眼又凌乱，用一套暖色调多彩配色——主色用纯黑/米白，关键字/数字取品牌橙红，
-     字符串橄榄绿、函数名金棕、内置名/类型低饱和青绿、属性柔和岩蓝、注释加深暖棕。
-     与 Claude 品牌色板协调，同时保证语法层次清晰、对比度达 AA。
+   - claude / claude-dark：暖色品牌配色 —— 7 个色相分离（赭红 / 橄榄绿 /
+     梅紫 / 青绿 / 琥珀金 / 岩蓝 / 暖灰），数字独立于关键字，注释 / 标点 /
+     元信息为弱化层；正文类 token 对各自 --code-bg 达 WCAG AA（≥4.5:1）。
    =========================================================================== */
 
 /* VSCode Light+（light / sepia 浅色主题） */
@@ -2847,18 +2943,21 @@ body {
   --tok-meta: #1f2328;
 }
 
-/* Claude 主题：暖色调多彩配色（主色黑 + 暖色 token，层次清晰、对比达 AA） */
+/* Claude 主题：暖色品牌配色 —— 7 个色相清晰分离（赭红 / 橄榄绿 / 梅紫 /
+   青绿 / 琥珀金 / 岩蓝 / 暖灰），与米色纸感背景协调。数字独立于关键字取
+   梅紫，注释 / 标点 / 元信息作为弱化层（≥3:1），其余 token 对 #e6dfd0
+   底色均达 WCAG AA（≥4.5:1）。 */
 [data-theme="claude"] {
-  --tok-base: #000000;      /* 基础：纯黑（主色，按需求） */
-  --tok-keyword: #a8402a;   /* 关键字 / 数字：深化品牌橙红 */
-  --tok-string: #5a6b2e;    /* 字符串：橄榄绿（区别于正文） */
-  --tok-number: #a8402a;
-  --tok-comment: #6a6049;   /* 注释：加深暖棕（修复发灰，≈4.4:1） */
-  --tok-type: #1f6b63;      /* 内置名 print/len / 类型：低饱和青绿 */
-  --tok-func: #85581a;      /* 函数名：金棕 */
-  --tok-attr: #4f6a8a;      /* 属性 / 装饰器：柔和岩蓝（冷色点缀） */
-  --tok-punct: #5a554c;     /* 标点：暖灰 */
-  --tok-meta: #6a6049;      /* 元信息：暖棕 */
+  --tok-base: #2c2a26;      /* 基础：深棕黑（与 --fg 一致，替换纯黑） */
+  --tok-keyword: #a13c27;   /* 关键字：赭红（品牌橙红系，4.96:1） */
+  --tok-string: #3f6b2a;    /* 字符串：橄榄绿（4.73:1） */
+  --tok-number: #7a4b9e;    /* 数字 / 字面量：梅紫（独立色相，4.76:1） */
+  --tok-comment: #776f60;   /* 注释：暖灰，弱化层（3.75:1） */
+  --tok-type: #1e6e64;      /* 内置名 print/len / 类型：青绿（4.56:1） */
+  --tok-func: #7d5c00;      /* 函数名：琥珀金（4.65:1） */
+  --tok-attr: #36618a;      /* 属性 / 装饰器：岩蓝（4.90:1） */
+  --tok-punct: #6b655a;     /* 标点：暖灰（4.36:1） */
+  --tok-meta: #7f7259;      /* 元信息：暖沙（≥3:1） */
 }
 
 /* VSCode Dark+（dark 暗色主题） */
@@ -2875,18 +2974,18 @@ body {
   --tok-meta: #9cdcfe;
 }
 
-/* Claude Dark 主题：暖色调多彩配色（与 claude 对应，暗底亮化） */
+/* Claude Dark 主题：暖色品牌配色（与 claude 逐 token 对应，暗底亮化） */
 [data-theme="claude-dark"] {
   --tok-base: #e8e5dd;      /* 基础：米白（主色） */
-  --tok-keyword: #f08660;   /* 关键字 / 数字：亮橙 */
-  --tok-string: #a5c068;    /* 字符串：浅黄绿 */
-  --tok-number: #f08660;
-  --tok-comment: #b0a89e;   /* 注释：提亮暖灰（修复发灰） */
-  --tok-type: #5fb3a8;      /* 内置名 / 类型：青绿 */
-  --tok-func: #e0b870;      /* 函数名：浅金 */
-  --tok-attr: #8fb8d4;      /* 属性 / 装饰器：柔岩蓝 */
-  --tok-punct: #b8b2a6;     /* 标点：暖灰 */
-  --tok-meta: #b0a89e;      /* 元信息：暖灰 */
+  --tok-keyword: #e98a68;   /* 关键字：亮赭红（5.66:1） */
+  --tok-string: #a3c47c;    /* 字符串：浅橄榄绿（7.32:1） */
+  --tok-number: #c39be0;    /* 数字 / 字面量：浅梅紫（6.19:1） */
+  --tok-comment: #948d80;   /* 注释：暖灰（4.35:1） */
+  --tok-type: #6cc4b6;      /* 内置名 / 类型：青绿（6.96:1） */
+  --tok-func: #dcb266;      /* 函数名：浅琥珀金（7.22:1） */
+  --tok-attr: #8fb5dc;      /* 属性 / 装饰器：柔岩蓝（6.69:1） */
+  --tok-punct: #b0aa9e;     /* 标点：暖灰（6.19:1） */
+  --tok-meta: #a09784;      /* 元信息：暖沙（4.94:1） */
 }
 
 /* 编辑器：暗底下代码基础文字 / 光标变亮（变量需设在 .milkdown-code-block） */
@@ -2899,46 +2998,69 @@ body {
   caret-color: var(--tok-base);
 }
 
-/* 编辑器 CodeMirror 语法 token */
+/* 编辑器 CodeMirror 语法 token。
+   useMilkdown 给 code-mirror feature 注册了 classHighlighter（@lezer/highlight），
+   token 输出稳定的 tok-* 类名（keyword 子标签 controlKeyword/operatorKeyword/
+   modifier 等会归并到 tok-keyword，不会再出现独立类名），这里映射到 --tok-*。
+   classHighlighter 对"定义位"会同时输出两个类（如 tok-variableName
+   tok-definition、tok-propertyName tok-definition），单类规则等特异性下按
+   声明顺序后者胜——末尾的复合选择器显式固定：变量定义名取函数色、属性
+   定义名保持属性色。 */
 .mditor-milkdown .milkdown-code-block .tok-keyword,
-.mditor-milkdown .milkdown-code-block .tok-operator,
-.mditor-milkdown .milkdown-code-block .tok-operatorKeyword,
-.mditor-milkdown .milkdown-code-block .tok-controlKeyword,
-.mditor-milkdown .milkdown-code-block .tok-modifier {
+.mditor-milkdown .milkdown-code-block .tok-operator {
   color: var(--tok-keyword);
 }
 .mditor-milkdown .milkdown-code-block .tok-string,
-.mditor-milkdown .milkdown-code-block .tok-string2 {
+.mditor-milkdown .milkdown-code-block .tok-string2,
+.mditor-milkdown .milkdown-code-block .tok-url,
+.mditor-milkdown .milkdown-code-block .tok-inserted {
   color: var(--tok-string);
 }
 .mditor-milkdown .milkdown-code-block .tok-number,
 .mditor-milkdown .milkdown-code-block .tok-atom,
-.mditor-milkdown .milkdown-code-block .tok-bool {
+.mditor-milkdown .milkdown-code-block .tok-bool,
+.mditor-milkdown .milkdown-code-block .tok-literal,
+.mditor-milkdown .milkdown-code-block .tok-labelName {
   color: var(--tok-number);
 }
 .mditor-milkdown .milkdown-code-block .tok-comment {
   color: var(--tok-comment);
 }
 .mditor-milkdown .milkdown-code-block .tok-typeName,
-.mditor-milkdown .milkdown-code-block .tok-namespace {
+.mditor-milkdown .milkdown-code-block .tok-namespace,
+.mditor-milkdown .milkdown-code-block .tok-className {
   color: var(--tok-type);
-}
-.mditor-milkdown .milkdown-code-block .tok-definition {
-  color: var(--tok-func);
-}
-.mditor-milkdown .milkdown-code-block .tok-propertyName {
-  color: var(--tok-attr);
 }
 .mditor-milkdown .milkdown-code-block .tok-variableName,
 .mditor-milkdown .milkdown-code-block .tok-variableName2 {
   color: var(--tok-base);
 }
-.mditor-milkdown .milkdown-code-block .tok-punctuation,
-.mditor-milkdown .milkdown-code-block .tok-separator {
+.mditor-milkdown .milkdown-code-block .tok-propertyName {
+  color: var(--tok-attr);
+}
+.mditor-milkdown .milkdown-code-block .tok-definition,
+.mditor-milkdown .milkdown-code-block .tok-macroName {
+  color: var(--tok-func);
+}
+.mditor-milkdown .milkdown-code-block .tok-deleted {
+  color: var(--tok-keyword);
+}
+.mditor-milkdown .milkdown-code-block .tok-punctuation {
   color: var(--tok-punct);
 }
 .mditor-milkdown .milkdown-code-block .tok-meta {
   color: var(--tok-meta);
+}
+.mditor-milkdown .milkdown-code-block .tok-invalid {
+  color: var(--tok-keyword);
+  text-decoration: underline wavy;
+}
+/* 复合类（classHighlighter 的定义位输出）：特异性高于上面的单类规则 */
+.mditor-milkdown .milkdown-code-block .tok-variableName.tok-definition {
+  color: var(--tok-func);
+}
+.mditor-milkdown .milkdown-code-block .tok-propertyName.tok-definition {
+  color: var(--tok-attr);
 }
 
 /* 静态渲染：让 .hljs 背景透明（由外层 <pre> 的 --code-bg 决定底色），

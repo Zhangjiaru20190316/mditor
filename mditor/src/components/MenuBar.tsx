@@ -11,7 +11,7 @@
 // React.memo：App 每次按键都重渲染，但本组件 props（focusMode/theme/
 // onDispatch）只在模式或主题变化时才变 —— 打字期间完全跳过重渲染。
 
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CheckIcon } from "./icons";
 
 /** 单个菜单条目：自定义项（id 转发 dispatchMenu）或分隔线。 */
@@ -107,7 +107,6 @@ function buildMenus(focusMode: boolean, theme: string): MenuDef[] {
       label: "帮助",
       entries: [
         item("app_settings", "设置…"),
-        item("app_check_update", "检查更新…"),
         sep(),
         item("app_about", "关于 Mditor"),
       ],
@@ -122,7 +121,12 @@ export const MenuBar = memo(function MenuBar({ focusMode, theme, onDispatch }: P
   const btnRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
 
-  const menus = buildMenus(focusMode, theme);
+  // 全部条目里只有 4 条动态（专注模式勾选 + 3 个主题圆点），其余全静态
+  // —— 用 useMemo 把结构稳定下来，仅 focusMode/theme 变化时重建，pos/open 等
+  // 无关重渲染不再产生新数组（也避免 keydown 副作用因 menus 引用变化重挂）。
+  const menus = useMemo(() => buildMenus(focusMode, theme), [focusMode, theme]);
+  // keydown 副作用实际只用到条目数量（导航循环取模），抽出为原始值依赖。
+  const menuCount = menus.length;
   const close = useCallback(() => setOpen(null), []);
 
   const activate = useCallback(
@@ -152,7 +156,19 @@ export const MenuBar = memo(function MenuBar({ focusMode, theme, onDispatch }: P
   // 用捕获阶段注册 —— 本组件随状态变化会重挂监听（排到 App 的全局 keydown
   // 之后），捕获恒先于冒泡执行，Esc 的 stopImmediatePropagation 才能保证
   // 「先关菜单、不连带退出焦点模式」。
+  // 依赖收敛到实际使用的值：open + menuCount（原始值，只在菜单数量变化时才
+  // 改变）；moveFocus 移入 effect 内，不参与依赖 → pos 等无关渲染不再重挂。
   useEffect(() => {
+    /** 在当前下拉层的条目间移动 DOM 焦点（Enter 由聚焦的 <button> 原生触发）。 */
+    const moveFocus = (dir: 1 | -1) => {
+      const items = dropdownRef.current?.querySelectorAll<HTMLButtonElement>(".mb-item");
+      if (!items || items.length === 0) return;
+      const list = Array.from(items);
+      const idx = list.findIndex((b) => b === document.activeElement);
+      const next = idx === -1 ? (dir === 1 ? 0 : list.length - 1) : (idx + dir + list.length) % list.length;
+      list[next].focus();
+    };
+
     const onKey = (e: KeyboardEvent) => {
       if (open === null) {
         if (e.key === "Alt" && !e.repeat && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
@@ -161,7 +177,7 @@ export const MenuBar = memo(function MenuBar({ focusMode, theme, onDispatch }: P
         }
         return;
       }
-      const count = menus.length;
+      const count = menuCount;
       switch (e.key) {
         case "Escape":
           e.preventDefault();
@@ -193,18 +209,7 @@ export const MenuBar = memo(function MenuBar({ focusMode, theme, onDispatch }: P
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- menus 随 props 重建
-  }, [open, menus]);
-
-  /** 在当前下拉层的条目间移动 DOM 焦点（Enter 由聚焦的 <button> 原生触发）。 */
-  const moveFocus = (dir: 1 | -1) => {
-    const items = dropdownRef.current?.querySelectorAll<HTMLButtonElement>(".mb-item");
-    if (!items || items.length === 0) return;
-    const list = Array.from(items);
-    const idx = list.findIndex((b) => b === document.activeElement);
-    const next = idx === -1 ? (dir === 1 ? 0 : list.length - 1) : (idx + dir + list.length) % list.length;
-    list[next].focus();
-  };
+  }, [open, menuCount]);
 
   return (
     <nav className="mb" aria-label="应用菜单">

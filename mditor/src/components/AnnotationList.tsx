@@ -15,6 +15,7 @@
 import { memo, useCallback, useDeferredValue, useMemo, useState } from "react";
 import type { Annotation } from "../lib/annotations";
 import { getAnchorSnippet } from "../lib/annotations";
+import { confirmDialog } from "../lib/dialogs";
 
 interface Props {
   annotations: Annotation[];
@@ -85,9 +86,11 @@ export const AnnotationList = memo(function AnnotationList({
 
   const handleDelete = useCallback(
     (a: Annotation) => {
-      if (!confirm(`删除批注 #${a.marker}？`)) return;
-      if (editingId === a.id) cancelEdit();
-      onDelete(a.id);
+      void (async () => {
+        if (!(await confirmDialog(`删除批注 #${a.marker}？`))) return;
+        if (editingId === a.id) cancelEdit();
+        onDelete(a.id);
+      })();
     },
     [editingId, cancelEdit, onDelete]
   );

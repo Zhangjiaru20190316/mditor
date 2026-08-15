@@ -17,7 +17,6 @@
 import { memo, useEffect, useState } from "react";
 import type { EditMode } from "../types";
 import { formatBytes, getHeapUsage, IS_DEV } from "../lib/memory";
-import { bumpLeakCounter } from "../lib/leakCounters";
 import { SidebarIcon, AiIcon, ExpandIcon } from "./icons";
 
 interface Props {
@@ -67,7 +66,6 @@ export const StatusBar = memo(function StatusBar({
   useEffect(() => {
     if (!IS_DEV) return;
     const tick = () => {
-      bumpLeakCounter("statusTicks");
       const h = getHeapUsage();
       setHeap(h ? { used: h.used, limit: h.limit } : null);
     };

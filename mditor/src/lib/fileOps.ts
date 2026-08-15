@@ -14,10 +14,10 @@ import {
   exists,
 } from "@tauri-apps/plugin-fs";
 import { dirname, join } from "./path-shim";
-import { isMarkdown, type TreeNode } from "./tauriFs";
 
 // Characters forbidden in file names on Windows (and poor practice elsewhere).
 // Backslash is intentionally matched via the literal in the class.
+// eslint-disable-next-line no-control-regex -- 文件名合法性校验需要显式匹配控制字符
 const INVALID_NAME_CHARS = /[<>:"/\\|?*\u0000-\u001f]/;
 // Windows reserved device names — can't be a file/folder name on their own.
 const RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i;
@@ -84,25 +84,6 @@ export async function pathExists(path: string): Promise<boolean> {
  */
 export function withName(path: string, newName: string): string {
   return join(dirname(path), newName);
-}
-
-/**
- * Collect every markdown file path under a tree node (inclusive). For a file
- * node, returns [path] if it's markdown, else []. For a dir, walks all
- * descendants. Used after a delete to know which paths to drop from the recent
- * list and to detect whether the currently open file vanished.
- */
-export function collectMdPaths(node: TreeNode): string[] {
-  const out: string[] = [];
-  const walk = (n: TreeNode) => {
-    if (n.isDir) {
-      n.children?.forEach(walk);
-    } else if (isMarkdown(n.name)) {
-      out.push(n.path);
-    }
-  };
-  walk(node);
-  return out;
 }
 
 /**

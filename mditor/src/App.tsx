@@ -18,7 +18,6 @@ import { AnnotationList } from "./components/AnnotationList";
 import { SearchBar } from "./components/SearchBar";
 import { StatusBar } from "./components/StatusBar";
 import { SettingsModal } from "./components/SettingsModal";
-import { UpdateModal } from "./components/UpdateModal";
 import { TitleBar } from "./components/TitleBar";
 import { AboutModal } from "./components/AboutModal";
 import {
@@ -36,16 +35,18 @@ import { useSettings } from "./hooks/useSettings";
 import { useFile } from "./hooks/useFile";
 import { useResizable } from "./hooks/useResizable";
 import { useAnnotations } from "./hooks/useAnnotations";
-import { useLeakProbe } from "./hooks/useLeakProbe";
 import { buildAnnotationMessages, chatStream, isAiConfigured } from "./lib/ai";
-import { baseName, pickFolder, dirOf } from "./lib/tauriFs";
+import { baseName, pickFolder, dirOf, MD_EXT_RE } from "./lib/tauriFs";
 import { readCached } from "./lib/filePrefetch";
 import { toPosix } from "./lib/path-shim";
 import { exportHtml, exportPdf, exportPng, exportDocx } from "./lib/exporter";
 import { copyRich } from "./lib/clipboard";
+import { showAlert, confirmDialog } from "./lib/dialogs";
 import { getWorkspace, setWorkspace, clearRecentPath } from "./lib/store";
-import { checkForUpdate, type UpdateInfo } from "./lib/updater";
+import { dismissSplash } from "./lib/splash";
 import { takeHealSnapshot } from "./lib/session";
+import { countWords } from "./lib/textStats";
+import type { FlatHeading, OutlineNode } from "./types";
 
 type SidebarTab = "tree" | "outline" | "recent" | "annotations";
 
@@ -57,9 +58,6 @@ const MIN_SWITCH_MS = 300;
 export default function App() {
   const settingsApi = useSettings();
   const fileApi = useFile();
-  // TEMPORARY: leak-counter probe (see hooks/useLeakProbe). Remove once the idle
-  // heap leak is located.
-  useLeakProbe();
   const editorRef = useRef<EditorHandle>(null);
   const aiPanelRef = useRef<AiPanelHandle>(null);
 
@@ -79,7 +77,6 @@ export default function App() {
   workspaceRef.current = workspace;
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [updateModal, setUpdateModal] = useState<UpdateInfo | null>(null);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [recentKey, setRecentKey] = useState(0);
@@ -88,6 +85,10 @@ export default function App() {
   // 修改）时先清掉前一个定时器再设新的，避免定时器堆积与过期 closure 持有状态。
   const statusTimerRef = useRef<number | undefined>(undefined);
   const [liveMarkdown, setLiveMarkdown] = useState("");
+  // Headings extracted from the live ProseMirror doc (rich-mode outline source;
+  // ids are Milkdown's own <hN id>s so outline jumps can't miss). Null until
+  // the editor reports its first heading set.
+  const [docHeadings, setDocHeadings] = useState<FlatHeading[] | null>(null);
   const [editMode, setEditMode] = useState<"wysiwyg" | "ir" | "sv">("wysiwyg");
 
   // ---- iOS-style 「先响应动画，再加载内容」file switching ----
@@ -132,7 +133,15 @@ export default function App() {
 
   // load saved workspace on boot
   useEffect(() => {
-    getWorkspace().then(setWs);
+    getWorkspace()
+      .then(setWs)
+      // 工作区恢复失败也要放行开屏，不能把用户挡在主界面外
+      .catch(() => undefined)
+      .finally(() => {
+        // 双 rAF：等「外壳 + 恢复的工作区」首帧提交后再淡出开屏，
+        // 保证开屏下方不是空壳（与 openPath 里的双 rAF 同理）
+        requestAnimationFrame(() => requestAnimationFrame(dismissSplash));
+      });
   }, []);
 
   // Cancel any pending live-markdown rAF on unmount so a late flush can't
@@ -142,11 +151,6 @@ export default function App() {
       if (liveMdRafRef.current != null) cancelAnimationFrame(liveMdRafRef.current);
     };
   }, []);
-
-  // re-apply theme when settings change
-  useEffect(() => {
-    editorRef.current && settingsApi.settings; // touch for reactivity
-  }, [settingsApi.settings]);
 
   const openPath = useCallback(
     async (path: string) => {
@@ -202,7 +206,7 @@ export default function App() {
         }
       } catch (e) {
         if (token !== switchTokenRef.current) return;
-        alert(`打开失败：${String(e)}`);
+        void showAlert(`打开失败：${String(e)}`, "Mditor", "error");
       } finally {
         // Only the newest switch owns clearing the UI state; older loads that
         // were superseded leave it to whichever click won.
@@ -311,17 +315,23 @@ export default function App() {
     [settingsApi.settings.excludedPaths]
   );
   const handleExclude = useCallback((path: string) => {
-    const cur = settingsRef.current.settings.excludedPaths ?? [];
-    if (cur.includes(path)) return; // dedup
-    void settingsRef.current.update({ excludedPaths: [...cur, path] });
+    // Functional update: consecutive excludes must chain off the LATEST list,
+    // not a ref snapshot (the same lost-update race update() now guards against).
+    void settingsRef.current.update((prev) => {
+      const cur = prev.excludedPaths ?? [];
+      return cur.includes(path) ? {} : { excludedPaths: [...cur, path] };
+    });
   }, []);
 
   // Open an externally-supplied path (double-clicked .md / `mditor.exe file.md`),
   // but confirm first if the current document has unsaved edits. Reuses the
   // stable openPath so it always reads the live file api via ref.
   const maybeOpen = useCallback(
-    (path: string) => {
-      if (fileApiRef.current.doc.dirty && !confirm("当前文档未保存，是否打开新文件？")) {
+    async (path: string) => {
+      if (
+        fileApiRef.current.doc.dirty &&
+        !(await confirmDialog("当前文档未保存，是否打开新文件？"))
+      ) {
         return;
       }
       void openPath(path);
@@ -338,7 +348,8 @@ export default function App() {
   const liveMdRafRef = useRef<number | null>(null);
   const liveMdRef = useRef("");
   const onInput = useCallback((md: string) => {
-    fileApiRef.current.markDirty();
+    // markDirty 由 Editor 的 onInput 桥接负责（每字符一次），这里只做
+    // rAF 合并的 markdown 镜像更新。
     liveMdRef.current = md;
     if (liveMdRafRef.current == null) {
       liveMdRafRef.current = requestAnimationFrame(() => {
@@ -358,31 +369,6 @@ export default function App() {
     liveMdRef.current = "";
     setLiveMarkdown("");
   }, []);
-
-  // ----- update check: manual (from menu) or silent (on startup) -----
-  // manual=true → always surface a result (modal on update, alert on "latest"/error).
-  // manual=false → only open the modal when an update is available; swallow errors.
-  const doCheckUpdate = useCallback(async (manual: boolean) => {
-    try {
-      const info = await checkForUpdate();
-      if (info.available) {
-        setUpdateModal(info);
-      } else if (manual) {
-        alert("当前已是最新版本");
-      }
-    } catch (e) {
-      if (manual) alert(`检查更新失败：${String(e)}`);
-    }
-  }, []); // stable — only uses stable setter + imported fn
-
-  // Silent update check on boot: 6s after mount, query the endpoint and open
-  // the update modal only if a newer version exists. Errors are swallowed so
-  // a flaky network never disturbs startup. Delayed so it doesn't race with
-  // the heavier Vditor/init boot sequence.
-  useEffect(() => {
-    const t = setTimeout(() => { void doCheckUpdate(false); }, 6000);
-    return () => clearTimeout(t);
-  }, [doCheckUpdate]);
 
   // ----- menu events from Rust (registered ONCE, reads latest hooks via refs) -----
   // macOS 保留原生菜单，其点击以 `menu` 事件转发到这里；Windows 的前端菜单栏
@@ -415,6 +401,9 @@ export default function App() {
   }, [maybeOpen]);
 
   // ----- global keyboard shortcuts (registered ONCE) -----
+  // Ctrl+S/N/O/I 等与菜单同名的动作统一转发 dispatchMenu（单一实现来源），
+  // 这里只保留事件层职责：preventDefault 与没有菜单 id 的键（Ctrl+F/H 搜索、
+  // Ctrl+\ 侧边栏、Esc 焦点模式、F11）。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Esc 退出焦点模式（仅焦点模式开启时拦截）
@@ -433,19 +422,10 @@ export default function App() {
       }
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
-      const fa = fileApiRef.current;
       switch (e.key.toLowerCase()) {
         case "s":
           e.preventDefault();
-          if (e.shiftKey) {
-            void fa.saveAs(() => editorRef.current?.getValue() ?? "");
-          } else {
-            // 乐观反馈：立即提示「已保存」，不等待落盘；失败时覆盖为「保存失败」。
-            flashStatus("已保存");
-            fa.save(() => editorRef.current?.getValue() ?? "").catch(() =>
-              flashStatus("保存失败", 5000)
-            );
-          }
+          dispatchMenuRef.current(e.shiftKey ? "file_save_as" : "file_save");
           break;
         case "f":
           e.preventDefault();
@@ -460,26 +440,11 @@ export default function App() {
           break;
         case "n":
           e.preventDefault();
-          if (!fa.doc.dirty || confirm("当前文档未保存，确认新建？")) {
-            fa.newDoc();
-            resetLiveMd();
-          }
+          dispatchMenuRef.current("file_new");
           break;
         case "o":
           e.preventDefault();
-          if (e.shiftKey) {
-            void (async () => {
-              const f = await pickFolder();
-              if (f) {
-                setWs(f);
-                await setWorkspace(f);
-                setSidebarOpen(true);
-                setSidebarTab("tree");
-              }
-            })();
-          } else {
-            void fa.open().then((ok) => ok && setRecentKey((k) => k + 1));
-          }
+          dispatchMenuRef.current(e.shiftKey ? "file_open_folder" : "file_open");
           break;
         case "\\":
           e.preventDefault();
@@ -487,7 +452,7 @@ export default function App() {
           break;
         case "i":
           e.preventDefault();
-          setAiOpen((o) => !o);
+          dispatchMenuRef.current("view_ai_assistant");
           break;
       }
     };
@@ -517,7 +482,7 @@ export default function App() {
       const ctx = { html, css, docPath: fileApi.doc.path };
       const name =
         (fileApi.doc.path ? baseName(fileApi.doc.path) : "untitled").replace(
-          /\.md$|\.markdown$/i,
+          MD_EXT_RE,
           ""
         ) || "untitled";
       try {
@@ -527,7 +492,11 @@ export default function App() {
         else if (kind === "png") {
           const el = ed.previewEl();
           if (!el) {
-            alert("当前模式下无可截图的预览区，请切换到所见即所得/预览模式");
+            void showAlert(
+              "当前模式下无可截图的预览区，请切换到所见即所得/预览模式",
+              "Mditor",
+              "warning"
+            );
             return;
           }
           const isDarkTheme =
@@ -537,7 +506,7 @@ export default function App() {
           await exportPng(el, `${name}.png`, bg);
         }
       } catch (e) {
-        alert(`导出失败：${String(e)}`);
+        void showAlert(`导出失败：${String(e)}`, "Mditor", "error");
       }
     },
     [fileApi.doc.path, settingsApi.settings.theme]
@@ -552,7 +521,7 @@ export default function App() {
       await copyRich(html, plain, collectThemeCss());
       flashStatus("已复制富文本");
     } catch (e) {
-      alert(`复制失败：${String(e)}`);
+      void showAlert(`复制失败：${String(e)}`, "Mditor", "error");
     }
   }, [flashStatus]);
 
@@ -570,9 +539,11 @@ export default function App() {
     const sa = settingsRef.current;
     switch (id) {
       case "file_new":
-        if (fa.doc.dirty && !confirm("当前文档未保存，确认新建？")) return;
-        fa.newDoc();
-        resetLiveMd();
+        void (async () => {
+          if (fa.doc.dirty && !(await confirmDialog("当前文档未保存，确认新建？"))) return;
+          fa.newDoc();
+          resetLiveMd();
+        })();
         break;
       case "file_open":
         void (async () => {
@@ -667,9 +638,6 @@ export default function App() {
       case "app_settings":
         setSettingsOpen(true);
         break;
-      case "app_check_update":
-        void doCheckUpdate(true);
-        break;
       case "app_about":
         setAboutOpen(true);
         break;
@@ -691,20 +659,28 @@ export default function App() {
   const dispatchMenuRef = useRef(dispatchMenu);
   dispatchMenuRef.current = dispatchMenu;
 
-  const jumpToAnchor = useCallback((anchorId: string) => {
-    // Milkdown renders <hN id="..."> matching the outline slug. Focus FIRST,
-    // then scroll: native focus() scrolls the caret into view, and when it ran
-    // AFTER an async `smooth` scrollIntoView it overrode the heading scroll and
-    // yanked the viewport back to the caret (document start) — so every outline
-    // click landed at the top. Focusing first and scrolling instantly
-    // (behavior:"auto") makes the heading scroll the last synchronous one, so
-    // it wins. (Same reason jumpToAnnotation uses instant scrolling.)
-    editorRef.current?.previewEl()?.focus();
-    const el =
-      document.getElementById(anchorId) ||
-      document.querySelector<HTMLElement>(`[data-id="${anchorId}"]`);
-    el?.scrollIntoView({ behavior: "auto", block: "start" });
-  }, []);
+  const jumpToHeading = useCallback(
+    (node: OutlineNode) => {
+      // sv mode: the Milkdown DOM is hidden and stale, so target the source
+      // textarea directly via the heading's recorded line.
+      if (editMode === "sv") {
+        if (node.line != null) editorRef.current?.jumpToSourceLine(node.line);
+        return;
+      }
+      // Milkdown renders <hN id="..."> matching the outline slug. Focus FIRST,
+      // then scroll: native focus() scrolls the caret into view, and when it ran
+      // AFTER an async `smooth` scrollIntoView it overrode the heading scroll and
+      // yanked the viewport back to the caret (document start) — so every outline
+      // click landed at the top. Focusing first and scrolling instantly
+      // (behavior:"auto") makes the heading scroll the last synchronous one, so
+      // it wins. (Same reason jumpToAnnotation uses instant scrolling.)
+      editorRef.current?.previewEl()?.focus();
+      document
+        .getElementById(node.id)
+        ?.scrollIntoView({ behavior: "auto", block: "start" });
+    },
+    [editMode]
+  );
 
   // Jump the editor to an annotation's marker badge and open its popover.
   // The AnnotationPopover opens via a global mousedown listener, so after
@@ -713,7 +689,7 @@ export default function App() {
   // real click). No-op if the marker isn't currently rendered (e.g. split-view
   // mode where markers aren't badged).
   const jumpToAnnotation = useCallback((id: string) => {
-    // Focus the editor surface FIRST — same reason as jumpToAnchor above:
+    // Focus the editor surface FIRST — same reason as jumpToHeading above:
     // calling focus() AFTER scrollIntoView restores the (stale) selection and
     // the browser scrolls the caret back into view, yanking the viewport away
     // from the marker so the click appeared not to jump at all. Focusing first
@@ -927,14 +903,7 @@ export default function App() {
   // Defer expensive recompute of word count so a fast typist in a large
   // document doesn't get key-input lag — React runs this at lower priority.
   const deferredMarkdown = useDeferredValue(liveMarkdown);
-  const words = useMemo(() => {
-    const md = deferredMarkdown;
-    if (!md) return 0;
-    // CJK chars + latin words
-    const cjk = (md.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g) ?? []).length;
-    const latin = (md.replace(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g, " ").match(/[A-Za-z0-9]+/g) ?? []).length;
-    return cjk + latin;
-  }, [deferredMarkdown]);
+  const words = useMemo(() => countWords(deferredMarkdown), [deferredMarkdown]);
 
   const docName = fileApi.doc.path ? baseName(fileApi.doc.path) : "未命名.md";
 
@@ -1032,7 +1001,12 @@ export default function App() {
               </div>
             ))}
           {sidebarTab === "outline" && (
-            <Outline markdown={liveMarkdown} onJump={jumpToAnchor} />
+            <Outline
+              mode={editMode}
+              markdown={liveMarkdown}
+              headings={docHeadings}
+              onJump={jumpToHeading}
+            />
           )}
           {sidebarTab === "recent" && (
             <RecentList onOpen={openPath} refreshKey={recentKey} />
@@ -1089,6 +1063,7 @@ export default function App() {
           settings={settingsApi.settings}
           fileApi={fileApi}
           onInput={onInput}
+          onHeadings={setDocHeadings}
           onAutosaved={onAutosaved}
           onWatcherStatus={onWatcherStatus}
           onModeChange={setEditMode}
@@ -1206,19 +1181,7 @@ export default function App() {
         onChange={settingsApi.update}
       />
 
-      <UpdateModal
-        open={updateModal !== null}
-        version={updateModal?.version}
-        body={updateModal?.body}
-        update={updateModal?.update}
-        onClose={() => setUpdateModal(null)}
-      />
-
-      <AboutModal
-        open={aboutOpen}
-        onClose={() => setAboutOpen(false)}
-        onCheckUpdate={() => void doCheckUpdate(true)}
-      />
+      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </div>
   );
 }

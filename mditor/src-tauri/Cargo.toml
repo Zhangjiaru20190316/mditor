@@ -1,6 +1,6 @@
 [package]
 name = "mditor"
-version = "3.4.1"
+version = "3.5.4"
 description = "A local-first Markdown editor inspired by Typora"
 authors = ["Mditor"]
 edition = "2021"
@@ -20,11 +20,8 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-store = "2"
-# Auto-update: checks a remote endpoint for a newer signed update package and,
-# if found, downloads + installs it on next launch. The matching private key
-# (kept OUT of the repo) signs each release bundle; the pubkey below verifies it.
-tauri-plugin-updater = "2"
-# Used by the updater flow to relaunch the app after an update is installed.
+# Used to exit the app from the frontend menu (app_exit) and — should the
+# updater ever return — relaunch after an update.
 tauri-plugin-process = "2"
 # Desktop-only: intercepts a second launch (e.g. double-clicking a .md while
 # the app is already running) so the file path is forwarded to the live process
@@ -36,7 +33,6 @@ serde_json = "1"
 # dependency on Windows (the bundled reqwest uses native-tls by default).
 # `stream` enables resp.bytes_stream() for SSE streaming in ai_chat_stream.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 # StreamExt::next over the reqwest byte stream while parsing SSE chunks.
 futures-util = "0.3"
 

@@ -9,7 +9,6 @@
 import { LazyStore } from "@tauri-apps/plugin-store";
 import {
   DEFAULT_SETTINGS,
-  newAiModelId,
   type AiModelConfig,
   type RecentFile,
   type Settings,
@@ -76,26 +75,36 @@ export async function saveSettings(s: Settings): Promise<void> {
   await store.save();
 }
 
+// In-memory mirror of the `recent` list: keeps hot-path reads (every save
+// pushes here) off the IPC round-trip. The store file stays the source of
+// truth across sessions; within one session every mutation flows through the
+// functions below, so the cache can't go stale.
+let recentCache: RecentFile[] | null = null;
+
 export async function loadRecent(): Promise<RecentFile[]> {
-  return (await store.get<RecentFile[]>("recent")) ?? [];
+  if (recentCache) return recentCache;
+  recentCache = (await store.get<RecentFile[]>("recent")) ?? [];
+  return recentCache;
 }
 
 export async function pushRecent(file: RecentFile): Promise<void> {
   const list = await loadRecent();
-  const without = list.filter((r) => r.path !== file.path);
-  without.unshift(file);
-  // keep the 30 most recent
-  const trimmed = without.slice(0, 30);
+  // Ctrl+S fires this after every save; when the file is ALREADY the most
+  // recent entry there is nothing to reorder or persist — skip the whole
+  // set+save IPC write (this per-save churn was flagged by the project's own
+  // diagnostics as a steady memory-growth contributor).
+  if (list[0]?.path === file.path) return;
+  const trimmed = [file, ...list.filter((r) => r.path !== file.path)].slice(0, 30);
+  recentCache = trimmed;
   await store.set("recent", trimmed);
   await store.save();
 }
 
 export async function clearRecentPath(path: string): Promise<void> {
   const list = await loadRecent();
-  await store.set(
-    "recent",
-    list.filter((r) => r.path !== path)
-  );
+  const trimmed = list.filter((r) => r.path !== path);
+  recentCache = trimmed;
+  await store.set("recent", trimmed);
   await store.save();
 }
 

@@ -79,11 +79,12 @@ export function useResizable(opts: UseResizableOptions): ResizerHandlers {
       pendingW = clamp(Math.round(startWidth + delta), o.min, o.max);
       if (rafId == null) rafId = requestAnimationFrame(flush);
     };
-    // 抽出"拆除监听器 + 复位 body 样式 + 取消 rAF"为独立函数：pointerup 与
-    // 组件卸载两种路径都要走它。
+    // 抽出"拆除监听器 + 复位 body 样式 + 取消 rAF"为独立函数：pointerup、
+    // pointercancel 与组件卸载三种路径都要走它。
     const teardown = () => {
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", cancel);
       document.body.classList.remove("is-resizing");
       document.body.style.userSelect = "";
       document.body.style.cursor = "";
@@ -103,9 +104,22 @@ export function useResizable(opts: UseResizableOptions): ResizerHandlers {
       o.onMove(w);
       o.onCommit(w);
     };
+    // 触摸/笔输入常被系统中断（掌压、系统手势接管、窗口失焦）——浏览器此时
+    // 派发 pointercancel 而非 pointerup。若只挂 up，move/up 监听器会永久残留
+    // 在 document 上并持有整个拖拽闭包。中断点仍在拖拽位置，等价于"在当前
+    // 位置松手"：把最后挂起的宽度落到视觉并提交，保持视觉与持久化一致。
+    const cancel = () => {
+      teardown();
+      teardownRef.current = null;
+      o.onMove(pendingW);
+      o.onCommit(pendingW);
+    };
 
+    // 未使用 setPointerCapture（监听器挂 document 已覆盖拖出元素的移动），
+    // 因此没有 capture/release 配对问题，只需保证监听器都经 teardown 移除。
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", cancel);
     teardownRef.current = teardown;
   }, []);
 

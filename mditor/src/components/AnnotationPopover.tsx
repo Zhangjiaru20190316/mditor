@@ -12,6 +12,7 @@
 
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Annotation } from "../lib/annotations";
+import { confirmDialog } from "../lib/dialogs";
 import type { Theme } from "../types";
 import { MarkdownText } from "./MarkdownText";
 import { AnnotationIcon, CloseIcon } from "./icons";
@@ -221,10 +222,12 @@ export const AnnotationPopover = memo(function AnnotationPopover({
               className="anno-btn danger"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
-                if (confirm("删除这条批注？")) {
-                  onDelete(active.id);
-                  close();
-                }
+                void (async () => {
+                  if (await confirmDialog("删除这条批注？")) {
+                    onDelete(active.id);
+                    close();
+                  }
+                })();
               }}
             >
               删除

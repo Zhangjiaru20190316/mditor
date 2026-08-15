@@ -1,20 +1,20 @@
 // 文件预读缓存（LRU）：文件树 hover 时预读 markdown 文件，openPath 命中缓存
 // 则跳过 readTextFile，让切换近乎瞬时。预读不阻塞、失败静默，绝不污染错误态。
-// 只缓存 ≤1MB 的 .md/.markdown 文件；超出上限按 LRU 淘汰最久未访问的项。
+// 只缓存 ≤1MB 的 Markdown 文件；超出上限按 LRU 淘汰最久未访问的项。
 
 import { readTextFile, stat } from "@tauri-apps/plugin-fs";
 import { extname } from "./path-shim";
+import { MD_EXTS } from "./tauriFs";
 
 const CAPACITY = 20;
 const MAX_BYTES = 1 * 1024 * 1024; // 1 MiB —— 超过此大小不预读（避免占用过多内存）
-const PREFETCH_EXTS = new Set([".md", ".markdown"]);
 
 // Map 保持插入序：首个 entry 即最久未访问，用作 LRU 淘汰对象。
 const cache = new Map<string, string>();
 
-/** 是否值得预读：仅 .md / .markdown。 */
+/** 是否值得预读：所有受支持的 Markdown 扩展名（与 tauriFs.MD_EXTS 同源）。 */
 export function isPrefetchable(path: string): boolean {
-  return PREFETCH_EXTS.has(extname(path).toLowerCase());
+  return MD_EXTS.has(extname(path).toLowerCase());
 }
 
 /** 命中缓存则返回内容，否则 undefined（命中时刷新到队尾 = 最近访问）。 */

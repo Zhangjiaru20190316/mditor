@@ -105,9 +105,15 @@ export function useFile(): FileApi {
     async (getContent: () => string) => {
       const d = docRef.current;
       const content = getContent();
-      const suggest = d.path
-        ? baseName(d.path)
-        : d.content.split("\n")[0]?.slice(0, 40) || "untitled.md";
+      // First-line-as-name is free-form prose — strip characters Windows
+      // forbids in file names (plus control chars and trailing dots/spaces),
+      // or the save dialog can end up with an unusable default name.
+      const title = (d.content.split("\n")[0] ?? "")
+        .slice(0, 40)
+        // eslint-disable-next-line no-control-regex -- 控制字符正是要清洗的目标
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, "")
+        .replace(/[\s.]+$/, "");
+      const suggest = d.path ? baseName(d.path) : title || "untitled.md";
       const path = await saveMdAs(content, suggest.endsWith(".md") ? suggest : `${suggest}.md`);
       if (!path) return false;
       setDoc({ path, content, dirty: false });

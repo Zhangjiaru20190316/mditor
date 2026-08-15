@@ -27,26 +27,39 @@ export const SearchBar = memo(function SearchBar({ open, onClose, getMarkdown, s
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [count, setCount] = useState(0);
   const findRef = useRef<HTMLInputElement>(null);
+  // ~200ms 防抖定时器：大文档上每次击键同步对整篇 markdown 跑 RegExp 会阻塞
+  // 输入。计数走防抖后的快照；回车 / ↓ 跳转与替换仍即时读最新 find。
+  const countTimerRef = useRef<number | null>(null);
 
   // focus the find field when opening
   useEffect(() => {
     if (open) findRef.current?.focus();
   }, [open]);
 
-  // recompute matches
+  // recompute matches (debounced — the full-document scan is O(doc) per keystroke)
   useEffect(() => {
     if (!find) {
       setCount(0);
       return;
     }
-    const md = getMarkdown();
-    const flags = caseSensitive ? "g" : "gi";
-    try {
-      const re = new RegExp(escapeRegExp(find), flags);
-      setCount((md.match(re) ?? []).length);
-    } catch {
-      setCount(0);
-    }
+    countTimerRef.current = window.setTimeout(() => {
+      countTimerRef.current = null;
+      const md = getMarkdown();
+      const flags = caseSensitive ? "g" : "gi";
+      try {
+        const re = new RegExp(escapeRegExp(find), flags);
+        setCount((md.match(re) ?? []).length);
+      } catch {
+        setCount(0);
+      }
+    }, 200);
+    return () => {
+      // 重输（依赖变化）或卸载时重置挂起的防抖轮询。
+      if (countTimerRef.current != null) {
+        window.clearTimeout(countTimerRef.current);
+        countTimerRef.current = null;
+      }
+    };
   }, [find, caseSensitive, getMarkdown]);
 
   // keyboard: Esc closes
@@ -115,6 +128,13 @@ export const SearchBar = memo(function SearchBar({ open, onClose, getMarkdown, s
           placeholder="查找…"
           value={find}
           onChange={(e) => setFind(e.target.value)}
+          onKeyDown={(e) => {
+            // 回车 = 查找下一处：立即用最新输入跳转，不等防抖。
+            if (e.key === "Enter") {
+              e.preventDefault();
+              highlightNext();
+            }
+          }}
         />
         <button className="sb-btn" onClick={highlightNext} title="查找下一个">↓</button>
         <label className="sb-toggle" title="区分大小写">

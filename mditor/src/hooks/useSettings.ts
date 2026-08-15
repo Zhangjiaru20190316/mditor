@@ -39,7 +39,15 @@ const THEME_LOADERS: Partial<Record<Theme, () => Promise<unknown>>> = {
 export interface SettingsApi {
   settings: Settings;
   loading: boolean;
-  update: (patch: Partial<Settings>) => Promise<void>;
+  /**
+   * Merge a patch into the settings and persist. Accepts a plain Partial or a
+   * function of the CURRENT settings (functional update) — the functional form
+   * is required for back-to-back updates (e.g. toggles, list appends) so each
+   * call sees the previous call's patch instead of a stale snapshot.
+   */
+  update: (
+    patch: Partial<Settings> | ((prev: Settings) => Partial<Settings>)
+  ) => Promise<void>;
   setTheme: (t: Theme) => Promise<void>;
   toggleFocus: () => Promise<void>;
   /** Re-read the custom CSS file (call after editing it externally). */
@@ -88,20 +96,40 @@ export function useSettings(): SettingsApi {
     })();
   }, []);
 
-  const update = useCallback(async (patch: Partial<Settings>) => {
-    const next = { ...settingsRef.current, ...patch };
-    setSettings(next);
-    await saveSettings(next);
-  }, []);
+  const update = useCallback(
+    async (
+      patch: Partial<Settings> | ((prev: Settings) => Partial<Settings>)
+    ) => {
+      // Merge via a functional setSettings so concurrent setStates (e.g. the
+      // initial load) can't be clobbered, and write the merged value back into
+      // settingsRef EAGERLY so two back-to-back update() calls chain instead of
+      // both reading the same stale snapshot and dropping the first patch
+      // (lost-update). `settingsRef.current = settings` on each render then
+      // converges to the same object.
+      const apply = (prev: Settings): Settings => {
+        const p = typeof patch === "function" ? patch(prev) : patch;
+        const next = { ...prev, ...p };
+        settingsRef.current = next;
+        return next;
+      };
+      const next = apply(settingsRef.current);
+      setSettings((prev) => apply(prev));
+      await saveSettings(next);
+    },
+    []
+  );
 
   const setTheme = useCallback(
     async (t: Theme) => update({ theme: t }),
     [update]
   );
 
-  const toggleFocus = useCallback(async () => {
-    await update({ focusMode: !settingsRef.current.focusMode });
-  }, [update]);
+  // Functional update: read the current value through the updater, not through
+  // a ref snapshot (two rapid toggles must both apply).
+  const toggleFocus = useCallback(
+    async () => update((s) => ({ focusMode: !s.focusMode })),
+    [update]
+  );
 
   const reloadCustomCss = useCallback(async () => {
     await applyCustomCss(settingsRef.current.customCssPath);

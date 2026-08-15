@@ -108,18 +108,24 @@ function printHtml(fullHtml: string): Promise<void> {
     // 每个隐藏 iframe（含其完整 document 对象）会一直挂到 60s 兜底超时才释放，
     // 堆积成可观的内存占用。
     let settled = false;
+    let settleTimer: number | undefined;
     let fallbackTimer: number | undefined;
     const cleanup = () => {
       if (settled) return;
       settled = true;
+      if (settleTimer !== undefined) window.clearTimeout(settleTimer);
       if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer);
       iframe.remove();
     };
     iframe.onload = () => {
       try {
         const win = iframe.contentWindow;
-        // give layout/fonts a tick to settle before invoking print
-        setTimeout(() => {
+        // give layout/fonts a tick to settle before invoking print. Track the
+        // handle and re-check `settled` inside: if cleanup already ran (e.g.
+        // doc.write fires onload twice, or onerror lands after onload), the
+        // pending callback must not call print() on a removed iframe.
+        settleTimer = window.setTimeout(() => {
+          if (settled) return;
           win?.focus();
           // 打印对话框关闭后立即回收（afterprint 于打印/取消后触发），
           // 不再空等 60s；兜底定时器防范事件缺失的浏览器。
@@ -160,12 +166,35 @@ export async function exportPng(
   if (!path) return null;
   // Make sure fonts are ready so CJK / mono render correctly.
   if (document.fonts?.ready) await document.fonts.ready;
+
+  // Canvas budget gate: scale 2 quadruples the pixel count, and a tall document
+  // at 2x easily exceeds what browsers allocate for a single canvas (opaque OOM
+  // or a silently coerced/blank canvas). modern-screenshot multiplies the
+  // width/height by `scale`, so the final canvas is (w*scale)×(h*scale) —
+  // estimate it first and step the scale down before rendering.
+  const MAX_CANVAS_SIDE = 16_384; // px per side, widely-safe upper bound
+  const MAX_CANVAS_PIXELS = 120_000_000; // ~120 MP total-pixel budget
+  const w = previewEl.scrollWidth;
+  const h = previewEl.scrollHeight;
+  if (w <= 0 || h <= 0) throw new Error("无法导出 PNG：文档内容为空。");
+  const fits = (s: number) =>
+    w * s <= MAX_CANVAS_SIDE &&
+    h * s <= MAX_CANVAS_SIDE &&
+    w * h * s * s <= MAX_CANVAS_PIXELS;
+  let scale = 2;
+  if (!fits(scale)) scale = 1; // too big at 2x — fall back to native resolution
+  if (!fits(scale)) {
+    throw new Error(
+      `文档过大，无法导出 PNG（约 ${w}×${h} px，超过 ${MAX_CANVAS_PIXELS / 1_000_000} MP 画布预算）。请拆分文档后再试。`
+    );
+  }
+
   const { domToPng } = await import("modern-screenshot");
   const dataUrl = await domToPng(previewEl, {
-    scale: 2,
+    scale,
     backgroundColor,
-    width: previewEl.scrollWidth,
-    height: previewEl.scrollHeight,
+    width: w,
+    height: h,
   });
   const bytes = base64ToBytes(dataUrl);
   await writeFile(path, bytes);

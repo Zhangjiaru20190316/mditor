@@ -48,7 +48,7 @@ export function isAiConfigured(s: Settings): boolean {
 }
 
 /** Built-in default system prompt (used when settings.aiSystemPrompt is empty). */
-export const DEFAULT_SYSTEM_PROMPT = [
+const DEFAULT_SYSTEM_PROMPT = [
   "你是一个 Markdown 写作助手，集成在 Mditor 编辑器中。",
   "用户正在编辑一篇笔记，下面用 <note> 标签给出当前全文作为上下文。",
   "回答请使用中文。涉及代码时用 Markdown 代码块；涉及数学公式时用 LaTeX 语法，",
@@ -117,39 +117,37 @@ export function buildSelectionMessages(opts: {
  * lightweight structure the renderer can handle (no headings / code fences /
  * images / links / tables / blockquotes — those would break the popover layout).
  *
- * Output shape (forced, so the model can't collapse to a one-liner):
+ * Note: 「可增 / 可删 / 可改」是对批注**功能**的能力描述（用户可在 popover /
+ * 列表面板里编辑、删除批注），不是对批注**内容**的强制三段结构。因此正文
+ * 不再套用固定分类，由模型按内容性质自由组织。
+ *
+ * Output shape:
  *   1. 首行：**加粗** 一句话核心结论（≤25 字，直击重点）。
- *   2. 三类编辑建议，每类一行加粗小标题 + 1-3 条无序列表：
- *        - **可增**：原文缺失但应补充的关键信息、证据、反例、上下文。
- *        - **可删**：冗余、重复、跑题、与主旨无关、可果断去掉的内容。
- *        - **可改**：措辞、逻辑、结构、事实错误、表达不清等需要改写之处。
- *      某类若无问题，写「无明显问题」并跳过其列表项，不要硬凑。
- *   3. 末尾可选「📌 重点」一行，给出最该优先处理的事（≤30 字）。
+ *   2. 正文：根据内容性质自由组织 —— 几条要点、一段说明或按需分小节均可，
+ *      不强制三段分类；有数学公式时用 $...$ / $$...$$。
+ *   3. 末尾可选「重点」一行，给出最该优先处理的事（≤30 字）。
  *
  * Hard rules:
  *   - 每条建议必须指向具体点，禁止泛泛而谈（如「可以更生动」）。
  *   - 单条 15-40 字，先说改什么，再说为什么。
- *   - 总长 200-450 字，信息密度高、避免空话，不得只输出一句话总结。
+ *   - 总长 150-400 字，信息密度高、避免空话，不得只输出一句话总结。
  *   - 只输出批注正文，无前后缀、无引号、无「批注：」之类前缀。
  */
 export function buildAnnotationMessages(reply: string): ChatMessage[] {
   const system = [
-    "你是 Mditor 编辑器中的批注助手。把下面的内容精炼成一条结构化、高信息密度的 Markdown 批注，挂在用户选中的文字旁。",
+    "你是 Mditor 编辑器中的批注助手。把下面的内容精炼成一条结构清晰、高信息密度的 Markdown 批注，挂在用户选中的文字旁。",
     "",
-    "输出格式（严格遵守，禁止省略任一段落，禁止只输出一句话总结）：",
+    "输出要求：",
     "1. 首行：用 **加粗** 给出一句话核心结论（≤25 字，直击重点；禁止「本段主要讲述了…」这类套话）。",
-    "2. 随后按「增 / 删 / 改」三类给出可执行的编辑建议；每类以一行加粗小标题开头，下跟 1-3 条无序列表（用 - 开头）：",
-    "   - **可增**：原文缺失但应补充的关键信息、证据、反例或上下文。",
-    "   - **可删**：冗余、重复、跑题、与主旨无关、可果断去掉的内容。",
-    "   - **可改**：措辞、逻辑、结构、事实错误、表达不清等需要改写之处。",
-    "   若某类无明显问题，在该类标题下写一行「无明显问题」并跳过其列表项，不要硬凑。",
+    "2. 正文：根据内容性质自由组织 —— 可以是几条无序列表要点、一段说明，或按需分小节；",
+    "   不要强制套用「可增 / 可删 / 可改」三段结构，按实际需要选择最清晰的呈现方式。",
     "3. 末尾可选附一行「重点」：给出最该优先处理的一件事（≤30 字）。",
     "",
     "风格与约束：",
     "- 每条建议必须指向原文 / 回复中的具体点，禁止泛泛而谈（如「可以更生动」「需要优化」）。",
     "- 单条建议 15-40 字，先说改什么，再说为什么。",
-    "- 总长度 200-450 字，信息密度高、避免空话。",
-    "- 仅允许使用 **加粗**、`行内代码`、无序列表，列表保持扁平（不嵌套）。",
+    "- 总长 150-400 字，信息密度高、避免空话，不得只输出一句话总结。",
+    "- 允许使用 **加粗**、`行内代码`、无序 / 有序列表、$行内公式$、$$独立公式块$$；列表保持扁平（不嵌套）。",
     "- 禁止使用标题（#）、代码块（```）、图片、链接、表格、引用块（>）。",
     "- 只输出批注正文，不要解释、不要引号、不要「批注：」「好的」之类前后缀。",
   ].join("\n");
@@ -239,7 +237,7 @@ export function chatStream(
   // stash them in a ref so cleanup always reads the latest set — important
   // when the backend stream completes before the listen() promises resolve
   // (fast local servers); without this the handlers would leak.
-  let unlistenFns: UnlistenFn[] = [];
+  const unlistenFns: UnlistenFn[] = [];
 
   const cleanup = () => {
     unlistenFns.splice(0).forEach((fn) => fn());

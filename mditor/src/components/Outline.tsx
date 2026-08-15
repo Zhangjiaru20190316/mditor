@@ -1,28 +1,50 @@
-// Document outline: headings extracted from the live markdown, click to jump.
+// Document outline: click a heading to jump to it.
 //
-// Performance: React.memo'd so it only re-renders when `markdown`/`onJump`
-// actually change. The outline is computed from a DEFERRED copy of the
-// markdown so a fast typist in a large document doesn't block the main thread
-// on every keystroke — React runs the recompute at lower priority.
+// Two data sources, by mode:
+//   * rich (wysiwyg/ir): `headings` — extracted from the LIVE ProseMirror doc
+//     by useMilkdown, whose ids are Milkdown's own <hN id>s, so jumps always
+//     resolve. Emitted only on real heading changes (stable array ref).
+//   * sv: the hidden ProseMirror doc is stale while the textarea is edited, so
+//     the outline re-parses `markdown` (line numbers recorded for jumps).
+//
+// Performance: React.memo'd so it only re-renders when props actually change.
+// The sv source is debounced then deferred so a fast typist in a large document
+// doesn't block the main thread on every keystroke.
 
 import { memo, useDeferredValue, useMemo } from "react";
-import { buildOutline } from "../lib/outline";
+import { buildOutline, buildOutlineFromHeadings } from "../lib/outline";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
-import type { OutlineNode } from "../types";
+import type { EditMode, FlatHeading, OutlineNode } from "../types";
 
 interface Props {
+  mode: EditMode;
+  /** Live markdown source (sv-mode outline + editor-not-ready fallback). */
   markdown: string;
-  onJump: (anchorId: string) => void;
+  /** Live doc headings (rich mode); null until the editor reports them. */
+  headings: FlatHeading[] | null;
+  onJump: (node: OutlineNode) => void;
 }
 
-export const Outline = memo(function Outline({ markdown, onJump }: Props) {
-  // T5: debounce the source first so a typing burst collapses into ONE reparse,
-  // then defer it so even that single recompute doesn't compete with typing.
-  // Together this cuts the full-document outline parse from per-keystroke to
-  // once-per-pause while staying non-blocking and eventually consistent.
+export const Outline = memo(function Outline({
+  mode,
+  markdown,
+  headings,
+  onJump,
+}: Props) {
+  // T5: debounce the sv source first so a typing burst collapses into ONE
+  // reparse, then defer it so even that single recompute doesn't compete with
+  // typing. The doc-derived path arrives already change-gated from the editor,
+  // but running it through the same defer costs nothing.
   const debouncedMd = useDebouncedValue(markdown, 150);
   const deferredMd = useDeferredValue(debouncedMd);
-  const tree = useMemo(() => buildOutline(deferredMd), [deferredMd]);
+  const deferredHeadings = useDeferredValue(headings);
+  const tree = useMemo(
+    () =>
+      mode === "sv" || deferredHeadings == null
+        ? buildOutline(deferredMd)
+        : buildOutlineFromHeadings(deferredHeadings),
+    [mode, deferredMd, deferredHeadings]
+  );
   if (tree.length === 0) {
     return <div className="ol-empty">无标题</div>;
   }
@@ -40,14 +62,14 @@ const OutlineItem = memo(function OutlineItem({
   onJump,
 }: {
   node: OutlineNode;
-  onJump: (id: string) => void;
+  onJump: (node: OutlineNode) => void;
 }) {
   return (
     <li>
       <div
         className={`ol-row ol-h${node.level}`}
         title={node.text}
-        onClick={() => onJump(node.id)}
+        onClick={() => onJump(node)}
       >
         {node.text}
       </div>
