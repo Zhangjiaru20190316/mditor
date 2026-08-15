@@ -8,9 +8,22 @@
 //
 // Two context modes:
 //   * "full"     — the whole note is the context; replies can be inserted at
-//                  the cursor or replace the whole document.
+//                  the cursor or, for rewrite-type replies, reviewed hunk-by-
+//                  hunk before replacing the document (改动预览).
 //   * "selection"— a highlighted fragment is the focus; replies can replace
-//                  just that selection or be inserted below it.
+//                  just that selection (also via 改动预览) or be inserted
+//                  below it.
+//
+// Follow-ups (追问): every assistant reply carries a「追问」button. A follow-up
+// hangs under the answer it targets (Msg.parentId), rendered as an indented
+// thread; its request history is the targeted thread chain (lib/aiThread), not
+// the whole chat. Threads nest arbitrarily deep and one answer can carry
+// several parallel follow-up threads.
+//
+// Rewrite safety: 润色/改写/纠错 replies never replace the document directly —
+// the「审查改动」action diffs the reply against the target text and shows the
+// DiffReview panel (per-hunk accept/reject, jump-to-context, one-shot apply
+// that lands as a single undo step).
 //
 // Performance: AiPanel and MsgRow are both React.memo'd. App passes stable
 // useCallback props so the panel skips re-renders during typing in the editor.
@@ -35,8 +48,10 @@ import {
   resolveActiveModel,
   type ChatMessage,
 } from "../lib/ai";
-import { confirmDialog } from "../lib/dialogs";
+import { buildThreadHistory } from "../lib/aiThread";
+import { applyHunks, diffText, unwrapWholeFence, type DiffHunk } from "../lib/diff";
 import { MarkdownText } from "./MarkdownText";
+import { DiffReview } from "./DiffReview";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { AiIcon, TrashIcon, CloseIcon, ChevronRightIcon } from "./icons";
 import type { Settings, Theme, ThinkingStrength } from "../types";
@@ -46,21 +61,41 @@ export interface AiPanelHandle {
   askSelection: (selection: string, instruction: string, range?: { from: number; to: number } | null) => void;
 }
 
+/** A pending 改动预览（AI 修改类回复的应用前审查）。 */
+export interface ReviewState {
+  mode: "full" | "selection";
+  /** 审查的目标原文（全文或选区文本）。 */
+  original: string;
+  /** AI 修订文本（已去整体围栏）。 */
+  revised: string;
+  hunks: DiffHunk[];
+  /** decisions[i] === true 表示接受第 i 处。 */
+  decisions: boolean[];
+  /** 选区模式：捕获的文档区间（应用时校验，失效则按内容回退定位）。 */
+  range: { from: number; to: number } | null;
+}
+
+/** 一次改动审查的应用请求（交给 App 落盘）。 */
+export interface ApplyChangesPayload {
+  mode: "full" | "selection";
+  range: { from: number; to: number } | null;
+  original: string;
+  merged: string;
+}
+
 interface Props {
   open: boolean;
   settings: Settings;
   /** Read the current note text (for the system-prompt context). */
   getNote: () => string;
-  /** Read the current editor selection text. */
-  getSelection: () => string;
-  /** Insert AI output at the cursor (full-doc mode). */
+  /** Insert AI output at the cursor (full-doc mode) — one undo step. */
   onInsert: (md: string) => void;
-  /** Replace the whole note with AI output (full-doc mode). */
-  onReplace: (md: string) => void;
-  /** Replace the current editor selection with AI output (selection mode). */
-  onReplaceSelection: (md: string) => void;
   /** Insert AI output immediately after the current selection. */
   onInsertAfterSelection: (md: string) => void;
+  /** Apply an accepted 改动预览（一步撤销的写回，见 Editor.aiWriteDoc/aiWriteRange）。 */
+  onApplyChanges: (payload: ApplyChangesPayload) => void;
+  /** Jump the editor to a hunk's original text (查看上下文). */
+  onJumpToText: (needle: string) => void;
   /** Turn an assistant reply into an annotation. The panel awaits this so it
    *  can show a busy state on the clicked message. `anchorText` is the
    *  selection the reply was about (selection mode only); `range` is the
@@ -94,11 +129,17 @@ interface Msg {
    *  about it so the「批注」action can anchor the marker exactly (selection mode
    *  only). Stale once the document is edited; addAnnotation re-validates it. */
   range?: { from: number; to: number };
+  /** 追问：本条消息挂在哪条 AI 回答之下（根层消息无此字段）。同一条回答可挂
+   *  多条并行追问；追问的回答也可继续被追问（多层嵌套）。 */
+  parentId?: number;
+  /** （assistant）本条回答回复的是哪条用户消息——追问历史沿
+   *  parentId×repliedUser 链回溯到线程根（lib/aiThread）。 */
+  repliedUser?: number;
   /** True while this assistant message is still streaming in. */
   streaming?: boolean;
   /** Reasoning / thinking tokens (reasoning models only). Shown in a
-   *  collapsible block above the answer: auto-expands while the model thinks,
-   *  auto-collapses once the visible answer starts flowing in. */
+   * collapsible block above the answer: auto-expands while the model thinks,
+   * auto-collapses once the visible answer starts flowing in. */
   reasoning?: string;
 }
 
@@ -110,13 +151,19 @@ interface Msg {
 const MAX_MESSAGES = 100;
 
 export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
-  { open, settings, getNote, onInsert, onReplace, onReplaceSelection, onInsertAfterSelection, onAnnotate, onOpenSettings, onSettingsChange, onClose },
+  { open, settings, getNote, onInsert, onInsertAfterSelection, onApplyChanges, onJumpToText, onAnnotate, onOpenSettings, onSettingsChange, onClose },
   ref
 ) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  /** 面板内轻提示（审查应用成功等），下一次发送/清空时消失。 */
+  const [notice, setNotice] = useState("");
+  /** 当前展开追问输入框的回答 id（-1 = 无）。 */
+  const [followUpFor, setFollowUpFor] = useState(-1);
+  /** 进行中的改动预览（非空时面板切换为审查视图）。 */
+  const [review, setReview] = useState<ReviewState | null>(null);
   // Id of the assistant message currently being refined into an annotation
   // (shows a busy hint on its "批注" button). -1 when idle. Tracked by stable
   // message id (not array index) so the hint stays on the right row even if the
@@ -145,6 +192,10 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
   const rafIdRef = useRef<number | null>(null);
   // Monotonic counter minting stable message ids (see Msg.id).
   const msgIdRef = useRef(0);
+  // Mirror of `messages` for stable callbacks (submitFollowUp reads the live
+  // list without rebuilding its identity every turn — keeps MsgRow memo valid).
+  const messagesRef = useRef<Msg[]>([]);
+  messagesRef.current = messages;
 
   const flushDelta = useCallback(() => {
     rafIdRef.current = null;
@@ -192,14 +243,26 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
   // unconditionally would yank the user back down while they scroll up through
   // history. 80px ≈ one line of text tolerance (virtual-list measurement can
   // leave the last frame a few px short of the exact bottom).
+  // With follow-up threads the streaming row can sit mid-list (indented under
+  // its parent answer), so while loading we follow THAT row (scrollToIndex
+  // align:end) instead of the container bottom.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight >= 80) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (loading) {
+      if (!nearBottom) return;
+      const idx = rows.findIndex((r) => r.msg.role === "assistant" && r.msg.streaming);
+      if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "end" });
+      return;
+    }
     el.scrollTo({
       top: el.scrollHeight,
       behavior: "smooth",
     });
+    // rows/virtualizer 经闭包读取最新值（deps 只需覆盖触发时机：消息变化 /
+    // 流式状态翻转），列入 deps 会让每次流式帧都重复执行同一滚动。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, loading]);
 
   // Reset the conversation whenever the panel is reopened.
@@ -207,7 +270,10 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     if (open) {
       setMessages([]);
       setError("");
+      setNotice("");
       setInput("");
+      setFollowUpFor(-1);
+      setReview(null);
       activeSelectionRef.current = "";
     }
   }, [open]);
@@ -250,23 +316,61 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
   // overscan; off-screen rows unmount and re-hit the renderMarkdown LRU (T1)
   // when scrolled back. Dynamic measurement (measureElement) handles the
   // variable heights of code blocks / formulas / streaming replies.
+  //
+  // 追问层级（DFS 展开）：消息按「根层顺序 + 每条回答下挂的追问子树」排布，
+  // 每行携带 depth 供缩进渲染。消息数组本身保持追加序（流式更新只碰末尾），
+  // 展示序是纯派生——MAX_MESSAGES 截断掉的祖先会被当作根层优雅降级。
+  const rows = useMemo(() => {
+    const byId = new Map<number, Msg>();
+    for (const m of messages) byId.set(m.id, m);
+    const childrenOf = new Map<number, Msg[]>();
+    const roots: Msg[] = [];
+    for (const m of messages) {
+      const p = m.parentId != null ? byId.get(m.parentId) : undefined;
+      if (p && p.role === "assistant") {
+        const list = childrenOf.get(p.id);
+        if (list) list.push(m);
+        else childrenOf.set(p.id, [m]);
+      } else {
+        roots.push(m);
+      }
+    }
+    const out: Array<{ msg: Msg; depth: number }> = [];
+    const walk = (m: Msg, depth: number) => {
+      out.push({ msg: m, depth });
+      if (m.role === "assistant") {
+        for (const c of childrenOf.get(m.id) ?? []) walk(c, depth + 1);
+      }
+    };
+    for (const r of roots) walk(r, 0);
+    return out;
+  }, [messages]);
+
   const virtualizer = useVirtualizer({
-    count: messages.length,
+    count: rows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 160,
     overscan: 6,
     // Preserve the original 12px inter-message spacing; matches .ai-msgs gap.
     gap: 12,
     // Stable per-row key so recycling keeps component state on the right msg.
-    getItemKey: (index) => messages[index].id,
+    getItemKey: (index) => rows[index].msg.id,
   });
 
-  // ---- the core send routine, shared by free-form input, quick actions, and
-  // ---- selection-bar invocations. `mode` decides the system prompt shape and
-  // ---- which write-back actions attach to the assistant reply.
+  // ---- the core send routine, shared by free-form input, quick actions,
+  // ---- selection-bar invocations and 追问. `mode` decides the system prompt
+  // ---- shape and which write-back actions attach to the assistant reply;
+  // ---- `parent` (追问) targets a specific answer: the new turn hangs under
+  // ---- it and its request history is that thread's chain, not the whole chat.
   const send = async (
     raw: string,
-    opts: { mode: CtxMode; selection?: string; range?: { from: number; to: number } | null } = { mode: "full" }
+    opts: {
+      mode: CtxMode;
+      selection?: string;
+      range?: { from: number; to: number } | null;
+      /** 追问目标（被追问的那条回答）。 */
+      parent?: Msg;
+    } = { mode: "full" }
   ) => {
     const text = raw.trim();
     if (!text || loading) return;
@@ -275,23 +379,59 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
       return;
     }
     setError("");
+    setNotice("");
 
-    const selection = opts.selection ?? (opts.mode === "selection" ? activeSelectionRef.current : "");
+    const parent = opts.parent;
+    // 追问继承被追问回答的选区上下文；顶层提问维持原行为（显式 selection →
+    // 会话选区 → 空）。
+    const effSelection =
+      opts.selection ??
+      (parent
+        ? parent.selection
+        : opts.mode === "selection"
+          ? activeSelectionRef.current
+          : "");
     // Carry the selection's document positions onto the AI turn so the「批注」
     // action can re-anchor the marker exactly (selection mode only). Undefined
     // in full mode or when no range was captured.
-    const range = opts.mode === "selection" ? opts.range ?? undefined : undefined;
+    const range =
+      opts.mode === "selection" ? (opts.range ?? parent?.range ?? undefined) : undefined;
     const requestId = `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     let history: ChatMessage[];
-    if (opts.mode === "selection" && selection) {
+    if (parent) {
+      // 追问：沿 parentId×repliedUser 链回溯目标线程，聚焦该线程的上下文。
+      const chain = buildThreadHistory(messages, parent.id);
+      if (opts.mode === "selection" && effSelection) {
+        const [sys] = buildSelectionMessages({
+          instruction: text,
+          selection: effSelection,
+          noteContext: getNote(),
+          systemPromptOverride: settings.aiSystemPrompt,
+        });
+        history = [
+          sys,
+          ...chain,
+          {
+            role: "user",
+            content: `${text}\n\n<selection>\n${effSelection}\n</selection>`,
+          },
+        ];
+      } else {
+        history = [
+          { role: "system", content: buildSystemPrompt(getNote(), settings.aiSystemPrompt) },
+          ...chain,
+          { role: "user", content: text },
+        ];
+      }
+    } else if (opts.mode === "selection" && effSelection) {
       history = buildSelectionMessages({
         instruction: text,
-        selection,
+        selection: effSelection,
         noteContext: getNote(),
         systemPromptOverride: settings.aiSystemPrompt,
       });
-      activeSelectionRef.current = selection;
+      activeSelectionRef.current = effSelection;
     } else {
       history = [
         { role: "system", content: buildSystemPrompt(getNote(), settings.aiSystemPrompt) },
@@ -304,24 +444,46 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     }
 
     setMessages((prev) => {
+      const userMsgId = ++msgIdRef.current;
+      const aiMsgId = ++msgIdRef.current;
       const next: Msg[] = [
         ...prev,
-        { id: ++msgIdRef.current, role: "user", content: text, mode: opts.mode, selection, range },
+        {
+          id: userMsgId,
+          role: "user",
+          content: text,
+          mode: opts.mode,
+          selection: effSelection,
+          range,
+          parentId: parent?.id,
+        },
         // Carry the selection (and its range) onto the assistant message too,
         // so the「批注」action on this reply can anchor the marker on the exact
         // text it was about (m.selection/m.range are read by the 批注 button).
         // Without this the marker always falls back to the cursor and lands at
-        // the doc start.
-        { id: ++msgIdRef.current, role: "assistant", content: "", mode: opts.mode, selection, range, streaming: true },
+        // the doc start. repliedUser 让追问链能回溯到本回合的问题。
+        {
+          id: aiMsgId,
+          role: "assistant",
+          content: "",
+          mode: opts.mode,
+          selection: effSelection,
+          range,
+          parentId: parent?.id,
+          repliedUser: userMsgId,
+          streaming: true,
+        },
       ];
       // Trim oldest messages beyond the cap. The new user+assistant pair is
       // always preserved (they're at the tail). Unmounted MsgRows release their
-      // rendered preview DOM via the effect cleanup below.
+      // rendered preview DOM via the effect cleanup below. 被截断的追问祖先由
+      // rows DFS 优雅降级为根层。
       return next.length > MAX_MESSAGES
         ? next.slice(next.length - MAX_MESSAGES)
         : next;
     });
     setInput("");
+    setFollowUpFor(-1);
     setLoading(true);
 
     streamRef.current = chatStream({
@@ -420,9 +582,102 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     streamRef.current = null;
     setMessages([]);
     setError("");
+    setNotice("");
     setInput("");
+    setFollowUpFor(-1);
+    setReview(null);
     activeSelectionRef.current = "";
   };
+
+  // ---- 追问 -----------------------------------------------------------------
+
+  const startFollowUp = useCallback((id: number) => {
+    setFollowUpFor(id);
+  }, []);
+
+  const closeFollowUp = useCallback(() => setFollowUpFor(-1), []);
+
+  // 行内追问输入框的提交（MsgRow 内部持有草稿文本，这里只接收结果）。
+  const submitFollowUp = useCallback((id: number, text: string) => {
+    const target = messagesRef.current.find(
+      (m) => m.id === id && m.role === "assistant"
+    );
+    if (!target || target.streaming) return;
+    void sendRef.current(text, { mode: target.mode, parent: target });
+  }, []);
+
+  // ---- 改动预览（修改类回复的应用前审查）------------------------------------
+
+  /** 打开某条回复的改动审查：diff 目标原文（全文 / 选区）与 AI 修订文本。 */
+  const openReview = useCallback(
+    (m: Msg) => {
+      const revised = unwrapWholeFence(m.content);
+      let original: string;
+      if (m.mode === "selection") {
+        if (!m.selection) {
+          setError("这条回复缺少选区上下文，无法审查改动。");
+          return;
+        }
+        original = m.selection;
+      } else {
+        original = getNote();
+      }
+      const hunks = diffText(original, revised);
+      setReview({
+        mode: m.mode,
+        original,
+        revised,
+        hunks,
+        decisions: hunks.map(() => true),
+        range: m.range ?? null,
+      });
+    },
+    [getNote]
+  );
+
+  const toggleReviewHunk = useCallback((index: number) => {
+    setReview((prev) => {
+      if (!prev) return prev;
+      const decisions = [...prev.decisions];
+      decisions[index] = !decisions[index];
+      return { ...prev, decisions };
+    });
+  }, []);
+
+  const setReviewAll = useCallback((accept: boolean) => {
+    setReview((prev) =>
+      prev ? { ...prev, decisions: prev.hunks.map(() => accept) } : prev
+    );
+  }, []);
+
+  const cancelReview = useCallback(() => setReview(null), []);
+
+  const jumpToHunk = useCallback(
+    (hunk: DiffHunk) => {
+      // 纯新增没有原文可跳；退而求其次跳到新内容（在原文中不存在，无操作）。
+      if (hunk.anchorLine) onJumpToText(hunk.anchorLine);
+    },
+    [onJumpToText]
+  );
+
+  /** 应用已接受的 hunks：一次合并写回（一步撤销），随后回到聊天视图。 */
+  const applyReview = useCallback(() => {
+    if (!review) return;
+    const accepted = review.decisions.filter(Boolean).length;
+    if (accepted === 0) {
+      setReview(null);
+      return;
+    }
+    const merged = applyHunks(review.original, review.hunks, review.decisions);
+    onApplyChanges({
+      mode: review.mode,
+      range: review.range,
+      original: review.original,
+      merged,
+    });
+    setNotice(`已应用 ${accepted} 处改动（Ctrl+Z 可一步撤销）。`);
+    setReview(null);
+  }, [review, onApplyChanges]);
 
   // Keep a ref to the latest `send` so the imperative handle below can stay
   // stable (empty deps) instead of rebuilding every turn. Without this, every
@@ -502,7 +757,7 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
         </div>
       )}
 
-      {activeSelectionRef.current && (
+      {activeSelectionRef.current && !review && (
         <div className="ai-ctx-banner" title={activeSelectionRef.current}>
           当前针对「选中片段」回答。
           <button
@@ -516,113 +771,131 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
         </div>
       )}
 
-      {fullActions.length > 0 && (
-        <div className="ai-quick">
-          {fullActions.map((q) => (
-            <button
-              key={q.label}
-              className="ai-quick-btn"
-              disabled={loading}
-              onClick={() => void send(q.prompt)}
-              title={q.prompt}
-            >
-              {q.label}
-            </button>
-          ))}
-        </div>
-      )}
+      {notice && !review && <div className="ai-notice">{notice}</div>}
 
-      <div className="ai-msgs" ref={scrollRef}>
-        {messages.length === 0 && !loading && (
-          <div className="ai-empty">
-            问任何关于这篇笔记的问题，或试试上方的快捷操作。
-            <br />
-            选中文字可针对片段提问 / 改写 / 翻译。
-            <br />
-            例如：「这篇笔记的要点是什么？」「把第二段改得更简洁。」
-          </div>
-        )}
-        {messages.length > 0 && (
-          <div
-            className="ai-msgs-virtual"
-            style={{ height: virtualizer.getTotalSize() }}
-          >
-            {virtualizer.getVirtualItems().map((vi) => {
-              const m = messages[vi.index];
-              return (
-                <div
-                  key={m.id}
-                  data-index={vi.index}
-                  ref={virtualizer.measureElement}
-                  className="ai-msgs-row"
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    width: "100%",
-                    transform: `translateY(${vi.start}px)`,
-                  }}
-                >
-                  <MsgRow
-                    msg={m}
-                    theme={settings.theme}
-                    onInsert={() => onInsert(m.content)}
-                    onReplace={() => {
-                      void (async () => {
-                        if (await confirmDialog("用这条 AI 回复替换当前笔记全部内容？")) {
-                          onReplace(m.content);
-                        }
-                      })();
-                    }}
-                    onReplaceSelection={() => onReplaceSelection(m.content)}
-                    onInsertAfterSelection={() => onInsertAfterSelection(m.content)}
-                    onAnnotate={() => void handleAnnotate(m.id, m.content, m.selection, m.range)}
-                    annotating={annotatingId === m.id}
-                    onCopy={() => navigator.clipboard?.writeText(m.content)}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        )}
-        {loading && messages.every((m) => !(m.role === "assistant" && m.streaming)) && (
-          <div className="ai-msg ai-msg-assistant ai-typing">正在思考…</div>
-        )}
-        {error && <div className="ai-error">{error}</div>}
-      </div>
-
-      <div className="ai-input-row">
-        <textarea
-          className="ai-input"
-          placeholder={
-            activeSelectionRef.current
-              ? "针对选中片段提问，Enter 发送，Shift+Enter 换行"
-              : "输入问题，Enter 发送，Shift+Enter 换行"
-          }
-          value={input}
-          rows={2}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void send(input);
-            }
-          }}
+      {review ? (
+        <DiffReview
+          hunks={review.hunks}
+          decisions={review.decisions}
+          mode={review.mode}
+          onToggle={toggleReviewHunk}
+          onSetAll={setReviewAll}
+          onApply={applyReview}
+          onCancel={cancelReview}
+          onJump={jumpToHunk}
         />
-        {loading ? (
-          <button className="ai-send ai-stop-btn" onClick={stop}>
-            停止
-          </button>
-        ) : (
-          <button
-            className="ai-send"
-            disabled={!input.trim()}
-            onClick={() => void send(input)}
-          >
-            发送
-          </button>
-        )}
-      </div>
+      ) : (
+        <>
+          {fullActions.length > 0 && (
+            <div className="ai-quick">
+              {fullActions.map((q) => (
+                <button
+                  key={q.label}
+                  className="ai-quick-btn"
+                  disabled={loading}
+                  onClick={() => void send(q.prompt)}
+                  title={q.prompt}
+                >
+                  {q.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="ai-msgs" ref={scrollRef}>
+            {messages.length === 0 && !loading && (
+              <div className="ai-empty">
+                问任何关于这篇笔记的问题，或试试上方的快捷操作。
+                <br />
+                选中文字可针对片段提问 / 改写 / 翻译；每条回答下的「追问」可就
+                该回答继续深入。
+                <br />
+                例如：「这篇笔记的要点是什么？」「把第二段改得更简洁。」
+              </div>
+            )}
+            {rows.length > 0 && (
+              <div
+                className="ai-msgs-virtual"
+                style={{ height: virtualizer.getTotalSize() }}
+              >
+                {virtualizer.getVirtualItems().map((vi) => {
+                  const row = rows[vi.index];
+                  const m = row.msg;
+                  return (
+                    <div
+                      key={m.id}
+                      data-index={vi.index}
+                      ref={virtualizer.measureElement}
+                      className="ai-msgs-row"
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        transform: `translateY(${vi.start}px)`,
+                      }}
+                    >
+                      <MsgRow
+                        msg={m}
+                        depth={row.depth}
+                        theme={settings.theme}
+                        busy={loading}
+                        followUpActive={followUpFor === m.id}
+                        onStartFollowUp={startFollowUp}
+                        onSubmitFollowUp={submitFollowUp}
+                        onCloseFollowUp={closeFollowUp}
+                        onInsert={() => onInsert(m.content)}
+                        onReview={() => openReview(m)}
+                        onInsertAfterSelection={() => onInsertAfterSelection(m.content)}
+                        onAnnotate={() => void handleAnnotate(m.id, m.content, m.selection, m.range)}
+                        annotating={annotatingId === m.id}
+                        onCopy={() => navigator.clipboard?.writeText(m.content)}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {loading && messages.every((m) => !(m.role === "assistant" && m.streaming)) && (
+              <div className="ai-msg ai-msg-assistant ai-typing">正在思考…</div>
+            )}
+            {error && <div className="ai-error">{error}</div>}
+          </div>
+
+          <div className="ai-input-row">
+            <textarea
+              className="ai-input"
+              placeholder={
+                activeSelectionRef.current
+                  ? "针对选中片段提问，Enter 发送，Shift+Enter 换行"
+                  : "输入问题，Enter 发送，Shift+Enter 换行"
+              }
+              value={input}
+              rows={2}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void send(input);
+                }
+              }}
+            />
+            {loading ? (
+              <button className="ai-send ai-stop-btn" onClick={stop}>
+                停止
+              </button>
+            ) : (
+              <button
+                className="ai-send"
+                disabled={!input.trim()}
+                onClick={() => void send(input)}
+              >
+                发送
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }));
@@ -631,11 +904,20 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
 
 interface MsgRowProps {
   msg: Msg;
+  /** 线程深度（0 = 根层，1+ = 追问层级），驱动缩进与连接线。 */
+  depth: number;
   /** App theme, to pick Vditor's light/dark content theme for the preview. */
   theme: Theme;
+  /** 面板正在流式输出中（禁用追问入口）。 */
+  busy: boolean;
+  /** 追问输入框是否展开在本行下方。 */
+  followUpActive: boolean;
+  onStartFollowUp: (id: number) => void;
+  onSubmitFollowUp: (id: number, text: string) => void;
+  onCloseFollowUp: () => void;
   onInsert: () => void;
-  onReplace: () => void;
-  onReplaceSelection: () => void;
+  /** 打开改动预览（替换类写回的审查入口）。 */
+  onReview: () => void;
   onInsertAfterSelection: () => void;
   onAnnotate: () => void;
   /** True while this reply is being refined into an annotation. */
@@ -671,10 +953,15 @@ const ThinkingDots = memo(function ThinkingDots() {
 
 const MsgRow = memo(function MsgRow({
   msg,
+  depth,
   theme,
+  busy,
+  followUpActive,
+  onStartFollowUp,
+  onSubmitFollowUp,
+  onCloseFollowUp,
   onInsert,
-  onReplace,
-  onReplaceSelection,
+  onReview,
   onInsertAfterSelection,
   onAnnotate,
   annotating,
@@ -683,6 +970,16 @@ const MsgRow = memo(function MsgRow({
   const isAssistant = msg.role === "assistant";
   const hasContent = msg.content.length > 0;
   const hasReasoning = !!(msg.reasoning && msg.reasoning.length > 0);
+  const isThread = depth > 0;
+  // 追问草稿：输入框挂在本行内部，草稿随之局部化——别的行重渲染不受打字影响。
+  const [followUpText, setFollowUpText] = useState("");
+  const fuRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (followUpActive) {
+      setFollowUpText("");
+      fuRef.current?.focus();
+    }
+  }, [followUpActive]);
 
   // 思考过程折叠态：reasoning 首次有内容时自动展开，正文开始流入时自动折叠，
   // 之后交给用户手动控制。用 ref 追踪上一次的空/非空状态以检测"首次到达"，
@@ -701,16 +998,28 @@ const MsgRow = memo(function MsgRow({
     prevContentEmpty.current = contentEmpty;
   }, [hasReasoning, hasContent]);
 
+  // 追问层级渲染：缩进封顶 4 层深度对应的宽度，再深保持对齐（避免窄面板
+  // 被挤没）；连接线交给 CSS（.ai-msg-thread）。
+  const threadStyle =
+    depth > 0 ? { marginLeft: `${Math.min(depth, 4) * 18}px` } : undefined;
+
   if (!isAssistant) {
     return (
-      <div className="ai-msg ai-msg-user">
+      <div
+        className={`ai-msg ai-msg-user${isThread ? " ai-msg-thread" : ""}`}
+        style={threadStyle}
+      >
+        {isThread && <span className="ai-thread-tag">追问</span>}
         <div className="ai-msg-content">{msg.content}</div>
       </div>
     );
   }
 
   return (
-    <div className="ai-msg ai-msg-assistant">
+    <div
+      className={`ai-msg ai-msg-assistant${isThread ? " ai-msg-thread" : ""}`}
+      style={threadStyle}
+    >
       {msg.mode === "selection" && (
         <span className="ai-ctx-tag">选区上下文</span>
       )}
@@ -756,8 +1065,11 @@ const MsgRow = memo(function MsgRow({
         <div className="ai-actions">
           {msg.mode === "selection" ? (
             <>
-              <button onClick={onReplaceSelection} title="用这条回复替换编辑器中选中的文字">
-                替换选区
+              <button
+                onClick={onReview}
+                title="先审查这处修改（原内容 → 新内容对照，可逐处接受/拒绝），确认后替换选中文字"
+              >
+                替换选区…
               </button>
               <button onClick={onInsertAfterSelection} title="在选中文字下方插入这条回复">
                 插入到选区下方
@@ -766,7 +1078,12 @@ const MsgRow = memo(function MsgRow({
           ) : (
             <>
               <button onClick={onInsert}>插入到光标</button>
-              <button onClick={onReplace}>替换全文</button>
+              <button
+                onClick={onReview}
+                title="先审查这处修改（原内容 → 新内容对照，可逐处接受/拒绝），确认后替换全文"
+              >
+                替换全文…
+              </button>
             </>
           )}
           <button
@@ -778,6 +1095,47 @@ const MsgRow = memo(function MsgRow({
             {annotating ? "精炼中…" : "批注"}
           </button>
           <button onClick={onCopy}>复制</button>
+          <button
+            onClick={() => onStartFollowUp(msg.id)}
+            disabled={busy}
+            title={busy ? "等待当前回答完成" : "针对这条回答继续追问（挂在其下方，可多层嵌套）"}
+          >
+            追问
+          </button>
+        </div>
+      )}
+      {/* 行内追问输入框：挂在被追问的回答正下方（actions 之内）。提交后
+          新的问答对以缩进线程渲染在本回答之下。 */}
+      {followUpActive && (
+        <div className="ai-followup">
+          <textarea
+            ref={fuRef}
+            className="ai-followup-input"
+            rows={2}
+            value={followUpText}
+            placeholder="针对这条回答继续追问…（Enter 发送，Shift+Enter 换行）"
+            onChange={(e) => setFollowUpText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (followUpText.trim()) onSubmitFollowUp(msg.id, followUpText);
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                onCloseFollowUp();
+              }
+            }}
+          />
+          <div className="ai-followup-actions">
+            <button
+              className="ai-followup-send"
+              disabled={!followUpText.trim() || busy}
+              onClick={() => onSubmitFollowUp(msg.id, followUpText)}
+            >
+              发送追问
+            </button>
+            <button onClick={onCloseFollowUp}>取消</button>
+          </div>
         </div>
       )}
     </div>

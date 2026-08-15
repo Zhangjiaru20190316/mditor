@@ -11,7 +11,7 @@ import { Editor, type EditorHandle } from "./components/Editor";
 import { FileTree, type TreeChange } from "./components/FileTree";
 import { Outline } from "./components/Outline";
 import { RecentList } from "./components/RecentList";
-import { AiPanel, type AiPanelHandle } from "./components/AiPanel";
+import { AiPanel, type AiPanelHandle, type ApplyChangesPayload } from "./components/AiPanel";
 import { SelectionToolbar } from "./components/SelectionToolbar";
 import { AnnotationPopover } from "./components/AnnotationPopover";
 import { AnnotationList } from "./components/AnnotationList";
@@ -36,6 +36,7 @@ import { useFile } from "./hooks/useFile";
 import { useResizable } from "./hooks/useResizable";
 import { useAnnotations } from "./hooks/useAnnotations";
 import { buildAnnotationMessages, chatStream, isAiConfigured } from "./lib/ai";
+import { normalizeAnchorText } from "./lib/anchorSearch";
 import { baseName, pickFolder, dirOf, MD_EXT_RE } from "./lib/tauriFs";
 import { readCached } from "./lib/filePrefetch";
 import { toPosix } from "./lib/path-shim";
@@ -752,20 +753,41 @@ export default function App() {
     []
   );
   const isEditorReady = useCallback(() => editorRef.current?.ready() ?? false, []);
-  const insertAtCursor = useCallback(
-    (md: string) => editorRef.current?.insertAtCursor(md),
-    []
-  );
-  const replaceContent = useCallback(
-    (md: string) => editorRef.current?.replaceContent(md),
-    []
-  );
-  const replaceSelection = useCallback(
-    (md: string) => editorRef.current?.replaceSelection(md),
+  // AI「插入到光标」：走 aiWriteInsert（一步撤销的单事务写回）。
+  const aiInsert = useCallback(
+    (md: string) => editorRef.current?.aiWriteInsert(md),
     []
   );
   const insertAfterSelection = useCallback(
     (md: string) => editorRef.current?.insertAfterSelection(md),
+    []
+  );
+  // 改动预览「应用」：把逐处接受/拒绝后的合并文本一次性写回（一步撤销）。
+  // 选区模式先校验捕获区间仍持有原文；失效则按内容回退定位，仍找不到才报错。
+  const applyAiChanges = useCallback((payload: ApplyChangesPayload) => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    if (payload.mode === "full") {
+      ed.aiWriteDoc(payload.merged);
+      return;
+    }
+    if (payload.range) {
+      const t = ed.getTextAt(payload.range.from, payload.range.to);
+      if (normalizeAnchorText(t) === normalizeAnchorText(payload.original)) {
+        ed.aiWriteRange(payload.range.from, payload.range.to, payload.merged);
+        return;
+      }
+    }
+    const found = ed.findTextRange(payload.original, payload.range?.from ?? -1);
+    if (found) {
+      ed.aiWriteRange(found.from, found.to, payload.merged);
+      return;
+    }
+    void showAlert("原选区已变化且未能按内容定位，请重新选中后再试。", "Mditor", "warning");
+  }, []);
+  // 改动预览「查看上下文」：滚动编辑器到该处改动的原文位置。
+  const jumpToAiText = useCallback(
+    (needle: string) => editorRef.current?.revealText(needle),
     []
   );
   // Annotation edit/delete bridge for the popover (stable; reads editorRef at
@@ -793,18 +815,27 @@ export default function App() {
   // the raw reply if refinement fails or the model isn't configured.
   //
   // 流式 + 乐观挂载：点批注的瞬间就挂上占位 marker（"生成中…"），用户立刻在
-  // 编辑器里看到反馈；随后精炼内容以流式片段实时写回 marker，结束收尾。
-  // updateAnnotation 会触发整篇 setValue，故用 rAF 节流到每帧最多一次。
+  // 编辑器里看到反馈；随后精炼内容以流式片段实时写回 marker。
+  // updateAnnotation 触发整篇重写，用 rAF 节流到每帧最多一次。
+  //
+  // 一步撤销（AI 写回契约）：进入前先记 baseline；流式帧各自合并进撤销组；
+  // 结束时 finalizeAnnotation 以 baseline 为基线收束为单个撤销步骤——按一次
+  // Ctrl+Z 即完全回到点「批注」之前的文档。
   const onAnnotateReply = useCallback(
     async (reply: string, anchorText?: string, range?: { from: number; to: number } | null) => {
       const s = settingsRef.current.settings;
       const editor = editorRef.current;
+      if (!editor) return;
+      const baseline = editor.getValue();
       // 乐观挂载占位 marker，拿到 annotationId 用于后续更新。
-      const annoId = editor?.addAnnotation("生成中…", anchorText, range) ?? null;
+      const annoId = editor.addAnnotation("生成中…", anchorText, range);
+      if (!annoId) return;
+      const finalize = (text: string) =>
+        editor.finalizeAnnotation(annoId, text.trim() || reply.trim(), baseline);
 
       if (!isAiConfigured(s)) {
         // 未配置 AI：直接用原始回复收尾占位。
-        if (annoId) editor?.updateAnnotation(annoId, reply.trim());
+        finalize(reply);
         return;
       }
 
@@ -812,7 +843,7 @@ export default function App() {
       let rafId: number | null = null;
       const flush = () => {
         rafId = null;
-        if (annoId) editor?.updateAnnotation(annoId, partial);
+        editor.updateAnnotation(annoId, partial);
       };
       try {
         await new Promise<void>((resolve, reject) => {
@@ -831,14 +862,13 @@ export default function App() {
             },
           });
         });
-        // 收尾：清掉待处理 rAF，用最终内容（去空白）刷新 marker。
+        // 收尾：清掉待处理 rAF，以 baseline 收束为一步撤销。
         if (rafId != null) cancelAnimationFrame(rafId);
-        const finalText = partial.trim();
-        if (annoId) editor?.updateAnnotation(annoId, finalText || reply.trim());
+        finalize(partial.trim());
       } catch {
         // 精炼失败：取消待处理帧，回退为原始回复，保证 marker 不停在"生成中…"。
         if (rafId != null) cancelAnimationFrame(rafId);
-        if (annoId) editor?.updateAnnotation(annoId, reply.trim());
+        finalize(reply);
       }
     },
     []
@@ -1085,11 +1115,10 @@ export default function App() {
         open={aiOpen}
         settings={settingsApi.settings}
         getNote={getMarkdown}
-        getSelection={getEditorSelection}
-        onInsert={insertAtCursor}
-        onReplace={replaceContent}
-        onReplaceSelection={replaceSelection}
+        onInsert={aiInsert}
         onInsertAfterSelection={insertAfterSelection}
+        onApplyChanges={applyAiChanges}
+        onJumpToText={jumpToAiText}
         onAnnotate={onAnnotateReply}
         onOpenSettings={openSettings}
         onSettingsChange={onSettingsChange}
@@ -1112,6 +1141,7 @@ export default function App() {
 
       <AnnotationPopover
         annotations={annotations}
+        markdown={liveMarkdown}
         onUpdate={updateAnnotation}
         onDelete={deleteAnnotation}
         theme={settingsApi.settings.theme}

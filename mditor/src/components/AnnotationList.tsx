@@ -135,6 +135,15 @@ export const AnnotationList = memo(function AnnotationList({
               <span className="anno-item-badge" title={`批注 #${a.marker}`}>
                 #{a.marker}
               </span>
+              {a.codeLine && (
+                <span
+                  className="anno-item-lines"
+                  title={`锚定在代码块内第 ${a.codeLine.start}–${a.codeLine.end} 行（随内容跟随）`}
+                >
+                  代码 {a.codeLine.start}
+                  {a.codeLine.end > a.codeLine.start ? `–${a.codeLine.end}` : ""} 行
+                </span>
+              )}
               <span
                 className="anno-item-anchor"
                 title={snippet || "（未找到锚点文字）"}

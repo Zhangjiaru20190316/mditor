@@ -439,3 +439,38 @@
   padding: 1px 9px;
   line-height: 1.6;
 }
+
+/* ---- 代码行级批注（lib/codeAnno.ts）------------------------------------- */
+/* 批注打开时其锚定代码行的高亮：CodeMirror 行（.cm-line）与整块 <pre> 兜底。
+   颜色对深浅主题都可读（半透明叠加，不改变代码前景色）。 */
+.cm-line.anno-code-line-hl {
+  background: rgba(255, 176, 32, 0.28) !important;
+  box-shadow: inset 3px 0 0 var(--accent, #e0a032);
+  border-radius: 2px;
+}
+pre.anno-code-line-hl {
+  background: rgba(255, 176, 32, 0.15) !important;
+  box-shadow: inset 3px 0 0 var(--accent, #e0a032);
+}
+/* popover 标题里的代码行号徽标 */
+.anno-popover-lines {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--fg-muted);
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 5px;
+  white-space: nowrap;
+}
+/* 批注列表里的代码行标识 */
+.anno-item-lines {
+  flex: none;
+  font-size: 10px;
+  color: var(--accent);
+  background: var(--accent-soft, var(--hover));
+  border-radius: 4px;
+  padding: 2px 5px;
+  white-space: nowrap;
+}

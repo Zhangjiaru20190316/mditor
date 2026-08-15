@@ -7,11 +7,22 @@
 // showing the body (looked up from the parsed `annotations` list). Edit /
 // delete actions call back into the editor bridge.
 //
+// 代码行级批注：当批注带有 codeLine 元数据（锚在代码块内的具体行上，见
+// lib/codeAnno.ts）时，打开前先按当前文档内容重新解析行位（跟随内容而非行
+// 号），高亮对应代码行（CodeMirror .cm-line / 整块 pre 兜底），popover 贴着
+// 第一个高亮行定位；关闭时清掉高亮。
+//
 // The component is self-contained: drop one instance in and it manages its own
 // open/close, positioning, and edit state.
 
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Annotation } from "../lib/annotations";
+import {
+  CODE_LINE_HL_CLASS,
+  clearCodeLineHighlights,
+  highlightCodeLines,
+  resolveCodeLines,
+} from "../lib/codeAnno";
 import { confirmDialog } from "../lib/dialogs";
 import type { Theme } from "../types";
 import { MarkdownText } from "./MarkdownText";
@@ -20,6 +31,8 @@ import { AnnotationIcon, CloseIcon } from "./icons";
 interface Props {
   /** Current parsed annotations (used to look up the active one's body). */
   annotations: Annotation[];
+  /** Live document markdown — re-resolves code-line anchors against edits. */
+  markdown: string;
   /** Save edited content for the given id. */
   onUpdate: (id: string, content: string) => void;
   /** Delete the given annotation (marker + definition). */
@@ -39,6 +52,7 @@ interface Pos {
 
 export const AnnotationPopover = memo(function AnnotationPopover({
   annotations,
+  markdown,
   onUpdate,
   onDelete,
   theme,
@@ -52,6 +66,11 @@ export const AnnotationPopover = memo(function AnnotationPopover({
   // 避免 activeId 每次变化都重注册 mousedown/keydown。
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeId;
+  // annotations / markdown 的 ref 镜像（同上，供一次性注册的 mousedown 用）。
+  const annotationsRef = useRef(annotations);
+  annotationsRef.current = annotations;
+  const markdownRef = useRef(markdown);
+  markdownRef.current = markdown;
 
   const active = activeId
     ? annotations.find((a) => a.id === activeId) ?? null
@@ -62,6 +81,7 @@ export const AnnotationPopover = memo(function AnnotationPopover({
     setPos(null);
     setEditing(false);
     setDraft("");
+    clearCodeLineHighlights();
   }, []);
 
   // Close if the active annotation vanished from the document (deleted /
@@ -86,10 +106,25 @@ export const AnnotationPopover = memo(function AnnotationPopover({
         e.stopPropagation();
         const id = marker.getAttribute("data-label") ?? "";
         const rect = marker.getBoundingClientRect();
+        // 代码行级批注：按当前内容重解行位并高亮；popover 贴第一个高亮行。
+        // 解析失败（行内容被删等）或非代码批注 → 回退到 marker 旁定位。
+        clearCodeLineHighlights();
+        let initialPos: Pos | null = null;
+        const anno = annotationsRef.current.find((a) => a.id === id);
+        if (anno?.codeLine) {
+          const resolved = resolveCodeLines(markdownRef.current, id, anno.codeLine);
+          if (resolved) {
+            const lineEl = highlightCodeLines(marker, resolved.start, resolved.end);
+            if (lineEl) {
+              const r = lineEl.getBoundingClientRect();
+              initialPos = { left: r.right + 8, top: r.top };
+            }
+          }
+        }
         setActiveId(id);
         // Re-derive position on next paint once we know the marker's viewport
         // position is current (it may shift right after a setValue re-render).
-        setPos({ left: rect.right + 8, top: rect.top });
+        setPos(initialPos ?? { left: rect.right + 8, top: rect.top });
         setEditing(false);
         return;
       }
@@ -109,11 +144,15 @@ export const AnnotationPopover = memo(function AnnotationPopover({
 
   // Recompute position relative to the marker whenever it opens, clamping into
   // the viewport. Done in useLayoutEffect so the card never flashes off-screen.
+  // 代码行级批注优先贴第一个高亮行（.anno-code-line-hl），否则贴 marker。
   useLayoutEffect(() => {
     if (!activeId) return;
-    const marker = document.querySelector<HTMLElement>(
-      `${MARKER_SELECTOR}[data-label="${cssEsc(activeId)}"]`
-    );
+    const hl = document.querySelector<HTMLElement>(`.${CODE_LINE_HL_CLASS}`);
+    const marker =
+      hl ??
+      document.querySelector<HTMLElement>(
+        `${MARKER_SELECTOR}[data-label="${cssEsc(activeId)}"]`
+      );
     if (!marker) return;
     const rect = marker.getBoundingClientRect();
     const cardW = cardRef.current?.offsetWidth ?? 304;
@@ -156,6 +195,15 @@ export const AnnotationPopover = memo(function AnnotationPopover({
         <span className="anno-popover-title">
           <AnnotationIcon size={12} className="anno-popover-title-icon" />
           批注 #{active.marker}
+          {active.codeLine && (
+            <span className="anno-popover-lines" title="批注锚定的代码行（随内容跟随）">
+              代码 第 {active.codeLine.start}
+              {active.codeLine.end > active.codeLine.start
+                ? `–${active.codeLine.end}`
+                : ""}{" "}
+              行
+            </span>
+          )}
         </span>
         <button
           className="anno-popover-close"

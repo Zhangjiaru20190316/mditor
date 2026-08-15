@@ -39,6 +39,7 @@ import {
 } from "../lib/annotations";
 import type { CodeLineMeta } from "../lib/codeAnno";
 import { formatBytes, getHeapUsage, IS_DEV } from "../lib/memory";
+import { normalizeAnchorText } from "../lib/anchorSearch";
 import { logMemory } from "../lib/diagnostics";
 import { saveHealSnapshot } from "../lib/session";
 import type { EditMode, Settings, BlockInfo, FlatHeading } from "../types";
@@ -643,10 +644,14 @@ export const Editor = memo(
         if (!ed) return;
         const md = ed.getValue() ?? "";
         const next = updateAnnotationInMd(md, id, content);
-        const final = next === md ? baseline : next;
-        ed.aiWriteFinalize(baseline, final);
+        if (next === md) {
+          // 批注定义已不在（被删除）或内容本就相同：不动文档——
+          // 此时走 baseline 回卷会把流式期间的其他编辑一并卷掉。
+          return;
+        }
+        ed.aiWriteFinalize(baseline, next);
         fileApi.markDirty();
-        onInputRef.current?.(final);
+        onInputRef.current?.(next);
       },
       revealText: (needle) => handle.editor?.revealText(needle),
       findTextRange: (needle, hint) =>
