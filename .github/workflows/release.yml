@@ -37,7 +37,9 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # npm 11 (Node 24) — npm 10 mis-handles the lockfile's cross-platform
+          # esbuild optional deps (vitest 4 needs esbuild 0.28), failing `npm ci`.
+          node-version: 24
           cache: npm
           cache-dependency-path: mditor/package-lock.json
 
