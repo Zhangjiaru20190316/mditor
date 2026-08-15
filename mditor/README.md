@@ -78,6 +78,14 @@ mditor/
 └── docs/                   # 设计与实施文档
 ```
 
+## 支持本项目
+
+Mditor 是完全开源、免费、无广告、无遥测的软件。如果它帮到了你，欢迎请我喝杯咖啡，每一份支持都会直接转化为更好的更新。
+
+- **爱发电**（中国大陆，推荐）：https://afdian.com/a/<你的主页ID>（尚未开通，敬请期待）
+- **GitHub Sponsors**：https://github.com/sponsors/Zhangjiaru20190316
+- **微信赞赏码 / 支付宝**：待补充
+
 ## License
 
 MIT
