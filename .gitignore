@@ -11,6 +11,9 @@ HeapSnapshot-*.json
 # Session/tool files
 .zcode/
 
+# Promotion drafts (not part of the repo)
+promo/
+
 # OS junk
 Thumbs.db
 desktop.ini
