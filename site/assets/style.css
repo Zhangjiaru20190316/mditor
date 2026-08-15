@@ -73,6 +73,8 @@ main { max-width: 960px; margin: 0 auto; padding: 56px 20px 40px; }
 
 .support { margin-top: 56px; }
 .support-links { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+.qr-caption { text-align: center; color: var(--muted); font-size: 13px; margin-top: 26px; }
+.qr { display: block; margin: 10px auto 0; width: 180px; height: 180px; border-radius: 12px; border: 1px solid var(--border); }
 
 footer {
   text-align: center;
