@@ -84,7 +84,7 @@ mditor/
 
 Mditor 是完全开源、免费、无广告、无遥测的软件。如果它帮到了你，欢迎请我喝杯咖啡，每一份支持都会直接转化为更好的更新。
 
-- **爱发电**（中国大陆，推荐）：https://afdian.com/a/<你的主页ID>（尚未开通，敬请期待）
+- **爱发电**（中国大陆，推荐）：https://afdian.com/u/d582c7c0989811f18da15254001e7c00
 - **GitHub Sponsors**：https://github.com/sponsors/Zhangjiaru20190316
 - **微信赞赏码 / 支付宝**：待补充
 
