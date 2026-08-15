@@ -16,6 +16,8 @@
 // definition block is hidden in the editor (see annotation.css + the
 // `data-anno` tagging in useAnnotationMarkers) and shown in a popover on click.
 
+import { stripCodeLineMeta, withCodeLineMeta, type CodeLineMeta } from "./codeAnno";
+
 /** A single annotation parsed from a markdown document. */
 export interface Annotation {
   /** Marker id without the `[^...]` brackets, e.g. `anno-1`. */
@@ -24,6 +26,9 @@ export interface Annotation {
   marker: number;
   /** Body text of the annotation (trimmed, may span multiple lines). */
   content: string;
+  /** Code line-level anchor, when the annotation targets lines inside a code
+   *  block (see lib/codeAnno.ts). Null for ordinary prose annotations. */
+  codeLine?: CodeLineMeta | null;
 }
 
 /** Prefix that distinguishes annotations from ordinary footnotes. */
@@ -35,9 +40,11 @@ export function refToken(id: string): string {
 }
 
 /** Build the footnote definition block `[^anno-7]: text` (continuation lines
- *  are indented so Lute keeps them inside the same definition). */
-export function buildDefinition(id: string, content: string): string {
-  const indented = content.replace(/\r?\n/g, "\n    ");
+ *  are indented so Lute keeps them inside the same definition). When the
+ *  annotation is code-line anchored, a `<!--md:line …-->` metadata token is
+ *  prepended (see lib/codeAnno.ts). */
+export function buildDefinition(id: string, content: string, codeLine?: CodeLineMeta | null): string {
+  const indented = withCodeLineMeta(content, codeLine ?? null).replace(/\r?\n/g, "\n    ");
   return `[^${id}]: ${indented}`;
 }
 
@@ -66,7 +73,8 @@ export function parseAnnotations(md: string): Annotation[] {
       bodyLines.push(lines[j].replace(/^[ \t]+/, ""));
       j++;
     }
-    byId.set(id, { id, marker, content: bodyLines.join("\n").trim() });
+    const { content, meta } = stripCodeLineMeta(bodyLines.join("\n").trim());
+    byId.set(id, { id, marker, content, codeLine: meta });
   }
   return Array.from(byId.values()).sort((a, b) => a.marker - b.marker);
 }
@@ -171,9 +179,10 @@ function cap(s: string, max: number): string {
 export function appendAnnotationDefinition(
   md: string,
   id: string,
-  content: string
+  content: string,
+  codeLine?: CodeLineMeta | null
 ): string {
-  const def = buildDefinition(id, content);
+  const def = buildDefinition(id, content, codeLine);
   const trimmed = md.replace(/\s+$/, "");
   if (trimmed === "") return def;
   return trimmed + "\n\n" + def;
@@ -250,9 +259,11 @@ export function removeAnnotationFromMd(md: string, id: string): string {
 }
 
 /**
- * Replace the body of an existing annotation definition, preserving its id
- * and position. Continuation lines of the old definition are dropped and the
- * new content's newlines are re-indented to stay inside the definition.
+ * Replace the body of an existing annotation definition, preserving its id,
+ * position AND any code-line metadata token (see lib/codeAnno.ts) so editing
+ * an annotation doesn't demote a code-line anchor back to block level.
+ * Continuation lines of the old definition are dropped and the new content's
+ * newlines are re-indented to stay inside the definition.
  */
 export function updateAnnotationInMd(
   md: string,
@@ -260,7 +271,11 @@ export function updateAnnotationInMd(
   newContent: string
 ): string {
   const defRe = new RegExp(`^(\\[\\^${escapeRegExp(id)}\\]:)[ \\t]*(.*)$`);
-  const indented = newContent.replace(/\r?\n/g, "\n    ");
+  const defLine = md.split(/\r?\n/).find((ln) => defRe.test(ln)) ?? "";
+  const defMatch = defLine.match(defRe);
+  // The metadata token lives at the head of the old body (def line).
+  const oldMeta = defMatch ? stripCodeLineMeta(defMatch[2]).meta : null;
+  const indented = withCodeLineMeta(newContent, oldMeta).replace(/\r?\n/g, "\n    ");
   const lines = md.split(/\r?\n/);
   const out: string[] = [];
   let i = 0;

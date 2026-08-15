@@ -37,6 +37,7 @@ import {
   removeAnnotationFromMd,
   updateAnnotationInMd,
 } from "../lib/annotations";
+import type { CodeLineMeta } from "../lib/codeAnno";
 import { formatBytes, getHeapUsage, IS_DEV } from "../lib/memory";
 import { logMemory } from "../lib/diagnostics";
 import { saveHealSnapshot } from "../lib/session";
@@ -106,6 +107,23 @@ export interface EditorHandle {
   updateAnnotation: (id: string, content: string) => void;
   /** Remove an annotation entirely: strips its marker(s) and definition. */
   removeAnnotation: (id: string) => void;
+  /* ---- AI 写回（一步撤销）----
+   * 每个方法恰好构成一个撤销步骤（见 MilkdownFacade 的契约说明）。
+   * Editor 层统一补 markDirty + onInput 通知（facade 静默了内部回声）。 */
+  /** 整篇 AI 写回（改动审查应用 / 替换全文）。 */
+  aiWriteDoc: (md: string) => void;
+  /** 区间 AI 写回（改动审查选区模式）。 */
+  aiWriteRange: (from: number, to: number, md: string) => void;
+  /** 光标处 AI 插入。 */
+  aiWriteInsert: (md: string) => void;
+  /** 批注流式写回收尾：以 baseline 为撤销基线，把批注最终内容一步落盘。 */
+  finalizeAnnotation: (id: string, content: string, baseline: string) => void;
+  /** 滚动到 needle 首次出现处（改动审查「查看上下文」跳转）。 */
+  revealText: (needle: string) => void;
+  /** 按内容定位文档区间（选区失效时的回退锚定）。 */
+  findTextRange: (needle: string, hint?: number) => { from: number; to: number } | null;
+  /** [from,to) 的纯文本（选区有效性校验）。 */
+  getTextAt: (from: number, to: number) => string;
   /** Whether the editor is currently mounted and ready. */
   ready: () => boolean;
   /**
@@ -538,6 +556,19 @@ export const Editor = memo(
         const num = nextAnnotationId(before);
         const id = `anno-${num}`;
         const token = refToken(id);
+        // 代码行级批注：锚定选区仍与 anchorText 吻合时，若它落在代码块内，
+        // 捕获块内行号锚（随定义持久化为 <!--md:line …--> 元数据）。
+        let codeLine: CodeLineMeta | null = null;
+        if (
+          range &&
+          (!anchorText ||
+            normalizeAnchorText(ed.getTextAt(range.from, range.to)) ===
+              normalizeAnchorText(anchorText))
+        ) {
+          codeLine = ed.getCodeAnchorAt(range);
+        } else if (!range) {
+          codeLine = ed.getCodeAnchorAt(ed.getSelectionRange());
+        }
         let withMarker: string | null = null;
         // Place the marker via the unified resolver. It inserts inline for
         // normal prose, and — when the anchor sits inside a block that can't
@@ -555,8 +586,9 @@ export const Editor = memo(
           const trimmed = before.replace(/\s+$/, "");
           withMarker = trimmed === "" ? token : `${trimmed}${token}`;
         }
-        // Append the definition block at the end and re-set the whole doc.
-        ed.setValue(appendAnnotationDefinition(withMarker, id, content), true);
+        // Append the definition block and re-set the whole doc. flush=false：
+        // 保留撤销历史，marker 插入与本事务相邻合并为一步撤销（AI 写回契约）。
+        ed.setValue(appendAnnotationDefinition(withMarker, id, content, codeLine));
         fileApi.markDirty();
         onInputRef.current?.(ed.getValue());
         return id;
@@ -567,7 +599,9 @@ export const Editor = memo(
         const md = ed.getValue() ?? "";
         const next = updateAnnotationInMd(md, id, content);
         if (next === md) return;
-        ed.setValue(next, true);
+        // flush=false：流式更新按相邻合并进同一撤销组；收尾（finalizeAnnotation）
+        // 用 baseline 收束为一步。
+        ed.setValue(next);
         fileApi.markDirty();
         onInputRef.current?.(ed.getValue());
       },
@@ -577,10 +611,47 @@ export const Editor = memo(
         const md = ed.getValue() ?? "";
         const next = removeAnnotationFromMd(md, id);
         if (next === md) return;
-        ed.setValue(next, true);
+        ed.setValue(next);
         fileApi.markDirty();
         onInputRef.current?.(ed.getValue());
       },
+      /* ---- AI 写回（一步撤销）---- */
+      aiWriteDoc: (md) => {
+        const ed = handle.editor;
+        if (!ed) return;
+        ed.aiWriteDoc(md);
+        fileApi.markDirty();
+        onInputRef.current?.(ed.getValue());
+      },
+      aiWriteRange: (from, to, md) => {
+        const ed = handle.editor;
+        if (!ed) return;
+        ed.aiWriteRange(from, to, md);
+        fileApi.markDirty();
+        onInputRef.current?.(ed.getValue());
+      },
+      aiWriteInsert: (md) => {
+        const ed = handle.editor;
+        if (!ed) return;
+        ed.focus();
+        ed.aiWriteInsert(md);
+        fileApi.markDirty();
+        onInputRef.current?.(ed.getValue());
+      },
+      finalizeAnnotation: (id, content, baseline) => {
+        const ed = handle.editor;
+        if (!ed) return;
+        const md = ed.getValue() ?? "";
+        const next = updateAnnotationInMd(md, id, content);
+        const final = next === md ? baseline : next;
+        ed.aiWriteFinalize(baseline, final);
+        fileApi.markDirty();
+        onInputRef.current?.(final);
+      },
+      revealText: (needle) => handle.editor?.revealText(needle),
+      findTextRange: (needle, hint) =>
+        handle.editor?.findTextRange(needle, hint) ?? null,
+      getTextAt: (from, to) => handle.editor?.getTextAt(from, to) ?? "",
       previewEl: () => {
         if (handle.mode === "sv") return null;
         return (

@@ -2,7 +2,9 @@
 
 本地优先的 Markdown 编辑器，体验对标 Typora。基于 **Tauri 2 + React 18 + Milkdown (Crepe)** 构建 —— 无云端、无遥测，文件始终保存在你的电脑上。
 
-![platform](https://img.shields.io/badge/platform-Windows-blue) ![license](https://img.shields.io/badge/license-MIT-green)
+![platform](https://img.shields.io/badge/platform-Windows-blue) ![license](https://img.shields.io/badge/license-MIT-green) ![downloads](https://img.shields.io/github/downloads/Zhangjiaru20190316/mditor/total?label=downloads&color=success)
+
+> 🌐 官网与下载：<https://Zhangjiaru20190316.github.io/mditor/>（GitHub Pages）
 
 ## 功能特性
 

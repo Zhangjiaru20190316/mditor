@@ -25,8 +25,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { Crepe } from "@milkdown/crepe";
-import { replaceAll, insert, getHTML, replaceRange, insertPos } from "@milkdown/utils";
-import { editorViewCtx } from "@milkdown/core";
+import {
+  replaceAll,
+  insert,
+  getHTML,
+  replaceRange,
+  insertPos,
+  markdownToSlice,
+} from "@milkdown/utils";
+import { editorViewCtx, parserCtx } from "@milkdown/core";
+import { closeHistory } from "@milkdown/prose/history";
 import { toggleMark, setBlockType as pmSetBlockType, wrapIn, lift } from "@milkdown/prose/commands";
 import { wrapInList, liftListItem } from "@milkdown/prose/schema-list";
 import {
@@ -39,6 +47,7 @@ import {
 } from "@milkdown/prose/tables";
 import { TextSelection } from "@milkdown/prose/state";
 import type { EditorView } from "@milkdown/prose/view";
+import { Slice } from "@milkdown/prose/model";
 import type { Mark, Node as PMNode, ResolvedPos } from "@milkdown/prose/model";
 import { headingIdGenerator } from "@milkdown/kit/preset/commonmark";
 import { syntaxHighlighting } from "@codemirror/language";
@@ -52,7 +61,13 @@ import { persistImage, persistRemoteImage, resolveImgSrc } from "../lib/imageMan
 import { isBigDoc, getHeapUsage } from "../lib/memory";
 import { logMemory } from "../lib/diagnostics";
 import { headingSlugBase } from "../lib/outline";
-import { normalizeAnchorText, findAnchorPos, nearestOccurrenceEnd } from "../lib/anchorSearch";
+import {
+  normalizeAnchorText,
+  findAnchorPos,
+  findAnchorRange,
+  nearestOccurrenceEnd,
+} from "../lib/anchorSearch";
+import type { CodeLineMeta } from "../lib/codeAnno";
 import { stampAnnotationMarkers } from "./useAnnotationMarkers";
 import { stampEditorImageLazyAttrs } from "../lib/imageLazy";
 import { COLOR_DECL_RE, colorFromStyle } from "../lib/colorSpan";
@@ -141,6 +156,28 @@ export interface MilkdownFacade {
   deleteNodeAt: (pos: number) => void;
   /** 改写 `pos` 处图片的 src（用于「更换图片」，写入可移植的 markdown 引用）。 */
   setImageSrc: (pos: number, src: string) => void;
+  /* ---- AI 写回（一步撤销契约）---------------------------------------------
+   * AI 的任何一次写回都恰好构成一个撤销步骤：富文本模式下每个写回都是
+   * 一个带 closeHistory 标记的事务（强制开启新的撤销组，绝不与用户此前的
+   * 输入合并），sv 模式下经 select-all/range + execCommand("insertText")
+   * 写入，textarea 的原生撤销把整次写回当作一步。 */
+  /** 整篇写回（改动审查「全部应用」/ 替换全文）。 */
+  aiWriteDoc: (md: string) => void;
+  /** 区间写回（改动审查选区模式）：把 [from,to) 替换为解析后的 md。 */
+  aiWriteRange: (from: number, to: number, md: string) => void;
+  /** 在光标处插入（AI「插入到光标」）。 */
+  aiWriteInsert: (md: string) => void;
+  /** 多事务写回收尾（AI 批注流式精炼）：先无痕恢复 baseline（不记入历史），
+   *  再把 next 作为唯一被记录的事务写入——一次撤销即回到 baseline。 */
+  aiWriteFinalize: (baseline: string, next: string) => void;
+  /** 代码行级批注：range 位于代码块内时返回 {start,end,firstLine} 行锚点，
+   *  否则 null（调用方退回块级批注）。 */
+  getCodeAnchorAt: (range: { from: number; to: number } | null) => CodeLineMeta | null;
+  /** 滚动文档到 needle 首次出现处（只移动视图/选区，不产生历史步骤）。 */
+  revealText: (needle: string) => void;
+  /** 定位 needle（hint 附近的那个匹配）的文档区间，找不到返回 null。
+   *  用于选区失效后按内容回退定位。 */
+  findTextRange: (needle: string, hint?: number) => { from: number; to: number } | null;
   focus: () => void;
 }
 
@@ -975,6 +1012,226 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           return -1;
         }
       },
+      /* ---- AI 写回（一步撤销契约，见 MilkdownFacade 接口注释） ---- */
+      aiWriteDoc: (md) => {
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return;
+          taUndoableReplace(ta, 0, ta.value.length, md);
+          sourceTextRef.current = ta.value;
+          contentRef.current = ta.value;
+          return;
+        }
+        const crepe = crepeRef.current;
+        if (!crepe) return;
+        suppressRef.current = true;
+        try {
+          crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const doc = ctx.get(parserCtx)(md);
+            if (!doc) return;
+            view.dispatch(
+              closeHistory(
+                view.state.tr.replace(
+                  0,
+                  view.state.doc.content.size,
+                  new Slice(doc.content, 0, 0)
+                )
+              )
+            );
+          });
+        } catch {
+          /* not ready */
+        }
+        suppressRef.current = false;
+        contentRef.current = md;
+        // NOTE: 故意不调 maybeRecreateForBigDoc —— big-doc 翻转要重建编辑器、
+        // 清空撤销历史，违背一步撤销契约；边界在下次文件载入时自然对齐。
+      },
+      aiWriteRange: (from, to, md) => {
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return;
+          const f = Math.max(0, Math.min(from, ta.value.length));
+          const t = Math.max(f, Math.min(to, ta.value.length));
+          taUndoableReplace(ta, f, t, md);
+          sourceTextRef.current = ta.value;
+          contentRef.current = ta.value;
+          return;
+        }
+        const crepe = crepeRef.current;
+        if (!crepe) return;
+        suppressRef.current = true;
+        try {
+          crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const size = view.state.doc.content.size;
+            const f = Math.max(0, Math.min(from, size));
+            const t = Math.max(f, Math.min(to, size));
+            const slice = markdownToSlice(md)(ctx);
+            view.dispatch(closeHistory(view.state.tr.replaceRange(f, t, slice)));
+          });
+        } catch {
+          /* not ready */
+        }
+        suppressRef.current = false;
+      },
+      aiWriteInsert: (md) => {
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return;
+          taUndoableReplace(ta, ta.selectionStart, ta.selectionEnd, md);
+          sourceTextRef.current = ta.value;
+          contentRef.current = ta.value;
+          return;
+        }
+        const crepe = crepeRef.current;
+        if (!crepe) return;
+        suppressRef.current = true;
+        try {
+          crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const slice = markdownToSlice(md)(ctx);
+            view.dispatch(closeHistory(view.state.tr.replaceSelection(slice).scrollIntoView()));
+          });
+        } catch {
+          /* not ready */
+        }
+        suppressRef.current = false;
+      },
+      aiWriteFinalize: (baseline, next) => {
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return;
+          // 原生撤销路径：静默重置到 baseline（清掉流式期间的撤销痕迹），
+          // 随后一次 execCommand 写入 —— 撤销一步即回到 baseline。
+          ta.value = baseline;
+          taUndoableReplace(ta, 0, ta.value.length, next);
+          sourceTextRef.current = ta.value;
+          contentRef.current = ta.value;
+          return;
+        }
+        const crepe = crepeRef.current;
+        if (!crepe) return;
+        suppressRef.current = true;
+        try {
+          crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const d0 = ctx.get(parserCtx)(baseline);
+            if (d0) {
+              const restore = view.state.tr.replace(
+                0,
+                view.state.doc.content.size,
+                new Slice(d0.content, 0, 0)
+              );
+              restore.setMeta("addToHistory", false);
+              view.dispatch(restore);
+            }
+            const d1 = ctx.get(parserCtx)(next);
+            if (d1) {
+              view.dispatch(
+                closeHistory(
+                  view.state.tr.replace(
+                    0,
+                    view.state.doc.content.size,
+                    new Slice(d1.content, 0, 0)
+                  )
+                )
+              );
+            }
+          });
+        } catch {
+          /* not ready */
+        }
+        suppressRef.current = false;
+        contentRef.current = next;
+      },
+      getCodeAnchorAt: (range) => {
+        if (!range || range.to <= range.from) return null;
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return null;
+          return svCodeAnchorAt(ta.value, range.from, range.to);
+        }
+        try {
+          return crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const doc = view.state.doc;
+            const size = doc.content.size;
+            const from = Math.max(0, Math.min(range.from, size));
+            const to = Math.max(from, Math.min(range.to, size));
+            const $from = doc.resolve(from);
+            let depth = -1;
+            for (let d = $from.depth; d >= 1; d--) {
+              if ($from.node(d).type.name === "code_block") {
+                depth = d;
+                break;
+              }
+            }
+            if (depth < 0) return null;
+            const contentStart = $from.before(depth) + 1;
+            const contentEnd = $from.after(depth) - 1;
+            const toClamped = Math.min(to, contentEnd);
+            if (toClamped <= from) return null;
+            const before = doc.textBetween(contentStart, from, "\n");
+            const through = doc
+              .textBetween(contentStart, toClamped, "\n")
+              .replace(/\n$/, "");
+            const start = before.split("\n").length; // `from` 所在行（1-based）
+            const end = through.split("\n").length; // `to` 所在行（1-based）
+            const lines = $from.node(depth).textContent.split("\n");
+            const firstLine = lines[start - 1] ?? "";
+            if (!firstLine.trim() || start > end) return null;
+            return { start, end, firstLine };
+          });
+        } catch {
+          return null;
+        }
+      },
+      revealText: (needle) => {
+        if (!needle) return;
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return;
+          const idx = ta.value.indexOf(needle);
+          if (idx < 0) return;
+          ta.setSelectionRange(idx, idx + needle.length);
+          ta.focus(); // focus 滚动 caret 行入视图
+          return;
+        }
+        try {
+          crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const pos = findAnchorPos(view.state.doc, needle, -1);
+            if (pos <= 0) return;
+            // 仅选区事务（无 steps → 不进历史），scrollIntoView 滚到该处。
+            const tr = view.state.tr.setSelection(
+              TextSelection.near(view.state.doc.resolve(pos), -1)
+            );
+            tr.scrollIntoView();
+            view.dispatch(tr);
+          });
+        } catch {
+          /* not ready */
+        }
+      },
+      findTextRange: (needle, hint) => {
+        if (!needle) return null;
+        if (modeRef.current === "sv") {
+          const ta = sourceRef.current;
+          if (!ta) return null;
+          const end = nearestOccurrenceEnd(ta.value, needle, hint ?? -1);
+          return end < 0 ? null : { from: end - needle.length, to: end };
+        }
+        try {
+          return crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            return findAnchorRange(view.state.doc, needle, hint ?? -1);
+          });
+        } catch {
+          return null;
+        }
+      },
       focus: () => {
         if (modeRef.current === "sv") {
           sourceRef.current?.focus();
@@ -1454,6 +1711,73 @@ function replaceTextareaSelection(ta: HTMLTextAreaElement, text: string): void {
   ta.value = ta.value.slice(0, s) + text + ta.value.slice(en);
   const pos = s + text.length;
   ta.selectionStart = ta.selectionEnd = pos;
+}
+
+/** Undoable textarea write (AI 一步撤销的 sv 模式路径)：选中 [from,to) 后经
+ *  execCommand("insertText") 写入，原生撤销把整次写入当作一步。WebView2 支持
+ *  该命令；返回 false（被策略拦截等罕见情形）时调用方退回普通赋值，保正确
+ *  性、牺牲撤销粒度。会触发一次原生 input 事件（与手工输入同路径）。 */
+function taUndoableReplace(ta: HTMLTextAreaElement, from: number, to: number, text: string): boolean {
+  ta.focus();
+  ta.setSelectionRange(from, to);
+  let ok = false;
+  try {
+    ok = document.execCommand("insertText", false, text);
+  } catch {
+    ok = false;
+  }
+  if (!ok) {
+    const before = ta.value.slice(0, from);
+    ta.value = before + text + ta.value.slice(to);
+    ta.setSelectionRange(before.length + text.length, before.length + text.length);
+  }
+  return ok;
+}
+
+/** sv 模式的代码行锚点：textarea 偏移 [from,to) 是否落在某个围栏代码块内，
+ *  在则返回块内行号 {start,end,firstLine}（1-based，firstLine 为锚定首行
+ *  原文，供内容跟随）。 */
+function svCodeAnchorAt(value: string, from: number, to: number): CodeLineMeta | null {
+  const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
+  const lines = value.split("\n");
+  let off = 0;
+  let inFence = false;
+  let fenceCh = "";
+  const contentLines: string[] = [];
+  const contentOffsets: number[] = [];
+  let start = -1;
+  let end = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const lineStart = off;
+    const lineEnd = off + lines[i].length;
+    off = lineEnd + 1;
+    const m = FENCE.exec(lines[i]);
+    if (!inFence) {
+      if (m) {
+        inFence = true;
+        fenceCh = m[1][0];
+        contentLines.length = 0;
+        contentOffsets.length = 0;
+        start = -1;
+        end = -1;
+      }
+      continue;
+    }
+    if (m && m[1][0] === fenceCh) {
+      inFence = false; // 块结束；已记录的 start/end（若有）即最终结果
+      continue;
+    }
+    // 代码内容行
+    contentLines.push(lines[i]);
+    contentOffsets.push(lineStart);
+    if (start < 0 && from >= lineStart && from <= lineEnd) start = contentLines.length;
+    if (start > 0 && to > lineStart && to <= lineEnd + 1) end = contentLines.length;
+  }
+  if (start < 0) return null;
+  if (end < 0) end = start; // to 越界（块外）：按单行处理
+  const firstLine = contentLines[start - 1] ?? "";
+  if (!firstLine.trim()) return null;
+  return { start, end, firstLine };
 }
 
 /** Wrap (or unwrap, if already wrapped) the textarea selection with `open` and

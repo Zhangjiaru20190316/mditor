@@ -65,9 +65,11 @@ export function nearestOccurrenceEnd(haystack: string, needle: string, hint = -1
  *  whitespace runs in the DOM selection string), while other inline atoms
  *  (footnote_reference, images) contribute nothing — exactly like the empty
  *  pseudo-element badges the DOM selection string sees. */
-export function findAnchorPos(doc: PMNode, anchorText: string, hintFrom = -1): number {
-  const needle = normalizeAnchorText(anchorText);
-  if (!needle) return -1;
+/** Flatten the document into normalized text with a char → PM-position map.
+ *  Block boundaries and hard_breaks emit a separator space (they are
+ *  whitespace runs in the DOM selection string), inline atoms contribute
+ *  nothing. Shared by findAnchorPos / findAnchorRange. */
+function flattenDoc(doc: PMNode): { text: string; pmAt: number[] } {
   const chars: string[] = [];
   const pmAt: number[] = [];
   // Suppresses leading separators and collapses whitespace runs to one space.
@@ -93,7 +95,13 @@ export function findAnchorPos(doc: PMNode, anchorText: string, hintFrom = -1): n
     }
     return true;
   });
-  const text = chars.join("");
+  return { text: chars.join(""), pmAt };
+}
+
+export function findAnchorPos(doc: PMNode, anchorText: string, hintFrom = -1): number {
+  const needle = normalizeAnchorText(anchorText);
+  if (!needle) return -1;
+  const { text, pmAt } = flattenDoc(doc);
   let best = -1;
   let bestDist = Infinity;
   let idx = text.indexOf(needle);
@@ -108,6 +116,35 @@ export function findAnchorPos(doc: PMNode, anchorText: string, hintFrom = -1): n
     if (dist < bestDist) {
       bestDist = dist;
       best = pos;
+    }
+    idx = text.indexOf(needle, idx + 1);
+  }
+  return best;
+}
+
+/** The PM RANGE covering the needle occurrence closest to `hintFrom` (first
+ *  occurrence when hint < 0), or null when it can't be matched. Unlike
+ *  findAnchorPos (an insertion end-position), this returns the [from, to]
+ *  span so callers can REPLACE the matched text. */
+export function findAnchorRange(
+  doc: PMNode,
+  anchorText: string,
+  hintFrom = -1
+): { from: number; to: number } | null {
+  const needle = normalizeAnchorText(anchorText);
+  if (!needle) return null;
+  const { text, pmAt } = flattenDoc(doc);
+  let best: { from: number; to: number } | null = null;
+  let bestDist = Infinity;
+  let idx = text.indexOf(needle);
+  while (idx >= 0) {
+    const end = idx + needle.length;
+    const range = { from: pmAt[idx], to: pmAt[end - 1] + 1 };
+    if (hintFrom < 0) return range;
+    const dist = Math.abs(pmAt[idx] - hintFrom);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = range;
     }
     idx = text.indexOf(needle, idx + 1);
   }
