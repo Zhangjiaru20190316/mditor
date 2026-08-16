@@ -170,6 +170,9 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
   // list is sliced at the MAX_MESSAGES cap mid-operation.
   const [annotatingId, setAnnotatingId] = useState(-1);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 本轮问题的消息 id，作为滚动锚点：回合开始把问题对齐视口顶部，
+  // 生成期间不跟随输出滚动，回答结束时回到问题开头。
+  const turnAnchorIdRef = useRef<number | null>(null);
   const streamRef = useRef<{ cancel: () => void } | null>(null);
   // Last selection the user asked about, so a follow-up free-form question in
   // the same session keeps the selection context until they clear it.
@@ -238,32 +241,20 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     [onAnnotate]
   );
 
-  // Auto-scroll to the latest message — but only when the reader is already at
-  // (or near) the bottom. Streaming appends content every frame; following
-  // unconditionally would yank the user back down while they scroll up through
-  // history. 80px ≈ one line of text tolerance (virtual-list measurement can
-  // leave the last frame a few px short of the exact bottom).
-  // With follow-up threads the streaming row can sit mid-list (indented under
-  // its parent answer), so while loading we follow THAT row (scrollToIndex
-  // align:end) instead of the container bottom.
+  // 滚动锚定：以「本轮问题」为锚。回合开始（loading 翻转为 true，与新增
+  // 消息同批提交）把问题行对齐到视口顶部；流式生成期间完全不滚动——长回答
+  // 不再把视图一直拽向底部，生成中可自由回看历史；回答结束（完成/出错/停止，
+  // loading 翻转为 false）再次对齐问题开头，方便从头阅读整段回答。
+  // 锚点行的偏移只取决于其上方的行（均已定稿），流式帧不会使其抖动。
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-    if (loading) {
-      if (!nearBottom) return;
-      const idx = rows.findIndex((r) => r.msg.role === "assistant" && r.msg.streaming);
-      if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "end" });
-      return;
-    }
-    el.scrollTo({
-      top: el.scrollHeight,
-      behavior: "smooth",
-    });
-    // rows/virtualizer 经闭包读取最新值（deps 只需覆盖触发时机：消息变化 /
-    // 流式状态翻转），列入 deps 会让每次流式帧都重复执行同一滚动。
+    const anchorId = turnAnchorIdRef.current;
+    if (anchorId == null) return;
+    const idx = rows.findIndex((r) => r.msg.id === anchorId);
+    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "start" });
+    // 仅依赖 loading 的翻转沿（回合开始/结束）；流式帧引起的 messages
+    // 变化不触发滚动。rows/virtualizer 经闭包读取最新值。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, loading]);
+  }, [loading]);
 
   // Reset the conversation whenever the panel is reopened.
   useEffect(() => {
@@ -443,9 +434,11 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
       if (opts.mode === "full") activeSelectionRef.current = "";
     }
 
+    // 在 updater 外铸造消息 id（保持 updater 纯函数），并记录本轮滚动锚点。
+    const userMsgId = ++msgIdRef.current;
+    const aiMsgId = ++msgIdRef.current;
+    turnAnchorIdRef.current = userMsgId;
     setMessages((prev) => {
-      const userMsgId = ++msgIdRef.current;
-      const aiMsgId = ++msgIdRef.current;
       const next: Msg[] = [
         ...prev,
         {

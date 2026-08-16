@@ -85,6 +85,16 @@ export interface EditorHandle {
   toggleBold: () => void;
   /** Toggle ==highlight== on the current selection. Works in rich + source modes. */
   toggleHighlight: () => void;
+  /** Toggle *italic* on the current selection（V3.6）. */
+  toggleItalic: () => void;
+  /** Toggle ~~strikethrough~~ on the current selection（V3.6）. */
+  toggleStrikethrough: () => void;
+  /** Toggle `inline code` on the current selection（V3.6）. */
+  toggleInlineCode: () => void;
+  /** 把选区变成链接（或以 text 为文字在光标处插入链接）（V3.6）。 */
+  insertLink: (href: string, text?: string) => void;
+  /** 在光标处插入脚注并追加定义（V3.6）；返回脚注 id 或 null。 */
+  insertFootnote: () => string | null;
   /** Apply a text color to the current selection (replaces any existing color).
    *  Stored as `<span style="color:…">`. Works in rich + source modes. */
   setTextColor: (color: string) => void;
@@ -92,7 +102,14 @@ export interface EditorHandle {
   clearTextColor: () => void;
   /** Whether the current selection/caret already carries bold / highlight / a
    *  text color, for showing the toolbar buttons' active state. */
-  getActiveMarks: () => { bold: boolean; highlight: boolean; color: string | null };
+  getActiveMarks: () => {
+    bold: boolean;
+    highlight: boolean;
+    italic: boolean;
+    strike: boolean;
+    code: boolean;
+    color: string | null;
+  };
   /** Add an annotation: inserts a `[^anno-N]` marker and appends the definition.
    *  Anchored at `range` when provided (a selection captured while it was still
    *  live — the robust path, since selections collapse once focus moves to a
@@ -166,6 +183,8 @@ export const Editor = memo(
   ) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sourceRef = useRef<HTMLTextAreaElement | null>(null);
+  // sv 模式的 CodeMirror 宿主（V3.6）。
+  const svHostRef = useRef<HTMLDivElement | null>(null);
   const getContentRef = useRef<() => string>(() => "");
   const onInputRef = useRef(onInput);
   onInputRef.current = onInput;
@@ -196,6 +215,7 @@ export const Editor = memo(
   const handle = useMilkdown({
     hostRef,
     sourceRef,
+    svHostRef,
     docPath: () => fileApi.doc.path,
     onInput: (md) => {
       fileApi.markDirty();
@@ -249,12 +269,55 @@ export const Editor = memo(
     handle.applyTheme(settings);
   }, [settings, handle]);
 
-  // Spellcheck on the editable surface (Milkdown's ProseMirror + the source textarea).
+  // Spellcheck on the editable surface (Milkdown's ProseMirror + the sv surface).
   useEffect(() => {
     const el = document.querySelector<HTMLElement>(".mditor-milkdown .ProseMirror");
     if (el) el.setAttribute("spellcheck", String(settings.spellcheck));
     if (sourceRef.current) sourceRef.current.setAttribute("spellcheck", String(settings.spellcheck));
-  }, [settings.spellcheck, handle.ready, handle.mode]);
+    // CodeMirror 的可编辑层是 .cm-content（contenteditable）。
+    const cm = svHostRef.current?.querySelector<HTMLElement>(".cm-content");
+    if (cm) cm.setAttribute("spellcheck", String(settings.spellcheck));
+  }, [settings.spellcheck, handle.ready, handle.mode, handle.svCm]);
+
+  // 打字机模式（富文本路径，V3.6）：光标行保持在视口中部。sv 模式由
+  // CodeMirror 的 isTypewriter 钩子在编辑器内部处理。
+  useEffect(() => {
+    if (!settings.typewriterMode || handle.mode === "sv") return;
+    let raf: number | null = null;
+    const centerCaret = () => {
+      raf = null;
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      const node = sel.anchorNode;
+      const el =
+        node && node.nodeType === Node.ELEMENT_NODE
+          ? (node as Element)
+          : node?.parentElement ?? null;
+      if (!el?.closest(".ProseMirror")) return;
+      const host = document.querySelector<HTMLElement>(".mditor-editor-host");
+      if (!host) return;
+      const range = sel.getRangeAt(0).cloneRange();
+      range.collapse(false); // 光标端（选区拖动时跟随活动端）
+      const rects = range.getClientRects();
+      const rect =
+        rects.length > 0 ? rects[rects.length - 1] : range.getBoundingClientRect();
+      if (!rect || (rect.top === 0 && rect.bottom === 0)) return;
+      const hostRect = host.getBoundingClientRect();
+      const delta = rect.top + rect.height / 2 - (hostRect.top + host.clientHeight / 2);
+      // 死区：半个行高以内不滚，避免每个字符的微抖。
+      if (Math.abs(delta) < 16) return;
+      host.scrollTop += delta;
+    };
+    const schedule = () => {
+      if (raf != null) return;
+      raf = requestAnimationFrame(centerCaret);
+    };
+    document.addEventListener("selectionchange", schedule);
+    return () => {
+      document.removeEventListener("selectionchange", schedule);
+      if (raf != null) cancelAnimationFrame(raf);
+    };
+  }, [settings.typewriterMode, handle.mode, handle.ready]);
 
   // Report the active mode up to App (for the StatusBar selector) whenever the
   // editor (re)builds / mode changes.
@@ -531,6 +594,49 @@ export const Editor = memo(
         fileApi.markDirty();
         onInputRef.current?.(ed.getValue());
       },
+      toggleItalic: () => {
+        const ed = handle.editor;
+        if (!ed) return;
+        ed.focus();
+        ed.toggleItalic();
+        fileApi.markDirty();
+        onInputRef.current?.(ed.getValue());
+      },
+      toggleStrikethrough: () => {
+        const ed = handle.editor;
+        if (!ed) return;
+        ed.focus();
+        ed.toggleStrikethrough();
+        fileApi.markDirty();
+        onInputRef.current?.(ed.getValue());
+      },
+      toggleInlineCode: () => {
+        const ed = handle.editor;
+        if (!ed) return;
+        ed.focus();
+        ed.toggleInlineCode();
+        fileApi.markDirty();
+        onInputRef.current?.(ed.getValue());
+      },
+      insertLink: (href, text) => {
+        const ed = handle.editor;
+        if (!ed) return;
+        ed.focus();
+        ed.insertLink(href, text);
+        fileApi.markDirty();
+        onInputRef.current?.(ed.getValue());
+      },
+      insertFootnote: () => {
+        const ed = handle.editor;
+        if (!ed) return null;
+        ed.focus();
+        const id = ed.insertFootnote();
+        if (id) {
+          fileApi.markDirty();
+          onInputRef.current?.(ed.getValue());
+        }
+        return id;
+      },
       setTextColor: (color: string) => {
         const ed = handle.editor;
         if (!ed) return;
@@ -548,7 +654,14 @@ export const Editor = memo(
         onInputRef.current?.(ed.getValue());
       },
       getActiveMarks: () =>
-        handle.editor?.getActiveMarks() ?? { bold: false, highlight: false, color: null },
+        handle.editor?.getActiveMarks() ?? {
+          bold: false,
+          highlight: false,
+          italic: false,
+          strike: false,
+          code: false,
+          color: null,
+        },
       addAnnotation: (content, anchorText, range) => {
         const ed = handle.editor;
         if (!ed) return null;
@@ -666,17 +779,9 @@ export const Editor = memo(
       },
       jumpToSourceLine: (line) => {
         if (handle.mode !== "sv") return;
-        const ta = sourceRef.current;
-        if (!ta || line < 0) return;
-        // Char offset of the line's first character (split is count-limited,
-        // so this doesn't copy the whole doc per jump).
-        const pos =
-          line === 0 ? 0 : ta.value.split("\n", line).join("\n").length + 1;
-        ta.setSelectionRange(pos, pos);
-        // focus() scrolls the caret's line into view. The textarea soft-wraps,
-        // so line-height math can't align the heading to the viewport top —
-        // guaranteeing the line is visible is the contract here.
-        ta.focus();
+        if (line < 0) return;
+        // CodeMirror 优先（居中滚动 + 光标落位），回退旧 textarea 的 focus 滚动。
+        handle.editor?.jumpToLine(line);
       },
       ready: () => handle.ready,
       switchMode: (m) => handle.switchMode(m),
@@ -693,11 +798,17 @@ export const Editor = memo(
         data-mode={handle.mode}
         hidden={handle.mode === "sv"}
       />
+      <div
+        ref={svHostRef}
+        className="mditor-sv"
+        data-mode={handle.mode}
+        hidden={handle.mode !== "sv"}
+      />
       <textarea
         ref={sourceRef}
         className="mditor-source"
         data-mode={handle.mode}
-        hidden={handle.mode !== "sv"}
+        hidden={handle.mode !== "sv" || handle.svCm}
         placeholder="开始书写…  (源码模式 · Ctrl+S 保存，Ctrl+F 查找)"
       />
       {/* 块级右键菜单：portal 到 body，Editor 仅承载状态与命令桥接 */}

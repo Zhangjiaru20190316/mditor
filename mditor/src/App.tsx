@@ -6,7 +6,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { exit } from "@tauri-apps/plugin-process";
-import { readTextFile } from "@tauri-apps/plugin-fs";
+import { readTextFile, readFile } from "@tauri-apps/plugin-fs";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileTree, type TreeChange } from "./components/FileTree";
 import { Outline } from "./components/Outline";
@@ -20,6 +21,13 @@ import { StatusBar } from "./components/StatusBar";
 import { SettingsModal } from "./components/SettingsModal";
 import { TitleBar } from "./components/TitleBar";
 import { AboutModal } from "./components/AboutModal";
+import { TabsBar } from "./components/TabsBar";
+import { WorkspaceSearch } from "./components/WorkspaceSearch";
+import { TemplateModal } from "./components/TemplateModal";
+import { LinkDialog } from "./components/LinkDialog";
+import { renderTemplate, type DocTemplate } from "./lib/templates";
+import type { SearchHit } from "./lib/workspaceSearch";
+import { persistImage } from "./lib/imageManager";
 import {
   FileTreeIcon,
   OutlineIcon,
@@ -30,6 +38,7 @@ import {
   ChevronRightIcon,
   AiIcon,
   SidebarIcon,
+  SearchIcon,
 } from "./components/icons";
 import { useSettings } from "./hooks/useSettings";
 import { useFile } from "./hooks/useFile";
@@ -42,19 +51,24 @@ import { readCached } from "./lib/filePrefetch";
 import { toPosix } from "./lib/path-shim";
 import { exportHtml, exportPdf, exportPng, exportDocx } from "./lib/exporter";
 import { copyRich } from "./lib/clipboard";
-import { showAlert, confirmDialog } from "./lib/dialogs";
+import { showAlert, confirmDialog, choiceDialog } from "./lib/dialogs";
 import { getWorkspace, setWorkspace, clearRecentPath } from "./lib/store";
 import { dismissSplash } from "./lib/splash";
 import { takeHealSnapshot } from "./lib/session";
 import { countWords } from "./lib/textStats";
-import type { FlatHeading, OutlineNode } from "./types";
+import type { FlatHeading, OutlineNode, TabItem } from "./types";
 
-type SidebarTab = "tree" | "outline" | "recent" | "annotations";
+type SidebarTab = "tree" | "outline" | "recent" | "annotations" | "search";
 
 /** Minimum visible duration of the file-switch animation (ms). The loading bar
  *  always plays at least this long so every switch — even a cached/instant one
  *  — gives clear feedback. Kept short so quick switching never feels sluggish. */
 const MIN_SWITCH_MS = 300;
+
+/** 路径 → 标签匹配键（Windows 大小写不敏感 + 分隔符归一）。 */
+function tabPathKey(p: string): string {
+  return toPosix(p).toLowerCase();
+}
 
 export default function App() {
   const settingsApi = useSettings();
@@ -91,6 +105,200 @@ export default function App() {
   // the editor reports its first heading set.
   const [docHeadings, setDocHeadings] = useState<FlatHeading[] | null>(null);
   const [editMode, setEditMode] = useState<"wysiwyg" | "ir" | "sv">("wysiwyg");
+
+  // ---- 多标签页（V3.6）------------------------------------------------------
+  // 只有活动标签住在编辑器/useFile 里；切走时把 live 内容快照进 TabItem。
+  // 未命名脏缓冲随标签往返保留；有路径的标签切走前静默自动保存（与
+  // autosave 同一哲学：落盘优于弹窗）。fileNew/打开文件 = 新标签。
+  const [tabs, setTabs] = useState<TabItem[]>([
+    { key: "untitled-1", path: null, name: "未命名.md", dirty: false, content: "" },
+  ]);
+  const [activeKey, setActiveKey] = useState("untitled-1");
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const activeKeyRef = useRef(activeKey);
+  activeKeyRef.current = activeKey;
+  const untitledSeqRef = useRef(1);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [linkDialogText, setLinkDialogText] = useState("");
+
+  /** 编辑器当前内容（tab 快照 / 保存都用它）。 */
+  const getCurrentContent = useCallback(
+    () => editorRef.current?.getValue() ?? liveMdRef.current ?? "",
+    []
+  );
+
+  /** 把活动标签的 live 状态写回 tabs 数组（切走前调用）。 */
+  const snapshotActiveTab = useCallback(() => {
+    const key = activeKeyRef.current;
+    const doc = fileApiRef.current.doc;
+    const content = getCurrentContent();
+    setTabs((ts) =>
+      ts.map((t) => (t.key === key ? { ...t, path: doc.path, dirty: doc.dirty, content } : t))
+    );
+  }, [getCurrentContent]);
+
+  /** 切换标签页：切走前快照（有路径且脏 → 静默保存）；干净的目标标签重读
+   *  磁盘（捕捉外部修改），脏标签恢复快照。freshContent 供 openPath 传入
+   *  已读好的内容避免二次 IO。 */
+  const activateTab = useCallback(
+    async (key: string, freshContent?: string) => {
+      if (key === activeKeyRef.current) return;
+      const target = tabsRef.current.find((t) => t.key === key);
+      if (!target) return;
+      const curDoc = fileApiRef.current.doc;
+      const curKey = activeKeyRef.current;
+      const curContent = getCurrentContent();
+      let curDirty = curDoc.dirty;
+      if (curDoc.dirty && curDoc.path) {
+        try {
+          await fileApiRef.current.writeOnly(() => curContent);
+          curDirty = false;
+        } catch {
+          /* 写失败：保留脏快照，切回来还在 */
+        }
+      }
+      let content = target.content;
+      if (target.path && !target.dirty) {
+        content = freshContent ?? target.content;
+        if (freshContent === undefined) {
+          try {
+            content = await readTextFile(target.path);
+          } catch {
+            /* 文件被删？退回快照 */
+          }
+        }
+      }
+      setTabs((ts) =>
+        ts.map((t) =>
+          t.key === curKey
+            ? { ...t, path: curDoc.path, dirty: curDirty, content: curContent }
+            : t
+        )
+      );
+      setActiveKey(key);
+      activeKeyRef.current = key;
+      fileApiRef.current.showDoc({ path: target.path, content, dirty: target.dirty });
+      // 轻量切换动画（复用文件切换的 loading bar）。
+      setPendingPath(target.path);
+      setDocSwitching(true);
+      window.setTimeout(() => {
+        if (activeKeyRef.current === key) {
+          setPendingPath(null);
+          setDocSwitching(false);
+        }
+      }, 200);
+    },
+    [getCurrentContent]
+  );
+
+  /** 新建未命名标签（模板内容可选）。当前若是一个干净的空未命名标签且新建
+   *  内容也为空（Ctrl+N），则原位替换而不是叠出第二个空标签。 */
+  const newUntitledTab = useCallback(
+    (content = "") => {
+      const curActive = tabsRef.current.find((t) => t.key === activeKeyRef.current);
+      const replaceCurrent =
+        content === "" &&
+        !!curActive &&
+        curActive.path == null &&
+        !curActive.dirty &&
+        curActive.content === "";
+      if (replaceCurrent && curActive) {
+        // 原地清空即可（内容本就是空）。
+        fileApiRef.current.newDoc();
+        return;
+      }
+      snapshotActiveTab();
+      const key = `untitled-${++untitledSeqRef.current}`;
+      setTabs((ts) => [
+        ...ts,
+        { key, path: null, name: "未命名.md", dirty: content !== "", content },
+      ]);
+      setActiveKey(key);
+      activeKeyRef.current = key;
+      fileApiRef.current.showDoc({ path: null, content, dirty: content !== "" });
+      setDocSwitching(true);
+      window.setTimeout(() => setDocSwitching(false), 200);
+    },
+    [snapshotActiveTab]
+  );
+
+  /** 关闭标签：有路径且脏 → 先保存；未命名且脏 → 确认丢弃；关最后一个
+   *  → 回到一个干净的未命名标签。 */
+  const closeTab = useCallback(
+    async (key: string) => {
+      const cur = tabsRef.current;
+      const idx = cur.findIndex((t) => t.key === key);
+      if (idx < 0) return;
+      const target = cur[idx];
+      let content = target.content;
+      let dirty = target.dirty;
+      const isActive = key === activeKeyRef.current;
+      if (isActive) {
+        content = getCurrentContent();
+        dirty = fileApiRef.current.doc.dirty;
+      }
+      if (dirty && target.path) {
+        try {
+          if (isActive) {
+            await fileApiRef.current.writeOnly(() => content);
+          } else {
+            const { saveMd } = await import("./lib/tauriFs");
+            await saveMd(target.path, content);
+          }
+          dirty = false;
+        } catch {
+          /* 保存失败继续关闭（内存快照已丢弃前提示） */
+        }
+      } else if (dirty && !target.path) {
+        const ok = await confirmDialog(
+          `「${target.name}」有未保存的内容，关闭后将丢失。确认关闭？`
+        );
+        if (!ok) return;
+      }
+      const remaining = cur.filter((t) => t.key !== key);
+      if (remaining.length === 0) {
+        const k = `untitled-${++untitledSeqRef.current}`;
+        setTabs([{ key: k, path: null, name: "未命名.md", dirty: false, content: "" }]);
+        setActiveKey(k);
+        activeKeyRef.current = k;
+        fileApiRef.current.newDoc();
+        return;
+      }
+      setTabs(remaining);
+      if (isActive) {
+        const next = remaining[Math.min(idx, remaining.length - 1)];
+        setActiveKey(next.key);
+        activeKeyRef.current = next.key;
+        fileApiRef.current.showDoc({
+          path: next.path,
+          content: next.content,
+          dirty: next.dirty,
+        });
+      }
+    },
+    [getCurrentContent]
+  );
+
+  // 「注册一次」的全局监听（keydown / drag-drop）经 ref 取最新标签页回调。
+  const activateTabRef = useRef(activateTab);
+  activateTabRef.current = activateTab;
+  const closeTabRef = useRef(closeTab);
+  closeTabRef.current = closeTab;
+
+  // 活动 useFile 状态（saveAs 改路径 / dirty 变化）同步回标签记录。
+  useEffect(() => {
+    const doc = fileApi.doc;
+    setTabs((ts) =>
+      ts.map((t) => {
+        if (t.key !== activeKeyRef.current) return t;
+        const name = doc.path ? baseName(doc.path) : "未命名.md";
+        if (t.path === doc.path && t.dirty === doc.dirty && t.name === name) return t;
+        return { ...t, path: doc.path, name, dirty: doc.dirty };
+      })
+    );
+  }, [fileApi.doc]);
 
   // ---- iOS-style 「先响应动画，再加载内容」file switching ----
   // pendingPath: optimistically highlighted in the file tree the instant a row
@@ -190,7 +398,38 @@ export default function App() {
         // A newer click superseded us while we were waiting — drop this load
         // so the user never sees file A flash in after they clicked B.
         if (token !== switchTokenRef.current) return;
-        await fileApiRef.current.openPath(path, content);
+        // 多标签页：已打开的文件 → 激活既有标签（干净标签用刚读的新内容）；
+        // 新文件 → 新标签；唯一例外：当前是干净的空未命名标签 → 原位替换
+        // （首个文件打开不会凭空多出一个标签）。
+        const pk = tabPathKey(path);
+        const existing = tabsRef.current.find(
+          (t) => t.path != null && tabPathKey(t.path) === pk
+        );
+        if (existing && existing.key !== activeKeyRef.current) {
+          await activateTab(existing.key, existing.dirty ? undefined : content);
+        } else if (!existing) {
+          const curActive = tabsRef.current.find((t) => t.key === activeKeyRef.current);
+          const replaceCurrent =
+            !!curActive && curActive.path == null && !curActive.dirty && curActive.content === "";
+          const key = replaceCurrent && curActive ? curActive.key : `file-${pk}`;
+          const tab: TabItem = {
+            key,
+            path,
+            name: baseName(path),
+            dirty: false,
+            content,
+          };
+          if (replaceCurrent && curActive) {
+            // 原位替换（沿用旧 key，避免 DOM 重建）：无需快照被替换的标签。
+            setTabs((ts) => ts.map((t) => (t.key === key ? tab : t)));
+          } else {
+            snapshotActiveTab();
+            setTabs((ts) => [...ts, tab]);
+          }
+          setActiveKey(key);
+          activeKeyRef.current = key;
+          await fileApiRef.current.openPath(path, content);
+        }
         if (token !== switchTokenRef.current) return;
         setRecentKey((k) => k + 1);
         // 外部打开的文件若不在当前工作区内，自动把其所在目录设为工作区，
@@ -228,7 +467,7 @@ export default function App() {
         }
       }
     },
-    [] // stable — reads live fileApi/workspace via refs
+    [activateTab, snapshotActiveTab] // 均 stable —— openPath 身份保持稳定
   );
 
   // Rehydrate after a healing webview reload (see lib/session + Editor's
@@ -285,25 +524,52 @@ export default function App() {
   }, [openPath]);
 
   // React to file-tree mutations (delete / rename) coming from FileTree.
-  //   * deleted: if the open file was among the removed paths, close the buffer;
-  //     drop every deleted path from the recent list too.
-  //   * renamed: if the open file was renamed, update its stored path in place
-  //     (content is unchanged by a rename).
+  //   * deleted: drop every tab whose file vanished (dirty tabs with a path
+  //     were best-effort saved by autosave; untitled tabs aren't affected);
+  //     drop every deleted path from the recent list too. If the ACTIVE tab
+  //     vanished, activate a neighbour (or a fresh untitled tab).
+  //   * renamed: update the stored path/name of the matching tab (content is
+  //     unchanged by a rename).
   // Stable (empty deps) — reads live fileApi via ref.
   const onTreeChange = useCallback((change: TreeChange) => {
     const fa = fileApiRef.current;
     if (change.type === "deleted") {
-      const gone = new Set(change.paths);
-      if (fa.doc.path && gone.has(fa.doc.path)) {
-        fa.newDoc();
-        resetLiveMd();
-      }
+      const gone = new Set(change.paths.map((p) => tabPathKey(p)));
       for (const p of change.paths) void clearRecentPath(p);
       setRecentKey((k) => k + 1);
+      const cur = tabsRef.current;
+      const remaining = cur.filter(
+        (t) => !t.path || !gone.has(tabPathKey(t.path))
+      );
+      if (remaining.length === cur.length) return;
+      if (remaining.length === 0) {
+        const k = `untitled-${++untitledSeqRef.current}`;
+        setTabs([{ key: k, path: null, name: "未命名.md", dirty: false, content: "" }]);
+        setActiveKey(k);
+        activeKeyRef.current = k;
+        fa.newDoc();
+        return;
+      }
+      setTabs(remaining);
+      const activeGone = !remaining.some((t) => t.key === activeKeyRef.current);
+      if (activeGone) {
+        const idx = cur.findIndex((t) => t.key === activeKeyRef.current);
+        const next = remaining[Math.min(idx, remaining.length - 1)];
+        setActiveKey(next.key);
+        activeKeyRef.current = next.key;
+        fa.showDoc({ path: next.path, content: next.content, dirty: next.dirty });
+      }
     } else if (change.type === "renamed") {
       if (fa.doc.path === change.from) {
         fa.updatePath(change.from, change.to);
       }
+      setTabs((ts) =>
+        ts.map((t) =>
+          t.path === change.from
+            ? { ...t, path: change.to, name: baseName(change.to) }
+            : t
+        )
+      );
     }
   }, []);
 
@@ -324,17 +590,10 @@ export default function App() {
     });
   }, []);
 
-  // Open an externally-supplied path (double-clicked .md / `mditor.exe file.md`),
-  // but confirm first if the current document has unsaved edits. Reuses the
-  // stable openPath so it always reads the live file api via ref.
+  // Open an externally-supplied path (double-clicked .md / `mditor.exe file.md`).
+  // 多标签页（V3.6）：打开进新标签页，不会丢当前文档 —— 无需脏确认。
   const maybeOpen = useCallback(
     async (path: string) => {
-      if (
-        fileApiRef.current.doc.dirty &&
-        !(await confirmDialog("当前文档未保存，是否打开新文件？"))
-      ) {
-        return;
-      }
       void openPath(path);
     },
     [openPath]
@@ -359,17 +618,8 @@ export default function App() {
       });
     }
   }, []); // stable
-  // Reset the mirror to empty (new doc / open file deleted under us). Cancels
-  // any pending rAF FIRST so a stale typed value can't land after the reset
-  // and clobber it back to the previous document's content.
-  const resetLiveMd = useCallback(() => {
-    if (liveMdRafRef.current != null) {
-      cancelAnimationFrame(liveMdRafRef.current);
-      liveMdRafRef.current = null;
-    }
-    liveMdRef.current = "";
-    setLiveMarkdown("");
-  }, []);
+  // 注：V3.6 起标签页切换/新建/删除都经 fileApi 的 onLoaded 路径推送内容，
+  // 镜像由 onInput 自行更新；旧的 resetLiveMd（强制清空镜像）不再需要。
 
   // ----- menu events from Rust (registered ONCE, reads latest hooks via refs) -----
   // macOS 保留原生菜单，其点击以 `menu` 事件转发到这里；Windows 的前端菜单栏
@@ -401,6 +651,43 @@ export default function App() {
     };
   }, [maybeOpen]);
 
+  // ----- 拖放 .md 文件到窗口 = 打开标签页（V3.6）-----------------------------
+  // 走 Tauri 的原生 drag-drop 事件（webview 默认启用 dragDropEnabled，HTML5
+  // drop 反而收不到），能直接拿到绝对路径。拖拽期间给 body 加类显示提示层。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let over = false;
+    getCurrentWindow()
+      .onDragDropEvent((event) => {
+        const p = event.payload;
+        if (p.type === "enter" || p.type === "over") {
+          if (!over) {
+            over = true;
+            document.body.classList.add("is-dragging-md");
+          }
+        } else if (p.type === "leave") {
+          over = false;
+          document.body.classList.remove("is-dragging-md");
+        } else if (p.type === "drop") {
+          over = false;
+          document.body.classList.remove("is-dragging-md");
+          for (const path of p.paths) {
+            if (/\.(md|markdown|mdx|mdown)$/i.test(path)) void openPath(path);
+          }
+        }
+      })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {
+        /* 平台/权限不支持 — 静默降级（窗口拖放不可用不影响其余功能） */
+      });
+    return () => {
+      document.body.classList.remove("is-dragging-md");
+      unlisten?.();
+    };
+  }, [openPath]);
+
   // ----- global keyboard shortcuts (registered ONCE) -----
   // Ctrl+S/N/O/I 等与菜单同名的动作统一转发 dispatchMenu（单一实现来源），
   // 这里只保留事件层职责：preventDefault 与没有菜单 id 的键（Ctrl+F/H 搜索、
@@ -430,7 +717,13 @@ export default function App() {
           break;
         case "f":
           e.preventDefault();
-          setSearchOpen(true);
+          if (e.shiftKey) {
+            // Ctrl+Shift+F：跨文件搜索（V3.6）。
+            setSidebarOpen(true);
+            setSidebarTab("search");
+          } else {
+            setSearchOpen(true);
+          }
           break;
         case "h":
           // Ctrl/Cmd+Shift+H toggles highlight (handled by the editor surface);
@@ -454,6 +747,25 @@ export default function App() {
         case "i":
           e.preventDefault();
           dispatchMenuRef.current("view_ai_assistant");
+          break;
+        case "tab":
+          // Ctrl+Tab / Ctrl+Shift+Tab：多标签页轮换（V3.6）。
+          e.preventDefault();
+          {
+            const cur = tabsRef.current;
+            if (cur.length > 1) {
+              const idx = cur.findIndex((t) => t.key === activeKeyRef.current);
+              const next = e.shiftKey
+                ? (idx - 1 + cur.length) % cur.length
+                : (idx + 1) % cur.length;
+              void activateTabRef.current(cur[next].key);
+            }
+          }
+          break;
+        case "w":
+          // Ctrl+W：关闭当前标签页（V3.6；Tauri 窗口未占用该组合键）。
+          e.preventDefault();
+          void closeTabRef.current(activeKeyRef.current);
           break;
       }
     };
@@ -487,8 +799,15 @@ export default function App() {
           ""
         ) || "untitled";
       try {
-        if (kind === "html") await exportHtml(ctx, `${name}.html`);
-        else if (kind === "pdf") await exportPdf(ctx, `${name}.pdf`);
+        if (kind === "html") {
+          // V3.6：导出前选择是否把本地图片内联为 base64（单文件分发）。
+          const inline = await choiceDialog(
+            "是否把本地图片内联进 HTML（生成单个自包含文件）？\n「保留引用」则维持相对路径，需连同 assets 文件夹一起分发。",
+            "内联图片",
+            "保留引用"
+          );
+          await exportHtml(ctx, `${name}.html`, { inlineImages: inline });
+        } else if (kind === "pdf") await exportPdf(ctx, `${name}.pdf`);
         else if (kind === "docx") await exportDocx(ctx, `${name}.docx`);
         else if (kind === "png") {
           const el = ed.previewEl();
@@ -540,11 +859,11 @@ export default function App() {
     const sa = settingsRef.current;
     switch (id) {
       case "file_new":
-        void (async () => {
-          if (fa.doc.dirty && !(await confirmDialog("当前文档未保存，确认新建？"))) return;
-          fa.newDoc();
-          resetLiveMd();
-        })();
+        // 多标签页：新建 = 新的未命名标签，旧文档留在自己的标签里，无需确认。
+        newUntitledTab();
+        break;
+      case "file_new_template":
+        setTemplateOpen(true);
         break;
       case "file_open":
         void (async () => {
@@ -653,8 +972,67 @@ export default function App() {
         editorRef.current?.toggleHighlight();
         editorRef.current?.find();
         break;
+      case "format_italic":
+        editorRef.current?.toggleItalic();
+        editorRef.current?.find();
+        break;
+      case "format_strike":
+        editorRef.current?.toggleStrikethrough();
+        editorRef.current?.find();
+        break;
+      case "format_code":
+        editorRef.current?.toggleInlineCode();
+        editorRef.current?.find();
+        break;
+      case "insert_link":
+        setLinkDialogText(editorRef.current?.getSelection() ?? "");
+        setLinkDialogOpen(true);
+        break;
+      case "insert_image":
+        void (async () => {
+          try {
+            const picked = await openDialog({
+              multiple: false,
+              filters: [
+                {
+                  name: "图片",
+                  extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"],
+                },
+              ],
+            });
+            if (!picked || typeof picked !== "string") return;
+            const bytes = await readFile(picked);
+            const name = picked.split(/[\\/]/).pop() ?? "image.png";
+            const r = await persistImage(
+              new File([bytes], name),
+              fileApiRef.current.doc.path
+            );
+            const alt = (name.replace(/\.[^.]+$/, "") || "图片").replace(/[[\]]/g, "");
+            editorRef.current?.insertAtCursor(`![${alt}](${r.ref})\n\n`);
+            editorRef.current?.find();
+          } catch {
+            /* 选择器取消 / 读取失败 — 静默忽略 */
+          }
+        })();
+        break;
+      case "insert_footnote":
+        editorRef.current?.insertFootnote();
+        editorRef.current?.find();
+        break;
+      case "view_typewriter":
+        void settingsRef.current.update((prev) => ({
+          typewriterMode: !prev.typewriterMode,
+        }));
+        break;
+      case "view_search":
+        setSidebarOpen(true);
+        setSidebarTab("search");
+        break;
     }
-  }, []); // ← stable — reads live state via refs
+    // 三个依赖都是稳定 useCallback（doCopyRich←flashStatus、newUntitledTab←
+    // snapshotActiveTab←getCurrentContent），列出只为满足 exhaustive-deps ——
+    // dispatchMenu 的身份仍然不变。
+  }, [doCopyRich, flashStatus, newUntitledTab]); // ← stable — reads live state via refs
   // 上面「注册一次」的事件监听（menu 事件 / 全局快捷键）声明在本回调之前，
   // 但只在提交后才执行 —— 经 ref 镜像取调用时的最新 dispatchMenu。
   const dispatchMenuRef = useRef(dispatchMenu);
@@ -738,6 +1116,12 @@ export default function App() {
   // time so the memo'd toolbar skips re-renders during typing).
   const toggleBold = useCallback(() => editorRef.current?.toggleBold(), []);
   const toggleHighlight = useCallback(() => editorRef.current?.toggleHighlight(), []);
+  const toggleItalic = useCallback(() => editorRef.current?.toggleItalic(), []);
+  const toggleStrikethrough = useCallback(
+    () => editorRef.current?.toggleStrikethrough(),
+    []
+  );
+  const toggleInlineCode = useCallback(() => editorRef.current?.toggleInlineCode(), []);
   const setTextColor = useCallback(
     (color: string) => editorRef.current?.setTextColor(color),
     []
@@ -748,6 +1132,9 @@ export default function App() {
       editorRef.current?.getActiveMarks() ?? {
         bold: false,
         highlight: false,
+        italic: false,
+        strike: false,
+        code: false,
         color: null,
       },
     []
@@ -875,6 +1262,36 @@ export default function App() {
   );
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeAi = useCallback(() => setAiOpen(false), []);
+
+  // 跨文件搜索结果 → 打开文件并跳到命中处（V3.6）。sv 模式按行号跳；
+  // 富文本按整行内容 reveal（anchorSearch 的空白归一比对可容忍行首缩进）。
+  const onOpenSearchResult = useCallback(
+    async (path: string, hit: SearchHit) => {
+      await openPath(path);
+      window.setTimeout(() => {
+        if (editMode === "sv") {
+          editorRef.current?.jumpToSourceLine(hit.line);
+        } else {
+          const needle = hit.full.trim();
+          if (needle) editorRef.current?.revealText(needle);
+        }
+      }, 300);
+    },
+    [openPath, editMode]
+  );
+
+  // 「插入链接」弹窗确认 → 编辑器写回（V3.6）。
+  const onInsertLinkConfirm = useCallback((href: string, text: string) => {
+    editorRef.current?.insertLink(href, text);
+    editorRef.current?.find();
+  }, []);
+
+  // 「从模板新建」确认 → 新标签页写入模板内容（V3.6）。
+  const newUntitledTabRef = useRef(newUntitledTab);
+  newUntitledTabRef.current = newUntitledTab;
+  const onPickTemplate = useCallback((t: DocTemplate) => {
+    newUntitledTabRef.current(renderTemplate(t));
+  }, []);
   const onSettingsChange = useCallback(
     (patch: Partial<Parameters<typeof settingsApi.update>[0]>) =>
       void settingsApi.update(patch),
@@ -944,7 +1361,15 @@ export default function App() {
         dirty={fileApi.doc.dirty}
         focusMode={focusMode}
         theme={settingsApi.settings.theme}
+        typewriter={settingsApi.settings.typewriterMode}
         onDispatch={dispatchMenu}
+      />
+      {/* 多标签页（V3.6）：≥2 个标签时显示 */}
+      <TabsBar
+        tabs={tabs}
+        activeKey={activeKey}
+        onActivate={(k) => void activateTab(k)}
+        onClose={(k) => void closeTab(k)}
       />
       <aside className={`sidebar ${sidebarOpen ? "open" : "closed"}`}>
         <nav className="sb-tabs">
@@ -978,6 +1403,13 @@ export default function App() {
             {annotations.length > 0 && (
               <span className="sb-tab-badge">{annotations.length}</span>
             )}
+          </button>
+          <button
+            className={sidebarTab === "search" ? "active" : ""}
+            onClick={() => setSidebarTab("search")}
+            title="在工作区中搜索 (Ctrl+Shift+F)"
+          >
+            <SearchIcon size={17} />
           </button>
         </nav>
         <div className="sb-panel">
@@ -1040,6 +1472,18 @@ export default function App() {
           )}
           {sidebarTab === "recent" && (
             <RecentList onOpen={openPath} refreshKey={recentKey} />
+          )}
+          {sidebarTab === "search" && (
+            <>
+              <div className="sb-head">
+                <span className="sb-ws-name">在工作区中搜索</span>
+              </div>
+              <WorkspaceSearch
+                workspace={workspace}
+                excludedPaths={excludedSet}
+                onOpenResult={(p, h) => void onOpenSearchResult(p, h)}
+              />
+            </>
           )}
           {sidebarTab === "annotations" && (
             <>
@@ -1134,6 +1578,9 @@ export default function App() {
         onAnnotate={addAnnotationAtSelection}
         onBold={toggleBold}
         onHighlight={toggleHighlight}
+        onItalic={toggleItalic}
+        onStrike={toggleStrikethrough}
+        onCode={toggleInlineCode}
         onSetColor={setTextColor}
         onClearColor={clearTextColor}
         getActiveMarks={getActiveMarks}
@@ -1212,6 +1659,19 @@ export default function App() {
       />
 
       <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
+
+      {/* V3.6：从模板新建 / 插入链接 弹窗 */}
+      <TemplateModal
+        open={templateOpen}
+        onClose={() => setTemplateOpen(false)}
+        onPick={onPickTemplate}
+      />
+      <LinkDialog
+        open={linkDialogOpen}
+        initialText={linkDialogText}
+        onConfirm={onInsertLinkConfirm}
+        onClose={() => setLinkDialogOpen(false)}
+      />
     </div>
   );
 }

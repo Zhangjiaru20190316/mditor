@@ -50,6 +50,7 @@ fn find_md_arg(args: &[String]) -> Option<String> {
 /// menu bar's dispatch ids mirror these).
 pub mod menu_ids {
     pub const NEW: &str = "file_new";
+    pub const NEW_TEMPLATE: &str = "file_new_template";
     pub const OPEN: &str = "file_open";
     pub const OPEN_FOLDER: &str = "file_open_folder";
     pub const SAVE: &str = "file_save";
@@ -61,11 +62,19 @@ pub mod menu_ids {
     pub const COPY_RICH: &str = "edit_copy_rich";
 
     pub const FORMAT_BOLD: &str = "format_bold";
+    pub const FORMAT_ITALIC: &str = "format_italic";
+    pub const FORMAT_STRIKE: &str = "format_strike";
+    pub const FORMAT_CODE: &str = "format_code";
     pub const FORMAT_HIGHLIGHT: &str = "format_highlight";
+    pub const INSERT_LINK: &str = "insert_link";
+    pub const INSERT_IMAGE: &str = "insert_image";
+    pub const INSERT_FOOTNOTE: &str = "insert_footnote";
 
     pub const VIEW_OUTLINE: &str = "view_outline";
     pub const VIEW_FILETREE: &str = "view_filetree";
+    pub const VIEW_SEARCH: &str = "view_search";
     pub const VIEW_FOCUS: &str = "view_focus";
+    pub const VIEW_TYPEWRITER: &str = "view_typewriter";
     pub const AI_ASSISTANT: &str = "view_ai_assistant";
     pub const THEME_LIGHT: &str = "theme_light";
     pub const THEME_DARK: &str = "theme_dark";
@@ -125,6 +134,7 @@ pub fn run() {
             {
                 let file_menu = SubmenuBuilder::new(app, "文件")
                     .text(NEW, "新建")
+                    .text(NEW_TEMPLATE, "从模板新建…")
                     .text(OPEN, "打开文件…")
                     .text(OPEN_FOLDER, "打开文件夹…")
                     .separator()
@@ -154,7 +164,9 @@ pub fn run() {
                 let view_menu = SubmenuBuilder::new(app, "视图")
                     .text(VIEW_OUTLINE, "切换大纲")
                     .text(VIEW_FILETREE, "切换文件树")
+                    .text(VIEW_SEARCH, "在工作区中搜索")
                     .text(VIEW_FOCUS, "专注模式")
+                    .text(VIEW_TYPEWRITER, "打字机模式")
                     .text(AI_ASSISTANT, "AI 助手")
                     .separator()
                     .text(THEME_LIGHT, "浅色主题")
@@ -170,12 +182,20 @@ pub fn run() {
                     .about(None)
                     .build()?;
 
-                // 格式 menu: 加粗 / 高光 on the current selection. No accelerators —
-                // shortcuts (Ctrl+B / Ctrl+Shift+H) are handled in the editor surface
-                // so they never get stolen from other inputs (AI panel, search, …).
+                // 格式 menu: inline formatting + insertions on the current
+                // selection. No accelerators — shortcuts (Ctrl+B / Ctrl+Shift+H)
+                // are handled in the editor surface so they never get stolen
+                // from other inputs (AI panel, search, …).
                 let format_menu = SubmenuBuilder::new(app, "格式")
                     .text(FORMAT_BOLD, "加粗")
+                    .text(FORMAT_ITALIC, "斜体")
+                    .text(FORMAT_STRIKE, "删除线")
+                    .text(FORMAT_CODE, "行内代码")
                     .text(FORMAT_HIGHLIGHT, "高光")
+                    .separator()
+                    .text(INSERT_LINK, "插入链接…")
+                    .text(INSERT_IMAGE, "插入图片…")
+                    .text(INSERT_FOOTNOTE, "插入脚注")
                     .separator()
                     .item(&PredefinedMenuItem::copy(app, Some("复制为富文本".into()))?)
                     .build()?;

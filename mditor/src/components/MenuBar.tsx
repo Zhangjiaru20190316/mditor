@@ -36,11 +36,13 @@ interface MenuDef {
 interface Props {
   focusMode: boolean;
   theme: string;
+  /** 打字机模式勾选态（V3.6）。 */
+  typewriter: boolean;
   onDispatch: (id: string) => void;
 }
 
 /** 快捷键提示只标注真实存在的全局快捷键（App keydown / 编辑器表面处理）。 */
-function buildMenus(focusMode: boolean, theme: string): MenuDef[] {
+function buildMenus(focusMode: boolean, theme: string, typewriter: boolean): MenuDef[] {
   const item = (
     id: string,
     label: string,
@@ -53,6 +55,7 @@ function buildMenus(focusMode: boolean, theme: string): MenuDef[] {
       label: "文件",
       entries: [
         item("file_new", "新建", "Ctrl+N"),
+        item("file_new_template", "从模板新建…"),
         item("file_open", "打开文件…", "Ctrl+O"),
         item("file_open_folder", "打开文件夹…", "Ctrl+Shift+O"),
         sep(),
@@ -86,7 +89,9 @@ function buildMenus(focusMode: boolean, theme: string): MenuDef[] {
       entries: [
         item("view_outline", "切换大纲"),
         item("view_filetree", "切换文件树"),
+        item("view_search", "在工作区中搜索", "Ctrl+Shift+F"),
         { kind: "item", id: "view_focus", label: "专注模式", mark: "check", marked: focusMode },
+        { kind: "item", id: "view_typewriter", label: "打字机模式", mark: "check", marked: typewriter },
         item("view_ai_assistant", "AI 助手", "Ctrl+I"),
         sep(),
         { kind: "item", id: "theme_light", label: "浅色主题", mark: "dot", marked: theme === "light" },
@@ -100,7 +105,14 @@ function buildMenus(focusMode: boolean, theme: string): MenuDef[] {
       label: "格式",
       entries: [
         item("format_bold", "加粗", "Ctrl+B"),
+        item("format_italic", "斜体"),
+        item("format_strike", "删除线"),
+        item("format_code", "行内代码"),
         item("format_highlight", "高光", "Ctrl+Shift+H"),
+        sep(),
+        item("insert_link", "插入链接…"),
+        item("insert_image", "插入图片…"),
+        item("insert_footnote", "插入脚注"),
       ],
     },
     {
@@ -114,7 +126,7 @@ function buildMenus(focusMode: boolean, theme: string): MenuDef[] {
   ];
 }
 
-export const MenuBar = memo(function MenuBar({ focusMode, theme, onDispatch }: Props) {
+export const MenuBar = memo(function MenuBar({ focusMode, theme, typewriter, onDispatch }: Props) {
   const [open, setOpen] = useState<number | null>(null);
   // 下拉层视口坐标（fixed + 钳制），展开 / 切换菜单时按按钮 rect 重算。
   const [pos, setPos] = useState({ left: 0, top: 0 });
@@ -124,7 +136,10 @@ export const MenuBar = memo(function MenuBar({ focusMode, theme, onDispatch }: P
   // 全部条目里只有 4 条动态（专注模式勾选 + 3 个主题圆点），其余全静态
   // —— 用 useMemo 把结构稳定下来，仅 focusMode/theme 变化时重建，pos/open 等
   // 无关重渲染不再产生新数组（也避免 keydown 副作用因 menus 引用变化重挂）。
-  const menus = useMemo(() => buildMenus(focusMode, theme), [focusMode, theme]);
+  const menus = useMemo(
+    () => buildMenus(focusMode, theme, typewriter),
+    [focusMode, theme, typewriter]
+  );
   // keydown 副作用实际只用到条目数量（导航循环取模），抽出为原始值依赖。
   const menuCount = menus.length;
   const close = useCallback(() => setOpen(null), []);

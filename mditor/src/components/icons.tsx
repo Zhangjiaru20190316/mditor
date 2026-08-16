@@ -311,3 +311,15 @@ export function TextColorIcon({ size, className }: IconProps) {
     </svg>
   );
 }
+
+/* ---------------- 侧边栏：跨文件搜索 ---------------- */
+
+/** 放大镜：侧边栏「搜索」标签（V3.6 跨文件搜索）。 */
+export function SearchIcon({ size, className }: IconProps) {
+  return (
+    <Svg size={size} className={className}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.5-4.5" />
+    </Svg>
+  );
+}

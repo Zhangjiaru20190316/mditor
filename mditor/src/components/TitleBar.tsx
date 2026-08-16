@@ -24,6 +24,8 @@ interface Props {
   dirty: boolean;
   focusMode: boolean;
   theme: string;
+  /** 打字机模式勾选态（透传给菜单栏，V3.6）。 */
+  typewriter: boolean;
   onDispatch: (id: string) => void;
 }
 
@@ -32,6 +34,7 @@ export const TitleBar = memo(function TitleBar({
   dirty,
   focusMode,
   theme,
+  typewriter,
   onDispatch,
 }: Props) {
   // 最大化状态：onResized 里回查 isMaximized，驱动 □/❐ 图标切换。
@@ -63,7 +66,7 @@ export const TitleBar = memo(function TitleBar({
     <header className="titlebar" data-tauri-drag-region>
       <LogoIcon size={18} className="titlebar-logo" />
       <span className="titlebar-app-name">Mditor</span>
-      <MenuBar focusMode={focusMode} theme={theme} onDispatch={onDispatch} />
+      <MenuBar focusMode={focusMode} theme={theme} typewriter={typewriter} onDispatch={onDispatch} />
       {/* 居中文档名：pointer-events:none 让拖拽穿透到 header 拖拽区 */}
       <div className="titlebar-doc" title={name}>
         {dirty && <span className="titlebar-dot" />}

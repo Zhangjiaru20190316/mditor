@@ -17,6 +17,7 @@
 import { memo, useEffect, useState } from "react";
 import type { EditMode } from "../types";
 import { formatBytes, getHeapUsage, IS_DEV } from "../lib/memory";
+import { countWords } from "../lib/textStats";
 import { SidebarIcon, AiIcon, ExpandIcon } from "./icons";
 
 interface Props {
@@ -77,6 +78,37 @@ export const StatusBar = memo(function StatusBar({
   const heapColor =
     heapRatio > 0.85 ? "#e53935" : heapRatio > 0.7 ? "#f9a825" : undefined;
 
+  // 选区字数统计（V3.6）：自包含监听 selectionchange —— 只在编辑器表面持有
+  // 非空选区时显示「已选 N 字」。150ms 防抖 + 不上抛父组件（打字零开销）。
+  const [selWords, setSelWords] = useState(0);
+  useEffect(() => {
+    let timer: number | null = null;
+    const read = () => {
+      timer = null;
+      const sel = window.getSelection();
+      const node = sel?.anchorNode ?? null;
+      const el =
+        node && node.nodeType === Node.ELEMENT_NODE
+          ? (node as Element)
+          : node?.parentElement ?? null;
+      const inside = !!el?.closest(
+        ".ProseMirror, .mditor-source, .mditor-sv .cm-content"
+      );
+      const text = inside && sel && !sel.isCollapsed ? sel.toString() : "";
+      const n = text ? countWords(text) : 0;
+      setSelWords((prev) => (prev === n ? prev : n));
+    };
+    const schedule = () => {
+      if (timer != null) return;
+      timer = window.setTimeout(read, 150);
+    };
+    document.addEventListener("selectionchange", schedule);
+    return () => {
+      document.removeEventListener("selectionchange", schedule);
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, []);
+
   return (
     <footer className="sb-status">
       <button
@@ -107,6 +139,11 @@ export const StatusBar = memo(function StatusBar({
       </span>
       <span className="sb-status-sep" />
       <span className="sb-status-words">{words} 字</span>
+      {selWords > 0 && (
+        <span className="sb-status-sel" title="当前选区字数">
+          已选 {selWords} 字
+        </span>
+      )}
       {IS_DEV && heap != null && (
         <span
           className="sb-status-heap"

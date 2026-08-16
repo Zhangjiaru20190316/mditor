@@ -44,13 +44,26 @@ interface Props {
   onBold: () => void;
   /** Toggle ==highlight== on the current selection (rich + source modes). */
   onHighlight: () => void;
+  /** Toggle *italic* on the current selection（V3.6）. */
+  onItalic: () => void;
+  /** Toggle ~~strikethrough~~ on the current selection（V3.6）. */
+  onStrike: () => void;
+  /** Toggle `inline code` on the current selection（V3.6）. */
+  onCode: () => void;
   /** Apply a text color to the current selection (rich + source modes). */
   onSetColor: (color: string) => void;
   /** Remove any text color from the current selection. */
   onClearColor: () => void;
-  /** Whether the current selection/caret already carries bold / highlight / a
-   *  text color, so the buttons and swatches can reflect active state. */
-  getActiveMarks: () => { bold: boolean; highlight: boolean; color: string | null };
+  /** Whether the current selection/caret already carries bold / highlight /
+   *  italic / strike / code / a text color, so the buttons reflect active state. */
+  getActiveMarks: () => {
+    bold: boolean;
+    highlight: boolean;
+    italic: boolean;
+    strike: boolean;
+    code: boolean;
+    color: string | null;
+  };
 }
 
 type TranslateDir = "zh2en" | "en2zh";
@@ -61,7 +74,14 @@ interface Pos {
   flipDown: boolean;
 }
 
-type ActiveMarks = { bold: boolean; highlight: boolean; color: string | null };
+type ActiveMarks = {
+  bold: boolean;
+  highlight: boolean;
+  italic: boolean;
+  strike: boolean;
+  code: boolean;
+  color: string | null;
+};
 
 // Curated preset palette (红/橙/黄/绿/青/蓝/紫/粉/灰). Colors are stored as hex
 // in the document via `<span style="color:…">`.
@@ -108,6 +128,9 @@ export const SelectionToolbar = memo(function SelectionToolbar({
   actions,
   onBold,
   onHighlight,
+  onItalic,
+  onStrike,
+  onCode,
   onSetColor,
   onClearColor,
   getActiveMarks,
@@ -118,6 +141,9 @@ export const SelectionToolbar = memo(function SelectionToolbar({
   const [activeMarks, setActiveMarks] = useState<ActiveMarks>({
     bold: false,
     highlight: false,
+    italic: false,
+    strike: false,
+    code: false,
     color: null,
   });
   const [translateDir, setTranslateDir] = useState<TranslateDir>("zh2en");
@@ -377,13 +403,34 @@ export const SelectionToolbar = memo(function SelectionToolbar({
       style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
       onMouseDown={(e) => e.preventDefault()} // keep the editor selection while clicking
     >
-      {/* ---- Formatting (bold / highlight) — toggle in place, don't dismiss. ---- */}
+      {/* ---- Formatting (bold / italic / strike / code / highlight) — toggle in place. ---- */}
       <button
         className={`sel-btn${activeMarks.bold ? " active" : ""}`}
         title="加粗 (Ctrl+B)"
         onClick={() => runFormat(onBold)}
       >
         <strong>B</strong>
+      </button>
+      <button
+        className={`sel-btn${activeMarks.italic ? " active" : ""}`}
+        title="斜体"
+        onClick={() => runFormat(onItalic)}
+      >
+        <em>I</em>
+      </button>
+      <button
+        className={`sel-btn${activeMarks.strike ? " active" : ""}`}
+        title="删除线"
+        onClick={() => runFormat(onStrike)}
+      >
+        <span style={{ textDecoration: "line-through" }}>S</span>
+      </button>
+      <button
+        className={`sel-btn${activeMarks.code ? " active" : ""}`}
+        title="行内代码"
+        onClick={() => runFormat(onCode)}
+      >
+        {"{ }"}
       </button>
       <button
         className={`sel-btn sel-btn-hl${activeMarks.highlight ? " active" : ""}`}
@@ -599,11 +646,16 @@ export const SelectionToolbar = memo(function SelectionToolbar({
   );
 });
 
-/** True if `node` lives inside the Milkdown editable surface.
- *  WYSIWYG/IR: the ProseMirror contenteditable; SV: the source textarea. */
+/** True if `node` lives inside an editable editor surface.
+ *  WYSIWYG/IR: the ProseMirror contenteditable; SV: the CodeMirror content or
+ *  the fallback source textarea. */
 function editorAreaContains(node: Node | null): boolean {
   if (!node) return false;
   const el = node.nodeType === Node.ELEMENT_NODE ? (node as HTMLElement) : node.parentElement;
   if (!el) return false;
-  return !!el.closest(".ProseMirror") || !!el.closest(".mditor-source");
+  return (
+    !!el.closest(".ProseMirror") ||
+    !!el.closest(".mditor-source") ||
+    !!el.closest(".mditor-sv")
+  );
 }

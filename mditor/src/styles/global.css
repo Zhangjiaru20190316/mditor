@@ -43,12 +43,14 @@ button:not(:disabled):active {
 
 .app {
   display: grid;
-  /* 标题栏一行 +（侧边栏 | 侧栏分隔条 | 主区 | AI 分隔条 | AI 面板）+ 状态栏 ——
-     auto 列会跟随面板宽度（关闭/收起时对应列自然塌缩为 0） */
+  /* 标题栏一行 + 标签栏一行（≥2 个标签时才有内容）+（侧边栏 | 侧栏分隔条 |
+     主区 | AI 分隔条 | AI 面板）+ 状态栏 —— auto 列会跟随面板宽度（关闭/收起
+     时对应列自然塌缩为 0）；tabbar 为空时 auto 行同样塌缩为 0。 */
   grid-template-columns: auto auto 1fr auto auto;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto 1fr auto;
   grid-template-areas:
     "title   title  title  title title"
+    "tabbar  tabbar tabbar tabbar tabbar"
     "sidebar sbres  main   aires ai"
     "status  status status status status";
   height: 100vh;
@@ -400,7 +402,8 @@ body.is-resizing .sidebar {
 .is-focus .resizer,
 .is-focus .sidebar-opener,
 .is-focus .ai-fab,
-.is-focus .titlebar {
+.is-focus .titlebar,
+.is-focus .tabbar {
   display: none !important;
 }
 
@@ -1033,11 +1036,19 @@ body.is-resizing .sidebar {
   contain: layout style;
 }
 
-/* The Milkdown (Crepe) host and the source-mode textarea both fill the host. */
+/* The Milkdown (Crepe) host, the CodeMirror sv host and the source-mode
+   textarea all fill the host. */
 .mditor-milkdown,
+.mditor-sv,
 .mditor-source {
   min-height: 100%;
   box-sizing: border-box;
+}
+
+/* CM 首次挂载与 svCm 状态更新之间的那一帧，textarea 尚未被 React 隐藏 ——
+   用 DOM 状态直接压掉，避免闪现两个编辑面。 */
+.mditor-sv:not(:empty) ~ .mditor-source {
+  display: none;
 }
 
 /* Crepe's toolbar blends with the app chrome and stays pinned while scrolling. */
@@ -3459,4 +3470,387 @@ body {
 .hljs-meta,
 .hljs-tag {
   color: var(--tok-meta);
+}
+
+/* ========================================================================== */
+/* V3.6：多标签页 / 跨文件搜索 / 源码模式 CodeMirror / 打字机 / 选区统计 / 模板 */
+/* ========================================================================== */
+
+/* ---------- 文档标签栏 ---------- */
+.tabbar {
+  grid-area: tabbar;
+  display: flex;
+  align-items: stretch;
+  min-height: 34px;
+  background: var(--titlebar-bg, var(--bg));
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  user-select: none;
+  scrollbar-width: thin;
+}
+.tabbar::-webkit-scrollbar {
+  height: 3px;
+}
+.tabbar-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 12px;
+  max-width: 220px;
+  min-width: 120px;
+  border-right: 1px solid var(--border);
+  color: var(--fg-muted);
+  cursor: pointer;
+  position: relative;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.tabbar-tab:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+.tabbar-tab.active {
+  background: var(--bg);
+  color: var(--fg);
+}
+.tabbar-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--accent);
+}
+.tabbar-tab-icon {
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+.tabbar-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12.5px;
+  line-height: 1;
+  padding-block: 4px;
+}
+.tabbar-tab-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  position: relative;
+}
+.tabbar-tab-close:hover {
+  background: var(--border);
+  color: var(--fg);
+}
+/* 脏标签：默认显示圆点，hover 交换为 ×（浏览器惯例） */
+.tabbar-tab-close.dirty .tabbar-tab-dot {
+  display: block;
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.tabbar-tab-close.dirty svg {
+  display: none;
+}
+.tabbar-tab-close.dirty:hover .tabbar-tab-dot {
+  display: none;
+}
+.tabbar-tab-close.dirty:hover svg {
+  display: block;
+}
+
+/* ---------- 拖放 .md 提示层 ---------- */
+body.is-dragging-md::after {
+  content: "释放以打开 Markdown 文件";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  border: 2px dashed var(--accent);
+  margin: 16px;
+  border-radius: 12px;
+  pointer-events: none;
+}
+
+/* ---------- 跨文件搜索面板 ---------- */
+.ws-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 0 10px 10px;
+}
+.ws-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.ws-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+}
+.ws-input:focus {
+  border-color: var(--accent);
+}
+.ws-toggle {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.ws-toggle.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.ws-status {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  padding: 2px 2px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.ws-file {
+  margin-bottom: 6px;
+}
+.ws-file-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  padding: 4px 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-file-count {
+  font-weight: 400;
+  font-size: 10.5px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 8px;
+  padding: 1px 6px;
+}
+.ws-hit {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  align-items: baseline;
+}
+.ws-hit:hover {
+  background: var(--accent-soft);
+  color: var(--fg);
+}
+.ws-hit-line {
+  flex: 0 0 26px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--accent);
+  text-align: right;
+}
+.ws-hit-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+.ws-empty {
+  font-size: 12px;
+  color: var(--fg-muted);
+  padding: 12px 4px;
+  line-height: 1.6;
+}
+
+/* ---------- 源码模式 CodeMirror（.mditor-sv） ---------- */
+.mditor-sv {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+}
+.mditor-sv .cm-editor {
+  height: 100%;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: var(--line-height);
+}
+.mditor-sv .cm-editor.cm-focused {
+  outline: none;
+}
+.mditor-sv .cm-scroller {
+  padding: 28px clamp(24px, 6vw, 64px) 40vh;
+  box-sizing: border-box;
+}
+.mditor-sv .cm-gutters {
+  background: transparent;
+  border-right: 1px solid var(--border);
+  color: var(--fg-muted);
+  opacity: 0.75;
+}
+.mditor-sv .cm-activeLine {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.mditor-sv .cm-activeLineGutter {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--fg);
+}
+.mditor-sv .cm-selectionBackground,
+.mditor-sv .cm-editor .cm-selectionBackground {
+  background: color-mix(in srgb, var(--accent) 25%, transparent) !important;
+}
+.mditor-sv .cm-cursor {
+  border-left-color: var(--accent);
+}
+.mditor-sv .cm-placeholder {
+  color: var(--fg-muted);
+  opacity: 0.7;
+}
+.mditor-sv .cm-foldPlaceholder {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: none;
+  border-radius: 4px;
+  padding: 0 6px;
+}
+.mditor-sv .cm-foldGutter span {
+  color: var(--fg-muted);
+}
+.mditor-sv .cm-tooltip.cm-tooltip-autocomplete > ul {
+  font-family: var(--font-mono);
+}
+
+/* ---------- 从模板新建 / 插入链接 弹窗 ---------- */
+.template-card {
+  max-width: 460px;
+}
+.template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 18px 18px;
+}
+.template-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  text-align: left;
+}
+.template-item:hover,
+.template-item:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.template-item-icon {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+.template-item-name {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+.template-item-desc {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.link-card {
+  max-width: 440px;
+}
+.link-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px 18px;
+}
+.link-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.link-label {
+  flex: 0 0 64px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.link-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+}
+.link-input:focus {
+  border-color: var(--accent);
+}
+
+/* ---------- 状态栏：选区字数 ---------- */
+.sb-status-sel {
+  font-size: 11.5px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 8px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+/* 弹窗主按钮禁用态（插入链接等：内容未填齐时） */
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: none;
 }

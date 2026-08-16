@@ -32,6 +32,7 @@ import {
   replaceRange,
   insertPos,
   markdownToSlice,
+  callCommand,
 } from "@milkdown/utils";
 import { editorViewCtx, parserCtx } from "@milkdown/core";
 import { closeHistory } from "@milkdown/prose/history";
@@ -49,11 +50,13 @@ import { TextSelection } from "@milkdown/prose/state";
 import type { EditorView } from "@milkdown/prose/view";
 import { Slice } from "@milkdown/prose/model";
 import type { Mark, Node as PMNode, ResolvedPos } from "@milkdown/prose/model";
-import { headingIdGenerator } from "@milkdown/kit/preset/commonmark";
+import { headingIdGenerator, toggleInlineCodeCommand } from "@milkdown/kit/preset/commonmark";
 import { syntaxHighlighting } from "@codemirror/language";
 import { classHighlighter } from "@lezer/highlight";
 import { highlightPlugins } from "../lib/highlightMark";
 import { textColorPlugins } from "../lib/textColorMark";
+import { createSvEditor } from "../lib/svCodeMirror";
+import type { SvEditorHandle, SvSurface } from "../lib/svCodeMirror";
 import "@milkdown/crepe/theme/common/style.css";
 import "@milkdown/crepe/theme/nord.css";
 import type { EditMode, Settings, BlockInfo, BlockTargetKind, FlatHeading } from "../types";
@@ -122,6 +125,22 @@ export interface MilkdownFacade {
   /** Toggle ==highlight== on the current selection. Rich mode runs the
    *  highlight toggleMark; sv mode wraps/unwraps the textarea with `==`. */
   toggleHighlight: () => void;
+  /** Toggle *italic* (emphasis) on the current selection（V3.6）. */
+  toggleItalic: () => void;
+  /** Toggle ~~strikethrough~~ on the current selection（V3.6）. */
+  toggleStrikethrough: () => void;
+  /** Toggle `inline code` on the current selection（V3.6）. Rich mode runs
+   *  milkdown's toggleInlineCodeCommand；sv 模式用 ` 包裹。 */
+  toggleInlineCode: () => void;
+  /** 把当前选区变成（或以 text 为文字在光标处创建）指向 href 的链接（V3.6）。 */
+  insertLink: (href: string, text?: string) => void;
+  /** 在光标处插入脚注 `[^fn-N]`，并在文末追加其空定义（V3.6）。返回脚注 id。 */
+  insertFootnote: () => string | null;
+  /** sv 模式：滚动到 0-based `line` 行首并把光标放那里（大纲跳转）。 */
+  jumpToLine: (line: number) => void;
+  /** Whether the sv surface is the CodeMirror instance（Editor 用它决定隐藏
+   *  回退 textarea）。 */
+  svCodeMirrorActive: () => boolean;
   /** Apply a text color to the current selection (replaces any existing color).
    *  Rich mode runs a removeMark+addMark transaction; sv mode wraps the textarea
    *  selection with `<span style="color:…">…</span>`. */
@@ -130,7 +149,14 @@ export interface MilkdownFacade {
   clearTextColor: () => void;
   /** Whether the current selection/caret already carries bold / highlight /
    *  a text color — drives the active state of the toolbar buttons/swatches. */
-  getActiveMarks: () => { bold: boolean; highlight: boolean; color: string | null };
+  getActiveMarks: () => {
+    bold: boolean;
+    highlight: boolean;
+    italic: boolean;
+    strike: boolean;
+    code: boolean;
+    color: string | null;
+  };
   /* ---- 块级右键菜单（BlockContextMenu）----------------------------------
    * 仅富文本模式有效（sv 返回 null / no-op，由调用方避免弹出）。点击坐标来自
    * contextmenu 事件的 clientX/Y。 */
@@ -188,6 +214,8 @@ export interface MilkdownHandle {
   mode: EditMode;
   /** Current doc exceeds the big-doc cutoff (CodeMirror/KaTeX disabled). */
   bigDoc: boolean;
+  /** sv surface is backed by the CodeMirror instance (fallback = textarea). */
+  svCm: boolean;
   /** Switch edit mode. Content is preserved; undo history is cleared on the
    *  sv ⇄ rich transition (replaceAll flush). wysiwyg ⇄ ir is a label change. */
   switchMode: (m: EditMode) => void;
@@ -200,6 +228,8 @@ export interface MilkdownHandle {
 interface Options {
   hostRef: RefObject<HTMLDivElement | null>;
   sourceRef: RefObject<HTMLTextAreaElement | null>;
+  /** sv 模式的 CodeMirror 宿主（V3.6）；不可用时回退 sourceRef textarea。 */
+  svHostRef: RefObject<HTMLDivElement | null>;
   docPath: () => string | null;
   onInput: (md: string) => void;
   /** Live document headings (rich modes). Emitted only when the heading
@@ -233,12 +263,18 @@ const REMOTE_IMG_URL_RE =
   /^https?:\/\/\S+\.(png|jpe?g|gif|webp|svg|bmp)(?:[?#]\S*)?$/i;
 
 export function useMilkdown(opts: Options): MilkdownHandle {
-  const { hostRef, sourceRef } = opts;
+  const { hostRef, sourceRef, svHostRef } = opts;
   const crepeRef = useRef<Crepe | null>(null);
   const [ready, setReady] = useState(false);
   const [mode, setModeState] = useState<EditMode>("wysiwyg");
   const [bigDoc, setBigDoc] = useState(false);
   const [recreateToken, setRecreateToken] = useState(0);
+  // ---- sv 模式的 CodeMirror 表面（V3.6）--------------------------------
+  // 首次进入 sv 时惰性创建并常驻（隐藏），每次进入 sv 用 setValueReset 重置
+  // 内容与撤销历史。所有 sv 分支经 svSurface() 读取：优先 CM 适配器，回退
+  // 旧 <textarea>（CM 创建失败/宿主缺失时仍可用）。
+  const svRef = useRef<SvEditorHandle | null>(null);
+  const [svCm, setSvCm] = useState(false);
 
   const modeRef = useRef(mode);
   modeRef.current = mode;
@@ -551,6 +587,50 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     // (wysiwyg/ir share the instance; sv just toggles visibility).
   }, [recreateToken, hostRef, sourceRef]);
 
+  // ---- sv CodeMirror 表面（V3.6）：首次进入 sv 时惰性创建，常驻复用 ------
+  useEffect(() => {
+    if (mode !== "sv") return;
+    const host = svHostRef.current;
+    if (!host || svRef.current) return;
+    svRef.current = createSvEditor(host, {
+      initial: contentRef.current,
+      onDocChanged: (md) => {
+        // suppressRef 由 facade 的程序化写入置位 —— 那些写入由调用方自行上抛。
+        if (suppressRef.current) return;
+        sourceTextRef.current = md;
+        contentRef.current = md;
+        onInputRef.current(md);
+      },
+      isTypewriter: () => settingsRef.current.typewriterMode,
+      onToggleWrap: (mark) => {
+        const ta = svRef.current?.surface;
+        if (!ta) return;
+        const d = mark === "bold" ? "**" : "==";
+        toggleWrapTextarea(ta, d, d);
+        sourceTextRef.current = ta.value;
+        contentRef.current = ta.value;
+        onInputRef.current(ta.value);
+      },
+    });
+    setSvCm(true);
+  }, [mode, svHostRef]);
+
+  // 组件卸载时销毁 CM（sv ⇄ 富文本切换不销毁 —— 每次进入 sv 重置内容即可）。
+  useEffect(
+    () => () => {
+      svRef.current?.destroy();
+      svRef.current = null;
+    },
+    []
+  );
+
+  /** sv 模式的编辑面：优先 CodeMirror 适配器，回退旧 <textarea>。 */
+  const svSurface = useCallback(
+    (): HTMLTextAreaElement | SvSurface | null =>
+      svRef.current?.surface ?? sourceRef.current,
+    [sourceRef]
+  );
+
   // ---- textarea (sv) input forwarding -----------------------------------
   useEffect(() => {
     const ta = sourceRef.current;
@@ -614,9 +694,10 @@ export function useMilkdown(opts: Options): MilkdownHandle {
 
   // ---- the imperative facade (stable; reads live state via refs) --------
   const facade = useMemo<MilkdownFacade>(() => {
+    const sv = svSurface;
     const rawMarkdown = (): string => {
       if (modeRef.current === "sv") {
-        return sourceRef.current?.value ?? sourceTextRef.current ?? contentRef.current;
+        return sv()?.value ?? sourceTextRef.current ?? contentRef.current;
       }
       try {
         return crepeRef.current?.getMarkdown() ?? contentRef.current;
@@ -624,14 +705,58 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         return contentRef.current;
       }
     };
+    /** sv 模式：用分隔符包裹/解包选区并上抛输入（加粗/高光/斜体…共用）。 */
+    const svWrap = (open: string, close: string) => {
+      const ta = sv();
+      if (!ta) return;
+      toggleWrapTextarea(ta, open, close);
+      sourceTextRef.current = ta.value;
+      contentRef.current = ta.value;
+      onInputRef.current(ta.value);
+    };
+    /** 富文本模式：按 mark 名 toggleMark。 */
+    const richToggleMark = (name: string) => {
+      try {
+        crepeRef.current!.editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+          const mt = view.state.schema.marks[name];
+          if (mt) toggleMark(mt)(view.state, view.dispatch);
+        });
+      } catch {
+        /* not ready */
+      }
+    };
+    /** 当前选区纯文本（两种模式）。 */
+    const rawSelectionText = (): string => {
+      if (modeRef.current === "sv") {
+        const ta = sv();
+        return ta ? ta.value.slice(ta.selectionStart, ta.selectionEnd) : "";
+      }
+      try {
+        return crepeRef.current!.editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+          const { from, to } = view.state.selection;
+          return view.state.doc.textBetween(from, to, "\n");
+        });
+      } catch {
+        return "";
+      }
+    };
 
     return {
       getValue: () => rawMarkdown(),
       setValue: (md, clearStack) => {
         if (modeRef.current === "sv") {
-          if (sourceRef.current) sourceRef.current.value = md;
+          if (svRef.current && clearStack) {
+            // CM 表面：整体重置（含撤销历史清空），对齐 replaceAll flush。
+            svRef.current.setValueReset(md);
+          } else if (sv()) {
+            sv()!.value = md;
+          }
           sourceTextRef.current = md;
           contentRef.current = md;
+          // 与旧 textarea 路径一致：整篇载入可能翻转 big-doc 档位（重建隐藏
+          // 的 Crepe，保证切回富文本时 CodeMirror/KaTeX 特性位正确）。
           if (clearStack) maybeRecreateForBigDoc(md);
           return;
         }
@@ -663,10 +788,10 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         const crepe = crepeRef.current;
         if (!crepe) return "";
         if (modeRef.current === "sv") {
-          // Keep the (hidden, alive) Crepe in sync with the textarea so the
-          // serialized HTML reflects source-mode edits. getHTML is sync in the
-          // EditorHandle contract, so we cannot await a remark render here.
-          const md = sourceRef.current?.value ?? sourceTextRef.current ?? contentRef.current;
+          // Keep the (hidden, alive) Crepe in sync with the source surface so
+          // the serialized HTML reflects source-mode edits. getHTML is sync in
+          // the EditorHandle contract, so we cannot await a remark render here.
+          const md = sv()?.value ?? sourceTextRef.current ?? contentRef.current;
           // Export flows (copy-rich, export HTML/DOCX) call getHTML several
           // times over the same text; each call is a full parse + serialize
           // that also wipes the hidden instance's undo stack. Serve repeats
@@ -697,7 +822,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       },
       getSelection: () => {
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return "";
           return ta.value.slice(ta.selectionStart, ta.selectionEnd);
         }
@@ -713,7 +838,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       },
       insertValue: (md) => {
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return;
           insertIntoTextarea(ta, md);
           sourceTextRef.current = ta.value;
@@ -733,7 +858,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       },
       updateValue: (md) => {
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return;
           replaceTextareaSelection(ta, md);
           sourceTextRef.current = ta.value;
@@ -757,7 +882,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       },
       insertAfter: (md) => {
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return;
           const en = ta.selectionEnd;
           const insert = `${md}`;
@@ -790,7 +915,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         // popover/panel steals focus) so a caller can later insert at exactly
         // that range instead of guessing from plain text.
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return null;
           const from = ta.selectionStart;
           const to = ta.selectionEnd;
@@ -813,10 +938,10 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         // but takes the position as an argument instead of reading it from the
         // live selection.
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return;
           ta.value = ta.value.slice(0, pos) + md + ta.value.slice(pos);
-          ta.selectionStart = ta.selectionEnd = pos + md.length;
+          ta.setSelectionRange(pos + md.length, pos + md.length);
           sourceTextRef.current = ta.value;
           contentRef.current = ta.value;
           onInputRef.current?.(ta.value);
@@ -864,7 +989,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           // Source mode edits raw markdown. A [^id] inside a fenced code block
           // is literal text (not a footnote), so if the target sits inside a
           // fence, move the insertion to just after the closing fence.
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return false;
           let pos = -1;
           if (range && range.to > range.from) {
@@ -965,7 +1090,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         // earlier still matches anchorText (the document may have been edited
         // between capture and use, making {from,to} stale or out of bounds).
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           return ta ? ta.value.slice(from, to) : "";
         }
         try {
@@ -986,7 +1111,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         // selections aren't matched (-1) and fall back to the document tail.
         if (!needle) return -1;
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return -1;
           const idx = ta.value.indexOf(needle);
           return idx >= 0 ? idx + needle.length : -1;
@@ -1015,7 +1140,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       /* ---- AI 写回（一步撤销契约，见 MilkdownFacade 接口注释） ---- */
       aiWriteDoc: (md) => {
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return;
           taUndoableReplace(ta, 0, ta.value.length, md);
           sourceTextRef.current = ta.value;
@@ -1050,7 +1175,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       },
       aiWriteRange: (from, to, md) => {
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return;
           const f = Math.max(0, Math.min(from, ta.value.length));
           const t = Math.max(f, Math.min(to, ta.value.length));
@@ -1078,7 +1203,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       },
       aiWriteInsert: (md) => {
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return;
           taUndoableReplace(ta, ta.selectionStart, ta.selectionEnd, md);
           sourceTextRef.current = ta.value;
@@ -1101,12 +1226,18 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       },
       aiWriteFinalize: (baseline, next) => {
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return;
-          // 原生撤销路径：静默重置到 baseline（清掉流式期间的撤销痕迹），
-          // 随后一次 execCommand 写入 —— 撤销一步即回到 baseline。
-          ta.value = baseline;
-          taUndoableReplace(ta, 0, ta.value.length, next);
+          if (svRef.current) {
+            // CM 表面：重置到 baseline（清掉流式期间的撤销痕迹），再一次
+            // 单事务写入 next —— 撤销一步即回到 baseline。
+            svRef.current.setValueReset(baseline);
+            taUndoableReplace(ta, 0, baseline.length, next);
+          } else {
+            // 原生撤销路径：静默重置到 baseline，随后一次 execCommand 写入。
+            ta.value = baseline;
+            taUndoableReplace(ta, 0, ta.value.length, next);
+          }
           sourceTextRef.current = ta.value;
           contentRef.current = ta.value;
           return;
@@ -1149,7 +1280,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       getCodeAnchorAt: (range) => {
         if (!range || range.to <= range.from) return null;
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return null;
           return svCodeAnchorAt(ta.value, range.from, range.to);
         }
@@ -1191,7 +1322,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       revealText: (needle) => {
         if (!needle) return;
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return;
           const idx = ta.value.indexOf(needle);
           if (idx < 0) return;
@@ -1218,7 +1349,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       findTextRange: (needle, hint) => {
         if (!needle) return null;
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return null;
           const end = nearestOccurrenceEnd(ta.value, needle, hint ?? -1);
           return end < 0 ? null : { from: end - needle.length, to: end };
@@ -1234,7 +1365,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       },
       focus: () => {
         if (modeRef.current === "sv") {
-          sourceRef.current?.focus();
+          sv()?.focus();
           return;
         }
         try {
@@ -1247,48 +1378,146 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       },
       toggleBold: () => {
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
-          if (!ta) return;
-          toggleWrapTextarea(ta, "**", "**");
-          sourceTextRef.current = ta.value;
-          contentRef.current = ta.value;
-          onInputRef.current(ta.value);
+          svWrap("**", "**");
           return;
         }
-        try {
-          crepeRef.current!.editor.action((ctx) => {
-            const view = ctx.get(editorViewCtx);
-            const mt = view.state.schema.marks.strong;
-            if (mt) toggleMark(mt)(view.state, view.dispatch);
-          });
-        } catch {
-          /* not ready */
-        }
+        richToggleMark("strong");
       },
       toggleHighlight: () => {
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          svWrap("==", "==");
+          return;
+        }
+        richToggleMark("highlight");
+      },
+      toggleItalic: () => {
+        if (modeRef.current === "sv") {
+          svWrap("*", "*");
+          return;
+        }
+        richToggleMark("emphasis");
+      },
+      toggleStrikethrough: () => {
+        if (modeRef.current === "sv") {
+          svWrap("~~", "~~");
+          return;
+        }
+        richToggleMark("strikethrough");
+      },
+      toggleInlineCode: () => {
+        if (modeRef.current === "sv") {
+          svWrap("`", "`");
+          return;
+        }
+        try {
+          crepeRef.current!.editor.action(callCommand(toggleInlineCodeCommand.key));
+        } catch {
+          /* not ready */
+        }
+      },
+      insertLink: (href, text) => {
+        // 选区文字成为链接文字；无选区时用 text / href 本身。escape 掉会破坏
+        // 链接语法的方括号。
+        const label = (rawSelectionText().trim() || text || href).replace(
+          /([[\]])/g,
+          "\\$1"
+        );
+        const md = `[${label}](${href})`;
+        if (modeRef.current === "sv") {
+          const ta = sv();
           if (!ta) return;
-          toggleWrapTextarea(ta, "==", "==");
+          replaceTextareaSelection(ta, md);
           sourceTextRef.current = ta.value;
           contentRef.current = ta.value;
           onInputRef.current(ta.value);
           return;
         }
+        const crepe = crepeRef.current;
+        if (!crepe) return;
+        suppressRef.current = true;
         try {
-          crepeRef.current!.editor.action((ctx) => {
+          crepe.editor.action((ctx) => {
             const view = ctx.get(editorViewCtx);
-            const mt = view.state.schema.marks.highlight;
-            if (mt) toggleMark(mt)(view.state, view.dispatch);
+            const { from, to } = view.state.selection;
+            replaceRange(md, { from, to })(ctx);
           });
         } catch {
           /* not ready */
         }
+        suppressRef.current = false;
       },
+      insertFootnote: () => {
+        const id = nextFootnoteId(rawMarkdown());
+        const token = `[^${id}]`;
+        const def = `\n\n[^${id}]: \n`;
+        if (modeRef.current === "sv") {
+          const ta = sv();
+          if (!ta) return null;
+          let pos = ta.selectionEnd;
+          pos = svPosOutsideCodeFence(ta.value, pos);
+          ta.value = ta.value.slice(0, pos) + token + ta.value.slice(pos);
+          ta.setSelectionRange(pos + token.length, pos + token.length);
+          const withDef = ta.value.replace(/\s+$/, "") + def;
+          ta.value = withDef;
+          sourceTextRef.current = withDef;
+          contentRef.current = withDef;
+          onInputRef.current(withDef);
+          return id;
+        }
+        const crepe = crepeRef.current;
+        if (!crepe) return null;
+        suppressRef.current = true;
+        try {
+          crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const fnType = view.state.schema.nodes.footnote_reference;
+            if (!fnType) return;
+            const pos = view.state.selection.to;
+            const $pos = view.state.doc.resolve(pos);
+            const node = fnType.create({ label: id });
+            if ($pos.parent.type.contentMatch.matchType(fnType) != null) {
+              view.dispatch(view.state.tr.insert(pos, node));
+            } else if ($pos.depth >= 1) {
+              const paraType = view.state.schema.nodes.paragraph;
+              const para = paraType ? paraType.create(null, node) : node;
+              view.dispatch(view.state.tr.insert($pos.after($pos.depth), para));
+            } else {
+              return;
+            }
+            const cur = crepeRef.current?.getMarkdown() ?? "";
+            const next = cur.replace(/\s+$/, "") + def;
+            try {
+              crepeRef.current?.editor.action(replaceAll(next, false));
+            } catch {
+              /* not ready */
+            }
+            contentRef.current = next;
+          });
+          return id;
+        } catch {
+          return null;
+        } finally {
+          suppressRef.current = false;
+        }
+      },
+      jumpToLine: (line) => {
+        if (svRef.current) {
+          svRef.current.jumpToLine(line);
+          return;
+        }
+        const ta = sourceRef.current;
+        if (!ta || line < 0) return;
+        const pos =
+          line === 0 ? 0 : ta.value.split("\n", line).join("\n").length + 1;
+        ta.setSelectionRange(pos, pos);
+        ta.focus();
+      },
+      svCodeMirrorActive: () => !!svRef.current,
       getActiveMarks: () => {
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
-          if (!ta) return { bold: false, highlight: false, color: null };
+          const ta = sv();
+          if (!ta)
+            return { bold: false, highlight: false, italic: false, strike: false, code: false, color: null };
           return textareaActiveMarks(ta);
         }
         try {
@@ -1307,16 +1536,20 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             return {
               bold: marks.some((m) => m.type.name === "strong"),
               highlight: marks.some((m) => m.type.name === "highlight"),
+              italic: marks.some((m) => m.type.name === "emphasis"),
+              strike: marks.some((m) => m.type.name === "strikethrough"),
+              // 行内代码是节点而非 mark：光标所在文本块即 inline_code 时为真。
+              code: view.state.selection.$from.parent.type.name === "inline_code",
               color: (colorMark?.attrs.color as string | undefined) ?? null,
             };
           });
         } catch {
-          return { bold: false, highlight: false, color: null };
+          return { bold: false, highlight: false, italic: false, strike: false, code: false, color: null };
         }
       },
       setTextColor: (color: string) => {
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return;
           wrapTextareaColor(ta, color);
           sourceTextRef.current = ta.value;
@@ -1343,7 +1576,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       },
       clearTextColor: () => {
         if (modeRef.current === "sv") {
-          const ta = sourceRef.current;
+          const ta = sv();
           if (!ta) return;
           unwrapTextareaColor(ta);
           sourceTextRef.current = ta.value;
@@ -1604,12 +1837,17 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       if (m === modeRef.current) return;
       contentRef.current =
         modeRef.current === "sv"
-          ? sourceRef.current?.value ?? sourceTextRef.current ?? contentRef.current
+          ? svSurface()?.value ?? sourceTextRef.current ?? contentRef.current
           : (crepeRef.current?.getMarkdown() ?? contentRef.current);
 
       if (m === "sv") {
         sourceTextRef.current = contentRef.current;
-        if (sourceRef.current) sourceRef.current.value = contentRef.current;
+        if (svRef.current) {
+          // CodeMirror 表面：重置内容与撤销历史（CM 会在宿主上重新渲染）。
+          svRef.current.setValueReset(contentRef.current);
+        } else if (sourceRef.current) {
+          sourceRef.current.value = contentRef.current;
+        }
         setModeState("sv");
         return;
       }
@@ -1628,16 +1866,16 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       }
       setModeState(m);
     },
-    [sourceRef]
+    [svSurface, sourceRef]
   );
 
   const recreate = useCallback(() => {
     contentRef.current =
       modeRef.current === "sv"
-        ? sourceRef.current?.value ?? sourceTextRef.current ?? contentRef.current
+        ? svSurface()?.value ?? sourceTextRef.current ?? contentRef.current
         : (crepeRef.current?.getMarkdown() ?? contentRef.current);
     setRecreateToken((t) => t + 1);
-  }, [sourceRef]);
+  }, [svSurface]);
 
   const applyTheme = useCallback((s: Settings) => {
     applyProseVars(s);
@@ -1649,21 +1887,22 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       ready,
       mode,
       bigDoc,
+      svCm,
       switchMode,
       recreate,
       applyTheme,
     }),
-    [ready, mode, bigDoc, facade, switchMode, recreate, applyTheme]
+    [ready, mode, bigDoc, svCm, facade, switchMode, recreate, applyTheme]
   );
 }
 
-/** Insert `text` at the textarea caret (no selection overwrite). */
-function insertIntoTextarea(ta: HTMLTextAreaElement, text: string): void {
+/** Insert `text` at the surface caret (no selection overwrite). */
+function insertIntoTextarea(ta: HTMLTextAreaElement | SvSurface, text: string): void {
   const s = ta.selectionStart;
   const en = ta.selectionEnd;
   ta.value = ta.value.slice(0, s) + text + ta.value.slice(en);
   const pos = s + text.length;
-  ta.selectionStart = ta.selectionEnd = pos;
+  ta.setSelectionRange(pos, pos);
 }
 
 /** If `pos` (a textarea caret offset) lies inside a fenced code block, return
@@ -1703,23 +1942,32 @@ function svPosOutsideCodeFence(value: string, pos: number): number {
   return value.length;
 }
 
-/** Replace the textarea's current selection with `text` (inserts at caret if
+/** Replace the surface's current selection with `text` (inserts at caret if
  *  the selection is collapsed). */
-function replaceTextareaSelection(ta: HTMLTextAreaElement, text: string): void {
+function replaceTextareaSelection(ta: HTMLTextAreaElement | SvSurface, text: string): void {
   const s = ta.selectionStart;
   const en = ta.selectionEnd;
   ta.value = ta.value.slice(0, s) + text + ta.value.slice(en);
   const pos = s + text.length;
-  ta.selectionStart = ta.selectionEnd = pos;
+  ta.setSelectionRange(pos, pos);
 }
 
-/** Undoable textarea write (AI 一步撤销的 sv 模式路径)：选中 [from,to) 后经
- *  execCommand("insertText") 写入，原生撤销把整次写入当作一步。WebView2 支持
- *  该命令；返回 false（被策略拦截等罕见情形）时调用方退回普通赋值，保正确
- *  性、牺牲撤销粒度。会触发一次原生 input 事件（与手工输入同路径）。 */
-function taUndoableReplace(ta: HTMLTextAreaElement, from: number, to: number, text: string): boolean {
-  ta.focus();
-  ta.setSelectionRange(from, to);
+/** Undoable surface write（AI 一步撤销的 sv 模式路径）：CodeMirror 表面经
+ *  undoableReplace 单事务写入（CM 历史一步）；textarea 回退选中 [from,to)
+ *  后经 execCommand("insertText") 写入，原生撤销把整次写入当作一步。均返回
+ *  false 时调用方退回普通赋值，保正确性、牺牲撤销粒度。 */
+function taUndoableReplace(
+  ta: HTMLTextAreaElement | SvSurface,
+  from: number,
+  to: number,
+  text: string
+): boolean {
+  // CodeMirror 适配器带单事务写入；textarea 无此方法（undefined）走原生路径。
+  const fn = (ta as SvSurface).undoableReplace;
+  if (typeof fn === "function") return fn.call(ta, from, to, text);
+  const el = ta as HTMLTextAreaElement;
+  el.focus();
+  el.setSelectionRange(from, to);
   let ok: boolean;
   try {
     ok = document.execCommand("insertText", false, text);
@@ -1727,9 +1975,9 @@ function taUndoableReplace(ta: HTMLTextAreaElement, from: number, to: number, te
     ok = false;
   }
   if (!ok) {
-    const before = ta.value.slice(0, from);
-    ta.value = before + text + ta.value.slice(to);
-    ta.setSelectionRange(before.length + text.length, before.length + text.length);
+    const before = el.value.slice(0, from);
+    el.value = before + text + el.value.slice(to);
+    el.setSelectionRange(before.length + text.length, before.length + text.length);
   }
   return ok;
 }
@@ -1780,11 +2028,11 @@ function svCodeAnchorAt(value: string, from: number, to: number): CodeLineMeta |
   return { start, end, firstLine };
 }
 
-/** Wrap (or unwrap, if already wrapped) the textarea selection with `open` and
+/** Wrap (or unwrap, if already wrapped) the surface selection with `open` and
  *  `close` delimiters — a toggle, so pressing the shortcut twice is a no-op
  *  rather than nesting `****`. */
 function toggleWrapTextarea(
-  ta: HTMLTextAreaElement,
+  ta: HTMLTextAreaElement | SvSurface,
   open: string,
   close: string
 ): void {
@@ -1808,12 +2056,15 @@ function toggleWrapTextarea(
   }
 }
 
-/** Whether the textarea selection/caret currently sits inside `**…**` / `==…==`
- *  / a `<span style="color:…">…</span>`. Drives the toolbar active state in
- *  source mode. */
-function textareaActiveMarks(ta: HTMLTextAreaElement): {
+/** Whether the surface selection/caret currently sits inside `**…**` / `==…==`
+ *  / `*…*` / `~~…~~` / `` `…` `` / a `<span style="color:…">…</span>`. Drives
+ *  the toolbar active state in source mode. */
+function textareaActiveMarks(ta: HTMLTextAreaElement | SvSurface): {
   bold: boolean;
   highlight: boolean;
+  italic: boolean;
+  strike: boolean;
+  code: boolean;
   color: string | null;
 } {
   const s = ta.selectionStart;
@@ -1823,7 +2074,28 @@ function textareaActiveMarks(ta: HTMLTextAreaElement): {
     val.slice(Math.max(0, s - 2), s) === "**" && val.slice(en, en + 2) === "**";
   const highlight =
     val.slice(Math.max(0, s - 2), s) === "==" && val.slice(en, en + 2) === "==";
-  return { bold, highlight, color: textareaColorAt(ta) };
+  const strike =
+    val.slice(Math.max(0, s - 2), s) === "~~" && val.slice(en, en + 2) === "~~";
+  // 斜体：单星号包裹且不属于 `**` 加粗的内侧。
+  const italic =
+    !bold &&
+    val.slice(Math.max(0, s - 1), s) === "*" &&
+    val.slice(en, en + 1) === "*";
+  const code =
+    val.slice(Math.max(0, s - 1), s) === "`" && val.slice(en, en + 1) === "`";
+  return { bold, highlight, italic, strike, code, color: textareaColorAt(ta) };
+}
+
+/** 下一个可用的脚注 id（`fn-N`，与批注的 `anno-N` 命名空间隔离）。 */
+function nextFootnoteId(md: string): string {
+  let max = 0;
+  const re = /\[\^fn-(\d+)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(md))) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return `fn-${max + 1}`;
 }
 
 // Match a color span opening tag and capture its declared color. Tolerant of
@@ -1834,10 +2106,10 @@ function textareaActiveMarks(ta: HTMLTextAreaElement): {
 const SPAN_OPEN_RE = /<span\b[^>]*\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*>\s*$/i;
 const SPAN_CLOSE_RE = /^\s*<\/span>/i;
 
-/** If the textarea selection/caret is wrapped by `<span style=color>…</span>`,
+/** If the surface selection/caret is wrapped by `<span style=color>…</span>`,
  *  return that color; otherwise null. Scans a small window around the selection
  *  so it works for both a caret and a range. */
-function textareaColorAt(ta: HTMLTextAreaElement): string | null {
+function textareaColorAt(ta: HTMLTextAreaElement | SvSurface): string | null {
   const s = ta.selectionStart;
   const en = ta.selectionEnd;
   const val = ta.value;
@@ -1862,7 +2134,7 @@ function textareaColorAt(ta: HTMLTextAreaElement): string | null {
  *  `<span style="color:…">…</span>`. Toggling: if the selection already carries
  *  the SAME color span it is unwrapped; if it carries a DIFFERENT color the span
  *  is replaced (open tag rewritten) so colors don't nest. */
-function wrapTextareaColor(ta: HTMLTextAreaElement, color: string): void {
+function wrapTextareaColor(ta: HTMLTextAreaElement | SvSurface, color: string): void {
   const s = ta.selectionStart;
   const en = ta.selectionEnd;
   const val = ta.value;
@@ -1907,8 +2179,8 @@ function wrapTextareaColor(ta: HTMLTextAreaElement, color: string): void {
   ta.selectionEnd = en + open.length;
 }
 
-/** Remove the nearest enclosing color span around the textarea selection, if any. */
-function unwrapTextareaColor(ta: HTMLTextAreaElement): void {
+/** Remove the nearest enclosing color span around the surface selection, if any. */
+function unwrapTextareaColor(ta: HTMLTextAreaElement | SvSurface): void {
   const s = ta.selectionStart;
   const en = ta.selectionEnd;
   const val = ta.value;

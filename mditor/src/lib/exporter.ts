@@ -1,22 +1,27 @@
 // Export the current document to HTML / PDF / PNG / DOCX.
 //
-// Single source of truth: Vditor's rendered HTML (`getHTML()`). Every format
+// Single source of truth: the editor's rendered HTML (`getHTML()`). Every format
 // starts from that HTML + the active theme CSS, so exports visually match the
 // editor.
 //
-//   * HTML:  inline theme CSS into a standalone .html, write to disk.
+//   * HTML:  inline theme CSS into a standalone .html, write to disk. With
+//            `inlineImages` the LOCAL images referenced by the doc are read
+//            from disk and embedded as base64 data URLs → one portable file.
 //   * PDF:   load the same HTML into a hidden iframe and call print(). The user
 //            picks "Save as PDF" in the OS dialog. (True silent export isn't
 //            exposed by Tauri/wry yet — wry#707. Windows-only path TODO P1.)
-//   * PNG:   modern-screenshot of a rendered preview container.
+//   * PNG:   modern-screenshot of a rendered preview container; oversized
+//            documents step the scale DOWN fractionally instead of refusing.
 //   * DOCX:  @turbodocx/html-to-docx (real OOXML, client-side, no pandoc).
+//            Local images are inlined as data URLs first — the browser build
+//            has no sharp to fetch relative refs itself, so without inlining
+//            images silently dropped (the V3.5 known issue).
 //
 // Images: for portability we don't base64-inline by default (keeps HTML small);
-// a `inlineImages` option exists for the HTML path when you need a single
-// self-contained file.
+// the HTML path asks the user (V3.6), the DOCX path always inlines (lossless).
 
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { writeTextFile, writeFile } from "@tauri-apps/plugin-fs";
+import { writeTextFile, writeFile, readFile } from "@tauri-apps/plugin-fs";
 // NOTE: modern-screenshot + juice + @turbodocx/html-to-docx are all imported
 // lazily inside their respective export functions so the heavyweight "export"
 // bundle only loads when the user actually exports. Importing them at the top
@@ -26,6 +31,86 @@ const HTML_FILTER = [{ name: "HTML", extensions: ["html"] }];
 const PDF_FILTER = [{ name: "PDF", extensions: ["pdf"] }];
 const PNG_FILTER = [{ name: "Image", extensions: ["png"] }];
 const DOCX_FILTER = [{ name: "Word", extensions: ["docx"] }];
+
+/** 单张图片内联上限（过大直接保留引用，防止内存爆掉）。 */
+const INLINE_IMG_MAX_BYTES = 10 * 1024 * 1024;
+/** 内联总预算（超出后剩余图片保留原引用）。 */
+const INLINE_IMG_TOTAL_BUDGET = 64 * 1024 * 1024;
+
+const IMG_SRC_RE = /<img\b[^>]*\bsrc="([^"]*)"/gi;
+
+/** 按扩展名猜测 data URL 的 MIME。 */
+function mimeOf(src: string): string {
+  const m = /\.([a-z0-9]+)(?:[?#]|$)/i.exec(src);
+  switch ((m?.[1] ?? "").toLowerCase()) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    case "svg":
+      return "image/svg+xml";
+    case "bmp":
+      return "image/bmp";
+    case "ico":
+      return "image/x-icon";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+/**
+ * 把 HTML 里引用的 LOCAL 图片（相对路径 / 绝对路径，非 http(s) / data:）
+ * 读出来替换为 base64 data URL。`docPath` 用于解析相对引用。远程 URL 与
+ * 读取失败/超限的图片保留原样。单次遍历 + 预算控制，失败静默降级。
+ */
+export async function inlineLocalImages(
+  html: string,
+  docPath?: string | null
+): Promise<string> {
+  if (!docPath) return html;
+  const dir = docPath.replace(/[\\/][^\\/]+$/, "");
+  const toAbs = (src: string) =>
+    /^[a-zA-Z]:[\\/]/.test(src) ? src : `${dir}/${src}`.replace(/\\/g, "/");
+  const jobs: Array<{ src: string; abs: string }> = [];
+  IMG_SRC_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = IMG_SRC_RE.exec(html))) {
+    const src = m[1];
+    if (!src || /^(https?:|data:|asset:|blob:)/i.test(src)) continue;
+    jobs.push({ src, abs: toAbs(src) });
+  }
+  if (jobs.length === 0) return html;
+
+  let used = 0;
+  const cache = new Map<string, string>();
+  for (const { src, abs } of jobs) {
+    if (cache.has(abs)) continue;
+    try {
+      const bytes = await readFile(abs);
+      if (bytes.byteLength > INLINE_IMG_MAX_BYTES) continue;
+      if (used + bytes.byteLength > INLINE_IMG_TOTAL_BUDGET) continue;
+      used += bytes.byteLength;
+      let bin = "";
+      const CHUNK = 0x8000;
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+      }
+      cache.set(abs, `data:${mimeOf(src)};base64,${btoa(bin)}`);
+    } catch {
+      /* 读取失败：保留原引用 */
+    }
+  }
+  if (cache.size === 0) return html;
+  return html.replace(IMG_SRC_RE, (whole, src: string) => {
+    const data = cache.get(toAbs(src));
+    return data ? whole.replace(`"${src}"`, `"${data}"`) : whole;
+  });
+}
 
 export interface ExportContext {
   /** Rendered HTML of the document (from Vditor.getHTML()). */
@@ -64,15 +149,25 @@ function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;");
 }
 
-/** Export a standalone .html file. Returns the chosen path or null. */
+/** Export a standalone .html file. Returns the chosen path or null.
+ *  V3.6: `options.inlineImages` 把本地图片内联为 base64（单文件分发）。 */
 export async function exportHtml(
   ctx: ExportContext,
-  suggestedName = "untitled.html"
+  suggestedName = "untitled.html",
+  options: { inlineImages?: boolean } = {}
 ): Promise<string | null> {
   const path = await saveDialog({ defaultPath: suggestedName, filters: HTML_FILTER });
   if (!path) return null;
   const title = suggestedName.replace(/\.html?$/i, "");
-  const standalone = wrapHtml(ctx.html, ctx.css, title);
+  let html = ctx.html;
+  if (options.inlineImages) {
+    try {
+      html = await inlineLocalImages(html, ctx.docPath);
+    } catch {
+      /* 内联失败退回原引用 —— 导出仍然完成 */
+    }
+  }
+  const standalone = wrapHtml(html, ctx.css, title);
   await writeTextFile(path, standalone);
   return path;
 }
@@ -184,9 +279,17 @@ export async function exportPng(
   let scale = 2;
   if (!fits(scale)) scale = 1; // too big at 2x — fall back to native resolution
   if (!fits(scale)) {
-    throw new Error(
-      `文档过大，无法导出 PNG（约 ${w}×${h} px，超过 ${MAX_CANVAS_PIXELS / 1_000_000} MP 画布预算）。请拆分文档后再试。`
-    );
+    // V3.6：原生分辨率仍超预算 → 逐步 fractional 降采样（0.01 步进，最低
+    // 0.2），只有连 0.2 都放不下（单边超 16k）才拒绝。降采样导出优于直接
+    // 报错——用户拿到的是缩小但完整的图。
+    const byPixels = Math.sqrt(MAX_CANVAS_PIXELS / (w * h));
+    const bySide = Math.min(MAX_CANVAS_SIDE / w, MAX_CANVAS_SIDE / h);
+    scale = Math.floor(Math.min(1, byPixels, bySide) * 100) / 100;
+    if (scale < 0.2 || !fits(scale)) {
+      throw new Error(
+        `文档过大，无法导出 PNG（约 ${w}×${h} px，超过 ${MAX_CANVAS_PIXELS / 1_000_000} MP 画布预算）。请拆分文档后再试。`
+      );
+    }
   }
 
   const { domToPng } = await import("modern-screenshot");
@@ -219,9 +322,17 @@ export async function exportDocx(
 ): Promise<string | null> {
   const path = await saveDialog({ defaultPath: suggestedName, filters: DOCX_FILTER });
   if (!path) return null;
+  // V3.6：先把本地图片内联成 data URL —— 浏览器构建没有 sharp，相对引用的
+  // 图片会被转换器直接丢弃（V3.5 已知问题）。失败退回原 HTML（行为同旧版）。
+  let html = ctx.html;
+  try {
+    html = await inlineLocalImages(ctx.html, ctx.docPath);
+  } catch {
+    /* 内联失败按旧路径继续 */
+  }
   // Inline CSS so heading/list styling survives the html->docx conversion.
   const juice = (await import("juice")).default;
-  const inlined = juice.inlineContent(ctx.html, ctx.css);
+  const inlined = juice.inlineContent(html, ctx.css);
   const htmlToDocx = (await import("@turbodocx/html-to-docx")).default;
   const documentOptions = {
     table: { row: { cantSplit: true } },

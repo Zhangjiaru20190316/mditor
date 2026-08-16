@@ -314,6 +314,15 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
             <span className="hint">使用浏览器原生拼写检查（中英文）</span>
           </Field>
 
+          <Field label="打字机模式">
+            <input
+              type="checkbox"
+              checked={draft.typewriterMode}
+              onChange={(e) => set("typewriterMode", e.target.checked)}
+            />
+            <span className="hint">光标行始终保持在窗口中部（两种编辑模式均生效）</span>
+          </Field>
+
           <Field label="自定义 CSS 文件">
             <div className="css-row">
               <input

@@ -77,9 +77,10 @@ export const SearchBar = memo(function SearchBar({ open, onClose, getMarkdown, s
   const highlightNext = () => {
     focusEditor();
     // Milkdown WYSIWYG/IR renders into an editable .ProseMirror; source mode
-    // uses a .mditor-source textarea. window.find works on the contenteditable.
+    // is the CodeMirror content (.cm-content) or the fallback textarea —
+    // window.find works on all three (they're contenteditable/inputs).
     const editable = document.querySelector<HTMLElement>(
-      ".mditor-milkdown .ProseMirror, .mditor-source"
+      ".mditor-milkdown .ProseMirror, .mditor-source, .mditor-sv .cm-content"
     );
     if (!editable || !find) return;
     const sel = window.getSelection();

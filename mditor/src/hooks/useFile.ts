@@ -29,6 +29,13 @@ export interface FileApi {
   newDoc: () => void;
   open: () => Promise<boolean>;
   openPath: (path: string, content: string) => Promise<void>;
+  /**
+   * Restore a full DocState into the buffer WITHOUT touching the recent list —
+   * the tab-switch path (V3.6 多标签页). Pushes the content into the editor via
+   * onLoaded exactly like openPath, but skips the pushRecent IPC chain so
+   * flipping between tabs doesn't churn mditor.json / reorder 最近.
+   */
+  showDoc: (doc: DocState) => void;
   save: (getContent: () => string) => Promise<boolean>;
   /**
    * Persist the buffer to disk WITHOUT touching the recent list. Used by
@@ -100,6 +107,11 @@ export function useFile(): FileApi {
     await openPath(r.path, r.content);
     return true;
   }, [openPath]);
+
+  const showDoc = useCallback((d: DocState) => {
+    setDoc({ path: d.path, content: d.content, dirty: d.dirty });
+    onLoadedRef.current?.(d.content);
+  }, []);
 
   const saveAs = useCallback(
     async (getContent: () => string) => {
@@ -181,6 +193,7 @@ export function useFile(): FileApi {
       newDoc,
       open,
       openPath,
+      showDoc,
       save,
       writeOnly,
       saveAs,
@@ -188,6 +201,6 @@ export function useFile(): FileApi {
       markClean,
       updatePath,
     }),
-    [doc, setOnLoaded, newDoc, open, openPath, save, writeOnly, saveAs, markDirty, markClean, updatePath]
+    [doc, setOnLoaded, newDoc, open, openPath, showDoc, save, writeOnly, saveAs, markDirty, markClean, updatePath]
   );
 }

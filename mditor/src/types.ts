@@ -164,6 +164,11 @@ export interface Settings {
   autosaveIntervalMs: number;
   /** Focus mode: hide sidebars. */
   focusMode: boolean;
+  /**
+   * 打字机模式（V3.6）：光标行始终保持在视口中部——富文本模式经选区矩形
+   * 平滑滚动滚动容器，源码模式由 CodeMirror 的 scrollIntoView(center) 实现。
+   */
+  typewriterMode: boolean;
   /** Enable the browser's native spellcheck on the editor surface. */
   spellcheck: boolean;
   /**
@@ -243,6 +248,7 @@ export const DEFAULT_SETTINGS: Settings = {
   aiPanelWidth: 360,
   autosaveIntervalMs: 30_000,
   focusMode: false,
+  typewriterMode: false,
   spellcheck: true,
   memoryGuard: true,
   memoryGuardThresholdMb: 2500,
@@ -394,6 +400,24 @@ export interface DocState {
   content: string;
   /** Whether the buffer has unsaved changes vs. the last save/disk read. */
   dirty: boolean;
+}
+
+/**
+ * One entry of the document tab bar (V3.6 多标签页). Only the ACTIVE tab lives
+ * in the editor / useFile; switching away snapshots the live content here so
+ * untitled dirty buffers survive round-trips. `key` is stable across renders —
+ * file tabs are keyed by path, untitled tabs by a counter.
+ */
+export interface TabItem {
+  key: string;
+  /** Disk path, or null for an untitled buffer. */
+  path: string | null;
+  /** Display name (basename or 未命名.md). */
+  name: string;
+  /** Dirty flag mirrored from useFile while this tab is active. */
+  dirty: boolean;
+  /** Content snapshot taken when the tab was switched away from / created. */
+  content: string;
 }
 
 /**

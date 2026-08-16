@@ -23,3 +23,18 @@ export function confirmDialog(content: string, title = APP_TITLE): Promise<boole
     cancelLabel: "取消",
   });
 }
+
+/** 自定义按钮文案的二选一确认（取消/关闭视同否）。 */
+export function choiceDialog(
+  content: string,
+  okLabel: string,
+  cancelLabel: string,
+  title = APP_TITLE
+): Promise<boolean> {
+  return tauriConfirm(content, {
+    title,
+    kind: "info",
+    okLabel,
+    cancelLabel,
+  });
+}
