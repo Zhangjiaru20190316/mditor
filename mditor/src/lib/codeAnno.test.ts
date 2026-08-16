@@ -8,6 +8,7 @@ import {
 } from "./codeAnno";
 import {
   appendAnnotationDefinition,
+  findAnnotationRefLine,
   parseAnnotations,
   updateAnnotationInMd,
 } from "./annotations";
@@ -67,6 +68,32 @@ describe("code-line metadata codec", () => {
     const m: CodeLineMeta = { start: 4, end: 4, firstLine: "// 注释：中文ⓒ" };
     const { meta: back } = stripCodeLineMeta(`${encodeCodeLineMeta(m)}x`);
     expect(back?.firstLine).toBe("// 注释：中文ⓒ");
+  });
+});
+
+describe("findAnnotationRefLine", () => {
+  it("returns the 0-based line of the inline reference, not the definition", () => {
+    const md = ["# 标题", "", "正文[^anno-1]继续", "", "[^anno-1]: 内容"].join("\n");
+    expect(findAnnotationRefLine(md, "anno-1")).toBe(2);
+  });
+
+  it("finds a block-anchored marker on its own line", () => {
+    // doc's `[^anno-1]` sits alone on line 8 (0-based).
+    expect(findAnnotationRefLine(doc, "anno-1")).toBe(8);
+  });
+
+  it("picks the FIRST reference when the marker appears twice inline", () => {
+    const md = ["a[^anno-1]", "", "b[^anno-1]", "", "[^anno-1]: x"].join("\n");
+    expect(findAnnotationRefLine(md, "anno-1")).toBe(0);
+  });
+
+  it("returns null when only the definition exists", () => {
+    expect(findAnnotationRefLine("[^anno-1]: 只有定义", "anno-1")).toBeNull();
+  });
+
+  it("handles CRLF line endings", () => {
+    const md = "para\r\n\r\nref[^anno-2] here\r\n\r\n[^anno-2]: x";
+    expect(findAnnotationRefLine(md, "anno-2")).toBe(2);
   });
 });
 

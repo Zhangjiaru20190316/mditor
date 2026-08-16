@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.6.1 (2026-08-16)
+
+3.6.0 发布后的热修复：源码模式批注跳转、CSP 收紧、移除浏览器调试残留。
+
+### 功能正确性
+
+- **sv 模式批注跳转修复**：点击批注列表/大纲跳转时，隐藏的 Milkdown DOM 仍在文档里——`querySelector` 能找到其 marker（无布局盒），`scrollIntoView` 空转、popover 弹到屏幕左上角。现在 sv 模式改走源码面（`jumpToSourceLine`）滚动到行内 `[^id]` 引用所在行（新增 `lib/annotations.ts` 的 `findAnnotationRefLine`，排除 `[^id]:` 定义行，CRLF 兼容，含测试）
+
+### 安全
+
+- **CSP 收紧**：`index.html` 的 `script-src` 移除 `'unsafe-inline'`（与 tauri.conf.json 一致，全仓库无内联脚本/无 eval）
+- **移除浏览器调试残留**：删掉 index.html 里的 TEMP-DEBUG Tauri API mock（仅手动测试用，无真实权限模拟价值且扩大攻击面）
+
+### 工程
+
+- 新增测试 5 个（`codeAnno.test.ts` 的 `findAnnotationRefLine` 用例），全套 **83 个通过**；tsc / eslint（0 error）通过
+- 版本：package.json / tauri.conf.json / Cargo.toml / Cargo.lock → 3.6.1
+
 ## 3.6.0 (2026-08-16)
 
 V3.6 文档管理与编辑体验大版本：多标签页、跨文件搜索、文件拖放、源码模式 CodeMirror 化、格式工具补全、打字机模式、选区字数、导出质量（图片内联/降采样）、从模板新建。

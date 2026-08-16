@@ -128,6 +128,19 @@ export function getAnchorSnippet(md: string, id: string, maxBefore = 40): string
   return (start > 0 ? "…" : "") + snippet;
 }
 
+/**
+ * 0-based source line of the first INLINE `[^id]` reference (the `[^id]:`
+ * definition line is excluded by the same negative lookahead getAnchorSnippet
+ * uses). Null when the marker isn't referenced inline. sv-mode annotation
+ * jumps use this to scroll the source editor to the marker.
+ */
+export function findAnnotationRefLine(md: string, id: string): number | null {
+  const refRe = new RegExp(`\\[\\^${escapeRegExp(id)}\\](?!:)`);
+  const m = refRe.exec(md);
+  if (!m) return null;
+  return md.slice(0, m.index).split(/\r?\n/).length - 1;
+}
+
 /** Snippet for a block-anchored annotation marker — one whose marker sits on
  *  its own line directly after a fenced code block or a display-math block.
  *  Returns the block's first non-empty content line prefixed 代码：/公式：

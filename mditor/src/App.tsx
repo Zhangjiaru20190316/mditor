@@ -44,6 +44,7 @@ import { useSettings } from "./hooks/useSettings";
 import { useFile } from "./hooks/useFile";
 import { useResizable } from "./hooks/useResizable";
 import { useAnnotations } from "./hooks/useAnnotations";
+import { findAnnotationRefLine } from "./lib/annotations";
 import { buildAnnotationMessages, chatStream, isAiConfigured } from "./lib/ai";
 import { normalizeAnchorText } from "./lib/anchorSearch";
 import { baseName, pickFolder, dirOf, MD_EXT_RE } from "./lib/tauriFs";
@@ -1067,25 +1068,44 @@ export default function App() {
   // reuse that exact open path (keeps positioning/behaviour identical to a
   // real click). No-op if the marker isn't currently rendered (e.g. split-view
   // mode where markers aren't badged).
-  const jumpToAnnotation = useCallback((id: string) => {
-    // Focus the editor surface FIRST — same reason as jumpToHeading above:
-    // calling focus() AFTER scrollIntoView restores the (stale) selection and
-    // the browser scrolls the caret back into view, yanking the viewport away
-    // from the marker so the click appeared not to jump at all. Focusing first
-    // makes the marker scroll the final (winning) synchronous one.
-    editorRef.current?.previewEl()?.focus();
-    const marker = document.querySelector<HTMLElement>(
-      `sup[data-type="footnote_reference"][data-label="${id}"]`
-    );
-    if (!marker) return;
-    // Use instant (not smooth) scrolling: the popover positions itself from the
-    // marker's viewport rect right after this, so the marker must already be in
-    // its final position or the card would stick to the pre-scroll spot.
-    marker.scrollIntoView({ behavior: "auto", block: "center" });
-    marker.dispatchEvent(
-      new MouseEvent("mousedown", { bubbles: true, cancelable: true })
-    );
-  }, []);
+  const jumpToAnnotation = useCallback(
+    (id: string) => {
+      // sv mode: the Milkdown DOM is hidden (display:none) but STILL in the
+      // document, so the querySelector below would find its marker — an element
+      // with no layout box. scrollIntoView on it is a no-op (no scrolling) and
+      // the popover would position itself off the marker's zero rect (it pops
+      // up at the screen's top-left corner). Instead, scroll the SOURCE
+      // surface to the marker's inline `[^id]` reference line — same path the
+      // sv-mode outline jump uses. (No popover: in source mode the user reads
+      // the raw `[^id]` token itself.)
+      if (editMode === "sv") {
+        const line = findAnnotationRefLine(
+          editorRef.current?.getValue() ?? "",
+          id
+        );
+        if (line != null) editorRef.current?.jumpToSourceLine(line);
+        return;
+      }
+      // Focus the editor surface FIRST — same reason as jumpToHeading above:
+      // calling focus() AFTER scrollIntoView restores the (stale) selection and
+      // the browser scrolls the caret back into view, yanking the viewport away
+      // from the marker so the click appeared not to jump at all. Focusing first
+      // makes the marker scroll the final (winning) synchronous one.
+      editorRef.current?.previewEl()?.focus();
+      const marker = document.querySelector<HTMLElement>(
+        `sup[data-type="footnote_reference"][data-label="${id}"]`
+      );
+      if (!marker) return;
+      // Use instant (not smooth) scrolling: the popover positions itself from the
+      // marker's viewport rect right after this, so the marker must already be in
+      // its final position or the card would stick to the pre-scroll spot.
+      marker.scrollIntoView({ behavior: "auto", block: "center" });
+      marker.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, cancelable: true })
+      );
+    },
+    [editMode]
+  );
 
   // Stable toggles for StatusBar (kept out of JSX so React.memo can short-circuit
   // re-renders when only `liveMarkdown` changes during typing).
