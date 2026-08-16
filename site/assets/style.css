@@ -50,6 +50,13 @@ a:hover { text-decoration: underline; }
 .btn-primary { background: var(--accent); color: var(--accent-ink); box-shadow: 0 4px 14px rgba(59,130,246,0.35); }
 .btn-primary:hover { box-shadow: 0 6px 18px rgba(59,130,246,0.45); }
 .btn-ghost { background: rgba(255,255,255,0.08); color: var(--hero-ink); border: 1px solid rgba(255,255,255,0.25); }
+.btn-donate {
+  background: linear-gradient(135deg, #ff7a45 0%, #f5222d 100%);
+  color: #ffffff;
+  border: 1px solid rgba(255,255,255,0.35);
+  box-shadow: 0 4px 16px rgba(245,34,45,0.45);
+}
+.btn-donate:hover { box-shadow: 0 6px 22px rgba(245,34,45,0.55); }
 
 /* Sections */
 main { max-width: 960px; margin: 0 auto; padding: 56px 20px 40px; }
