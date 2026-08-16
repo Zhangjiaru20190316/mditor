@@ -90,6 +90,77 @@ main { max-width: 960px; margin: 0 auto; padding: 56px 20px 40px; }
 .qr-caption { text-align: center; color: var(--muted); font-size: 13px; margin-top: 26px; }
 .qr { display: block; margin: 10px auto 0; width: 180px; height: 180px; border-radius: 12px; border: 1px solid var(--border); }
 
+/* Guide (操作说明) */
+.guide { margin-top: 64px; }
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 18px; margin-bottom: 44px; }
+.step {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 22px;
+  position: relative;
+}
+.step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 10px;
+}
+.step h3 { font-size: 16px; margin-bottom: 6px; }
+.step p { color: var(--muted); font-size: 13.5px; }
+
+.highlight-band {
+  margin-bottom: 44px;
+  border-radius: 16px;
+  padding: 30px 28px;
+  background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+  color: var(--hero-ink);
+}
+.highlight-band h3 { font-size: 20px; text-align: center; margin-bottom: 20px; }
+.highlight-band ul {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px 20px;
+}
+.highlight-band li {
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 14px;
+  color: var(--hero-ink);
+}
+.highlight-band li b { color: #fbbf24; font-weight: 700; }
+
+.shot-row {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  margin-bottom: 34px;
+}
+.shot-row.flip { flex-direction: row-reverse; }
+.shot-row img {
+  width: 60%;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+.shot-text { flex: 1; }
+.shot-text h3 { font-size: 18px; margin-bottom: 8px; }
+.shot-text p { color: var(--muted); font-size: 14px; }
+@media (max-width: 720px) {
+  .shot-row, .shot-row.flip { flex-direction: column; }
+  .shot-row img { width: 100%; }
+}
+
 footer {
   text-align: center;
   padding: 32px 20px 40px;
