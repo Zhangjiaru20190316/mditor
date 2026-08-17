@@ -4,13 +4,29 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mditor — 本地优先的 Markdown 编辑器</title>
-  <meta name="description" content="Mditor：免费开源的本地优先 Markdown 编辑器，体验对标 Typora。无云端、无遥测、无广告，你的文件始终保存在自己的电脑上。">
+  <meta name="description" content="Mditor：免费开源的本地优先 Markdown 编辑器，体验对标 Typora。所见即所得、AI 助手、批注与大纲、多格式导出。无云端、无遥测、无广告，你的文件始终保存在自己的电脑上。">
   <link rel="icon" href="assets/icon.png">
   <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
 
-  <header class="hero">
+  <nav class="nav">
+    <div class="nav-inner">
+      <a class="nav-brand" href="#top">
+        <img src="assets/icon.png" alt="Mditor" class="nav-logo">
+        <span class="nav-name">Mditor</span>
+      </a>
+      <div class="nav-links">
+        <a href="#features">功能</a>
+        <a href="#guide">操作说明</a>
+        <a href="#shortcuts">快捷键</a>
+        <a href="#faq">常见问题</a>
+        <a href="#support" class="nav-support">支持本项目</a>
+      </div>
+    </div>
+  </nav>
+
+  <header class="hero" id="top">
     <div class="hero-inner">
       <img src="assets/icon.png" alt="Mditor logo" class="logo">
       <h1>Mditor</h1>
@@ -20,64 +36,75 @@
         <a class="btn btn-primary" href="https://github.com/Zhangjiaru20190316/mditor/releases/latest/download/Mditor_3.5.4_x64-setup.exe">下载 Windows 版</a>
         <a class="btn btn-ghost" href="https://github.com/Zhangjiaru20190316/mditor">查看源码</a>
       </div>
-      <p class="hint">Windows 10/11（WebView2）· 5 MB 安装包 · 支持 .md / .markdown / .mdx / .mdown</p>
+      <div class="hero-badges">
+        <span>v3.5.4</span><span>Windows 10/11</span><span>5 MB 安装包</span><span>MIT 开源</span>
+      </div>
     </div>
   </header>
 
   <main>
-    <section class="features">
+    <section class="features" id="features">
       <div class="section-title">
+        <p class="kicker">Features</p>
         <h2>功能特性</h2>
-        <p>为认真写作的人打造</p>
+        <p class="subtitle">为认真写作的人打造</p>
       </div>
       <div class="grid">
         <div class="card">
+          <span class="card-icon">✍️</span>
           <h3>所见即所得</h3>
           <p>Milkdown/ProseMirror 内核，支持 GFM、KaTeX 公式、代码高亮；所见即所得 / 即时渲染 / 源码三种模式一键切换。</p>
         </div>
         <div class="card">
+          <span class="card-icon">🗂️</span>
           <h3>工作区文件树</h3>
-          <p>懒加载目录、批量操作、外部修改实时监听，改动自动同步并给出冲突确认。</p>
+          <p>懒加载目录、批量操作、外部修改实时监听；多标签页 + 拖放打开，改动自动同步并给出冲突确认。</p>
         </div>
         <div class="card">
+          <span class="card-icon">✨</span>
           <h3>AI 写作助手</h3>
-          <p>OpenAI 兼容接口，自定义 BaseURL / Key / 模型，SSE 流式输出；选中文案即可改写、翻译、解释，一键批注。</p>
+          <p>OpenAI 兼容接口，内置 DeepSeek / 智谱 / Kimi / OpenRouter / Ollama 预设；SSE 流式输出，选中文字即可改写、翻译、解释。</p>
         </div>
         <div class="card">
+          <span class="card-icon">📌</span>
           <h3>大纲与批注</h3>
-          <p>侧边栏大纲跳转，原生脚注语法的行内批注，AI 辅助批注，阅读与写作互不干扰。</p>
+          <p>侧边栏大纲一键跳转；原生脚注语法的行内批注，支持 AI 一键生成，阅读与写作互不干扰。</p>
         </div>
         <div class="card">
+          <span class="card-icon">📤</span>
           <h3>多格式导出</h3>
-          <p>HTML / PDF / PNG 长图 / Word (docx)，主题样式完整保留。</p>
+          <p>HTML / PDF / PNG 长图 / Word (docx)，主题样式完整保留；支持复制富文本直接粘贴到微信、Word。</p>
         </div>
         <div class="card">
+          <span class="card-icon">🛡️</span>
           <h3>本地优先 · 隐私安全</h3>
           <p>设置与最近文件仅存于本机；严格 CSP、HTML 消毒、出站请求全部经 Rust 代理——没有遥测，没有数据上传。</p>
         </div>
       </div>
     </section>
 
-    <section class="guide">
+    <section class="guide" id="guide">
       <div class="section-title">
+        <p class="kicker">Guide</p>
         <h2>操作说明</h2>
-        <p>三步上手，零学习成本</p>
+        <p class="subtitle">覆盖全部功能，五分钟上手</p>
       </div>
+
       <div class="steps">
         <div class="step">
           <span class="step-num">1</span>
           <h3>打开文件夹</h3>
-          <p>「文件 → 打开文件夹」选择你的笔记目录，工作区文件树自动加载，支持拖入 .md 文件快速打开。</p>
+          <p>「文件 → 打开文件夹」选择你的笔记目录，工作区文件树自动加载；也可以直接把 .md 文件拖进窗口快速打开。</p>
         </div>
         <div class="step">
           <span class="step-num">2</span>
           <h3>开始写作</h3>
-          <p>所见即所得，像用 Word 一样写 Markdown：表格、公式、任务清单、代码块全部实时渲染。</p>
+          <p>所见即所得，像用 Word 一样写 Markdown：表格、公式、任务清单、代码块全部实时渲染，状态栏实时显示字数。</p>
         </div>
         <div class="step">
           <span class="step-num">3</span>
-          <h3>一键导出</h3>
-          <p>写完即可导出 PDF / PNG 长图 / Word / HTML，主题样式完整保留，分享或投稿都方便。</p>
+          <h3>保存与导出</h3>
+          <p>Ctrl+S 随时保存；写完导出 PDF / PNG 长图 / Word / HTML，或复制为富文本，分享投稿都方便。</p>
         </div>
       </div>
 
@@ -93,40 +120,175 @@
         </ul>
       </div>
 
+      <!-- 1. 写作与三种模式 -->
       <div class="shot-row">
         <img src="assets/screens/2-wysiwyg.png" alt="Mditor 写作主界面截图">
         <div class="shot-text">
-          <h3>专注写作</h3>
-          <p>干净的主编辑区，标题、加粗、链接、任务清单即输即得；状态栏显示字数与编辑模式，侧边栏一键收起。</p>
+          <h3>1 · 写作与格式化</h3>
+          <p>主编辑区干净专注：标题、加粗（Ctrl+B）、高光（Ctrl+Shift+H）、斜体、删除线、行内代码全部即输即得；选中文字会弹出浮动工具栏，链接、图片、脚注一键插入。</p>
+          <p>底部状态栏显示文档名、字数与当前模式；侧边栏（Ctrl+\）与 AI 面板（Ctrl+I）随时开关。</p>
         </div>
       </div>
       <div class="shot-row flip">
-        <img src="assets/screens/1-outline.png" alt="Mditor 大纲导航截图">
+        <img src="assets/screens/7-source.png" alt="Mditor 源码模式截图">
         <div class="shot-text">
-          <h3>大纲导航</h3>
-          <p>侧边栏大纲自动提取全文标题，长文结构一目了然，点击即可跳转；批注、文件树、最近文档同样一键切换。</p>
+          <h3>2 · 三种编辑模式</h3>
+          <p>状态栏下拉一键切换，初稿阶段用<b>所见即所得</b>，快速浏览用<b>即时渲染</b>，精确控制格式切<b>源码模式</b>——同一份文档随时互换，内容不会丢失。</p>
+          <p>切换模式会重建编辑器以释放内存，大文档长时间编辑也不卡顿。</p>
+        </div>
+      </div>
+
+      <!-- 3. 文件管理 -->
+      <div class="feature-band">
+        <h3>3 · 工作区与文件管理</h3>
+        <div class="feature-grid">
+          <div class="feature-item"><b>文件树</b>：懒加载目录，新建 / 重命名 / 删除 / 批量多选</div>
+          <div class="feature-item"><b>多标签页</b>：Ctrl+Tab 轮换，Ctrl+W 关闭，脏标签切走自动保存</div>
+          <div class="feature-item"><b>外部修改监听</b>：磁盘文件被其他程序修改时自动同步，有冲突先确认</div>
+          <div class="feature-item"><b>拖放打开</b>：把 .md 文件拖进窗口即开新标签</div>
+          <div class="feature-item"><b>最近文档</b>：侧边栏「最近」标签，找回上次写的东西</div>
+          <div class="feature-item"><b>全局搜索</b>：Ctrl+Shift+F 跨文件搜索工作区；Ctrl+F 当前文档查找替换</div>
+          <div class="feature-item"><b>模板新建</b>：会议纪要 / 周报 / 阅读笔记等内置模板，秒开常用结构</div>
+          <div class="feature-item"><b>富文本复制</b>：编辑菜单「复制为富文本」，粘贴到微信 / Word 保留格式</div>
         </div>
       </div>
       <div class="shot-row">
-        <img src="assets/screens/3-ai-panel.png" alt="Mditor AI 助手截图">
+        <img src="assets/screens/6-template.png" alt="Mditor 从模板新建截图">
         <div class="shot-text">
-          <h3>AI 助手</h3>
-          <p>OpenAI 兼容接口，内置 DeepSeek / 智谱 / Kimi / OpenRouter / Ollama 等预设；选中文字即可改写、翻译、解释，一键生成批注。</p>
+          <h3>4 · 从模板新建</h3>
+          <p>「文件 → 从模板新建」内置空白文档、会议纪要、周报、阅读笔记、写作提纲等多种模板，日期自动填充，新建即用。</p>
+          <p>也支持从本地文件新建：Ctrl+N 新建空文档，Ctrl+O 打开任意 .md 文件。</p>
         </div>
       </div>
+
+      <!-- 5. 大纲 -->
       <div class="shot-row flip">
-        <img src="assets/screens/4-source.png" alt="Mditor 源码模式截图">
+        <img src="assets/screens/1-outline.png" alt="Mditor 大纲导航截图">
         <div class="shot-text">
-          <h3>三种编辑模式</h3>
-          <p>所见即所得 / 即时渲染 / 源码模式，状态栏一键切换：写初稿用所见即所得，精确控制格式切源码，快速浏览用即时渲染。</p>
+          <h3>5 · 大纲导航</h3>
+          <p>侧边栏「大纲」自动提取全文标题，长文结构一目了然，点击任意标题即跳转；阅读与写作互不干扰。</p>
+          <p>侧边栏五个标签切换：<b>文件树 / 大纲 / 最近 / 批注 / 搜索</b>，批注标签带数量角标。</p>
+        </div>
+      </div>
+
+      <!-- 6. 批注 -->
+      <div class="shot-row">
+        <img src="assets/screens/3-annotation.png" alt="Mditor 批注弹层截图">
+        <div class="shot-text">
+          <h3>6 · 行内批注</h3>
+          <p>选中任意文字点浮动工具栏的「批注」，即在该处生成脚注式标记；点击标记查看内容，随时编辑或删除。</p>
+          <p>AI 助手回复也可以一键「批注」——把回答精炼成一条笔记挂在原文上，适合论文批注、代码评审。</p>
+        </div>
+      </div>
+
+      <!-- 7. AI -->
+      <div class="shot-row flip">
+        <img src="assets/screens/4-ai-panel.png" alt="Mditor AI 助手截图">
+        <div class="shot-text">
+          <h3>7 · AI 助手</h3>
+          <p>支持任意 OpenAI 兼容接口（自定义 BaseURL / Key / 模型），内置 DeepSeek、智谱 GLM、Kimi、OpenRouter、Ollama 本地模型预设，多套配置可切换。</p>
+          <p>选中文字即可改写、翻译、解释、续写；SSE 流式输出，支持追问；所有请求经本地 Rust 代理转发，不会直连外网。</p>
+        </div>
+      </div>
+
+      <!-- 8. 设置与个性化 -->
+      <div class="shot-row">
+        <img src="assets/screens/5-settings.png" alt="Mditor 设置面板截图">
+        <div class="shot-text">
+          <h3>8 · 设置与个性化</h3>
+          <p>「帮助 → 设置」中可调整：<b>主题</b>（浅色 / 深色 / 护眼 / Claude 双色）、<b>字体 / 字号 / 行距</b>、专注模式与打字机模式、拼写检查开关、侧边栏宽度等。</p>
+          <p>所有设置保存在本机 mditor.json，换机器不带走任何数据——隐私与便携都归你。</p>
+        </div>
+      </div>
+
+      <!-- 9. 性能与安全 -->
+      <div class="feature-band">
+        <h3>9 · 大文档性能与安全</h3>
+        <div class="feature-grid">
+          <div class="feature-item"><b>大文档性能模式</b>：超过阈值自动关闭代码高亮与公式渲染，打字依旧流畅</div>
+          <div class="feature-item"><b>内存守护</b>：软重建 + 会话快照自愈，异常后自动恢复文档</div>
+          <div class="feature-item"><b>严格 CSP</b>：无 unsafe-eval，AI 请求全部经 Rust 侧代理</div>
+          <div class="feature-item"><b>HTML 消毒</b>：AI 回复与批注渲染管线内置 rehype-sanitize</div>
+          <div class="feature-item"><b>无自动更新器</b>：v3.5.0 起移除占位更新器，收窄权限面</div>
+          <div class="feature-item"><b>无遥测</b>：不采集任何使用数据</div>
         </div>
       </div>
     </section>
 
-    <section class="support">
+    <section class="shortcuts" id="shortcuts">
       <div class="section-title">
+        <p class="kicker">Shortcuts</p>
+        <h2>快捷键一览</h2>
+        <p class="subtitle">常用操作全部支持快捷键</p>
+      </div>
+      <div class="shortcut-cols">
+        <table class="shortcut-table">
+          <thead><tr><th>文件</th><th>快捷键</th></tr></thead>
+          <tbody>
+            <tr><td>新建文档</td><td><kbd>Ctrl</kbd>+<kbd>N</kbd></td></tr>
+            <tr><td>打开文件</td><td><kbd>Ctrl</kbd>+<kbd>O</kbd></td></tr>
+            <tr><td>打开文件夹</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></td></tr>
+            <tr><td>保存 / 另存为</td><td><kbd>Ctrl</kbd>+<kbd>S</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></td></tr>
+            <tr><td>导出（PDF / HTML / PNG / Word）</td><td>「文件」菜单</td></tr>
+          </tbody>
+        </table>
+        <table class="shortcut-table">
+          <thead><tr><th>编辑</th><th>快捷键</th></tr></thead>
+          <tbody>
+            <tr><td>撤销 / 重做</td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td></tr>
+            <tr><td>剪切 / 复制 / 粘贴</td><td><kbd>Ctrl</kbd>+<kbd>X</kbd> / <kbd>C</kbd> / <kbd>V</kbd></td></tr>
+            <tr><td>查找替换</td><td><kbd>Ctrl</kbd>+<kbd>F</kbd></td></tr>
+            <tr><td>加粗 / 高光</td><td><kbd>Ctrl</kbd>+<kbd>B</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd></td></tr>
+            <tr><td>复制为富文本</td><td>「编辑」菜单</td></tr>
+          </tbody>
+        </table>
+        <table class="shortcut-table">
+          <thead><tr><th>视图</th><th>快捷键</th></tr></thead>
+          <tbody>
+            <tr><td>侧边栏开关</td><td><kbd>Ctrl</kbd>+<kbd>\</kbd></td></tr>
+            <tr><td>AI 助手</td><td><kbd>Ctrl</kbd>+<kbd>I</kbd></td></tr>
+            <tr><td>工作区搜索</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></td></tr>
+            <tr><td>切换标签页</td><td><kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd></td></tr>
+            <tr><td>关闭标签 / 全屏</td><td><kbd>Ctrl</kbd>+<kbd>W</kbd> / <kbd>F11</kbd></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="faq" id="faq">
+      <div class="section-title">
+        <p class="kicker">FAQ</p>
+        <h2>常见问题</h2>
+      </div>
+      <div class="faq-list">
+        <details>
+          <summary>支持 macOS / Linux 吗？</summary>
+          <p>目前发布 Windows 10/11 版本（WebView2）。macOS / Linux 在计划中，欢迎在 GitHub Issues 提出需求。</p>
+        </details>
+        <details>
+          <summary>我的数据会被上传吗？</summary>
+          <p>不会。文档就是本地磁盘上的 .md 文件，设置与最近文件存于本机 mditor.json。应用无遥测、无广告、无任何数据上报；唯一的网络请求只有你主动配置的 AI 接口，且经本地 Rust 代理转发。</p>
+        </details>
+        <details>
+          <summary>为什么没有自动更新？</summary>
+          <p>v3.5.0 起移除了自动更新器（原端点为占位符，无法工作）。手动到 Releases 页下载新版本即可，安装包仅 5 MB。</p>
+        </details>
+        <details>
+          <summary>AI 功能需要付费吗？</summary>
+          <p>AI 助手本身免费，但需要你自己配置模型接口（OpenAI 兼容即可，也可以用 DeepSeek、智谱、Kimi 或本地 Ollama）。不配置 AI 也不影响任何写作功能。</p>
+        </details>
+        <details>
+          <summary>如何参与或支持这个项目？</summary>
+          <p>点个 Star、提 Issue、发 PR 都是最好的支持；也欢迎通过下方渠道请作者喝杯咖啡。</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="support" id="support">
+      <div class="section-title">
+        <p class="kicker">Support</p>
         <h2>支持本项目</h2>
-        <p>Mditor 完全免费。如果它帮到了你，欢迎请作者喝杯咖啡</p>
+        <p class="subtitle">Mditor 完全免费。如果它帮到了你，欢迎请作者喝杯咖啡</p>
       </div>
       <div class="support-links">
         <a class="btn btn-donate" href="https://afdian.com/a/zhangabc">爱发电支持</a>
