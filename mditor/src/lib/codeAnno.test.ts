@@ -95,12 +95,49 @@ describe("findAnnotationRefLine", () => {
     const md = "para\r\n\r\nref[^anno-2] here\r\n\r\n[^anno-2]: x";
     expect(findAnnotationRefLine(md, "anno-2")).toBe(2);
   });
+
+  it("ignores look-alike refs inside fenced code blocks", () => {
+    // A document ABOUT footnotes: the `[^anno-1]` inside the fence is code,
+    // never a rendered marker — the jump must target the real prose ref.
+    const md = [
+      "# 笔记",
+      "",
+      "```md",
+      "示例[^anno-1]",
+      "```",
+      "",
+      "真正的引用[^anno-1]",
+      "",
+      "[^anno-1]: x",
+    ].join("\n");
+    expect(findAnnotationRefLine(md, "anno-1")).toBe(6);
+  });
+
+  it("ignores refs written inside another annotation's definition body", () => {
+    // 批注内容里引用另一条批注：定义块内（含缩进续行）的 `[^anno-1]`
+    // 不是 inline marker。
+    const md = [
+      "被批注[^anno-2]",
+      "",
+      "[^anno-2]: 见 [^anno-1]",
+      "    继续批注正文，也提到 [^anno-1]",
+      "",
+      "目标[^anno-1]",
+      "",
+      "[^anno-1]: y",
+    ].join("\n");
+    expect(findAnnotationRefLine(md, "anno-1")).toBe(5);
+  });
 });
 
 describe("resolveCodeLines", () => {
   it("resolves the exact lines when the code is unchanged", () => {
     const md = docWithMeta(doc);
-    expect(resolveCodeLines(md, "anno-1", meta)).toEqual({ start: 2, end: 3 });
+    expect(resolveCodeLines(md, "anno-1", meta)).toEqual({
+      start: 2,
+      end: 3,
+      blockStartLine: 3,
+    });
   });
 
   it("follows the content when lines were inserted above inside the block", () => {
@@ -108,14 +145,22 @@ describe("resolveCodeLines", () => {
       doc.replace("def f(x):", "import os\ndef f(x):")
     );
     // "  return x + 1" moved from line 2 to line 3 within the block.
-    expect(resolveCodeLines(edited, "anno-1", meta)).toEqual({ start: 3, end: 4 });
+    expect(resolveCodeLines(edited, "anno-1", meta)).toEqual({
+      start: 3,
+      end: 4,
+      blockStartLine: 3,
+    });
   });
 
   it("keeps pointing at the content when the line moved further", () => {
     const edited = docWithMeta(
       doc.replace("```python", "```python\n# a\n# b\n# c")
     );
-    expect(resolveCodeLines(edited, "anno-1", meta)).toEqual({ start: 5, end: 6 });
+    expect(resolveCodeLines(edited, "anno-1", meta)).toEqual({
+      start: 5,
+      end: 6,
+      blockStartLine: 3,
+    });
   });
 
   it("falls back to another block containing the line", () => {
@@ -137,7 +182,12 @@ describe("resolveCodeLines", () => {
         "[^anno-1]: 批注",
       ].join("\n")
     );
-    expect(resolveCodeLines(moved, "anno-1", meta)).toEqual({ start: 2, end: 3 });
+    // The match lives in the python block (content lines 3-4, 0-based).
+    expect(resolveCodeLines(moved, "anno-1", meta)).toEqual({
+      start: 2,
+      end: 3,
+      blockStartLine: 3,
+    });
   });
 
   it("returns null when the anchored line disappeared", () => {
@@ -160,6 +210,25 @@ describe("resolveCodeLines", () => {
 });
 
 describe("annotations integration", () => {
+  it("sv jump math: blockStartLine + start - 1 lands on the annotated source line", () => {
+    // The sv-mode annotation jump combines the block's absolute first content
+    // line with the 1-based in-block range to compute an absolute 0-based
+    // line. doc's anchored line "    return x + 1" is line 4 (0-based).
+    // (docWithMeta drops the meta token when the source definition lacks one,
+    // so embed it explicitly for the parseAnnotations round-trip.)
+    const md = doc.replace(
+      "[^anno-1]: 批注内容",
+      `[^anno-1]: ${encodeCodeLineMeta(meta)}批注内容`
+    );
+    const anno = parseAnnotations(md).find((a) => a.id === "anno-1");
+    expect(anno?.codeLine).not.toBeNull();
+    const r = resolveCodeLines(md, "anno-1", anno!.codeLine!);
+    expect(r).not.toBeNull();
+    expect(md.split(/\r?\n/)[r!.blockStartLine + r!.start - 1]).toBe(
+      "    return x + 1"
+    );
+  });
+
   it("parseAnnotations exposes codeLine and hides the token from content", () => {
     const md = appendAnnotationDefinition(
       "正文\n\n[^anno-1]",

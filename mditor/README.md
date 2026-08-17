@@ -74,11 +74,15 @@ CI（`.github/workflows/release.yml`）在推送 `v*` 标签时自动构建并�
 mditor/
 ├── src/                    # React 前端
 │   ├── components/         # Editor / FileTree / AiPanel / SettingsModal 等
-│   ├── hooks/              # useMilkdown（编辑器核心）/ useFile / useFileWatcher 等
-│   └── lib/                # exporter / renderMarkdown / store / ai 等纯逻辑
+│   ├── hooks/              # useMilkdown（编辑器核心）/ useFile / useSwitchFlow 等
+│   ├── lib/                # exporter / renderMarkdown / store / 解析缓存与后台解析管线
+│   └── workers/            # parseWorker（大文档后台 remark 解析）
 ├── src-tauri/              # Rust 后端（菜单、AI HTTP 代理、图片下载）
 └── docs/                   # 设计与实施文档
 ```
+
+进阶文档：[大文档性能三阶段架构](docs/performance.md) ·
+[安全说明（CSP / 文件权限 / AI 密钥存储）](docs/security.md)
 
 ## 支持本项目
 

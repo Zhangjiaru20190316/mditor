@@ -161,6 +161,11 @@ export const SelectionToolbar = memo(function SelectionToolbar({
   // stash the range here (on each selectionchange while the editor holds the
   // selection) and hand it to onAnnotate at submit time.
   const rangeRef = useRef<{ from: number; to: number } | null>(null);
+  // getActiveMarks 经 ref 镜像读取：App 侧它是稳定 useCallback（空依赖），
+  // 但走 ref 让「挂载一次的监听器永不闭包过期回调」不依赖上游约定（与
+  // App 的 fileApiRef 惯例一致），effect deps 也保持最小。
+  const getActiveMarksRef = useRef(getActiveMarks);
+  getActiveMarksRef.current = getActiveMarks;
 
   // Recompute position/visibility on selection changes & editor mouse/keys.
   // NOTE: `isReady` is a stable useCallback that reads editorRef.current at
@@ -209,7 +214,7 @@ export const SelectionToolbar = memo(function SelectionToolbar({
       rangeRef.current = getSelectionRange();
       // Reflect whether the selection already carries bold/highlight/color so
       // the formatting controls show active state.
-      setActiveMarks(getActiveMarks());
+      setActiveMarks(getActiveMarksRef.current());
       setVisible(true);
     };
 

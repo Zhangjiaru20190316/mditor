@@ -149,8 +149,13 @@ function allCodeBlocks(lines: string[]): CodeBlock[] {
 }
 
 export interface ResolvedCodeLines {
+  /** 1-based line range INSIDE the code block. */
   start: number;
   end: number;
+  /** 0-based line index (into the document's line array) of the block's first
+   *  content line — sv-mode jumps combine it with start/end to compute the
+   *  absolute source line of the annotated code. */
+  blockStartLine: number;
 }
 
 /**
@@ -192,7 +197,7 @@ export function resolveCodeLines(
   if (block) {
     const at = meta.start - 1;
     if (at >= 0 && at < block.lines.length && sameLine(block.lines[at], want)) {
-      return { start: meta.start, end: meta.start + count - 1 };
+      return { start: meta.start, end: meta.start + count - 1, blockStartLine: block.startLine };
     }
     // Follow the content: nearest occurrence to the recorded line.
     let best = -1;
@@ -205,7 +210,7 @@ export function resolveCodeLines(
         best = k;
       }
     }
-    if (best >= 0) return { start: best + 1, end: best + count };
+    if (best >= 0) return { start: best + 1, end: best + count, blockStartLine: block.startLine };
   }
 
   // 3) The line moved to another block — pick the match closest to the marker.
@@ -224,7 +229,7 @@ export function resolveCodeLines(
     }
   }
   if (bestBlock && bestLine >= 0) {
-    return { start: bestLine + 1, end: bestLine + count };
+    return { start: bestLine + 1, end: bestLine + count, blockStartLine: bestBlock.startLine };
   }
   return null;
 }

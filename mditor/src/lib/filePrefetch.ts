@@ -11,10 +11,20 @@ const MAX_BYTES = 1 * 1024 * 1024; // 1 MiB —— 超过此大小不预读（�
 
 // Map 保持插入序：首个 entry 即最久未访问，用作 LRU 淘汰对象。
 const cache = new Map<string, string>();
+// 最近一次 hover 预读的路径（空闲预解析的目标提示；见 peekHoverContent）。
+let lastHoverPath: string | null = null;
 
 /** 是否值得预读：所有受支持的 Markdown 扩展名（与 tauriFs.MD_EXTS 同源）。 */
 export function isPrefetchable(path: string): boolean {
   return MD_EXTS.has(extname(path).toLowerCase());
+}
+
+/** 空闲预解析目标提示：最后 hover 预读且已进缓存的大文档内容。
+ *  不是大文档 / 未缓存返回 null（parsePipeline 会再做缓存命中与预算检查）。 */
+export function peekHoverContent(minChars: number): string | null {
+  if (!lastHoverPath) return null;
+  const v = cache.get(lastHoverPath);
+  return v != null && v.length >= minChars ? v : null;
 }
 
 /** 命中缓存则返回内容，否则 undefined（命中时刷新到队尾 = 最近访问）。 */
@@ -30,6 +40,7 @@ export function readCached(path: string): string | undefined {
 
 /** 预读一个路径并存入缓存。跳过大文件（>1MB）与非 md 文件；失败静默。 */
 export async function prefetchFile(path: string): Promise<void> {
+  lastHoverPath = path;
   if (cache.has(path)) return;
   if (!isPrefetchable(path)) return;
   try {

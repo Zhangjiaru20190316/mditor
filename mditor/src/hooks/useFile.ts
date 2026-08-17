@@ -50,6 +50,13 @@ export interface FileApi {
   /** Clear the dirty flag (called after save). */
   markClean: () => void;
   /**
+   * Record an external reload (file watcher): the buffer is clean AND its
+   * content is now `content`. Unlike a bare markClean this keeps doc.content
+   * authoritative — snapshotActiveTab trusts doc.content for clean tabs
+   * (skipping the O(n) getMarkdown serialize), so it must never go stale.
+   */
+  noteExternalReload: (content: string) => void;
+  /**
    * Update the on-disk path of the current buffer without touching its content
    * (called after the open file is renamed in the file tree). No-op if the
    * current path doesn't match `oldPath`.
@@ -177,6 +184,10 @@ export function useFile(): FileApi {
     setDoc((d) => (d.dirty ? { ...d, dirty: false } : d));
   }, []);
 
+  const noteExternalReload = useCallback((content: string) => {
+    setDoc((d) => ({ ...d, content, dirty: false }));
+  }, []);
+
   const updatePath = useCallback((oldPath: string, newPath: string) => {
     setDoc((d) => (d.path === oldPath ? { ...d, path: newPath } : d));
   }, []);
@@ -199,8 +210,9 @@ export function useFile(): FileApi {
       saveAs,
       markDirty,
       markClean,
+      noteExternalReload,
       updatePath,
     }),
-    [doc, setOnLoaded, newDoc, open, openPath, showDoc, save, writeOnly, saveAs, markDirty, markClean, updatePath]
+    [doc, setOnLoaded, newDoc, open, openPath, showDoc, save, writeOnly, saveAs, markDirty, markClean, noteExternalReload, updatePath]
   );
 }

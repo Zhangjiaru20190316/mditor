@@ -361,7 +361,9 @@ export const Editor = memo(
     onReload: (content) => {
       handle.editor?.setValue(content, true);
       onInputRef.current?.(content);
-      fileApi.markClean();
+      // Record content too (not just clean): snapshotActiveTab trusts
+      // doc.content for clean tabs and skips the O(n) serialize.
+      fileApi.noteExternalReload(content);
     },
     onStatus: onWatcherStatus,
     isSavingRef,
@@ -533,14 +535,14 @@ export const Editor = memo(
         ed.insertValue(md);
         // insertValue is suppressed on the listener; mark dirty so the change
         // flows into autosave / outline.
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       replaceContent: (md) => {
         const ed = handle.editor;
         if (!ed) return;
         ed.setValue(md, true);
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(md);
       },
       getSelection: () => handle.editor?.getSelection() ?? "",
@@ -549,7 +551,7 @@ export const Editor = memo(
         if (!ed) return;
         ed.focus();
         ed.updateValue(md);
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       insertAfterSelection: (md) => {
@@ -557,7 +559,7 @@ export const Editor = memo(
         if (!ed) return;
         ed.focus();
         ed.insertAfter(`\n\n${md}`);
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       getSelectionRange: () => handle.editor?.getSelectionRange() ?? null,
@@ -565,7 +567,7 @@ export const Editor = memo(
         const ed = handle.editor;
         if (!ed) return;
         ed.insertAtPos(md, pos);
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       insertAnnoMarker: (id, range, anchorText) => {
@@ -573,7 +575,7 @@ export const Editor = memo(
         if (!ed) return false;
         const ok = ed.insertAnnoMarker(id, range, anchorText);
         if (ok) {
-          fileApi.markDirty();
+          fileApiRef.current.markDirty();
           onInputRef.current?.(ed.getValue());
         }
         return ok;
@@ -583,7 +585,7 @@ export const Editor = memo(
         if (!ed) return;
         ed.focus();
         ed.toggleBold();
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       toggleHighlight: () => {
@@ -591,7 +593,7 @@ export const Editor = memo(
         if (!ed) return;
         ed.focus();
         ed.toggleHighlight();
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       toggleItalic: () => {
@@ -599,7 +601,7 @@ export const Editor = memo(
         if (!ed) return;
         ed.focus();
         ed.toggleItalic();
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       toggleStrikethrough: () => {
@@ -607,7 +609,7 @@ export const Editor = memo(
         if (!ed) return;
         ed.focus();
         ed.toggleStrikethrough();
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       toggleInlineCode: () => {
@@ -615,7 +617,7 @@ export const Editor = memo(
         if (!ed) return;
         ed.focus();
         ed.toggleInlineCode();
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       insertLink: (href, text) => {
@@ -623,7 +625,7 @@ export const Editor = memo(
         if (!ed) return;
         ed.focus();
         ed.insertLink(href, text);
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       insertFootnote: () => {
@@ -632,7 +634,7 @@ export const Editor = memo(
         ed.focus();
         const id = ed.insertFootnote();
         if (id) {
-          fileApi.markDirty();
+          fileApiRef.current.markDirty();
           onInputRef.current?.(ed.getValue());
         }
         return id;
@@ -642,7 +644,7 @@ export const Editor = memo(
         if (!ed) return;
         ed.focus();
         ed.setTextColor(color);
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       clearTextColor: () => {
@@ -650,7 +652,7 @@ export const Editor = memo(
         if (!ed) return;
         ed.focus();
         ed.clearTextColor();
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       getActiveMarks: () =>
@@ -703,7 +705,7 @@ export const Editor = memo(
         // Append the definition block and re-set the whole doc. flush=false：
         // 保留撤销历史，marker 插入与本事务相邻合并为一步撤销（AI 写回契约）。
         ed.setValue(appendAnnotationDefinition(withMarker, id, content, codeLine));
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
         return id;
       },
@@ -716,7 +718,7 @@ export const Editor = memo(
         // flush=false：流式更新按相邻合并进同一撤销组；收尾（finalizeAnnotation）
         // 用 baseline 收束为一步。
         ed.setValue(next);
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       removeAnnotation: (id) => {
@@ -726,7 +728,7 @@ export const Editor = memo(
         const next = removeAnnotationFromMd(md, id);
         if (next === md) return;
         ed.setValue(next);
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       /* ---- AI 写回（一步撤销）---- */
@@ -734,14 +736,14 @@ export const Editor = memo(
         const ed = handle.editor;
         if (!ed) return;
         ed.aiWriteDoc(md);
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       aiWriteRange: (from, to, md) => {
         const ed = handle.editor;
         if (!ed) return;
         ed.aiWriteRange(from, to, md);
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       aiWriteInsert: (md) => {
@@ -749,7 +751,7 @@ export const Editor = memo(
         if (!ed) return;
         ed.focus();
         ed.aiWriteInsert(md);
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       finalizeAnnotation: (id, content, baseline) => {
@@ -763,7 +765,7 @@ export const Editor = memo(
           return;
         }
         ed.aiWriteFinalize(baseline, next);
-        fileApi.markDirty();
+        fileApiRef.current.markDirty();
         onInputRef.current?.(next);
       },
       revealText: (needle) => handle.editor?.revealText(needle),
@@ -787,11 +789,18 @@ export const Editor = memo(
       switchMode: (m) => handle.switchMode(m),
       find: () => handle.editor?.focus(),
     }),
+    // fileApi 经 fileApiRef.current 读取：markDirty 目前是稳定回调，但走 ref
+    // 让「工厂体永不闭包过期的 fileApi」显式成立——未来往工厂里加任何
+    // fileApi 依赖都不会静默过期。handle 是唯一真正变化的依赖（编辑器重建）。
     [handle]
   );
 
   return (
-    <div id={EDITOR_ID} className="mditor-editor-host">
+    <div
+      id={EDITOR_ID}
+      className="mditor-editor-host"
+      data-big={handle.bigDoc ? "" : undefined}
+    >
       <div
         ref={hostRef}
         className="mditor-milkdown"

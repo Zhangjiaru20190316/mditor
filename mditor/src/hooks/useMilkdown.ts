@@ -34,10 +34,9 @@ import {
   markdownToSlice,
   callCommand,
 } from "@milkdown/utils";
-import { editorViewCtx, parserCtx } from "@milkdown/core";
+import { editorViewCtx, parserCtx, schemaCtx } from "@milkdown/core";
 import { closeHistory } from "@milkdown/prose/history";
-import { toggleMark, setBlockType as pmSetBlockType, wrapIn, lift } from "@milkdown/prose/commands";
-import { wrapInList, liftListItem } from "@milkdown/prose/schema-list";
+import { toggleMark } from "@milkdown/prose/commands";
 import {
   addRowBefore,
   addRowAfter,
@@ -47,9 +46,8 @@ import {
   deleteColumn,
 } from "@milkdown/prose/tables";
 import { TextSelection } from "@milkdown/prose/state";
-import type { EditorView } from "@milkdown/prose/view";
-import { Slice } from "@milkdown/prose/model";
-import type { Mark, Node as PMNode, ResolvedPos } from "@milkdown/prose/model";
+import { Slice, Node } from "@milkdown/prose/model";
+import type { Node as PMNode } from "@milkdown/prose/model";
 import { headingIdGenerator, toggleInlineCodeCommand } from "@milkdown/kit/preset/commonmark";
 import { syntaxHighlighting } from "@codemirror/language";
 import { classHighlighter } from "@lezer/highlight";
@@ -73,7 +71,36 @@ import {
 import type { CodeLineMeta } from "../lib/codeAnno";
 import { stampAnnotationMarkers } from "./useAnnotationMarkers";
 import { stampEditorImageLazyAttrs } from "../lib/imageLazy";
-import { COLOR_DECL_RE, colorFromStyle } from "../lib/colorSpan";
+import {
+  applyParsedDoc,
+  bindEditor,
+  cacheParsedDoc,
+  takeCachedDoc,
+  unbindEditor,
+} from "../lib/parsePipeline";
+import {
+  insertIntoTextarea,
+  replaceTextareaSelection,
+  svPosOutsideCodeFence,
+  svCodeAnchorAt,
+  taUndoableReplace,
+  toggleWrapTextarea,
+  textareaActiveMarks,
+  wrapTextareaColor,
+  unwrapTextareaColor,
+  nextFootnoteId,
+} from "../lib/svTextarea";
+import {
+  classifyUnit,
+  linkRangeAt,
+  imageAt,
+  movableUnit,
+  nearestSibling,
+  applyBlockTarget,
+  moveBlockCommand,
+  duplicateBlockCommand,
+  deleteBlockCommand,
+} from "../lib/blockCommands";
 
 /** Imperative ops Editor.tsx composes its EditorHandle from. Mirrors the subset
  *  of the Vditor instance Editor.tsx called (getValue/setValue/getHTML/
@@ -261,6 +288,36 @@ const IDLE_HISTORY_TRIM_HEAP_RATIO = 0.8; // heap ≥ 80% of the guard threshold
 /** 粘贴的纯文本恰好是一个远程图片 URL（可带查询串/锚点）时触发下载落盘。 */
 const REMOTE_IMG_URL_RE =
   /^https?:\/\/\S+\.(png|jpe?g|gif|webp|svg|bmp)(?:[?#]\S*)?$/i;
+
+/** 整篇文档载入（flush 语义 = replaceAll(md, true)），带解析缓存快路径：
+ *  命中 → Node.fromJSON + EditorState 重建，零 remark 解析（阶段 1）；
+ *  未命中 → 原地解析（与 replaceAll 同构）并把结果回填缓存（仅大文档），
+ *  下次切回同一份内容即命中。任何失败静默返回，调用方语义与旧路径一致。 */
+function loadMarkdownFull(crepe: Crepe, md: string): void {
+  const cachedJson = takeCachedDoc(md);
+  if (cachedJson != null) {
+    try {
+      const applied = crepe.editor.action((ctx) => {
+        const doc = Node.fromJSON(ctx.get(schemaCtx), cachedJson as never);
+        applyParsedDoc(ctx, doc);
+        return true;
+      });
+      if (applied) return;
+    } catch {
+      /* fromJSON 失败（schema 漂移）→ 落回原地解析 */
+    }
+  }
+  try {
+    const parsed = crepe.editor.action((ctx) => {
+      const doc = ctx.get(parserCtx)(md);
+      if (doc) applyParsedDoc(ctx, doc);
+      return doc;
+    });
+    if (parsed) cacheParsedDoc(md, parsed);
+  } catch {
+    /* not ready */
+  }
+}
 
 export function useMilkdown(opts: Options): MilkdownHandle {
   const { hostRef, sourceRef, svHostRef } = opts;
@@ -538,15 +595,15 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       } catch {
         /* generator slice missing — keep Milkdown's default */
       }
+      // 阶段1/2：把新实例的 Schema/remark 插件表登记给解析管线（缓存签名 +
+      // worker 哨兵校验都基于它）。每次 recreate 都会重新绑定。放在 seed 之前，
+      // 让 seed 的整篇解析也能正确回填缓存。
+      bindEditor(crepe.editor.ctx);
       // Seed content with flush=true so headings pick up the generator AND the
       // undo history starts clean for this document.
       if (seed) {
         suppressRef.current = true;
-        try {
-          crepe.editor.action(replaceAll(seed, true));
-        } catch {
-          /* editor not fully ready — content will be re-pushed by Editor */
-        }
+        loadMarkdownFull(crepe, seed);
         suppressRef.current = false;
         contentRef.current = seed;
       }
@@ -564,6 +621,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     return () => {
       destroyed = true;
       crepeRef.current = null;
+      unbindEditor();
       // Cancel any in-flight annotation stamp so it doesn't run against the
       // about-to-be-destroyed DOM.
       if (pendingRaf != null) cancelAnimationFrame(pendingRaf);
@@ -766,23 +824,31 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           return;
         }
         // A full-document load that flips the big-doc cutoff would parse the
-        // doc twice: once for this replaceAll, then again when the recreate
-        // below seeds the new instance with the same content. Skip the doomed
-        // replaceAll — the recreate path seeds from contentRef — so a big
-        // file that crosses the cutoff is parsed exactly once.
+        // doc twice: once for this load, then again when the recreate below
+        // seeds the new instance with the same content. Skip the doomed load —
+        // the recreate path seeds from contentRef — so a big file that crosses
+        // the cutoff is parsed exactly once.
         if (clearStack === true && isBigDoc(md) !== bigDocRef.current) {
           maybeRecreateForBigDoc(md);
           return;
         }
+        if (clearStack === true) {
+          // 整篇载入：优先解析缓存（阶段 1 命中 → 零解析），未命中原地解析
+          // 并回填缓存。suppress 包住两条路径，避免程序化载入被当作用户输入。
+          suppressRef.current = true;
+          loadMarkdownFull(crepe, md);
+          suppressRef.current = false;
+          contentRef.current = md;
+          return;
+        }
         suppressRef.current = true;
         try {
-          crepe.editor.action(replaceAll(md, clearStack === true));
+          crepe.editor.action(replaceAll(md, false));
         } catch {
           /* not ready */
         }
         suppressRef.current = false;
         contentRef.current = md;
-        if (clearStack) maybeRecreateForBigDoc(md);
       },
       getHTML: () => {
         const crepe = crepeRef.current;
@@ -799,12 +865,10 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           // recreate — see the svHtmlCacheRef reset in the create effect).
           const cached = svHtmlCacheRef.current;
           if (cached.md === md) return cached.html;
+          // 走 loadMarkdownFull：与 replaceAll(md,true) 同 flush 语义，且
+          // 大文档在此前已解析过（缓存/预解析）时零解析直装、结果回填缓存。
           suppressRef.current = true;
-          try {
-            crepe.editor.action(replaceAll(md, true));
-          } catch {
-            /* ignore */
-          }
+          loadMarkdownFull(crepe, md);
           suppressRef.current = false;
           try {
             const html = crepe.editor.action(getHTML());
@@ -1852,15 +1916,13 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         return;
       }
       // Leaving sv: push the textarea back into the Crepe (flush clears undo).
+      // 走 loadMarkdownFull：大文档从 sv 切回富文本同样吃解析缓存（此前在
+      // sv 里整篇载入/预解析过的内容零解析直装）。
       if (modeRef.current === "sv") {
         const crepe = crepeRef.current;
         if (crepe) {
           suppressRef.current = true;
-          try {
-            crepe.editor.action(replaceAll(contentRef.current, true));
-          } catch {
-            /* ignore */
-          }
+          loadMarkdownFull(crepe, contentRef.current);
           suppressRef.current = false;
         }
       }
@@ -1896,311 +1958,6 @@ export function useMilkdown(opts: Options): MilkdownHandle {
   );
 }
 
-/** Insert `text` at the surface caret (no selection overwrite). */
-function insertIntoTextarea(ta: HTMLTextAreaElement | SvSurface, text: string): void {
-  const s = ta.selectionStart;
-  const en = ta.selectionEnd;
-  ta.value = ta.value.slice(0, s) + text + ta.value.slice(en);
-  const pos = s + text.length;
-  ta.setSelectionRange(pos, pos);
-}
-
-/** If `pos` (a textarea caret offset) lies inside a fenced code block, return
- *  the offset immediately after that block's closing fence line, so a markdown
- *  token inserted there is NOT swallowed as literal code. Otherwise return
- *  `pos` unchanged. Recognises ``` and ~~~ fences with up to 3 leading spaces.
- *  Used by the annotation marker in source mode. */
-function svPosOutsideCodeFence(value: string, pos: number): number {
-  const FENCE_RE = /^\s{0,3}(`{3,}|~{3,})/;
-  // Fence state up to the START of the line containing `pos`.
-  const lineStart = value.lastIndexOf("\n", pos - 1) + 1;
-  let inFence = false;
-  let fenceChar = ""; // "`" or "~" — only the same char closes the fence
-  for (const ln of value.slice(0, lineStart).split("\n")) {
-    const m = ln.match(FENCE_RE);
-    if (!m) continue;
-    if (!inFence) {
-      inFence = true;
-      fenceChar = m[1][0];
-    } else if (m[1][0] === fenceChar) {
-      inFence = false;
-      fenceChar = "";
-    }
-  }
-  if (!inFence) return pos;
-  // Inside a fence: find its closing fence at/after the current line and
-  // return the offset at the start of the line AFTER it.
-  let offset = lineStart;
-  for (const ln of value.slice(lineStart).split("\n")) {
-    const m = ln.match(FENCE_RE);
-    offset += ln.length + 1; // +1 for the "\n"
-    if (m && m[1][0] === fenceChar) {
-      return Math.min(offset, value.length);
-    }
-  }
-  // Unclosed fence (user mid-typing): fall back to end of document.
-  return value.length;
-}
-
-/** Replace the surface's current selection with `text` (inserts at caret if
- *  the selection is collapsed). */
-function replaceTextareaSelection(ta: HTMLTextAreaElement | SvSurface, text: string): void {
-  const s = ta.selectionStart;
-  const en = ta.selectionEnd;
-  ta.value = ta.value.slice(0, s) + text + ta.value.slice(en);
-  const pos = s + text.length;
-  ta.setSelectionRange(pos, pos);
-}
-
-/** Undoable surface write（AI 一步撤销的 sv 模式路径）：CodeMirror 表面经
- *  undoableReplace 单事务写入（CM 历史一步）；textarea 回退选中 [from,to)
- *  后经 execCommand("insertText") 写入，原生撤销把整次写入当作一步。均返回
- *  false 时调用方退回普通赋值，保正确性、牺牲撤销粒度。 */
-function taUndoableReplace(
-  ta: HTMLTextAreaElement | SvSurface,
-  from: number,
-  to: number,
-  text: string
-): boolean {
-  // CodeMirror 适配器带单事务写入；textarea 无此方法（undefined）走原生路径。
-  const fn = (ta as SvSurface).undoableReplace;
-  if (typeof fn === "function") return fn.call(ta, from, to, text);
-  const el = ta as HTMLTextAreaElement;
-  el.focus();
-  el.setSelectionRange(from, to);
-  let ok: boolean;
-  try {
-    ok = document.execCommand("insertText", false, text);
-  } catch {
-    ok = false;
-  }
-  if (!ok) {
-    const before = el.value.slice(0, from);
-    el.value = before + text + el.value.slice(to);
-    el.setSelectionRange(before.length + text.length, before.length + text.length);
-  }
-  return ok;
-}
-
-/** sv 模式的代码行锚点：textarea 偏移 [from,to) 是否落在某个围栏代码块内，
- *  在则返回块内行号 {start,end,firstLine}（1-based，firstLine 为锚定首行
- *  原文，供内容跟随）。 */
-function svCodeAnchorAt(value: string, from: number, to: number): CodeLineMeta | null {
-  const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
-  const lines = value.split("\n");
-  let off = 0;
-  let inFence = false;
-  let fenceCh = "";
-  const contentLines: string[] = [];
-  const contentOffsets: number[] = [];
-  let start = -1;
-  let end = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const lineStart = off;
-    const lineEnd = off + lines[i].length;
-    off = lineEnd + 1;
-    const m = FENCE.exec(lines[i]);
-    if (!inFence) {
-      if (m) {
-        inFence = true;
-        fenceCh = m[1][0];
-        contentLines.length = 0;
-        contentOffsets.length = 0;
-        start = -1;
-        end = -1;
-      }
-      continue;
-    }
-    if (m && m[1][0] === fenceCh) {
-      inFence = false; // 块结束；已记录的 start/end（若有）即最终结果
-      continue;
-    }
-    // 代码内容行
-    contentLines.push(lines[i]);
-    contentOffsets.push(lineStart);
-    if (start < 0 && from >= lineStart && from <= lineEnd) start = contentLines.length;
-    if (start > 0 && to > lineStart && to <= lineEnd + 1) end = contentLines.length;
-  }
-  if (start < 0) return null;
-  if (end < 0) end = start; // to 越界（块外）：按单行处理
-  const firstLine = contentLines[start - 1] ?? "";
-  if (!firstLine.trim()) return null;
-  return { start, end, firstLine };
-}
-
-/** Wrap (or unwrap, if already wrapped) the surface selection with `open` and
- *  `close` delimiters — a toggle, so pressing the shortcut twice is a no-op
- *  rather than nesting `****`. */
-function toggleWrapTextarea(
-  ta: HTMLTextAreaElement | SvSurface,
-  open: string,
-  close: string
-): void {
-  const s = ta.selectionStart;
-  const en = ta.selectionEnd;
-  const val = ta.value;
-  const before = val.slice(Math.max(0, s - open.length), s);
-  const after = val.slice(en, en + close.length);
-  const wrapped = before === open && after === close;
-  if (wrapped) {
-    // Strip the surrounding delimiters; keep the selection on the inner text.
-    ta.value =
-      val.slice(0, s - open.length) + val.slice(s, en) + val.slice(en + close.length);
-    ta.selectionStart = s - open.length;
-    ta.selectionEnd = en - open.length;
-  } else {
-    ta.value =
-      val.slice(0, s) + open + val.slice(s, en) + close + val.slice(en);
-    ta.selectionStart = s + open.length;
-    ta.selectionEnd = en + open.length;
-  }
-}
-
-/** Whether the surface selection/caret currently sits inside `**…**` / `==…==`
- *  / `*…*` / `~~…~~` / `` `…` `` / a `<span style="color:…">…</span>`. Drives
- *  the toolbar active state in source mode. */
-function textareaActiveMarks(ta: HTMLTextAreaElement | SvSurface): {
-  bold: boolean;
-  highlight: boolean;
-  italic: boolean;
-  strike: boolean;
-  code: boolean;
-  color: string | null;
-} {
-  const s = ta.selectionStart;
-  const en = ta.selectionEnd;
-  const val = ta.value;
-  const bold =
-    val.slice(Math.max(0, s - 2), s) === "**" && val.slice(en, en + 2) === "**";
-  const highlight =
-    val.slice(Math.max(0, s - 2), s) === "==" && val.slice(en, en + 2) === "==";
-  const strike =
-    val.slice(Math.max(0, s - 2), s) === "~~" && val.slice(en, en + 2) === "~~";
-  // 斜体：单星号包裹且不属于 `**` 加粗的内侧。
-  const italic =
-    !bold &&
-    val.slice(Math.max(0, s - 1), s) === "*" &&
-    val.slice(en, en + 1) === "*";
-  const code =
-    val.slice(Math.max(0, s - 1), s) === "`" && val.slice(en, en + 1) === "`";
-  return { bold, highlight, italic, strike, code, color: textareaColorAt(ta) };
-}
-
-/** 下一个可用的脚注 id（`fn-N`，与批注的 `anno-N` 命名空间隔离）。 */
-function nextFootnoteId(md: string): string {
-  let max = 0;
-  const re = /\[\^fn-(\d+)\]/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(md))) {
-    const n = Number(m[1]);
-    if (Number.isFinite(n) && n > max) max = n;
-  }
-  return `fn-${max + 1}`;
-}
-
-// Match a color span opening tag and capture its declared color. Tolerant of
-// extra attributes and either quote style. (Anchored at the END of a look-back
-// window: the textarea helpers below search backwards from the caret.) The
-// style/color-declaration atoms these pair with live in lib/colorSpan.ts,
-// shared with the remark round-trip so the two can't drift.
-const SPAN_OPEN_RE = /<span\b[^>]*\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*>\s*$/i;
-const SPAN_CLOSE_RE = /^\s*<\/span>/i;
-
-/** If the surface selection/caret is wrapped by `<span style=color>…</span>`,
- *  return that color; otherwise null. Scans a small window around the selection
- *  so it works for both a caret and a range. */
-function textareaColorAt(ta: HTMLTextAreaElement | SvSurface): string | null {
-  const s = ta.selectionStart;
-  const en = ta.selectionEnd;
-  const val = ta.value;
-  // Look back up to ~120 chars for an opening color span not yet closed.
-  const winStart = Math.max(0, s - 120);
-  const before = val.slice(winStart, s);
-  const after = val.slice(en, en + 12);
-  // Must be immediately followed by </span> for a tight range match; for a
-  // collapsed caret we still require the close to be right after the caret.
-  if (!SPAN_CLOSE_RE.test(after)) {
-    // Allow the close to sit a couple chars ahead (trailing spaces are rare
-    // inside a span, but tolerate them).
-    if (!/^\s{0,2}<\/span>/i.test(after)) return null;
-  }
-  const open = SPAN_OPEN_RE.exec(before);
-  if (!open) return null;
-  const style = open[1] ?? open[2] ?? "";
-  return colorFromStyle(style);
-}
-
-/** Wrap (or re-color, or unwrap if same color) the textarea selection with a
- *  `<span style="color:…">…</span>`. Toggling: if the selection already carries
- *  the SAME color span it is unwrapped; if it carries a DIFFERENT color the span
- *  is replaced (open tag rewritten) so colors don't nest. */
-function wrapTextareaColor(ta: HTMLTextAreaElement | SvSurface, color: string): void {
-  const s = ta.selectionStart;
-  const en = ta.selectionEnd;
-  const val = ta.value;
-  const before = val.slice(Math.max(0, s - 120), s);
-  const after = val.slice(en, en + 12);
-
-  const existingOpen = SPAN_OPEN_RE.exec(before);
-  const hasClose = SPAN_CLOSE_RE.test(after) || /^\s{0,2}<\/span>/i.test(after);
-  if (existingOpen && hasClose) {
-    const curStyle = existingOpen[1] ?? existingOpen[2] ?? "";
-    const curColor = colorFromStyle(curStyle);
-    const openStartInWin = existingOpen.index;
-    const openStart = Math.max(0, s - 120) + openStartInWin;
-    const openTag = existingOpen[0];
-    if (curColor && curColor.toLowerCase() === color.toLowerCase()) {
-      // Same color → unwrap (toggle off): strip open + close tags.
-      const closeLen = val.slice(en).match(/^<\/span>/i)?.[0].length ?? "</span>".length;
-      ta.value =
-        val.slice(0, openStart) +
-        val.slice(openStart + openTag.length, en) +
-        val.slice(en + closeLen);
-      const shrink = openTag.length;
-      ta.selectionStart = openStart;
-      ta.selectionEnd = en - shrink;
-    } else {
-      // Different color → rewrite the open tag's color (keeps the close).
-      const newStyle = curStyle.replace(COLOR_DECL_RE, `color: ${color}`);
-      const styleStr = curStyle.includes("color:") ? newStyle : `color: ${color}` + (curStyle.trim() ? `;${curStyle}` : "");
-      const newOpen = `<span style="${styleStr}">`;
-      ta.value =
-        val.slice(0, openStart) + newOpen + val.slice(openStart + openTag.length);
-      ta.selectionStart = s;
-      ta.selectionEnd = en;
-    }
-    return;
-  }
-  // Not yet wrapped: wrap fresh.
-  const open = `<span style="color:${color}">`;
-  const close = "</span>";
-  ta.value = val.slice(0, s) + open + val.slice(s, en) + close + val.slice(en);
-  ta.selectionStart = s + open.length;
-  ta.selectionEnd = en + open.length;
-}
-
-/** Remove the nearest enclosing color span around the surface selection, if any. */
-function unwrapTextareaColor(ta: HTMLTextAreaElement | SvSurface): void {
-  const s = ta.selectionStart;
-  const en = ta.selectionEnd;
-  const val = ta.value;
-  const before = val.slice(Math.max(0, s - 120), s);
-  const after = val.slice(en, en + 12);
-  const existingOpen = SPAN_OPEN_RE.exec(before);
-  const hasClose = SPAN_CLOSE_RE.test(after) || /^\s{0,2}<\/span>/i.test(after);
-  if (!existingOpen || !hasClose) return;
-  const openStart = Math.max(0, s - 120) + existingOpen.index;
-  const openTag = existingOpen[0];
-  const closeLen = val.slice(en).match(/^<\/span>/i)?.[0].length ?? "</span>".length;
-  ta.value =
-    val.slice(0, openStart) +
-    val.slice(openStart + openTag.length, en) +
-    val.slice(en + closeLen);
-  const shrink = openTag.length;
-  ta.selectionStart = openStart;
-  ta.selectionEnd = en - shrink;
-}
-
 /** Apply font/size/spacing as CSS vars on :root (the prose CSS in global.css
  *  consumes them on .ProseMirror). Mirrors the Vditor applyProseVars surface. */
 function applyProseVars(s: Settings) {
@@ -2210,333 +1967,4 @@ function applyProseVars(s: Settings) {
   root.style.setProperty("--font-size", `${s.fontSize}px`);
   root.style.setProperty("--line-height", String(s.lineHeight));
   root.style.setProperty("--para-spacing", `${s.paragraphSpacing}px`);
-}
-
-/* -------------------------------------------------------------------------- */
-/* 块级命令（BlockContextMenu）的纯 ProseMirror 辅助函数                        */
-/*                                                                            */
-/* “当前块”的判定：光标所在顶层块（doc 的直接子节点）。若该顶层块是列表，则取      */
-/* 光标所在的最外层 list_item（整项移动/复制，携带其嵌套内容）。表格、引用等       */
-/* 复合块整体作为单元处理（与 Notion 的块语义一致）。                            */
-/* -------------------------------------------------------------------------- */
-
-/** The "movable unit" at $pos: the top-level block, or — inside a top-level
- *  list — the shallowest list_item (the visible whole item). */
-function movableUnit($pos: ResolvedPos): { depth: number; node: PMNode } | null {
-  if ($pos.depth < 1) return null;
-  const top = $pos.node(1);
-  if (top.type.name === "bullet_list" || top.type.name === "ordered_list") {
-    for (let d = 2; d <= $pos.depth; d++) {
-      if ($pos.node(d).type.name === "list_item") {
-        return { depth: d, node: $pos.node(d) };
-      }
-    }
-  }
-  return { depth: 1, node: top };
-}
-
-function isEmptyParagraph(n: PMNode): boolean {
-  return n.type.name === "paragraph" && n.childCount === 0;
-}
-
-/** Index of the nearest sibling of `idx` in direction `step`, skipping empty
- *  paragraphs (the markdown “空行” — moving across one reads as jumping a
- *  visual gap, so it should not block the move). Returns -1 / childCount when
- *  the edge is reached. */
-function nearestSibling(parent: PMNode, idx: number, step: 1 | -1): number {
-  let i = idx + step;
-  while (i >= 0 && i < parent.childCount && isEmptyParagraph(parent.child(i))) {
-    i += step;
-  }
-  return i;
-}
-
-/** Semantic kind of a block node. A list_item is classified by its parent
- *  list (task items carry a non-null `checked` attr — gfm preset). */
-function classifyUnit(node: PMNode, parentName: string): BlockInfo["kind"] {
-  switch (node.type.name) {
-    case "paragraph":
-      return "paragraph";
-    case "heading":
-      return "heading";
-    case "blockquote":
-      return "blockquote";
-    case "code_block":
-      return "code_block";
-    case "horizontal_rule":
-      return "hr";
-    case "table":
-      return "table";
-    case "image":
-      return "image";
-    case "math":
-    case "math_block":
-      return "math_block";
-    case "html":
-    case "html_block":
-      return "html";
-    case "list_item":
-      if (parentName === "bullet_list") {
-        return node.attrs.checked != null ? "task_list" : "bullet_list";
-      }
-      if (parentName === "ordered_list") return "ordered_list";
-      return "other";
-    default:
-      return "other";
-  }
-}
-
-/** The contiguous range of the link mark around `pos`, or null. Expansion
- *  walks neighbour text nodes carrying an equal link mark — the standard
- *  “mark range at caret” resolution. */
-function linkRangeAt(
-  doc: PMNode,
-  pos: number
-): { from: number; to: number; href: string } | null {
-  const $p = doc.resolve(pos);
-  const findLink = (marks: readonly Mark[] | undefined) =>
-    marks?.find((m) => m.type.name === "link");
-  const mark = findLink($p.marks()) ?? findLink($p.nodeBefore?.marks) ?? findLink($p.nodeAfter?.marks);
-  if (!mark) return null;
-  const hasLink = (n: PMNode | null | undefined): boolean =>
-    !!n && !!findLink(n.marks)?.eq(mark);
-  let from = pos;
-  let to = pos;
-  while (from > 0 && hasLink(doc.resolve(from - 1).nodeBefore)) from--;
-  while (to < doc.content.size && hasLink(doc.resolve(to).nodeAfter)) to++;
-  if (from >= to) return null;
-  return { from, to, href: ((mark.attrs.href as string | undefined) ?? "") };
-}
-
-/** The image node at (or immediately around) `pos` — clicked directly, or via
- *  its caption/wrapper (the block image hosts the caption text). */
-function imageAt($pos: ResolvedPos, pos: number): { pos: number; src: string } | null {
-  // Caption / wrapper click: the image is an ancestor.
-  for (let d = $pos.depth; d >= 1; d--) {
-    if ($pos.node(d).type.name === "image") {
-      return {
-        pos: $pos.before(d),
-        src: (($pos.node(d).attrs.src as string | undefined) ?? ""),
-      };
-    }
-  }
-  // Direct hit: check the node starting at / adjacent to the click position.
-  for (const p of [pos, pos + 1, Math.max(0, pos - 1)]) {
-    const n = p <= $pos.doc.content.size ? $pos.doc.nodeAt(p) : null;
-    if (n && n.type.name === "image") {
-      return { pos: p, src: ((n.attrs.src as string | undefined) ?? "") };
-    }
-  }
-  return null;
-}
-
-/** Depth of the nearest ancestor of the given type names, or 0. */
-function ancestorDepth($pos: ResolvedPos, names: string[]): number {
-  for (let d = $pos.depth; d >= 1; d--) {
-    if (names.includes($pos.node(d).type.name)) return d;
-  }
-  return 0;
-}
-
-/** Whether the list_item containing the caret is a task item (checked != null). */
-function currentItemIsTask($pos: ResolvedPos): boolean {
-  const d = ancestorDepth($pos, ["list_item"]);
-  return d > 0 && $pos.node(d).attrs.checked != null;
-}
-
-/** Switch the nearest ancestor list's flavour: bullet ⇄ ordered, and plain ⇄
- *  task (task state lives on the `list_item` children's `checked` attr). Used
- *  both after wrapInList (to seed task items) and for in-place conversion —
- *  converting the whole list matches the familiar editor behaviour. */
-function switchListKind(view: EditorView, kind: BlockTargetKind): void {
-  const state = view.state;
-  const N = state.schema.nodes;
-  const $from = state.selection.$from;
-  const listDepth = ancestorDepth($from, ["bullet_list", "ordered_list"]);
-  if (!listDepth) return;
-  const list = $from.node(listDepth);
-  const listPos = $from.before(listDepth);
-  const wantType = kind === "ordered_list" ? N.ordered_list : N.bullet_list;
-  const wantTask = kind === "task_list";
-  const tr = state.tr.setNodeMarkup(listPos, wantType ?? undefined, list.attrs);
-  const liType = N.list_item;
-  if (liType && liType.spec.attrs && "checked" in liType.spec.attrs) {
-    let p = listPos + 1;
-    for (let i = 0; i < list.childCount; i++) {
-      const c = list.child(i);
-      if (c.type.name === "list_item") {
-        tr.setNodeMarkup(p, undefined, {
-          ...c.attrs,
-          checked: wantTask ? false : null,
-        });
-      }
-      p += c.nodeSize;
-    }
-  }
-  view.dispatch(tr.scrollIntoView());
-}
-
-/** Apply a block-type target chosen from the context menu, with toggle
- *  semantics (clicking the current flavour converts back to a paragraph). */
-function applyBlockTarget(
-  view: EditorView,
-  kind: BlockTargetKind,
-  level?: number
-): void {
-  const N = view.state.schema.nodes;
-  const $from = view.state.selection.$from;
-  const run = (cmd: (state: typeof view.state, dispatch?: typeof view.dispatch) => boolean) =>
-    cmd(view.state, view.dispatch);
-  const inQuote = ancestorDepth($from, ["blockquote"]) > 0;
-  const listName =
-    ancestorDepth($from, ["bullet_list"]) > 0
-      ? "bullet_list"
-      : ancestorDepth($from, ["ordered_list"]) > 0
-        ? "ordered_list"
-        : null;
-  const parent = $from.parent; // nearest textblock
-
-  switch (kind) {
-    case "paragraph":
-      if (listName && N.list_item) run(liftListItem(N.list_item));
-      else if (inQuote) run(lift);
-      else run(pmSetBlockType(N.paragraph));
-      break;
-    case "heading": {
-      const lv = Math.min(6, Math.max(1, level ?? 2));
-      if (parent.type.name === "heading" && parent.attrs.level === lv) {
-        run(pmSetBlockType(N.paragraph)); // same level again → back to paragraph
-        break;
-      }
-      // heading isn't valid inside list_item — lift out first, then apply.
-      if (listName && N.list_item) run(liftListItem(N.list_item));
-      run(pmSetBlockType(N.heading, { level: lv }));
-      break;
-    }
-    case "blockquote":
-      if (inQuote) run(lift);
-      else if (N.blockquote) run(wrapIn(N.blockquote));
-      break;
-    case "code_block":
-      if (parent.type.name === "code_block") {
-        run(pmSetBlockType(N.paragraph));
-        break;
-      }
-      if (listName && N.list_item) run(liftListItem(N.list_item));
-      run(pmSetBlockType(N.code_block));
-      break;
-    case "bullet_list":
-    case "ordered_list":
-    case "task_list": {
-      const curTask = listName === "bullet_list" && currentItemIsTask($from);
-      // Toggle off when already this exact flavour.
-      if (
-        (kind === "bullet_list" && listName === "bullet_list" && !curTask) ||
-        (kind === "ordered_list" && listName === "ordered_list") ||
-        (kind === "task_list" && curTask)
-      ) {
-        if (N.list_item) run(liftListItem(N.list_item));
-        break;
-      }
-      if (!listName) {
-        const wrapType = kind === "ordered_list" ? N.ordered_list : N.bullet_list;
-        if (wrapType) run(wrapInList(wrapType));
-        if (kind === "task_list") switchListKind(view, "task_list");
-        break;
-      }
-      // Different flavour / plain ⇄ task → convert the whole list in place.
-      switchListKind(view, kind);
-      break;
-    }
-    case "hr": {
-      const hrType = N.horizontal_rule;
-      if (!hrType) break;
-      // hr must live at the top level: insert after the current top-level block.
-      const after = $from.after(1);
-      const tr = view.state.tr.insert(after, hrType.create());
-      tr.setSelection(
-        TextSelection.near(tr.doc.resolve(Math.min(after + 1, tr.doc.content.size)), 1)
-      );
-      view.dispatch(tr.scrollIntoView());
-      break;
-    }
-  }
-  view.focus();
-}
-
-/** Swap the movable unit with its nearest (empty-paragraph-skipping) sibling.
- *  Implemented as delete + insert in ONE transaction so undo collapses the
- *  move into a single step and the caret travels with the block. */
-function moveBlockCommand(view: EditorView, dir: "up" | "down"): boolean {
-  const state = view.state;
-  const $from = state.selection.$from;
-  const unit = movableUnit($from);
-  if (!unit) return false;
-  const parentDepth = unit.depth - 1;
-  const parent = $from.node(parentDepth);
-  const start = $from.before(unit.depth);
-  const end = $from.after(unit.depth);
-  const step = dir === "down" ? 1 : -1;
-  const j = nearestSibling(parent, $from.index(parentDepth), step as 1 | -1);
-  if (j < 0 || j >= parent.childCount) return false;
-  // Doc range of the target sibling. start(parentDepth) is the content start
-  // of the parent, which equals the position of its FIRST child (0 for doc,
-  // Ls+1 for a list at Ls) — no extra offset needed.
-  let tStart = 0;
-  let tEnd = 0;
-  let p = $from.start(parentDepth);
-  for (let i = 0; i < parent.childCount; i++) {
-    if (i === j) tStart = p;
-    p += parent.child(i).nodeSize;
-    if (i === j) tEnd = p;
-  }
-  // NOTE: PM's node.copy() with no argument yields an EMPTY node (content
-  // defaults to null → Fragment.empty); the content must be passed explicitly.
-  const copy = unit.node.copy(unit.node.content);
-  // Caret offset inside the unit so it stays at the same reading spot.
-  const headOff = Math.max(
-    1,
-    Math.min(unit.node.nodeSize - 1, state.selection.head - start)
-  );
-  const tr = state.tr;
-  tr.delete(start, end);
-  const ins = tr.mapping.map(dir === "down" ? tEnd : tStart);
-  tr.insert(ins, copy);
-  tr.setSelection(TextSelection.near(tr.doc.resolve(ins + headOff), 1));
-  view.dispatch(tr.scrollIntoView());
-  return true;
-}
-
-/** Insert a copy of the movable unit right below itself; caret moves into the
- *  copy (same reading offset, clamped to the copy's interior). */
-function duplicateBlockCommand(view: EditorView): void {
-  const state = view.state;
-  const $from = state.selection.$from;
-  const unit = movableUnit($from);
-  if (!unit) return;
-  const start = $from.before(unit.depth);
-  const end = $from.after(unit.depth);
-  const headOff = Math.max(
-    1,
-    Math.min(unit.node.nodeSize - 1, state.selection.head - start)
-  );
-  const tr = state.tr.insert(end, unit.node.copy(unit.node.content));
-  tr.setSelection(TextSelection.near(tr.doc.resolve(end + headOff), 1));
-  view.dispatch(tr.scrollIntoView());
-}
-
-/** Delete the movable unit; caret falls to the end of the preceding neighbour
- *  (or the start of what follows when deleting the first block). */
-function deleteBlockCommand(view: EditorView): void {
-  const state = view.state;
-  const $from = state.selection.$from;
-  const unit = movableUnit($from);
-  if (!unit) return;
-  const start = $from.before(unit.depth);
-  const end = $from.after(unit.depth);
-  const tr = state.tr.delete(start, end);
-  tr.setSelection(
-    TextSelection.near(tr.doc.resolve(Math.min(start, tr.doc.content.size)), -1)
-  );
-  view.dispatch(tr.scrollIntoView());
 }

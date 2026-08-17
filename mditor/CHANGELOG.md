@@ -1,5 +1,63 @@
 # Changelog
 
+## 3.6.5 (2026-08-17)
+
+大文档性能三阶段优化的前两阶段落地（解析缓存 + 后台线程解析）+ 富文本视口化中间态，工程治理（巨型文件拆分、lint 清零、测试补强、安全文档）。
+
+### 性能：阶段 1 —— 标签级解析缓存 + 空闲预解析
+
+- **切回看过的标签零解析**：新增内容寻址的解析结果缓存（`lib/docCache`），按 `长度:FNV-1a` 指纹缓存「markdown → ProseMirror 文档 JSON」，LRU + 字节预算（总量 ~16MB 源文本 / 至多 6 条 / 单条 ≤4MB），只缓存大文档。`useMilkdown.setValue` 整篇载入时命中缓存即 `Node.fromJSON + EditorState.create` 直装，完全不跑 remark 解析；未命中的原地解析结果自动回填，下次切回同一份内容即命中
+- **失效策略**：内容被编辑 → 指纹自然变化（无显式失效协议）；编辑器重建换 Schema → schema 签名不符即弃用（同名 schema 可跨重建互换，缓存因此能在 recreate 后存活）；缓存淘汰接入内存守护——10s tick 堆超阈值先清缓存、停预解析（比重建编辑器廉价一个数量级），回落自动恢复
+- **空闲预解析**：切换收尾后的 idle 窗口（requestIdleCallback）预解析「下一个最可能的目标」——文件树 hover 预读的大文档优先（复用 `filePrefetch`，新增 `peekHoverContent`），其次相邻标签快照；预算严格 1 个目标、新切换开始即取消、内存压力自动停
+- **脏大标签切换免序列化**：`getCurrentContent` 富文本模式改走 rAF 镜像（每次输入同步更新，快照至多滞后一帧且不丢字；镜像为空才兜底序列化一次），sv 模式仍直读表面值——把 O(n) 的 `getMarkdown()` 全量序列化从切换热路径上拿掉
+
+### 性能：阶段 2 —— 后台线程解析
+
+- **首次打开的解析阻塞移出主线程**：新增 `parseWorker`（Vite module worker），大文档打开/切回在遮罩上屏后、setValue 之前 `await prepareDoc`——worker 用与编辑器 remarkCtx **同插件集**的管线（`lib/remarkPipeline`：remark-parse + inline-links + preserve-empty-line（按 preset-commonmark 逐行复刻）+ gfm + math（按 Crepe latex 复刻，大文档档位自动关闭）+ 本应用 mark/textColor）产出 mdast 树，原文 UTF-8 ArrayBuffer 走 Transferable 零拷贝；主线程经 `ParserState.next/toDoc`（@milkdown/transformer 公开 API）轻量映射为 PM 文档入缓存
+- **一致性哨兵**：`bindEditor` 读取 remarkPluginsCtx 与预期插件数（小文档 7 / 大文档 5）比对，数量不符（未来注册了新 remark 插件）→ worker 自动禁用、回退主线程路径，绝不静默分叉；`remarkPipeline.test.ts` 锚定各插件行为（mark/gfm/脚注/链接归一/br 清理/颜色 span/math 块化/处理器复用）
+- **失败兜底**：worker 加载失败/解析异常/超时（按体量缩放，上限 10s，超时终止重建）→ 静默回退现状同步解析，遮罩机制不变；沿用切换 token 语义，过期结果直接丢弃
+- **顺带受益**：sv 模式下大文档源码文本即刻上屏、预解析后台进行；sv ⇄ 富文本切换、sv 导出 HTML 的隐藏解析改走同一缓存路径
+
+### 性能：阶段 3（中间态）—— 富文本大文档视口化
+
+- big 模式（>3000 行 / >500KB）对 ProseMirror 顶层块启用 `content-visibility: auto`：浏览器跳过视口外子树的 layout/paint，DOM 仍在文档中——跨视口选区、查找、批注 marker、大纲跳转全部不受影响，以零交互回归风险拿到视口化的主要收益（1MB+ 文档数千块的滚动/输入不再为离屏块付布局）。完整分区渲染/通用视口化（跨视口选区、拖拽等难题）按计划作为独立攻坚项目，见 `docs/performance.md`
+
+### 工程
+
+- **巨型文件渐进拆分**：切换动画状态机抽为 `hooks/useSwitchFlow`（token/最短可见时长/等帧判定，纯时序逻辑入 `lib/switchTiming` 供单测）；sv 表面辅助函数（~305 行）抽为 `lib/svTextarea`；块级命令（~330 行）抽为 `lib/blockCommands`；导出主题 CSS 收集抽为 `lib/themeCss`。useMilkdown 2480 → ~1970 行，App 卸下状态机与工具函数
+- **lint 清零（4 → 0）**：`Editor.tsx` useImperativeHandle 工厂体统一走 `fileApiRef.current.markDirty()`（消除「当前安全仅因 markDirty 是稳定回调」的隐患，未来加入任何 fileApi 依赖不会静默过期）；App 两处 settingsApi 依赖改走 `settingsRef`；SelectionToolbar 的 `getActiveMarks` 改 ref 镜像
+- **测试补强**：新增 28 个（`docCache.test` 9：指纹命中/内容失效/签名失效/LRU 淘汰与刷新/字节预算/压力清空；`switchTiming.test` 7：最短可见剩余时长/等帧判定；`remarkPipeline.test` 10：worker 管线行为锚定；`parseShared.test` 4：指纹性质），全套 **118 个通过**；tsc / eslint（0 error 0 warning）通过
+- **安全文档**：新增 `docs/security.md`（`dangerousDisableAssetCspModification` 的取舍与 CSP 手动放行说明、fs 全盘权限的攻击面收敛、AI API key 明文存储的边界与建议）与 `docs/performance.md`（三阶段架构、缓存/worker 一致性契约、验证方式）；README 增加入口链接
+- 版本：package.json / tauri.conf.json / Cargo.toml / Cargo.lock → 3.6.5
+
+## 3.6.3 (2026-08-17)
+
+大纲/批注跳转正确性修复 + 大文件打开/切换性能与动效。
+
+### 功能正确性（大纲 / 批注跳转）
+
+- **点击时用 live 内容解析跳转目标**：大纲树与批注列表来自防抖（150ms）+defer 的 markdown 镜像，点击瞬间的行号/id 可能是旧快照的（打字后、AI 回写、切标签后 150~350ms 窗口内）——跳转不再信任快照数据：
+  - sv 模式大纲：按 (标题文本, 同文本出现序数) 在 **live** 源码上重解析定位（`lib/outline.ts` 新增 `findHeadingLine`，`OutlineNode.occurrence` 由构树时单遍标注），过期的 `node.line` 不再驱动跳转
+  - 富文本大纲：点击的 id 先对照 **live** `docHeadings` 校验，失效时按 (文本, 序数) 找回正确 id；选择器从全局 `getElementById` 收窄到 Milkdown 宿主内；跳转前把光标停到标题文本上，杜绝 ProseMirror 恢复选区后把视口拽回原光标处
+  - sv 模式批注：代码行批注现在跳到**被批注的代码行本身**（`resolveCodeLines` 新增返回 `blockStartLine` 绝对行号，与富文本 popover 同一套重解析逻辑），不再落在代码块下方数百行之外的 marker 行；正文批注跳 marker 行为不变
+  - `findAnnotationRefLine` 从裸正则首命中改为逐行扫描：跳过围栏代码块内的形似 token（写"关于脚注的文档"不再被误伤）与批注定义块内的引用（批注内容里引用另一条批注不再误导定位）
+- **切换期间侧边栏门禁**：切换动画期间大纲/批注面板 `pointer-events: none`（批注 id 每篇文档都从 `anno-1` 重新编号，点了旧文档的列表项会跳到新文档同号批注）；文件树不门禁（openPath 的 supersede token 本就为快速连点设计）
+
+### 性能（大文件打开 / 切换）
+
+- **修复标签切换动画顺序 bug**：旧 `activateTab` 把 `showDoc`（整篇重解析，大文档秒级阻塞主线程）跑在 `setDocSwitching(true)` 之前且无 rAF yield——动画在重活结束后才绘制，完全没起作用，200ms 盲定时器反而白等。现统一为 openPath 的「先响应」模式：`beginSwitch`（立即亮动画 + token 作废旧切换）→ 双 rAF 等动画绘制 → 保存/读取/重解析 → `finishSwitch`（MIN_SWITCH_MS 最短可见 + 仅最新 token 有权收尾）
+- **干净标签切走免序列化**：`snapshotActiveTab`/`activateTab` 在标签未脏时直接用 `doc.content`，省掉大文档每次切换一次 O(n) 的 `getMarkdown()` 全量序列化（外部重载路径新增 `useFile.noteExternalReload` 保证 clean 态下 `doc.content` 始终权威）
+- 动效严格不拖慢打开：纯 CSS、只动 transform/opacity（合成器驱动，主线程被解析阻塞期间动画仍在跑）、在双 rAF yield 窗口内先绘制
+
+### 动效
+
+- **大文档切换遮罩**：切入大文档（>3000 行 / >500KB）时编辑区叠加半透明遮罩 +「正在载入大文档…」呼吸动效（`<main data-heavy>`），掩盖整篇重解析的等待；小文档保持 2px 顶栏 + 内容即刻可见（不被 300ms 最短可见时长拖慢）；`prefers-reduced-motion` 降级为静态遮罩
+
+### 工程
+
+- 新增测试 7 个（`outline.test.ts` 的 `findHeadingLine`/`stampHeadingOccurrences`、`codeAnno.test.ts` 的围栏/定义块跳过 + `blockStartLine` 期望值更新 + sv 绝对行号换算），全套 **90 个通过**；tsc / eslint（0 error，4 个存量 warning 与主干一致）通过
+- 版本：package.json / tauri.conf.json / Cargo.toml / Cargo.lock → 3.6.3
+
 ## 3.6.1 (2026-08-16)
 
 3.6.0 发布后的热修复：源码模式批注跳转、CSP 收紧、移除浏览器调试残留。

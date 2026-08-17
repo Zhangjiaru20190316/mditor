@@ -130,6 +130,54 @@ export function buildOutlineFromHeadings(flat: FlatHeading[]): OutlineNode[] {
   return builder.roots;
 }
 
+/**
+ * Stamp each node with its 0-based ordinal among same-text headings (whole
+ * tree, document order). Click handlers re-resolve a heading against the LIVE
+ * document by (text, occurrence), so a jump never trusts the debounced
+ * outline snapshot's line numbers / ids. Mutates + returns the same roots.
+ */
+export function stampHeadingOccurrences(roots: OutlineNode[]): OutlineNode[] {
+  const seen = new Map<string, number>();
+  const walk = (nodes: OutlineNode[]) => {
+    for (const n of nodes) {
+      const k = seen.get(n.text) ?? 0;
+      n.occurrence = k;
+      seen.set(n.text, k + 1);
+      walk(n.children);
+    }
+  };
+  walk(roots);
+  return roots;
+}
+
+/**
+ * 0-based source line of the `occurrence`-th heading whose text equals
+ * `text`, parsed from `md` — call this with the LIVE document at click time
+ * (NOT the debounced outline source, whose recorded lines can lag recent
+ * edits / tab switches by 150ms+). Null when that heading no longer exists
+ * (deleted / renamed) — callers treat it as a no-op jump.
+ */
+export function findHeadingLine(
+  md: string,
+  text: string,
+  occurrence = 0
+): number | null {
+  if (!md) return null;
+  let seen = 0;
+  const visit = (nodes: OutlineNode[]): number | null => {
+    for (const n of nodes) {
+      if (n.text === text) {
+        if (seen === occurrence) return n.line ?? null;
+        seen += 1;
+      }
+      const hit = visit(n.children);
+      if (hit != null) return hit;
+    }
+    return null;
+  };
+  return visit(buildOutline(md));
+}
+
 /** Shared nesting logic: attach each heading under the nearest shallower one. */
 class TreeBuilder {
   readonly roots: OutlineNode[] = [];

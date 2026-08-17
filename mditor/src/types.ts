@@ -391,6 +391,11 @@ export interface OutlineNode {
   /** 0-based source line of the heading text (source-parse path only; used
    *  by sv-mode outline jumps to scroll the textarea). */
   line?: number;
+  /** 0-based ordinal among headings with IDENTICAL text in this tree. Click
+   *  handlers use (text, occurrence) to re-resolve the heading against the
+   *  LIVE document — stale line numbers / ids from the debounced outline
+   *  snapshot must never drive the jump. */
+  occurrence?: number;
 }
 
 export interface DocState {

@@ -44,27 +44,28 @@ import { useSettings } from "./hooks/useSettings";
 import { useFile } from "./hooks/useFile";
 import { useResizable } from "./hooks/useResizable";
 import { useAnnotations } from "./hooks/useAnnotations";
-import { findAnnotationRefLine } from "./lib/annotations";
+import { useSwitchFlow, nextPaint } from "./hooks/useSwitchFlow";
+import { findAnnotationRefLine, parseAnnotations } from "./lib/annotations";
+import { resolveCodeLines } from "./lib/codeAnno";
+import { findHeadingLine } from "./lib/outline";
 import { buildAnnotationMessages, chatStream, isAiConfigured } from "./lib/ai";
 import { normalizeAnchorText } from "./lib/anchorSearch";
 import { baseName, pickFolder, dirOf, MD_EXT_RE } from "./lib/tauriFs";
-import { readCached } from "./lib/filePrefetch";
+import { readCached, peekHoverContent } from "./lib/filePrefetch";
+import { prepareDoc } from "./lib/parsePipeline";
 import { toPosix } from "./lib/path-shim";
 import { exportHtml, exportPdf, exportPng, exportDocx } from "./lib/exporter";
 import { copyRich } from "./lib/clipboard";
+import { collectThemeCss } from "./lib/themeCss";
 import { showAlert, confirmDialog, choiceDialog } from "./lib/dialogs";
 import { getWorkspace, setWorkspace, clearRecentPath } from "./lib/store";
 import { dismissSplash } from "./lib/splash";
 import { takeHealSnapshot } from "./lib/session";
 import { countWords } from "./lib/textStats";
-import type { FlatHeading, OutlineNode, TabItem } from "./types";
+import { isBigDoc } from "./lib/memory";
+import type { FlatHeading, OutlineNode, Settings, TabItem } from "./types";
 
 type SidebarTab = "tree" | "outline" | "recent" | "annotations" | "search";
-
-/** Minimum visible duration of the file-switch animation (ms). The loading bar
- *  always plays at least this long so every switch — even a cached/instant one
- *  — gives clear feedback. Kept short so quick switching never feels sluggish. */
-const MIN_SWITCH_MS = 300;
 
 /** 路径 → 标签匹配键（Windows 大小写不敏感 + 分隔符归一）。 */
 function tabPathKey(p: string): string {
@@ -105,7 +106,18 @@ export default function App() {
   // ids are Milkdown's own <hN id>s so outline jumps can't miss). Null until
   // the editor reports its first heading set.
   const [docHeadings, setDocHeadings] = useState<FlatHeading[] | null>(null);
+  // Live mirror for click-time jump resolution — the outline tree is
+  // debounced/deferred, so jumps must validate stale ids against the CURRENT
+  // heading set, not the snapshot the sidebar rendered from.
+  const docHeadingsRef = useRef<FlatHeading[] | null>(null);
+  const handleHeadings = useCallback((flat: FlatHeading[]) => {
+    docHeadingsRef.current = flat;
+    setDocHeadings(flat);
+  }, []);
   const [editMode, setEditMode] = useState<"wysiwyg" | "ir" | "sv">("wysiwyg");
+  // getCurrentContent 按 sv/富文本选择读取路径；ref 镜像保持该回调空依赖。
+  const editModeRef = useRef(editMode);
+  editModeRef.current = editMode;
 
   // ---- 多标签页（V3.6）------------------------------------------------------
   // 只有活动标签住在编辑器/useFile 里；切走时把 live 内容快照进 TabItem。
@@ -124,17 +136,53 @@ export default function App() {
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [linkDialogText, setLinkDialogText] = useState("");
 
-  /** 编辑器当前内容（tab 快照 / 保存都用它）。 */
-  const getCurrentContent = useCallback(
-    () => editorRef.current?.getValue() ?? liveMdRef.current ?? "",
-    []
-  );
+  // ---- iOS-style 「先响应动画，再加载内容」file switching -------------------
+  // 状态机本体在 hooks/useSwitchFlow.ts（token / 最短可见时长 / 大文档遮罩
+  // 档位），这里只消费其最小 API 面。
+  const switchFlow = useSwitchFlow();
+  const {
+    pendingPath,
+    docSwitching,
+    switchHeavy,
+    beginSwitch,
+    updateSwitchHeavy,
+    finishSwitch,
+    shouldYieldPaint,
+    isStale,
+    scheduleFollowUpPreparse,
+  } = switchFlow;
 
-  /** 把活动标签的 live 状态写回 tabs 数组（切走前调用）。 */
+  // 空闲预解析目标（阶段 1，预算 1 个）：hover 预读的大文档优先，其次相邻
+  // 标签的快照内容。经 ref 供 useSwitchFlow 收尾后的 idle 窗口读取。
+  const preparseTargetRef = useRef<() => string | null>(() => null);
+  preparseTargetRef.current = () => {
+    const hover = peekHoverContent(200_000);
+    if (hover) return hover;
+    const cur = tabsRef.current;
+    const idx = cur.findIndex((t) => t.key === activeKeyRef.current);
+    const neighbor = idx >= 0 ? (cur[idx + 1] ?? cur[idx - 1]) : undefined;
+    return neighbor ? neighbor.content : null;
+  };
+
+  /** 编辑器当前内容（tab 快照 / 保存都用它）。sv 模式表面值 O(1) 直读；
+   *  富文本优先走 rAF 镜像（liveMdRef 每次输入同步更新、setState 每帧合
+   *  并——快照至多滞后一帧且不丢字），把脏大文档切换的 O(n) getMarkdown()
+   *  全量序列化从切换热路径上拿掉；镜像为空（从未输入）才兜底序列化一次。 */
+  const getCurrentContent = useCallback(() => {
+    if (editModeRef.current === "sv") {
+      return editorRef.current?.getValue() ?? liveMdRef.current ?? "";
+    }
+    return liveMdRef.current || editorRef.current?.getValue() || "";
+  }, []);
+
+  /** 把活动标签的 live 状态写回 tabs 数组（切走前调用）。干净标签直接用
+   *  doc.content（openPath/showDoc/save/writeOnly/noteExternalReload 都会在
+   *  置 clean 的同时更新 content，快照永远权威）——省掉大文档切换时一次
+   *  O(n) 的 getMarkdown() 全量序列化；只有脏标签才需要向编辑器要内容。 */
   const snapshotActiveTab = useCallback(() => {
     const key = activeKeyRef.current;
     const doc = fileApiRef.current.doc;
-    const content = getCurrentContent();
+    const content = doc.dirty ? getCurrentContent() : doc.content;
     setTabs((ts) =>
       ts.map((t) => (t.key === key ? { ...t, path: doc.path, dirty: doc.dirty, content } : t))
     );
@@ -142,15 +190,27 @@ export default function App() {
 
   /** 切换标签页：切走前快照（有路径且脏 → 静默保存）；干净的目标标签重读
    *  磁盘（捕捉外部修改），脏标签恢复快照。freshContent 供 openPath 传入
-   *  已读好的内容避免二次 IO。 */
+   *  已读好的内容避免二次 IO。
+   *  动画顺序与 openPath 同一 iOS 模式：先亮 loading bar（大文档加遮罩）
+   *  → 等两帧让动画绘制 → 再做保存/读取/整篇重解析 —— 旧实现把 showDoc
+   *  跑在 setDocSwitching 之前，重活阻塞期间没有任何反馈，动画在内容
+   *  渲染完才出现，200ms 盲定时器反而白等。 */
   const activateTab = useCallback(
     async (key: string, freshContent?: string) => {
       if (key === activeKeyRef.current) return;
       const target = tabsRef.current.find((t) => t.key === key);
       if (!target) return;
+      const startedAt = performance.now();
+      const heavy = isBigDoc(freshContent ?? target.content);
+      const token = beginSwitch(target.path, heavy);
+      // 首次亮起动画、或大文档遮罩刚被点亮时才需要等帧；openPath 委托进来
+      // 时（动画已绘制、heavy 已一致）跳过，不多付两帧延迟。
+      if (shouldYieldPaint(heavy)) await nextPaint();
+      if (isStale(token)) return;
       const curDoc = fileApiRef.current.doc;
       const curKey = activeKeyRef.current;
-      const curContent = getCurrentContent();
+      // 干净标签免序列化（同 snapshotActiveTab）：只有脏时才 getMarkdown()。
+      const curContent = curDoc.dirty ? getCurrentContent() : curDoc.content;
       let curDirty = curDoc.dirty;
       if (curDoc.dirty && curDoc.path) {
         try {
@@ -171,6 +231,23 @@ export default function App() {
           }
         }
       }
+      // 等 IO 期间若有更新的切换（标签/文件点击）进来 —— 过期即放弃，由
+      // 最新者收尾；同时按磁盘上的最终内容更正大文档判定。
+      if (isStale(token)) return;
+      updateSwitchHeavy(isBigDoc(content));
+      // 阶段 2：大文档在整篇解析前先走后台线程预解析（缓存命中则瞬时返回）。
+      // 遮罩已上屏、主线程空闲 —— shimmer 动画全程流畅，await 返回后
+      // showDoc→setValue 命中缓存即零解析。失败/超时静默回退原地解析。
+      if (isBigDoc(content)) {
+        // sv 模式不等待：源码文本即刻上屏，预解析后台进行（命中缓存惠及
+        // 后续切回/切模式）；富文本等待 worker 产物后再进 setValue。
+        if (editModeRef.current === "sv") {
+          void prepareDoc(content, () => !isStale(token));
+        } else {
+          await prepareDoc(content, () => !isStale(token));
+          if (isStale(token)) return;
+        }
+      }
       setTabs((ts) =>
         ts.map((t) =>
           t.key === curKey
@@ -181,17 +258,10 @@ export default function App() {
       setActiveKey(key);
       activeKeyRef.current = key;
       fileApiRef.current.showDoc({ path: target.path, content, dirty: target.dirty });
-      // 轻量切换动画（复用文件切换的 loading bar）。
-      setPendingPath(target.path);
-      setDocSwitching(true);
-      window.setTimeout(() => {
-        if (activeKeyRef.current === key) {
-          setPendingPath(null);
-          setDocSwitching(false);
-        }
-      }, 200);
+      finishSwitch(token, startedAt);
+      scheduleFollowUpPreparse(() => preparseTargetRef.current());
     },
-    [getCurrentContent]
+    [beginSwitch, finishSwitch, updateSwitchHeavy, shouldYieldPaint, isStale, getCurrentContent, scheduleFollowUpPreparse]
   );
 
   /** 新建未命名标签（模板内容可选）。当前若是一个干净的空未命名标签且新建
@@ -218,11 +288,13 @@ export default function App() {
       ]);
       setActiveKey(key);
       activeKeyRef.current = key;
+      // 同一 token 收发：内容是空/模板（小），只走顶栏，并保证最短可见时长。
+      const startedAt = performance.now();
+      const token = beginSwitch(null, false);
       fileApiRef.current.showDoc({ path: null, content, dirty: content !== "" });
-      setDocSwitching(true);
-      window.setTimeout(() => setDocSwitching(false), 200);
+      finishSwitch(token, startedAt);
     },
-    [snapshotActiveTab]
+    [snapshotActiveTab, beginSwitch, finishSwitch]
   );
 
   /** 关闭标签：有路径且脏 → 先保存；未命名且脏 → 确认丢弃；关最后一个
@@ -301,23 +373,6 @@ export default function App() {
     );
   }, [fileApi.doc]);
 
-  // ---- iOS-style 「先响应动画，再加载内容」file switching ----
-  // pendingPath: optimistically highlighted in the file tree the instant a row
-  //   is clicked — before the file is even read. Gives immediate visual
-  //   acknowledgement (<1 frame) the way iOS list taps do.
-  // docSwitching: drives the top loading bar + editor opacity dip while the
-  //   new document is being read and rendered into Vditor.
-  const [pendingPath, setPendingPath] = useState<string | null>(null);
-  const [docSwitching, setDocSwitching] = useState(false);
-  // Token guard so a rapid second click (A → B before A finishes loading)
-  // doesn't let A's late result overwrite B. Only the newest click's load is
-  // committed to the editor; superseded loads bail out silently.
-  const switchTokenRef = useRef(0);
-  // Tracks the deferred clear of the switching UI (see openPath). Held in a ref
-  // so a newer click can cancel a still-pending min-duration timer on entry,
-  // preventing stale timers from stacking / clearing state at the wrong time.
-  const switchClearTimerRef = useRef<number | undefined>(undefined);
-
   // 面板宽度拖拽调节（模块 C）：拖拽中直接改 CSS 变量保证跟手，松手时持久化。
   const sidebarResize = useResizable({
     side: "left",
@@ -364,41 +419,46 @@ export default function App() {
 
   const openPath = useCallback(
     async (path: string) => {
-      // Take a token so a newer click can supersede this one mid-flight.
-      const token = ++switchTokenRef.current;
-      // A prior switch may still be inside its min-duration window with a
-      // pending clear timer — cancel it so it can't fire under this (newer)
-      // click and prematurely drop the loading bar.
-      if (switchClearTimerRef.current != null) {
-        window.clearTimeout(switchClearTimerRef.current);
-        switchClearTimerRef.current = undefined;
-      }
       // Phase 1 — INSTANT RESPONSE (<1 frame, the iOS pattern):
-      //   * highlight the clicked row optimistically (pendingPath)
-      //   * raise the loading bar + dim the editor (docSwitching) RIGHT AWAY
+      //   * raise the loading bar RIGHT AWAY (beginSwitch also supersedes any
+      //     in-flight switch and cancels its pending clear timer)
       //   * kick off the file read concurrently (async IPC — doesn't block the
       //     main thread, so the paint below can still commit)
       //   * then YIELD two frames. The double-rAF guarantees the browser has
-      //     committed the highlight + shimmer frame before we touch the editor —
+      //     committed the highlight + bar frame before we touch the editor —
       //     without this, the click and the heavy setValue land in the same
       //     blocked frame and the whole gesture feels sluggish.
-      // 切换动画始终可见：点击瞬间即出 loading bar + dim（不再经 150ms 门控），
+      // 切换动画始终可见：点击瞬间即出 loading bar + 高亮（不再经 150ms 门控），
       // 并保证至少 MIN_SWITCH_MS 可见时长——否则命中预读缓存的瞬时切换会完全
       // 跳过动画，体感上"动画没了"。
-      setPendingPath(path);
-      setDocSwitching(true);
       const startedAt = performance.now();
+      const token = beginSwitch(path, false);
       // 优先查预读缓存（文件树 hover 时已预读）；命中则跳过 readTextFile。
       const cached = readCached(path);
       const readP = cached !== undefined ? Promise.resolve(cached) : readTextFile(path);
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-      });
+      await nextPaint();
       try {
         const content = await readP;
         // A newer click superseded us while we were waiting — drop this load
         // so the user never sees file A flash in after they clicked B.
-        if (token !== switchTokenRef.current) return;
+        if (isStale(token)) return;
+        // 大文档：读到的内容过阈值时先亮编辑区遮罩、再等一帧让它绘制，
+        // 然后才进入整篇重解析的阻塞阶段（动效先行的关键一步）。
+        updateSwitchHeavy(isBigDoc(content));
+        await nextPaint();
+        if (isStale(token)) return;
+        // 阶段 2：遮罩上屏、主线程空闲的窗口里，把整篇 remark 解析放到后台
+        // 线程（缓存命中则瞬时返回）；随后 openPath/showDoc → setValue 命中
+        // 缓存即零解析。worker 失败/超时/被更新切换作废 → 静默回退原地解析。
+        if (isBigDoc(content)) {
+          // 同 activateTab：sv 不等待（源码即刻上屏，预解析转后台）。
+          if (editModeRef.current === "sv") {
+            void prepareDoc(content, () => !isStale(token));
+          } else {
+            await prepareDoc(content, () => !isStale(token));
+            if (isStale(token)) return;
+          }
+        }
         // 多标签页：已打开的文件 → 激活既有标签（干净标签用刚读的新内容）；
         // 新文件 → 新标签；唯一例外：当前是干净的空未命名标签 → 原位替换
         // （首个文件打开不会凭空多出一个标签）。
@@ -431,7 +491,7 @@ export default function App() {
           activeKeyRef.current = key;
           await fileApiRef.current.openPath(path, content);
         }
-        if (token !== switchTokenRef.current) return;
+        if (isStale(token)) return;
         setRecentKey((k) => k + 1);
         // 外部打开的文件若不在当前工作区内，自动把其所在目录设为工作区，
         // 使该文件出现在侧边栏文件树导航中（否则文件树只显示工作区内的文件）。
@@ -446,29 +506,21 @@ export default function App() {
           setSidebarTab("tree");
         }
       } catch (e) {
-        if (token !== switchTokenRef.current) return;
+        if (isStale(token)) return;
         void showAlert(`打开失败：${String(e)}`, "Mditor", "error");
       } finally {
         // Only the newest switch owns clearing the UI state; older loads that
-        // were superseded leave it to whichever click won.
-        if (token === switchTokenRef.current) {
-          // Guarantee the animation is visible for at least MIN_SWITCH_MS even
-          // when the load was instant (cached / tiny file) — otherwise the bar
-          // never registers. Defer the clear if we finished too quickly.
-          const clear = () => {
-            // Re-check the token: a newer click may have arrived while we waited.
-            if (token !== switchTokenRef.current) return;
-            setPendingPath(null);
-            setDocSwitching(false);
-            switchClearTimerRef.current = undefined;
-          };
-          const remaining = MIN_SWITCH_MS - (performance.now() - startedAt);
-          if (remaining <= 0) clear();
-          else switchClearTimerRef.current = window.setTimeout(clear, remaining);
+        // were superseded (including by an activateTab this openPath delegated
+        // to — it takes a newer token) leave it to whichever click won.
+        // finishSwitch enforces the MIN_SWITCH_MS floor + token re-checks.
+        if (!isStale(token)) {
+          finishSwitch(token, startedAt);
+          // 阶段 1：切换收尾后的 idle 窗口预解析下一个最可能目标（预算 1 个）。
+          scheduleFollowUpPreparse(() => preparseTargetRef.current());
         }
       }
     },
-    [activateTab, snapshotActiveTab] // 均 stable —— openPath 身份保持稳定
+    [activateTab, beginSwitch, updateSwitchHeavy, finishSwitch, snapshotActiveTab, isStale, scheduleFollowUpPreparse] // 均 stable —— openPath 身份保持稳定
   );
 
   // Rehydrate after a healing webview reload (see lib/session + Editor's
@@ -1042,11 +1094,44 @@ export default function App() {
   const jumpToHeading = useCallback(
     (node: OutlineNode) => {
       // sv mode: the Milkdown DOM is hidden and stale, so target the source
-      // textarea directly via the heading's recorded line.
+      // surface directly. The outline tree comes from a debounced+deferred
+      // markdown mirror, so its recorded `line` can lag the live document by
+      // 150ms+ (typing bursts, tab switches, AI write-backs) — re-resolve the
+      // heading against the LIVE source by (text, occurrence) instead of
+      // trusting the stale line number.
       if (editMode === "sv") {
-        if (node.line != null) editorRef.current?.jumpToSourceLine(node.line);
+        const line = findHeadingLine(
+          editorRef.current?.getValue() ?? "",
+          node.text,
+          node.occurrence ?? 0
+        );
+        if (line != null) editorRef.current?.jumpToSourceLine(line);
         return;
       }
+      // Rich mode: the outline can also be one commit behind the live doc.
+      // Validate the clicked id against the CURRENT heading set; if it's gone
+      // (doc changed under the deferred tree), re-resolve by (text,
+      // occurrence) so the jump still lands on the right heading. Only when
+      // the editor hasn't reported ANY headings yet do we fall back to the
+      // raw id (Milkdown slugs normally match the source-derived fallback).
+      const live = docHeadingsRef.current ?? [];
+      let id: string | undefined = live.some((h) => h.id === node.id)
+        ? node.id
+        : undefined;
+      if (id == null && live.length > 0) {
+        let seen = 0;
+        const want = node.occurrence ?? 0;
+        for (const h of live) {
+          if (h.text !== node.text) continue;
+          if (seen === want) {
+            id = h.id;
+            break;
+          }
+          seen += 1;
+        }
+      }
+      if (id == null && live.length === 0) id = node.id;
+      if (id == null) return;
       // Milkdown renders <hN id="..."> matching the outline slug. Focus FIRST,
       // then scroll: native focus() scrolls the caret into view, and when it ran
       // AFTER an async `smooth` scrollIntoView it overrode the heading scroll and
@@ -1055,9 +1140,24 @@ export default function App() {
       // (behavior:"auto") makes the heading scroll the last synchronous one, so
       // it wins. (Same reason jumpToAnnotation uses instant scrolling.)
       editorRef.current?.previewEl()?.focus();
-      document
-        .getElementById(node.id)
-        ?.scrollIntoView({ behavior: "auto", block: "start" });
+      const el = document
+        .querySelector<HTMLElement>(".mditor-milkdown")
+        ?.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
+      if (!el) return;
+      // Park the caret at the heading text: any later caret-following scroll
+      // (ProseMirror re-syncing its selection after focus, typewriter mode)
+      // then targets the heading itself instead of yanking the viewport back
+      // to wherever the pre-click selection was.
+      const first = el.firstChild;
+      if (first) {
+        const range = document.createRange();
+        range.setStart(first, 0);
+        range.collapse(true);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      }
+      el.scrollIntoView({ behavior: "auto", block: "start" });
     },
     [editMode]
   );
@@ -1071,18 +1171,28 @@ export default function App() {
   const jumpToAnnotation = useCallback(
     (id: string) => {
       // sv mode: the Milkdown DOM is hidden (display:none) but STILL in the
-      // document, so the querySelector below would find its marker — an element
-      // with no layout box. scrollIntoView on it is a no-op (no scrolling) and
-      // the popover would position itself off the marker's zero rect (it pops
-      // up at the screen's top-left corner). Instead, scroll the SOURCE
-      // surface to the marker's inline `[^id]` reference line — same path the
-      // sv-mode outline jump uses. (No popover: in source mode the user reads
-      // the raw `[^id]` token itself.)
+      // document, so a querySelector would find its marker — an element with
+      // no layout box. scrollIntoView on it is a no-op and the popover would
+      // position itself off the marker's zero rect. Instead, scroll the
+      // SOURCE surface — re-resolving the target against the LIVE document so
+      // the jump can't be driven by the debounced sidebar snapshot:
+      //   * code-line annotations: the inline `[^id]` marker sits on its own
+      //     line AFTER the code block, potentially hundreds of lines away
+      //     from the annotated code — resolve the range (same logic the
+      //     rich-mode popover uses) and jump to the code itself;
+      //   * prose annotations: the marker's inline reference line.
+      // (No popover: in source mode the user reads the raw `[^id]` token.)
       if (editMode === "sv") {
-        const line = findAnnotationRefLine(
-          editorRef.current?.getValue() ?? "",
-          id
-        );
+        const md = editorRef.current?.getValue() ?? "";
+        const meta = parseAnnotations(md).find((a) => a.id === id)?.codeLine;
+        if (meta) {
+          const r = resolveCodeLines(md, id, meta);
+          if (r) {
+            editorRef.current?.jumpToSourceLine(r.blockStartLine + r.start - 1);
+            return;
+          }
+        }
+        const line = findAnnotationRefLine(md, id);
         if (line != null) editorRef.current?.jumpToSourceLine(line);
         return;
       }
@@ -1092,9 +1202,13 @@ export default function App() {
       // from the marker so the click appeared not to jump at all. Focusing first
       // makes the marker scroll the final (winning) synchronous one.
       editorRef.current?.previewEl()?.focus();
-      const marker = document.querySelector<HTMLElement>(
-        `sup[data-type="footnote_reference"][data-label="${id}"]`
-      );
+      // Scope the lookup to the live Milkdown host so the (hidden) sv surface
+      // or static AI-panel render can never supply a zero-rect marker.
+      const marker = document
+        .querySelector<HTMLElement>(".mditor-milkdown")
+        ?.querySelector<HTMLElement>(
+          `sup[data-type="footnote_reference"][data-label="${id}"]`
+        );
       if (!marker) return;
       // Use instant (not smooth) scrolling: the popover positions itself from the
       // marker's viewport rect right after this, so the marker must already be in
@@ -1108,13 +1222,11 @@ export default function App() {
   );
 
   // Stable toggles for StatusBar (kept out of JSX so React.memo can short-circuit
-  // re-renders when only `liveMarkdown` changes during typing).
+  // re-renders when only `liveMarkdown` changes during typing). settingsApi 经
+  // settingsRef 读取（与 fileApiRef 同一惯例），保持空依赖的稳定身份。
   const toggleSidebar = useCallback(() => setSidebarOpen((o) => !o), []);
   const toggleAi = useCallback(() => setAiOpen((o) => !o), []);
-  const toggleFocus = useCallback(
-    () => void settingsApi.toggleFocus(),
-    [settingsApi.toggleFocus]
-  );
+  const toggleFocus = useCallback(() => void settingsRef.current.toggleFocus(), []);
 
   // ---- Stable editor-bridge callbacks (empty deps; read editorRef.current at
   // ---- call time). These MUST be stable so the memoised children that receive
@@ -1313,9 +1425,8 @@ export default function App() {
     newUntitledTabRef.current(renderTemplate(t));
   }, []);
   const onSettingsChange = useCallback(
-    (patch: Partial<Parameters<typeof settingsApi.update>[0]>) =>
-      void settingsApi.update(patch),
-    [settingsApi.update]
+    (patch: Partial<Settings>) => void settingsRef.current.update(patch),
+    []
   );
 
   // Stable callbacks for Editor's autosave/watcher status (depend only on
@@ -1391,7 +1502,7 @@ export default function App() {
         onActivate={(k) => void activateTab(k)}
         onClose={(k) => void closeTab(k)}
       />
-      <aside className={`sidebar ${sidebarOpen ? "open" : "closed"}`}>
+      <aside className={`sidebar ${sidebarOpen ? "open" : "closed"}${docSwitching ? " is-switching" : ""}`}>
         <nav className="sb-tabs">
           <button
             className={sidebarTab === "tree" ? "active" : ""}
@@ -1544,7 +1655,10 @@ export default function App() {
         </button>
       )}
 
-      <main className={`main${docSwitching ? " is-switching" : ""}`}>
+      <main
+        className={`main${docSwitching ? " is-switching" : ""}`}
+        data-heavy={switchHeavy ? "" : undefined}
+      >
         <SearchBar
           open={searchOpen}
           onClose={closeSearch}
@@ -1557,7 +1671,7 @@ export default function App() {
           settings={settingsApi.settings}
           fileApi={fileApi}
           onInput={onInput}
-          onHeadings={setDocHeadings}
+          onHeadings={handleHeadings}
           onAutosaved={onAutosaved}
           onWatcherStatus={onWatcherStatus}
           onModeChange={setEditMode}
@@ -1702,38 +1816,4 @@ export default function App() {
 function execOnEditor(editor: EditorHandle | null, cmd: string) {
   editor?.find(); // focus the surface first so the command has a target
   document.execCommand(cmd);
-}
-
-/** Collect active theme CSS text for export/clipboard (best-effort).
- *  按 (当前主题, 样式表数量) 缓存：重复导出 / 复制富文本不再重算整段 cssText；
- *  主题切换（懒加载新增 link 使 styleSheets.length 变化）或任何样式表增删
- *  会令缓存自动失效。 */
-let themeCssCache: { theme: string; sheetCount: number; css: string } | null = null;
-function collectThemeCss(): string {
-  const theme = document.documentElement.getAttribute("data-theme") ?? "light";
-  const sheetCount = document.styleSheets.length;
-  if (
-    themeCssCache &&
-    themeCssCache.theme === theme &&
-    themeCssCache.sheetCount === sheetCount
-  ) {
-    return themeCssCache.css;
-  }
-  let css = "";
-  for (const sheet of Array.from(document.styleSheets)) {
-    try {
-      const href = sheet.href ?? "";
-      // Collect our own bundled CSS (Vite emits under /assets/) plus any inline
-      // (<style>) sheets — these carry the prose/theme/annotation/KaTeX/hljs
-      // rules the exported document needs to look right. Cross-origin sheets
-      // (fonts etc.) are skipped by the catch below.
-      if (!href || href.includes("/assets/")) {
-        for (const rule of Array.from(sheet.cssRules)) css += rule.cssText + "\n";
-      }
-    } catch {
-      // cross-origin sheet; skip
-    }
-  }
-  themeCssCache = { theme, sheetCount, css };
-  return css;
 }

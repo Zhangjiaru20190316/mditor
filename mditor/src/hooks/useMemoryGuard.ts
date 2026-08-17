@@ -23,6 +23,7 @@
 import { useEffect, useRef } from "react";
 import { logMemory, sampleMemory } from "../lib/diagnostics";
 import { getHeapUsage } from "../lib/memory";
+import { setMemoryPressure } from "../lib/parsePipeline";
 
 export interface MemoryGuardOptions {
   /** Master switch (settings.memoryGuard). */
@@ -128,6 +129,14 @@ export function useMemoryGuard(opts: MemoryGuardOptions) {
       const overThreshold = used > thresholdBytes;
       const critical = limit > 0 && used > limit * CRITICAL_RATIO;
       const pastCooldown = now - lastHealRef.current > cooldownMs;
+
+      // 解析缓存/空闲预解析接入堆监控（阶段 1 约定）：超阈值先清缓存、停
+      // 预解析——这是比重建编辑器廉价一个数量级的回收手段，常可直接把堆
+      // 拉回阈值下，避免不必要的 soft recreate；回到阈值下自动恢复。
+      const cacheCleared = setMemoryPressure(overThreshold);
+      if (cacheCleared > 0) {
+        void logMemory("heal:cache-clear", { cleared: cacheCleared, used });
+      }
 
       if (!overThreshold) {
         // Back under threshold → the growth episode is over; allow a fresh soft

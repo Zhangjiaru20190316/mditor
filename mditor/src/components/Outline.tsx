@@ -12,7 +12,11 @@
 // doesn't block the main thread on every keystroke.
 
 import { memo, useDeferredValue, useMemo } from "react";
-import { buildOutline, buildOutlineFromHeadings } from "../lib/outline";
+import {
+  buildOutline,
+  buildOutlineFromHeadings,
+  stampHeadingOccurrences,
+} from "../lib/outline";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import type { EditMode, FlatHeading, OutlineNode } from "../types";
 
@@ -40,9 +44,11 @@ export const Outline = memo(function Outline({
   const deferredHeadings = useDeferredValue(headings);
   const tree = useMemo(
     () =>
-      mode === "sv" || deferredHeadings == null
-        ? buildOutline(deferredMd)
-        : buildOutlineFromHeadings(deferredHeadings),
+      stampHeadingOccurrences(
+        mode === "sv" || deferredHeadings == null
+          ? buildOutline(deferredMd)
+          : buildOutlineFromHeadings(deferredHeadings)
+      ),
     [mode, deferredMd, deferredHeadings]
   );
   if (tree.length === 0) {

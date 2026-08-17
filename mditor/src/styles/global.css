@@ -1268,6 +1268,73 @@ body.is-resizing .sidebar {
   to   { transform: scaleX(1); }
 }
 
+/* ---------- 大文档切换遮罩（big-doc switching veil） ------------------------
+ * App sets <main data-heavy> while switching INTO a big document (>3000 行 /
+ * >500 KB — isBigDoc), on top of the loading bar above. The whole-document
+ * reparse that follows blocks the main thread for a long time; this veil
+ * masks it. 动效绝不拖慢打开的约束：
+ *   * CSS-only（伪元素，零 React/JS 工作），在 App 的双 rAF yield 窗口内先
+ *     绘制，然后主线程才进入阻塞 —— 动效先于重活出现在屏幕上；
+ *   * 只动画 transform / opacity（合成器驱动）：主线程被解析阻塞期间动画
+ *     仍在合成器线程上继续跑 —— 这正是"掩盖等待"的关键；
+ *   * 不动画布局属性（width/top/left），不动画 box-shadow。
+ * Small documents never get the veil: content paints immediately and the
+ * MIN_SWITCH_MS floor only lingers on the 2px bar, never over fresh content.
+ * Reduced-motion: veil stays, breathing animation drops. */
+.main.is-switching[data-heavy]::after {
+  content: "正在载入大文档…";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--muted, #888);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  z-index: 35; /* above editor content; the top bar (z-index 40) stays visible */
+  pointer-events: none;
+  animation: md-heavy-veil 1.4s ease-in-out infinite;
+  will-change: opacity;
+}
+@keyframes md-heavy-veil {
+  from { opacity: 0.72; }
+  to   { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .main.is-switching[data-heavy]::after {
+    animation: none;
+  }
+}
+
+/* ---------- 大文档交互期视口化（阶段 3 中间态）-----------------------------
+ * Editor 在 big 模式（isBigDoc）给 .mditor-editor-host 加 data-big；这里对
+ * ProseMirror 的每个顶层块启用 content-visibility: auto —— 浏览器跳过视口
+ * 外子树的 layout/paint，但 DOM 仍在文档中：跨视口选区、查找（window.find
+ * 按需强制布局）、批注 marker、大纲跳转（scrollIntoView 对目标强制布局）
+ * 全部保持可用。相比通用视口化（占位节点 + 视口物化）零交互回归风险，
+ * 拿到的主要收益相同：1MB+ 文档数千个块的滚动/输入不再为离屏块付布局与
+ * 绘制。contain-intrinsic-size 给跳过的块一个保守的占位高度估计，避免滚
+ * 动条抖动。仅作用于 big 模式（小文档无感知）。完整分区渲染/视口化的取
+ * 舍见 docs/performance.md。 */
+.mditor-editor-host[data-big] .ProseMirror > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 3em;
+}
+
+/* ---------- Sidebar data panels: read-only while a switch is in flight -----
+ * The outline / annotation lists are debounced mirrors — for ~150ms+ after a
+ * tab switch they still show the OUTGOING document, and annotation ids
+ * restart at anno-1 in every document, so clicking a stale row would jump to
+ * the NEW document's same-numbered annotation (or nothing). Gate clicks (and
+ * dim slightly) until the switching UI drops. The file tree is deliberately
+ * NOT gated — openPath supersede tokens are built for rapid clicking. */
+.sidebar.is-switching .ol-root,
+.sidebar.is-switching .anno-list {
+  pointer-events: none;
+  opacity: 0.55;
+}
+
 /* ---------- search bar ---------- */
 .sb-root {
   position: absolute;

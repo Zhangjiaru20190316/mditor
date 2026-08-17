@@ -129,16 +129,51 @@ export function getAnchorSnippet(md: string, id: string, maxBefore = 40): string
 }
 
 /**
- * 0-based source line of the first INLINE `[^id]` reference (the `[^id]:`
- * definition line is excluded by the same negative lookahead getAnchorSnippet
- * uses). Null when the marker isn't referenced inline. sv-mode annotation
- * jumps use this to scroll the source editor to the marker.
+ * 0-based source line of the first INLINE `[^id]` reference. Null when the
+ * marker isn't referenced inline. sv-mode annotation jumps use this to scroll
+ * the source editor to the marker.
+ *
+ * Line-scanned rather than a raw regex-over-the-whole-document so it can't be
+ * fooled by look-alike tokens the renderer never treats as markers:
+ *   * `[^id]` inside a fenced code block (documents ABOUT footnotes);
+ *   * `[^id]` inside an annotation definition body (批注内容里引用另一条批注)
+ *     — the `[^…]:` line and its continuation lines are skipped.
  */
 export function findAnnotationRefLine(md: string, id: string): number | null {
+  if (!md) return null;
+  const lines = md.split(/\r?\n/);
   const refRe = new RegExp(`\\[\\^${escapeRegExp(id)}\\](?!:)`);
-  const m = refRe.exec(md);
-  if (!m) return null;
-  return md.slice(0, m.index).split(/\r?\n/).length - 1;
+  let inFence = false;
+  let fenceMarker = "";
+  let inDef = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Fences: same 0-3 space tolerance as buildOutline; marker char must match.
+    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      const marker = fence[1].charAt(0);
+      if (!inFence) {
+        inFence = true;
+        fenceMarker = marker;
+      } else if (marker === fenceMarker) {
+        inFence = false;
+      }
+      continue;
+    }
+    if (inFence) continue;
+    // Annotation definition blocks own their whole body — a ref written there
+    // is prose about the annotation, not the inline marker.
+    if (ANNO_DEF_RE.test(line)) {
+      inDef = true;
+      continue;
+    }
+    if (inDef) {
+      if (isContinuationLine(line)) continue;
+      inDef = false; // flush prose line ends the body — test it below
+    }
+    if (refRe.test(line)) return i;
+  }
+  return null;
 }
 
 /** Snippet for a block-anchored annotation marker — one whose marker sits on
