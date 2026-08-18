@@ -1105,7 +1105,7 @@ export default function App() {
           node.text,
           node.occurrence ?? 0
         );
-        if (line != null) editorRef.current?.jumpToSourceLine(line);
+        if (line != null) editorRef.current?.jumpToSourceLine(line, true);
         return;
       }
       // Rich mode: the outline can also be one commit behind the live doc.
@@ -1133,12 +1133,11 @@ export default function App() {
       if (id == null && live.length === 0) id = node.id;
       if (id == null) return;
       // Milkdown renders <hN id="..."> matching the outline slug. Focus FIRST,
-      // then scroll: native focus() scrolls the caret into view, and when it ran
-      // AFTER an async `smooth` scrollIntoView it overrode the heading scroll and
-      // yanked the viewport back to the caret (document start) — so every outline
-      // click landed at the top. Focusing first and scrolling instantly
-      // (behavior:"auto") makes the heading scroll the last synchronous one, so
-      // it wins. (Same reason jumpToAnnotation uses instant scrolling.)
+      // then scroll: native focus() scrolls the caret into view synchronously,
+      // so the scroll issued after it is the last (winning) one — a `smooth`
+      // scroll started here can no longer be overridden by it. (Same
+      // focus-first reason as jumpToAnnotation, which stays instant because
+      // its popover measures the marker rect right after landing.)
       editorRef.current?.previewEl()?.focus();
       const el = document
         .querySelector<HTMLElement>(".mditor-milkdown")
@@ -1157,7 +1156,31 @@ export default function App() {
         sel?.removeAllRanges();
         sel?.addRange(range);
       }
-      el.scrollIntoView({ behavior: "auto", block: "start" });
+      // 大纲跳转用平滑滚动；打字机模式下对齐到中部（与 sv 路径一致）。
+      // 平滑动画期间 host 置 smoothJump 标记，Editor 的打字机选区居中
+      // （selectionchange → 瞬时 scrollTop）看到标记即跳过，否则会在动画
+      // 起步时一帧掐断它。scrollend（动画完成/被打断）或超时兜底清除。
+      const reduced = window.matchMedia(
+        "(prefers-reduced-motion: reduce)"
+      ).matches;
+      const block: ScrollLogicalPosition = settingsRef.current.settings
+        .typewriterMode
+        ? "center"
+        : "start";
+      if (reduced) {
+        el.scrollIntoView({ behavior: "auto", block });
+        return;
+      }
+      const host = document.querySelector<HTMLElement>(".mditor-editor-host");
+      if (host) {
+        host.dataset.smoothJump = "1";
+        const clear = () => {
+          delete host.dataset.smoothJump;
+        };
+        host.addEventListener("scrollend", clear, { once: true });
+        window.setTimeout(clear, 1200);
+      }
+      el.scrollIntoView({ behavior: "smooth", block });
     },
     [editMode]
   );

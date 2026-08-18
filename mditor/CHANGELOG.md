@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.6.6 (2026-08-18)
+
+批注交互修复（点击无反应 / 代码块批注竖向堆叠）+ 大纲跳转平滑滚动（富文本与 sv 双路径）。
+
+### 功能正确性（批注）
+
+- **修复批注徽章点击无反应**：根因是 `useAnnotations` 的 150ms 防抖列表过期——文档刚变化（新建批注、切文件、AI 写回）后点徽章，popover 在防抖列表里查不到 id 就立即关闭。修复：点击时刻用 `parseAnnotations(markdownRef.current)` 对实时文档现场解析兜底（fallback state）；「批注消失」的关闭逻辑也改为现场解析确认后才关，避免误关。次因：徽章 16×16 命中区过小，CSS `::after` 外扩 4px 扩大点击区
+- **代码块批注竖向堆叠改为横向排列**：每个标记独占一段（`insertAnnoMarker` 代码块分支），修复为纯渲染层方案——`stampAnnotationMarkers` 给「只含标记」的段落打 `anno-row-item` 类，CSS `display:inline` 使连续标记段流入同一行、满行自动换行。不动 markdown 源（`resolveCodeLines` 的代码块锚定依赖「标记独占一行源文本」的约束，经用户确认仅改渲染层）；标记被删除或段落被输入文本时自动摘除该类
+
+### 体验（大纲跳转平滑滚动）
+
+- **富文本 + sv 双路径平滑滚动**：大纲跳转从瞬时滚动改为平滑滚动；打字机模式下对齐到视口中部（与 sv 路径一致）。富文本路径 focus 先行、平滑滚动后发，scrollend/1.2s 超时兜底清除 `host[data-smooth-jump]` 标记，期间 Editor 的打字机选区居中（瞬时 scrollTop）看到标记即跳过，不再一帧掐断动画
+- **sv 路径**：`jumpToLine(line, smooth)` 新增平滑参数——落光标事务置 `SmoothJumpFlag` 抑制打字机居中，再对 scrollDOM 平滑 scrollTo 到与瞬时路径相同的对齐目标（focus 先行的光标滚动发生在量坐标之前，后发的平滑滚动为最后一次滚动指令，不会被覆盖）
+- **尊重系统「减少动态效果」**：`prefers-reduced-motion: reduce` 时富文本与 sv 路径均退回瞬时滚动
+
+### 工程
+
+- 版本：package.json / package-lock / tauri.conf.json / Cargo.toml / Cargo.lock → 3.6.6
+
 ## 3.6.5 (2026-08-17)
 
 大文档性能三阶段优化的前两阶段落地（解析缓存 + 后台线程解析）+ 富文本视口化中间态，工程治理（巨型文件拆分、lint 清零、测试补强、安全文档）。

@@ -32,6 +32,8 @@
   cursor: pointer;
   user-select: none;
   transition: transform 0.12s ease, background 0.12s ease;
+  /* anchor for the ::after hit-area pad below */
+  position: relative;
 }
 .mditor-milkdown sup[data-type="footnote_reference"][data-label^="anno-"]::before {
   /* the number comes from data-anno-num, stamped by useAnnotationMarkers */
@@ -40,12 +42,41 @@
   font-weight: 700;
   color: var(--accent);
 }
+/* 16×16 的徽章命中区偏小，hover 放大又只是 transform 不扩命中盒，边缘点击
+   常落空（点了没反应）。::before 已被编号占用，用 ::after 铺一层透明命中
+   区（四向各扩 4px，无视觉变化）。 */
+.mditor-milkdown sup[data-type="footnote_reference"][data-label^="anno-"]::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+}
 .mditor-milkdown sup[data-type="footnote_reference"][data-label^="anno-"]:hover {
   transform: scale(1.12);
   background: var(--accent);
 }
 .mditor-milkdown sup[data-type="footnote_reference"][data-label^="anno-"]:hover::before {
   color: #fff;
+}
+
+/* ---------- code-block annotation rows ---------- */
+/* 代码块批注的标记各占一个段落（见 useMilkdown 的 insertAnnoMarker——
+   code_block 放不下行内 footnote），块级段落 + 段距让它们竖向堆叠，一个
+   批注占约 48px。useAnnotationMarkers 给“只含标记”的段落打 anno-row-item，
+   这里把它们 inline 化：连续标记段落流入同一匿名行盒，横向排列、满行自动
+   换行。正文里与文字同段的标记不受影响（段落含文字，不会被打类）。纯渲染
+   层方案——文档结构不变，锚点解析（resolveCodeLines 要求标记独占一行源
+   文本）不受影响。 */
+.mditor-milkdown .ProseMirror p.anno-row-item {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  line-height: 1;
+}
+/* 徽章本身是 inline-flex 原子盒，垂直 margin 有效并撑起行盒；行内统一
+   baseline 对齐（覆盖正文徽章的 super 上标对齐）。 */
+.mditor-milkdown .ProseMirror p.anno-row-item sup[data-type="footnote_reference"][data-label^="anno-"] {
+  margin: 4px 10px 4px 0;
+  vertical-align: baseline;
 }
 
 /* ---------- hide annotation definition blocks in the editor ---------- */

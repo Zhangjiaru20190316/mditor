@@ -163,8 +163,9 @@ export interface MilkdownFacade {
   insertLink: (href: string, text?: string) => void;
   /** 在光标处插入脚注 `[^fn-N]`，并在文末追加其空定义（V3.6）。返回脚注 id。 */
   insertFootnote: () => string | null;
-  /** sv 模式：滚动到 0-based `line` 行首并把光标放那里（大纲跳转）。 */
-  jumpToLine: (line: number) => void;
+  /** sv 模式：滚动到 0-based `line` 行首并把光标放那里（大纲跳转）。
+   *  smooth=true 时平滑滚动。 */
+  jumpToLine: (line: number, smooth?: boolean) => void;
   /** Whether the sv surface is the CodeMirror instance（Editor 用它决定隐藏
    *  回退 textarea）。 */
   svCodeMirrorActive: () => boolean;
@@ -1564,9 +1565,9 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           suppressRef.current = false;
         }
       },
-      jumpToLine: (line) => {
+      jumpToLine: (line, smooth) => {
         if (svRef.current) {
-          svRef.current.jumpToLine(line);
+          svRef.current.jumpToLine(line, smooth);
           return;
         }
         const ta = sourceRef.current;

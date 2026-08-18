@@ -56,8 +56,10 @@ export interface EditorHandle {
   previewEl: () => HTMLElement | null;
   /** sv mode: scroll the source textarea so `line` (0-based) is in view and
    *  place the caret at its start. No-op outside sv mode. Used by outline
-   *  jumps, which can't target the hidden Milkdown DOM there. */
-  jumpToSourceLine: (line: number) => void;
+   *  jumps, which can't target the hidden Milkdown DOM there. smooth=true
+   *  scrolls smoothly (outline jump); default instant (annotation/search
+   *  jumps measure rects right after landing). */
+  jumpToSourceLine: (line: number, smooth?: boolean) => void;
   /** Focus the editor surface (so find/replace highlights are visible). */
   find: () => void;
   /** Current text selection inside the editor, or "" if none. */
@@ -296,6 +298,9 @@ export const Editor = memo(
       if (!el?.closest(".ProseMirror")) return;
       const host = document.querySelector<HTMLElement>(".mditor-editor-host");
       if (!host) return;
+      // 大纲平滑跳转进行中（App.jumpToHeading 在 host 上置的标记）：
+      // 跳转落点已按打字机对齐到中部，这里的瞬时居中只会掐断平滑动画。
+      if (host.dataset.smoothJump) return;
       const range = sel.getRangeAt(0).cloneRange();
       range.collapse(false); // 光标端（选区拖动时跟随活动端）
       const rects = range.getClientRects();
@@ -779,11 +784,11 @@ export const Editor = memo(
           null
         );
       },
-      jumpToSourceLine: (line) => {
+      jumpToSourceLine: (line, smooth) => {
         if (handle.mode !== "sv") return;
         if (line < 0) return;
         // CodeMirror 优先（居中滚动 + 光标落位），回退旧 textarea 的 focus 滚动。
-        handle.editor?.jumpToLine(line);
+        handle.editor?.jumpToLine(line, smooth);
       },
       ready: () => handle.ready,
       switchMode: (m) => handle.switchMode(m),

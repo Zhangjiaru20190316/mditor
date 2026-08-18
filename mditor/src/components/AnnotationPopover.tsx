@@ -4,8 +4,10 @@
 // as <sup data-type="footnote_reference" data-label="anno-N"> badges (restyled
 // by annotation.css). This component listens for clicks anywhere on those
 // badges, resolves the id from `data-label`, and opens a fixed-position card
-// showing the body (looked up from the parsed `annotations` list). Edit /
-// delete actions call back into the editor bridge.
+// showing the body (looked up from the parsed `annotations` list — with an
+// on-demand parse of the live markdown as fallback while the debounced list
+// lags behind a fresh insert / file switch). Edit / delete actions call back
+// into the editor bridge.
 //
 // 代码行级批注：当批注带有 codeLine 元数据（锚在代码块内的具体行上，见
 // lib/codeAnno.ts）时，打开前先按当前文档内容重新解析行位（跟随内容而非行
@@ -16,7 +18,7 @@
 // open/close, positioning, and edit state.
 
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { Annotation } from "../lib/annotations";
+import { parseAnnotations, type Annotation } from "../lib/annotations";
 import {
   CODE_LINE_HL_CLASS,
   clearCodeLineHighlights,
@@ -61,6 +63,11 @@ export const AnnotationPopover = memo(function AnnotationPopover({
   const [pos, setPos] = useState<Pos | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  // annotations prop 落后于实时文档（useAnnotations 的 150ms 防抖）：刚插入
+  // 批注 / 刚切换文件后的徽章点击，prop 列表里还查不到该 id。点击时刻用
+  // markdownRef 现场解析一次作为兜底存到这里，避免弹窗开了立刻被当成
+  // “批注不存在”关掉（表现为点击没反应）。
+  const [fallback, setFallback] = useState<Annotation | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   // activeId 的 ref 镜像：全局监听器只注册一次（mount），回调内读最新值，
   // 避免 activeId 每次变化都重注册 mousedown/keydown。
@@ -73,7 +80,8 @@ export const AnnotationPopover = memo(function AnnotationPopover({
   markdownRef.current = markdown;
 
   const active = activeId
-    ? annotations.find((a) => a.id === activeId) ?? null
+    ? annotations.find((a) => a.id === activeId) ??
+      (fallback?.id === activeId ? fallback : null)
     : null;
 
   const close = useCallback(() => {
@@ -81,14 +89,20 @@ export const AnnotationPopover = memo(function AnnotationPopover({
     setPos(null);
     setEditing(false);
     setDraft("");
+    setFallback(null);
     clearCodeLineHighlights();
   }, []);
 
   // Close if the active annotation vanished from the document (deleted /
-  // rewritten by an external edit).
+  // rewritten by an external edit). The props list lags the live markdown by
+  // its 150ms parse debounce (see useAnnotations), so a missing id is only
+  // trusted once a fresh parse of the live document confirms it's really gone.
   useEffect(() => {
-    if (activeId && !active) close();
-  }, [activeId, active, close]);
+    if (!activeId || annotations.some((a) => a.id === activeId)) return;
+    if (!parseAnnotations(markdownRef.current).some((a) => a.id === activeId)) {
+      close();
+    }
+  }, [activeId, annotations, close]);
 
   // Listen for clicks on annotation markers anywhere in the editor surface.
   // 注册一次（close 是稳定的）：是否"当前有打开的批注"通过 activeIdRef 在
@@ -110,7 +124,12 @@ export const AnnotationPopover = memo(function AnnotationPopover({
         // 解析失败（行内容被删等）或非代码批注 → 回退到 marker 旁定位。
         clearCodeLineHighlights();
         let initialPos: Pos | null = null;
-        const anno = annotationsRef.current.find((a) => a.id === id);
+        let anno: Annotation | null =
+          annotationsRef.current.find((a) => a.id === id) ?? null;
+        if (!anno) {
+          // prop 列表还在防抖窗口内 —— 对实时文档现场解析兜底。
+          anno = parseAnnotations(markdownRef.current).find((a) => a.id === id) ?? null;
+        }
         if (anno?.codeLine) {
           const resolved = resolveCodeLines(markdownRef.current, id, anno.codeLine);
           if (resolved) {
@@ -122,6 +141,7 @@ export const AnnotationPopover = memo(function AnnotationPopover({
           }
         }
         setActiveId(id);
+        setFallback(anno);
         // Re-derive position on next paint once we know the marker's viewport
         // position is current (it may shift right after a setValue re-render).
         setPos(initialPos ?? { left: rect.right + 8, top: rect.top });

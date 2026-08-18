@@ -27,6 +27,40 @@ const HOST_SELECTOR = ".mditor-milkdown";
 const DEF_SELECTOR = 'dl[data-type="footnote_definition"][data-label^="anno-"]';
 const MARKER_SELECTOR =
   'sup[data-type="footnote_reference"][data-label^="anno-"]';
+/** Class stamped on marker-only paragraphs — see stampMarkerRows. */
+const ROW_CLASS = "anno-row-item";
+
+/** True when the paragraph holds nothing but annotation markers (plus
+ *  whitespace) — i.e. it's one of the per-marker paragraphs dropped after a
+ *  code block, not a prose paragraph a marker happens to live in. */
+function isMarkerOnlyParagraph(p: Element): boolean {
+  return Array.from(p.childNodes).every((n) => {
+    if (n.nodeType === Node.TEXT_NODE) return n.textContent?.trim() === "";
+    return n instanceof Element && n.matches(MARKER_SELECTOR);
+  });
+}
+
+/**
+ * Stamp `anno-row-item` on marker-only paragraphs. Code-block annotations
+ * each get their own paragraph below the block (code_block can't hold an
+ * inline footnote_reference), and block-level paragraphs stack vertically —
+ * one ~48px line per badge. annotation.css turns these paragraphs
+ * display:inline so consecutive ones flow into a single horizontal row that
+ * wraps when full. Render-layer only: the class is not in the schema (never
+ * serialized back to markdown) and the source text keeps one marker per
+ * line, which resolveCodeLines' block-anchor heuristic depends on.
+ */
+function stampMarkerRows(): void {
+  const paras = new Set<Element>();
+  document.querySelectorAll<HTMLElement>(MARKER_SELECTOR).forEach((el) => {
+    const p = el.closest("p");
+    if (p) paras.add(p);
+  });
+  // Also revisit previously-stamped paragraphs: a marker may have been
+  // deleted or text typed into one, disqualifying it.
+  document.querySelectorAll(`p.${ROW_CLASS}`).forEach((p) => paras.add(p));
+  paras.forEach((p) => p.classList.toggle(ROW_CLASS, isMarkerOnlyParagraph(p)));
+}
 
 /** True if any annotation marker/definition exists in the rendered DOM, false
  *  when none do (callers can cache the "no annotations" verdict to skip later
@@ -56,6 +90,8 @@ export function stampAnnotationMarkers(): boolean {
         el.setAttribute("data-anno-num", m[1]);
       }
     });
+    // Marker-only paragraphs become horizontal wrap rows (see stampMarkerRows).
+    stampMarkerRows();
     return true;
   } catch {
     // DOM queries can race with editor teardown; never let this throw.

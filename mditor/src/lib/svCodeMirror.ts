@@ -65,8 +65,10 @@ export interface SvEditorHandle {
   surface: SvSurface;
   /** 整体重置文档并清空撤销历史（文件载入 / 进入 sv 模式）。 */
   setValueReset: (md: string) => void;
-  /** 把光标规范到 0-based `line` 行首并滚动到视口中部（大纲跳转等）。 */
-  jumpToLine: (line: number) => void;
+  /** 把光标规范到 0-based `line` 行首并滚动到视口中部（大纲跳转等）。
+   *  smooth=true 时平滑滚动到目标行（大纲跳转），否则瞬时（默认，注释/
+   *  搜索跳转等依赖落位后立即量 rect 的路径）。 */
+  jumpToLine: (line: number, smooth?: boolean) => void;
   destroy: () => void;
 }
 
@@ -108,7 +110,19 @@ const mdHighlightStyle = HighlightStyle.define([
   { tag: t.typeName, color: "var(--tok-type)" },
 ]);
 
-function buildExtensions(opts: SvEditorOptions) {
+/** 平滑跳转期间抑制打字机自动居中：jumpToLine 的选区事务会同步触发
+ *  updateListener 的 viewScrolledCenter（瞬时滚动），它会立刻掐断进行中的
+ *  平滑动画 —— 跳转前后置位/复位此标记让该次居中跳过。 */
+interface SmoothJumpFlag {
+  active: boolean;
+}
+
+/** 系统开启了「减少动态效果」时退回瞬时滚动。 */
+function prefersReducedMotion(): boolean {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function buildExtensions(opts: SvEditorOptions, smoothJump?: SmoothJumpFlag) {
   return [
     lineNumbers(),
     foldGutter(),
@@ -147,8 +161,9 @@ function buildExtensions(opts: SvEditorOptions) {
       if (update.selectionSet) {
         opts.onSelectionChanged?.();
         // 打字机模式：光标行滚动到视口中部（effect-only 事务，不进历史，
-        // 也不会再触发本监听的 selectionSet 分支 → 无递归）。
-        if (opts.isTypewriter?.()) {
+        // 也不会再触发本监听的 selectionSet 分支 → 无递归）。平滑跳转发起
+        // 的选区变化跳过（见 SmoothJumpFlag）。
+        if (opts.isTypewriter?.() && !smoothJump?.active) {
           viewScrolledCenter(update.view);
         }
       }
@@ -169,8 +184,12 @@ export function createSvEditor(
   host: HTMLElement,
   opts: SvEditorOptions
 ): SvEditorHandle {
+  const smoothJump: SmoothJumpFlag = { active: false };
   const view = new EditorView({
-    state: EditorState.create({ doc: opts.initial, extensions: buildExtensions(opts) }),
+    state: EditorState.create({
+      doc: opts.initial,
+      extensions: buildExtensions(opts, smoothJump),
+    }),
     parent: host,
   });
 
@@ -227,19 +246,42 @@ export function createSvEditor(
     surface,
     setValueReset(md: string) {
       view.setState(
-        EditorState.create({ doc: md, extensions: buildExtensions(opts) })
+        EditorState.create({ doc: md, extensions: buildExtensions(opts, smoothJump) })
       );
     },
-    jumpToLine(line: number) {
+    jumpToLine(line: number, smooth = false) {
       const l = Math.max(0, Math.min(line, view.state.doc.lines - 1));
       const pos = view.state.doc.line(l + 1).from;
-      view.dispatch({
-        selection: { anchor: pos },
-        effects: EditorView.scrollIntoView(pos, {
-          y: opts.isTypewriter?.() ? "center" : "start",
-        }),
-      });
+      const y: "start" | "center" = opts.isTypewriter?.() ? "center" : "start";
+      if (!smooth) {
+        view.dispatch({
+          selection: { anchor: pos },
+          effects: EditorView.scrollIntoView(pos, { y }),
+        });
+        view.focus();
+        return;
+      }
+      // 平滑跳转（大纲）：CM 的 scrollIntoView 只能瞬时滚，这里先落光标
+      // （选区事务被 smoothJump 标记抑制掉打字机居中），再对 scrollDOM
+      // 做一次平滑 scrollTo 到与瞬时路径相同的对齐目标。focus 的原生
+      // 光标滚动在量坐标前发生，之后发起的平滑滚动是最后一次滚动指令，
+      // 不再会被覆盖。尊重系统的减少动态效果偏好。
+      smoothJump.active = true;
+      view.dispatch({ selection: { anchor: pos } });
+      smoothJump.active = false;
       view.focus();
+      const scroller = view.scrollDOM;
+      const block = view.lineBlockAt(pos);
+      const viewportTop = view.documentTop + block.top;
+      const rect = scroller.getBoundingClientRect();
+      const offset =
+        y === "center"
+          ? viewportTop - rect.top - scroller.clientHeight / 2
+          : viewportTop - rect.top;
+      scroller.scrollTo({
+        top: Math.max(0, scroller.scrollTop + offset),
+        behavior: prefersReducedMotion() ? "auto" : "smooth",
+      });
     },
     destroy() {
       view.destroy();
