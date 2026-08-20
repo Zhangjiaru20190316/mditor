@@ -29,6 +29,15 @@ export type QuickActionScope = "full" | "selection";
 export type ThinkingStrength = "off" | "low" | "medium" | "high";
 
 /**
+ * 笔记上下文进 <note> 的截断策略（v3.9 token 降本）：
+ *   * standard — 保留开头 6000 字符（默认）；
+ *   * large    — 12000 字符；
+ *   * smart    — 按与提问的相关度节选（标题恒保留 + 头尾段），预算同 large；
+ *   * full     — 不截断（原样发送，旧行为）。
+ */
+export type AiContextStrategy = "full" | "standard" | "large" | "smart";
+
+/**
  * One configured AI model connection (multi-model support). Only connection
  * info lives here; sampling knobs (temperature / thinking strength / system
  * prompt / max tokens / top_p) are shared globally across models.
@@ -172,6 +181,13 @@ export interface Settings {
   /** Enable the browser's native spellcheck on the editor surface. */
   spellcheck: boolean;
   /**
+   * 批注诊断面板（v3.9.3）：显示批注链路事件流/计数器（定点写成败、整篇
+   * 回退频率、盖章轮次、编辑器重建），并提供「批注体检」——用真实
+   * Milkdown 解析器逐条核查当前文档的批注定义形态。默认关闭；Ctrl+Alt+D
+   * 快捷切换。面板关闭时零开销（事件总线常驻，环形缓冲 300 条）。
+   */
+  annoDiagPanel: boolean;
+  /**
    * 内存守护：定期检查 JS 堆，超过 memoryGuardThresholdMb 时自愈——先尝试
    * 销毁重建编辑器（软），无效则升级为整页 reload（硬，唯一可靠回收手段）。
    * 编辑器是 Milkdown/ProseMirror（纯 JS，无 GopherJS），其状态全在 V8 堆上，
@@ -209,6 +225,15 @@ export interface Settings {
   aiTopP: number;
   /** Custom system prompt override; empty string = use the built-in default. */
   aiSystemPrompt: string;
+  /**
+   * 笔记上下文截断策略（v3.9 token 降本，见 lib/ai.ts truncateNoteForContext）。
+   * standard（默认）/large/smart/full。
+   */
+  aiContextStrategy: AiContextStrategy;
+  /** 对话历史 token 预算（v3.9）：请求只携带预算内的最近问答对。 */
+  aiHistoryBudgetTokens: number;
+  /** 批注精炼的输入截断上限（字符，v3.9；0 回退默认 4000）。 */
+  aiAnnotateMaxChars: number;
   /**
    * Reasoning/thinking strength for reasoning-capable models. "off" sends no
    * thinking field. See ThinkingStrength / the provider mapping in ai.rs.
@@ -250,6 +275,7 @@ export const DEFAULT_SETTINGS: Settings = {
   focusMode: false,
   typewriterMode: false,
   spellcheck: true,
+  annoDiagPanel: false,
   memoryGuard: true,
   memoryGuardThresholdMb: 2500,
   customCssPath: "",
@@ -258,9 +284,12 @@ export const DEFAULT_SETTINGS: Settings = {
   aiApiKey: "",
   aiModel: "gpt-4o-mini",
   aiTemperature: 0.7,
-  aiMaxTokens: 0,
+  aiMaxTokens: 4096,
   aiTopP: 1,
   aiSystemPrompt: "",
+  aiContextStrategy: "standard",
+  aiHistoryBudgetTokens: 8000,
+  aiAnnotateMaxChars: 4000,
   aiThinkingStrength: "off",
   aiModels: [
     {

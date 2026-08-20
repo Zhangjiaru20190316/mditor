@@ -23,7 +23,9 @@
 import { useEffect, useRef } from "react";
 import { logMemory, sampleMemory } from "../lib/diagnostics";
 import { getHeapUsage } from "../lib/memory";
+import { isUserActive } from "../lib/activity";
 import { setMemoryPressure } from "../lib/parsePipeline";
+import { annoEmit } from "../lib/annoDebug";
 
 export interface MemoryGuardOptions {
   /** Master switch (settings.memoryGuard). */
@@ -70,6 +72,8 @@ export function useMemoryGuard(opts: MemoryGuardOptions) {
   const backoffRef = useRef(false);
   /** True once a soft recreate has been tried in the current growth episode. */
   const softTriedRef = useRef(false);
+  /** 本轮增长期是否已提示过“推迟到空闲”（避免每个 tick 刷状态栏）。 */
+  const deferredNoticeRef = useRef(false);
 
   useEffect(() => {
     if (!opts.enabled) return;
@@ -142,6 +146,7 @@ export function useMemoryGuard(opts: MemoryGuardOptions) {
         // Back under threshold → the growth episode is over; allow a fresh soft
         // tier next time.
         if (softTriedRef.current && pastCooldown) softTriedRef.current = false;
+        deferredNoticeRef.current = false;
         return;
       }
       if (backoffRef.current || !pastCooldown) {
@@ -155,6 +160,23 @@ export function useMemoryGuard(opts: MemoryGuardOptions) {
         });
         return;
       }
+
+      // v3.9 可见、可避：用户正在输入/滚动时推迟自愈到空闲窗口（critical
+      // 除外 —— 内存保护是第一目标，临界状态立即处理）。此前软重建/reload
+      // 可能在滚动或打字中途落下（光标/滚动跳变），用户无从感知也无从
+      // 选择。每个增长期只提示一次。巡检周期与阈值不变。
+      if (!critical && isUserActive(30_000)) {
+        if (!deferredNoticeRef.current) {
+          deferredNoticeRef.current = true;
+          o.onStatus?.(
+            "内存偏高：将在空闲时自动优化（期间可随时 Ctrl+S 保存）",
+            "warn"
+          );
+        }
+        void logMemory("heal:deferred", { used, critical });
+        return;
+      }
+      deferredNoticeRef.current = false;
 
       // Over threshold + past cooldown + not backed off → heal.
       if (o.canSave()) await o.save();
@@ -180,6 +202,12 @@ export function useMemoryGuard(opts: MemoryGuardOptions) {
       o.onStatus?.("内存优化中：重建编辑器…", "warn");
       const before = sampleMemory();
       o.recreate();
+      // 诊断：软重建会销毁重建全部代码块子编辑器（可见闪烁），批注面板
+      // 计数以便把它与批注链路的闪烁区分开。
+      annoEmit("editor.recreate", "内存守护软重建（全部代码块/徽章重建一次）", {
+        level: "warn",
+        data: { used: before.used },
+      });
       void logMemory("heal", {
         tier: "soft",
         beforeUsed: before.used,
@@ -207,7 +235,13 @@ export function useMemoryGuard(opts: MemoryGuardOptions) {
               : null,
         });
         if (u > thresholdBytes) {
-          // Soft tier didn't dent it — escalate to a full reload.
+          // Soft tier didn't dent it — escalate to a full reload, but not while
+          // the user is mid-gesture (same activity gate as the main tick; the
+          // next tick re-attempts once they've gone idle).
+          if (isUserActive(30_000)) {
+            void logMemory("heal:escalate-deferred", { used: u });
+            return;
+          }
           void escalateReload(u, after.prosemirrorViews, "escalate");
         }
         // (If usage dropped below threshold, leave softTriedRef true; it clears

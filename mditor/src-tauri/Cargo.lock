@@ -2003,7 +2003,7 @@ dependencies = [
 
 [[package]]
 name = "mditor"
-version = "3.6.6"
+version = "3.9.7"
 dependencies = [
  "futures-util",
  "reqwest 0.12.28",

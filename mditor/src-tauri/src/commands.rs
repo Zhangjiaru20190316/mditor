@@ -21,15 +21,36 @@ const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 
 /// Append a single line to a log file, rotating it when it exceeds `max_bytes`.
 ///
-/// Creates the file and any missing parent directories. When `max_bytes` is
-/// provided and the existing file is already larger than that, it is renamed to
-/// `<path>.1` (replacing any previous backup) before the new line is written, so
-/// the log can never grow unbounded. Designed for the always-on memory
-/// diagnostics log written from the webview: an append here is one syscall and
-/// is flushed immediately, so the log survives a renderer OOM kill.
+/// SECURITY (v3.9.1): `path` arrives from the webview and is therefore
+/// untrusted — a compromised renderer could otherwise append to arbitrary
+/// files (e.g. `~/.ssh/authorized_keys`, shell profiles) and persist itself.
+/// The path is now validated to live inside `<app-data>/logs/`, which is the
+/// only directory the diagnostics log legitimately writes to. The command is
+/// also `async` so the filesystem work runs on the async runtime instead of
+/// blocking the app's main thread (it fires every memory-guard tick).
 #[command]
-pub fn append_log(path: String, line: String, max_bytes: Option<u64>) -> Result<(), String> {
+pub async fn append_log(
+    app: tauri::AppHandle,
+    path: String,
+    line: String,
+    max_bytes: Option<u64>,
+) -> Result<(), String> {
+    let logs_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("logs");
     let p = PathBuf::from(&path);
+    // Component-wise containment check (both sides derive from the same
+    // app_data_dir string the `app_data_dir` command returned, so no
+    // canonicalization is needed to make them comparable).
+    let confined = p
+        .parent()
+        .and_then(|parent| parent.strip_prefix(&logs_dir).ok())
+        .is_some_and(|rest| !rest.as_os_str().is_empty());
+    if !confined {
+        return Err("log path must be a file inside <app-data>/logs".into());
+    }
     // Ensure parent directory exists (best-effort; app-data/logs may not yet).
     if let Some(parent) = p.parent() {
         if !parent.as_os_str().is_empty() {

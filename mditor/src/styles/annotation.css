@@ -505,3 +505,114 @@ pre.anno-code-line-hl {
   padding: 2px 5px;
   white-space: nowrap;
 }
+
+/* ---------- anno diagnostics panel (v3.9.3) ---------- */
+.anno-diag {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 90;
+  width: 460px;
+  max-width: 92vw;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  font-size: 11px;
+  overflow: hidden;
+}
+.anno-diag-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.anno-diag-title {
+  color: var(--accent);
+  font-weight: 700;
+}
+.anno-diag-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+.anno-diag-actions .anno-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+.anno-diag-body {
+  padding: 8px 10px;
+  overflow-y: auto;
+  font-family: var(--mono-font, ui-monospace, monospace);
+  line-height: 1.5;
+}
+.anno-diag-section {
+  margin: 8px 0 4px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.anno-diag-section:first-child {
+  margin-top: 0;
+}
+.anno-diag-empty {
+  color: var(--muted, #888);
+}
+.anno-diag-counters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.anno-diag-counter b {
+  color: var(--accent);
+}
+.anno-diag-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 4px;
+}
+.anno-diag-table th,
+.anno-diag-table td {
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  text-align: left;
+  white-space: nowrap;
+}
+.anno-diag-table td:last-child {
+  white-space: normal;
+}
+.anno-diag-table tr.bad td {
+  color: #d33;
+}
+.anno-diag-events {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.anno-diag-event {
+  display: flex;
+  gap: 8px;
+}
+.anno-diag-event .t {
+  color: var(--muted, #888);
+  flex: none;
+}
+.anno-diag-event .k {
+  color: var(--accent);
+  flex: none;
+  min-width: 130px;
+}
+.anno-diag-event .m {
+  flex: 1;
+  min-width: 0;
+}
+.anno-diag-event.warn .m {
+  color: #b80;
+}
+.anno-diag-event.error .m {
+  color: #d33;
+}

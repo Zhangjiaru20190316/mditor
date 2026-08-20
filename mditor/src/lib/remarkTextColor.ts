@@ -149,17 +149,22 @@ function handleTextColor(
  * Deliberately NOT annotated `: Plugin` (the stringify handler touches
  * mdast-util-to-markdown internals). `this` is the unified Processor, which
  * provides `data()` for stashing remark-stringify options.
+ *
+ * 序列化处理器挂到 `data.toMarkdownExtensions`（v3.9.7 修复，与 remarkMark
+ * 同根因）：remark-stringify v11 只读这一个键；旧版写的 `data.toMarkdown`
+ * 是没人消费的死键，`textColor` 节点序列化直接抛 unknown-node 错误、保存
+ * 回退旧缓存——颜色文字同样存不下来。
  */
 export function remarkTextColor(this: {
   data(): Record<string, unknown>;
 }) {
-  const data = this.data() as Record<string, Record<string, unknown> | unknown[]>;
-  const toMarkdown = (data.toMarkdown || (data.toMarkdown = {})) as Record<string, unknown>;
-  const handlers = (toMarkdown.handlers || (toMarkdown.handlers = {})) as Record<string, unknown>;
-  handlers.textColor = handleTextColor;
-  // Allow raw `<` inside phrasing content (the span tags) without escaping.
-  const unsafe = (toMarkdown.unsafe || (toMarkdown.unsafe = [])) as unknown[];
-  unsafe.push({ character: "<", inConstruct: "phrasing" });
+  const data = this.data() as Record<string, unknown[]>;
+  const extensions = data.toMarkdownExtensions || (data.toMarkdownExtensions = []);
+  extensions.push({
+    handlers: { textColor: handleTextColor },
+    // Allow raw `<` inside phrasing content (the span tags) without escaping.
+    unsafe: [{ character: "<", inConstruct: "phrasing" }],
+  });
 
   return (tree: unknown) => {
     walk(tree as unknown as MdastNode);

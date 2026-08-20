@@ -1,5 +1,244 @@
 # Changelog
 
+## 3.9.7 (2026-08-20)
+
+两处用户报告 bug 修复版：①退出按钮要点两次才能关掉应用；②高亮（==高光==）与文字颜色保存不下来（其余编辑操作正常）。
+
+### 根因与修复
+
+- **高光/颜色存不下来（主修，序列化注册键写错）**：`remarkMark.ts` / `remarkTextColor.ts` 把序列化 handler 注册到 `data.toMarkdown`——而 remark-stringify v11 的编译器只读 **`data.toMarkdownExtensions`**（与 remark-gfm 同款注册路径），旧键是没有任何消费者读的死键。后果链：解析方向一直正常（`==x==` → mark 节点没问题），唯独保存方向 Milkdown `getMarkdown()` → `remark.stringify(tree)` 编译到 `mark` / `textColor` 节点时直接抛 `Cannot handle unknown node` → 整个 getMarkdown() 失败 → 保存回退旧缓存——「编辑时看得见、重开全消失」。批注/块操作走其它序列化路径不受影响，这正是「唯独高光颜色存不下来」的不对称证据。修复：两处注册改挂 `data.toMarkdownExtensions`
+- **退出按钮要点两次（v3.9.6 引入的回归）**：`forceClose()` 里 `await destroy()`——destroy 在收尾进行中会被吞/挂起（Tauri v2 Windows 已知不可靠记录），await 卡住后 1s 的 `exit(0)` 兜底迟迟轮不到，用户只能再点一次。修复：destroy 与 exit(0) **并行调度**（destroy 不等待、失败静默交给 exit 兜底），兜底等待从 1s 缩到 250ms；`onCloseRequested` 同步区分 `destroyingRef`（直接放行）与 `shutdownInFlightRef`（拦截防并发），收尾中的二次点击不再能绕过或重复触发关闭序列
+
+### 防回归
+
+- 新增 `remarkSerialize.test.ts`（6 例）：用与 Milkdown remarkCtx 同构的处理器（unified + parse/stringify 基座 + gfm + 两个自定义插件）直接锚定保存路径——mark → `==…==`、textColor → `<span style="color:…">…</span>`、混排、嵌套（strong 内 mark / textColor 内 strong）、完整往返、处理器复用。旧注册键下这些用例全部抛 unknown-node 而红
+
+### 验证
+
+- vitest **198/198**（+6：remarkSerialize 序列化往返）；tsc / eslint 0 错
+
+## 3.9.6 (2026-08-20)
+
+关闭窗口/退出应用修复版：v3.9.5 引入的「关闭前自动保存」拦截在某些机器/场景下导致窗口无法关闭（点 X / Alt+F4 无反应，应用关不掉）。本次把关闭路径做成**必然能关**：所有可能挂起点加硬上限 + destroy 失败自动降级 exit(0) + 全程 try/catch 兜底。
+### 根因与修复
+- **窗口关不掉（主修）**：v3.9.5 在 `onCloseRequested` 里「无脏内容时不拦截、保持原生路径」，且收尾完成后只调 `destroy()`——Tauri v2 在 Windows 上存在异步 close-requested 监听时窗口不会自行完成关闭、`destroy()` 在收尾中被吞/挂起的已知不可靠记录（上游多个仓库实证）。修复：**一律 `preventDefault()` 接管关闭流程**，收尾完成后走 `forceClose()`——`destroy()` + 1s 后进程仍在则 `exit(0)` 兜底（exit 再失败则二次 destroy）。收尾已在上层完成，强制结束不丢数据
+- **收尾挂起锁死关闭（防御）**：`flushDirtyTabs`（多标签逐个 IPC 写盘）加 **3s 硬上限**——任一步 IPC 挂起即按「保存失败」继续走确认流程，绝不让窗口永远关不掉（自动保存默认 30s，最坏丢 30s 编辑，远好于应用无法关闭）。关闭流程中的原生弹窗异常（窗口正在销毁等）视为确认、继续关闭
+- **重入防并发弹窗**：收尾期间的第二次关闭请求（Alt+F4/再点 X）经 `shutdownInFlightRef` 直接忽略，避免并发弹窗与并发 destroy
+- **菜单「退出」同加固**：`exit(0)` 失败时退回 `forceClose()`；退出序列同样带超时兜底
+- 整个 `onCloseRequested` 回调包 try/catch：任何异常（动态导入失败、序列化抛错等）记录后仍强制关闭，不留「静默关不掉」状态——异常经 opDebug 遥测可见（`window.__opDebug.report()`）
+### 验证
+
+- vitest **192/192**；tsc / eslint 0 错
+- 关闭路径人工核验：无脏直关、有脏落盘后关、保存失败弹确认、超时强制关、重入忽略、菜单退出六条路径均可达关闭终点（destroy → exit 兜底）
+## 3.9.5 (2026-08-20)
+
+编辑功能重大问题修复版：「块级编辑全部存不下来」（列表互转/转任务列表/分隔线/块上移/下移/复制/删除，批注不受影响）一键根修，附静默失败遥测体系；新增关闭窗口/退出应用前自动保存。
+
+### 根因与修复
+
+- **块级编辑静默失效（用户报告：各种编辑功能存不下来、重开全消失，唯独批注能存）**：v3.9.4 给块操作补滚动打点时，`blockCommands.ts` 的新统一派发出口 `dispatchScrolled` 被写成了**自递归**（函数调用自己、从不 `view.dispatch`）——6 条块命令（列表类型互转、转任务列表的第二步、插入分隔线、块上移/下移、复制块、删除块）的 ProseMirror 事务**从不派发，文档从未改变**；随后的 `RangeError: Maximum call stack size exceeded` 又被 facade 的空 `catch { /* not ready */ }` 静默吞掉——控制台、日志、诊断面板均无任何痕迹。用户侧观感即「编辑没有保存下来」；批注走独立的 `annotationOps` 派发路径，所以唯独批注能保存——这一不对称正是定位根因的关键证据。修复一行：`view.dispatch(tr.scrollIntoView())`。**防回归**：新增 `blockCommands.test.ts`（7 例）用 dispatch 间谍视图钉死「命令必须派发事务且文档确实变化」——修前 7/7 红（RangeError 复现），修后 7/7 绿；tsc/eslint 对运行时递归免疫，这类 bug 只有测试网兜得住
+- **关闭窗口/退出应用丢未保存修改（功能优化）**：点 X / Alt+F4 / 菜单「退出」默认直接结束进程，脏缓冲若没等到下一个自动保存间隔（默认 30s）就静默丢失。新增关闭前收尾：`onCloseRequested` 拦截窗口关闭（无脏内容时不拦截、保持原生路径），把**所有**有路径的脏标签写回磁盘（活动标签取编辑器实时内容，非活动标签取切换时的快照），随后主动 `destroy()` 完成关闭；菜单「退出」走同一序列（`exit(0)` 不触发窗口关闭事件，故单独接入）。只有未命名脏缓冲（无处可写）与保存失败的标签才弹确认，与 closeTab/activateTab 的「落盘优于弹窗」哲学一致
+
+### 静默失败遥测体系（工程化排查工具）
+
+- **`lib/opDebug.ts`**：本次 bug 隐形数日的根本原因是「编辑命令的异常被空 catch 吞掉」。现 facade 全部 **22 处编辑类命令**的空 catch（setValue/insertValue/updateValue/insertAfter/insertAtPos/aiWrite×4/toggleMark×5/toggleInlineCode/insertLink/insertFootnote/setTextColor/clearTextColor/setBlockType/moveBlock/duplicateBlock/deleteBlock/tableOp/revealText 等）接入 `noteOpError(op, err)`：按操作计数 + 最近错误记录 + 限频 console.warn（每操作首次必报，其后 10s 一次）。返回 false/null 的 catch（调用方有回退逻辑）不算静默失败，不接入。DevTools 出口 `window.__opDebug.stats() / .report()`。若再现「某编辑功能不生效」，控制台会直接给出是哪个操作在抛什么异常
+- 诊断面板（Ctrl+Alt+D）后续可按需接入 opDebug 数据；当前以控制台出口为先
+
+### 验证
+
+- vitest **192/192**（+10：blockCommands 派发回归 7 例——含修复前 7/7 红的对照验证；opDebug 3 例）；tsc / eslint 0 错；vite build 过
+- 块命令修复经真实 ProseMirror headless 视图（state 随 dispatch 推进的 PM 官方测试范式）验证事务派发与文档变化，非仅「不抛错」
+
+## 3.9.4 (2026-08-20)
+
+滚动三大疑难问题修复版：滚动偶发「页面自己动/乱闪」、滚动卡顿不流畅、批注弹层随滚动盖住标题栏/状态栏。前两个问题留有运行时证据采集体系（scrollDebug），持续排查不再靠猜。
+
+### 根因与修复
+
+- **标题栏菜单卡片被下方内容盖住（本版追加修复）**：`.mb-dropdown`（`z-index:95`）渲染在 `.titlebar` 内部，而 `.titlebar` 是 `position:relative + z-index:85` 的层叠上下文——95 只在标题栏内部竞争，整个标题栏子树在根层叠里被**封顶在 85**。上面把标签栏/状态栏升到 85 后（DOM 顺序靠后、同值后者胜），菜单下拉卡片反而被标签栏整片盖住。修复：下拉层与点击外部关闭的背板经 `createPortal` 挂到 `document.body`——94/95 直接参与根层叠竞争，稳压 chrome 层(85)/批注弹层(70)/右键菜单(90-91)，仍低于弹窗(100)；主题 CSS 变量定义在 `<html>` 上，Portal 不受影响
+- **批注弹层盖住上下栏（代码层实锤）**：`.anno-popover` 是 `position:fixed; z-index:70` 且挂在无层叠上下文的 `.app` 下（参与根层叠竞争），而标题栏只有 `z-index:10`、标签栏/状态栏**根本没有** z-index——弹层滚动跟随时的算术平移 `prev.top + delta` 又完全无视口钳位，锚点滚到视口顶/底时卡片整片压上三条栏。修复三管齐下：① 标题栏/标签栏/状态栏提升为 chrome 层 `z-index:85`（grid item 无需 position 即生效；仍低于右键菜单 90/菜单栏 95/弹窗 100，层级语义不变）；② 摆位算法 `placeCard` 增加可选 `bounds`（chrome 边界）参数，初始摆位/兜底钳位都以「标题栏+标签栏之下、状态栏之上」为可用区间（实测高度动态测量，焦点模式三栏隐藏时自动退化为裸视口）；③ rAF 跟随平移经 `clampTop` 钳回区间——卡片钉在栏内边缘等锚点滚回来，不再跟着滚出屏
+- **弹层打开时滚动卡顿（主源）**：旧 rAF 跟随只在「锚点位移 ≈ scrollTop 增量」时才算纯滚动，否则全量 `remeasure`——而 `remeasure` 对**全文档**每个徽章调 `getBoundingClientRect`，在 `content-visibility:auto` 大文档上会强制离屏块逐个布局；大文档滚动中任何高度重估（块进出视口）都会让锚点位移偏离 scrollTop 增量 → 掉进 remeasure 分支 → 全文档强制布局 → 掉大帧 → 下一帧位移更大 → 恶性循环。修复：跟随分支重构为「横向零位移 → 一律算术跟随（不测量）」，只有横向位移（侧栏/AI 面板拖拽改 CSS 变量、resize）才 remeasure；remeasure 自身在大文档下只测视口 ±600px 内**顶层块**的徽章（块级框尺寸对 content-visibility 是已知的，测块不布局子树）——滚动期间弹层开销从 O(全文档布局) 降为每帧 1 次 rect 读取
+- **打字机模式与滚动惯性对拉（「页面自己动」嫌疑主源）**：旧让位逻辑是「wheel 事件后 350ms 黑out」，盖不住触摸板/滚轮惯性期（WebView2 上惯性可远超 350ms）——黑out一到、惯性未止，任何 selectionchange 触发的居中都反向拽 scrollTop 与用户对拉。修复：让位改为**滚动静止检测**（host `scroll` 事件持续打时间戳，静止 400ms 才恢复居中），惯性全程天然覆盖，顺带覆盖键盘滚动（PageDown/空格）；居中自己写 scrollTop 也会触发 scroll → 自我抑制一拍，防自激
+- **滚动观察器挂错容器（本版诊断体系的自查发现，随版修复）**：`attachScrollWatch` 被挂在 `hostRef`（`.mditor-milkdown`，内容层，scrollTop 恒 0）而非真正滚动的 `.mditor-editor-host`——后果是 ghost 归因完全哑火（`moving` 永假，session:* 一条不发），且用户每次真实滚动都被哨兵**误报为 `layout:shift`**（scrollTop 恒 0 →「未在滚动」恒真 → 每帧测位移，300 条环形缓冲被冲刷，真证据被挤掉）。修复：根 div 增加 `scrollerRef`，观察器改挂 `.mditor-editor-host`；sv 模式下 host 不滚（`.cm-scroller` 内滚），观察器自然休眠（sv 不在覆盖范围，头注已记）。同时补齐 4 组未打点写入——`pm-insert`（AI 插入）/`reveal`（revealText）/`block-op`（块操作 5 处，经统一出口 `dispatchScrolled`）/`code-anno`（代码批注高亮滚动），消灭归因修好后的假 ghost。headless Edge harness A/B 实证：同样 6 步滚动，挂错容器误报 6 条 `layout:shift`、挂对容器 0 条；user / ghost / write 三种归因全部命中且互不串扰
+
+### 滚动诊断体系（工程化排查工具，用户点名）
+
+- **`lib/scrollDebug.ts`**：「页面自己动」从此有运行时证据——
+  - **滚动会话归因**：每次滚动从静止开始动时判定发起者——用户输入（wheel/触摸/滚动键/滚动条拖拽）200ms 内 → `user`；已知程序写入 250ms 内 → `write:<tag>`（打字机/大纲跳转/批注跳转/搜索跳转/重建恢复/愈合恢复/sv 跳转/AI 插入/reveal/块操作/代码批注高亮全部已打点）；两者都不是 → **`ghost`（自己动实锤）**，附方向/幅度/scrollTop/最近一次写入来源。惯性滚动天然归属发起会话（持续位移不重判）。仅覆盖富文本/IR 模式（sv 模式的滚动在 `.cm-scroller` 内部，观察器休眠）
+  - **视口内容位移哨兵**：scrollTop 没变、但视口顶块的文档坐标变了 → 内容在自己动（content-visibility 高度重估 / 图片加载 / 盖章行内化 / PM 重排）——scrollTop 写入检测抓不到的另一半「自己动」，哨兵二分选取 O(log n)
+  - **文档高度突变**：scrollHeight 变化 >8px（c-v 块首次进视口 3em 占位 → 实际高度的跳变证据）
+  - **长任务**：主线程阻塞 >50ms（滚动卡顿直接证据）
+  - `window.__scrollDebug` 控制台出口
+- **诊断面板升级（Ctrl+Alt+D）**：批注+滚动事件按时间合并展示（滚动异常常与批注/盖章/重建联动，交错时间线是定位关键）；「最近 ghost 滚动」摘要区；复制报告含全部滚动证据
+
+### 验证
+
+- vitest **182/182**（+8：placeCard chrome 边界 4 例——视口顶部锚点钳位/贴底钳位/中部不受影响/极窄区间退化，clampTop 4 例）；tsc / eslint 0 错；vite build 过
+- 滚动观察器挂载修复经一次性 headless Edge harness 实证（真实 scrollDebug 模块 + 应用滚动结构复刻）：user/ghost/write 三归因命中、挂对容器正常滚动 0 条误报 `layout:shift`、挂错容器（修复前接法）同场景 6 条误报——旧 bug 与新行为双向实锤，harness 用完即删
+- 「自己动」其余候选（content-visibility 高度重估、图片加载位移）刻意**未盲修**——scrollDebug 的 `session:ghost` / `layout:shift` / `layout:height` 事件将在复现时给出证据链，届时按证据修（避免重蹈「多轮猜测式修复」覆辙）
+
+## 3.9.3 (2026-08-20)
+
+批注四大问题根修版：徽章无编号/悬停闪烁、批注后代码块连片闪烁、侧栏跳转错位、弹层不跟随。前三者共享一个此前未被发现的真实根因——**盖章管线与 ProseMirror DOM 同步的 17Hz 死循环**（浏览器 harness 实测：空闲期徽章每秒被重建 17 次，恰为 60ms 盖章防抖周期）。附带批注诊断体系。
+
+### 根因与修复
+
+- **盖章战争（Bug 1+2 真根因，实测实锤）**：往 PM 管辖的 DOM 写 `data-anno-num`（徽章）与 `anno-row-item` class（marker 段落）→ PM 的 DOMObserver 视为外来突变 → 从 toDOM 防御性重渲染该节点（写入被抹掉）→ 我们的 MutationObserver 看到节点重建 → 60ms 后再盖章 → 永动。徽章无编号（元素重建窗口内属性永远缺失）、悬停闪烁（元素身份 17 次/秒变化）、marker 段落块级↔行内 17Hz 振荡（下方代码块连片闪的驱动源；与流式无关，手动批注后同样发作）全部由此而来。**根修：所有写 PM 管辖 DOM 的盖章动作包进 `domObserver.stop()/start()` 暂停窗口**（prosemirror 内部 API，`start()` 丢弃挂起记录，PM 完全看不见我们的写入），harness 实测空闲期徽章重建 100 次 → 0 次
+- **徽章编号内建化**：包装 `footnote_reference` schema 的 `toDOM`，label 匹配 `anno-N` 时直接在渲染产物注入 `data-anno-num`——编号随 DOM 创建即存在，任何重建零延迟恢复（盖章管线保留为兜底）
+- **流式断路器强化**：`no-parse`（中间态解析不出节点）一律跳帧、**永不**整篇回退（整篇重写走同一解析器，下一帧同形态必再失败——v3.9.2 的「连续 3 帧失败自愈」在持续失败形态下退化为 1/3 帧率整篇重写死循环）；`no-def` 自愈至多一次，再失败降级静默跳帧等收尾
+- **真实解析器验证**：浏览器 harness（真实 Crepe）对 12 种批注体形态做 standalone/全文/序列化往返三态矩阵——**全部通过**（v3.9.2 的 no-parse 假设对这些形态不成立，断路器仅作防御保留）
+- **文末 `<br/>` 污染根除**：harness 复现——定义插入落在 crepe trailing 空段落之后，旧空段滞留为顶级 `<br />`（用户真实文档中观测到的堆积由此产生）。`defInsertPos` 插入前跳过全部 trailing 空段
+- **侧栏跳转错位（Bug 3）**：三层修复——① `blockAbove`（文本侧）与 DOM 侧块定位均跳过 marker-only 行/段落：同一代码块第 2+ 条批注的「上方」是别的标记而非代码块，此前解析/高亮/锚定全部落空；② `resolveCodeLines` 新增 `blockIndex`，策略 3 命中他块时高亮/DOM 定位与文本解析两空间一致；③ 跳转路径光标停靠 + smoothJump 抑制（对齐 jumpToHeading 防御）+ 低频预解析 handoff（防抖列表滞后时首击仍有 codeLine）
+- **弹层跟随（Bug 4）**：打开期间 rAF 锚点跟随循环——每帧只读锚点一个 rect，位移 <1px 零开销；纯主滚动算术平移（缓存几何仍有效），其他一切位移源（面板拖拽只改 CSS 变量、代码块内 `.cm-scroller` 横向滚动不冒泡、盖章/图片加载布局位移）触发全量重测。关闭即停。harness 实测：滚动跟随误差 0px，布局变化重锚定生效
+
+### 批注诊断体系（工程化排查工具）
+
+- `lib/annoDebug.ts`：环形缓冲事件总线（300 条）+ 计数器（定点写成败分布、整篇重写次数与来源、盖章轮次、弹层跟随通道），批注全链路（创建/流式/收尾/删除/盖章/编辑器重建）全部接入；`window.__annoDebug` 控制台出口
+- **批注诊断面板**：设置 →「批注诊断面板」或 **Ctrl+Alt+D**。实时计数器 + 颜色分级事件流 + **「批注体检」**——用真实 Milkdown 解析器对当前文档逐条核查（PM 节点层有定义？DOM 有徽章？编号已盖？buildDefinition 形态 standalone 可解析？序列化往返内容等价？），历史上「字符串级测试全绿但真实解析器丢定义」的事故类型由此常驻可查；一键复制完整报告
+- 编辑器探针（`annoProbe`）：每次 crepe 重建重绑，体检与面板经此访问真实 ProseMirror 状态
+
+### 验证
+
+- vitest **174/174**（新增 annoDebug 总线/体检假探针、annoHandoff、堆叠标记解析等 13 例）；tsc / eslint 0 错
+- 浏览器 harness（真实 Crepe + 真实组件挂载）：完整批注生命周期（创建→流式 8 帧→收尾）整篇替换 = 0、流式失败 = 0、空闲 6 秒徽章重建 = 0、编号常驻、序列化产物无 `<br/>` 残留、内容完整；弹层滚动跟随 -120px 精确、布局变化重锚定
+
+## 3.9.2 (2026-08-19)
+
+批注流式闪烁根治版：特定文档（多行 bullet 批注体 / 代码行元数据 / 文末 `<br/>` 交错）上 AI 批注流式期间徽章闪烁无编号、下方代码块连片闪烁的根因修复。
+
+### 根因与修复
+
+- **流式帧禁止整篇回退（主因）**：定点替换 `replaceDefinitionOp` 一失败（流式中间态解析不出 `footnote_definition`）就整篇 `setValue` → `replaceAll` —— **每帧一次**把所有代码块的 CodeMirror 子编辑器连根重建 + 全部批注徽章重建（编号 60ms 内补不回 = 空药丸闪烁）。是否失败取决于中间态内容能否被独立解析，与文档强相关（故仅特定文档稳定复现）。修复三层：
+  - `updateAnnotation` 增加 `transient` 参数：AI 流式帧标记为中间态，定点失败**跳帧**（下一帧覆盖、收尾 `finalizeAnnotation` 权威写入），绝不整篇回退；手动保存（popover 编辑）保持整篇回退语义
+  - 同一 id 连续 ≥3 帧失败（定义真被解析丢弃）才整篇写回一次自愈，杜绝孤儿定义死循环
+  - 失败原因可观测：`replaceDefinitionOp` 返回 `TargetedOpResult`（no-def / no-parse / surface），限频 warn（2s 一条）标注跳帧/回退与原因
+- **前导空行的流式中间态不再产出「被解析器丢弃」的定义形态**：`withCodeLineMeta` 对首行为空的体此前回退「前缀 `<!--md:line-->`」形态——该形态的脚注定义会被 Milkdown 解析器**整个丢弃**，触发「解析失败 → 整篇回退 → 定义消失 → 再整篇回退」的每帧全文档重写循环。现改为把元数据令牌挂到**第一条非空行尾**，整条体全空时宁可不写令牌（空定义保持存在，下一非空帧补写）
+- **代码行高亮链路收窄**（防御纵深）：`restoreCodeLineHighlights` 的「仍已涂色」判断从全文档 querySelector 收窄到 active marker 关联块（任意残留高亮不再误判抑制补画）；popover 锚点优先取 **active 批注自己块内**的高亮行而非全文档第一个（他批注的残留高亮不再把卡片锚到错误的块）；解析 effect 补齐路径 `applyCodeLine` 免 `scrollIntoView`（打开兜底不再突然拽走视口）
+
+### 测试
+
+- 新增 4 例回归：anno-11 真实定义体（多行 bullet + 代码行元数据）的 `buildDefinition` 形态与 round-trip 幂等；前导空行中间态令牌位置；空体中间态定义存活性。全量 161/161 通过
+
+## 3.9.1 (2026-08-19)
+
+全面体检版：安全加固 + 数据丢失修复（安全/Bug/性能/动效四阶段审计，完整报告见 `docs/v3.9.1-audit-report.md`）+ 批注交互修复（徽章闪烁跳动 / 点击要两次）。共修复 2 个数据丢失级 Bug、1 个保存竞态、2 个健壮性缺陷、3 项安全加固、1 项体验缺失、2 项批注交互问题。
+
+### 批注交互（徽章闪烁跳动 / 点击要两次）
+
+- **AI 批注收尾不再整篇重写（「乱闪乱跳」主因）**：定点收尾此前要求从 baseline 里找本批注定义——而 baseline 捕获于创建之前，必然找不到 → 每次收尾都回退 `aiWriteFinalize` 整篇替换**两次**，所有代码块的 CodeMirror 子编辑器销毁重建两遍。新实现（`annotationOps.finalizeAnnotationOp`）不依赖 baseline：单事务无痕删除该批注全部落点（引用/marker 段/定义）→ `closeHistory` 单事务按原位放回 marker 与最终定义，两步都只触碰批注自己的节点，代码块 DOM 全程不动；一次 Ctrl+Z 仍回到批注前（撤销契约不变）；`removeAnnoOp` 与其共用同一套落点收集（`collectAnnotationSpans`）
+- **创建瞬间不再「先沉后弹」**：marker 段落此前先以块级段落（≈44px 行盒+段距）渲染，60ms 防抖盖章后才 inline 化（≈24px）——布局塌陷 + 滚动锚定补偿 = 双跳；徽章编号同窗口晚到（空药丸蹦数字）。修复：插入事务后**同步盖章**（`stampAnnotationMarkers` 幂等且有早退），inline 形态与编号首帧生效；`.mditor-editor-host` 关闭 `overflow-anchor` 抑制补偿放大
+- **流式期间盖章不再饥饿**：stamp 防抖加 250ms maxWait——流式每帧替换定义节点会持续重置 60ms 防抖，中间态（无编号+块级行）此前滞留整个生成期，结束才整体「咔哒」跳一次
+- **徽章单击必有反馈（「要点两次」修复）**：①mousedown 处理器不再做同步整篇序列化解析（大文档 50–200ms 主线程冻结会吞掉第一击）——解析挪到渲染后的 effect；②双源 miss 时不再渲染 `null`（60ms 空窗零反馈），立即渲染卡片壳「正在解析批注…」；③「打开兜底」与「消失关闭」合并为单一解析 effect（显示过再消失→关闭、从未解析到→孤儿卡片）；④弹层兜底钳位绝不盖住被点击的锚点徽章（此前窄窗口/贴边时卡片压住徽章，下一击被 contains 守卫静默吞掉）——`placeCard` 抽为纯函数（`lib/popoverPlace.ts`）并加锚点自避让 + 7 例单测锁定
+- 创建批注的双重上抛收敛为单次（`appendAnnoDefinition` 抑制回声，与 marker 插入一致）
+
+### 数据丢失修复（🔴 P0）
+
+- **预读缓存永不过期 → 旧内容覆盖磁盘新内容**：文件树 hover 预读的缓存条目此前无任何失效机制——外部程序（或上一会话）改写文件后，从树中再次点击会用预读的旧版本打开且标记为「干净」，随后一次保存即把磁盘上的新内容覆盖掉。修复：缓存条目记录预读时的 size+mtime，`readFresh` 命中时先 stat 比对、不一致自动回源重读；保存/另存为/外部重载路径同时主动删除条目（双保险）。删除了不做校验的 `readCached` 导出，杜绝误用
+- **「全部替换」静默回滚**：查找替换的「全部替换」经编辑器 `setValue` 写回，该路径不置脏、不上抛内容——替换结果既不进自动保存，切换标签时还会被旧快照回滚（永不落盘）。修复：`setValue` 与 `replaceContent` 同路径补 `markDirty` + `onInput`
+- **保存窗口期击键丢失**：`save`/`writeOnly` 落盘后无条件「清脏 + 回写提交时的旧内容」，IPC 窗口内到达的击键会被误标为已保存，关标签/切标签时永久丢弃。修复：落盘后重读实时内容，`dirty = (实时内容 !== 提交内容)`——写盘期间的新输入保持脏态，由下一次自动保存补写；另存为对话框期间到达的编辑同样不再丢失
+
+### 健壮性（🟡）
+
+- `mditor.json` 的 `recent` 键损坏（非数组）时不再让每次打开文件都抛「打开失败」——`loadRecent` 校验 `Array.isArray` 后回退空表
+- 启动加载设置失败（存储损坏/不可读）不再产生未处理 rejection：保持默认设置可用并 `console.warn`，不自动回存以免默认值覆盖原配置
+
+### 安全加固（🔴/🟡 纵深防御）
+
+- **`append_log` 任意路径写入收窄**：命令此前接受 webview 完全可控的路径（可向 `~/.ssh/authorized_keys`、shell profile 追加任意行实现持久化）。现强制路径必须位于 `<app-data>/logs/` 内；同时改为 async，文件 IO 移出主线程
+- **span/mark 内联 style 值级白名单**：rehype-sanitize 对放行的 `style` 属性不做值过滤，恶意 markdown/AI 回复可用 `position:fixed;inset:0` 全屏覆盖伪造界面。管线在 sanitize 之后新增裁剪步骤：仅保留 `color` / `background-color` 声明（colorSpan 功能所需全部），新增回归测试锁定
+- 已核实并保持：raw HTML 净化顺序正确（`rehypeRaw → rehypeSanitize`）、`javascript:` 协议被剥离、全仓库唯一 innerHTML 汇入点（MarkdownText）数据全部来自净化管线、外部链接协议白名单（http/https/mailto）、`fetch_image` 限 20MB 且仅 http(s)
+
+### 体验
+
+- 导出（HTML/PDF/DOCX/PNG）全程无反馈 → 状态栏依次提示「正在导出… / 导出完成 / 导出失败」，不再出现大文档导出期间界面「假死」可重复点击的观感
+
+### 已知问题（本轮未修，见体检报告 P1/P2 路线图）
+
+- npm audit：`image-size`（经 `@turbodocx/html-to-docx`）2 个高危 DoS 通告，上游无修复版本；实际触达面为 docx 导出路径，建议关注上游发布
+- 渲染管线（unified/KaTeX/lowlight ≈500KB）实际静态打进主 bundle（注释声称懒加载，与实现不符）——首屏优化最大单项
+- AI 流式「停止」仅摘除前端监听，Rust 侧请求继续跑到自然结束（继续计费）
+- fs 插件 scope `**`（本地优先编辑器的功能性取舍）与 AI API key 明文存储于 `mditor.json`（建议迁移 OS keychain）
+
+### 工程
+
+- 测试：157 通过（新增 placeCard 纯函数单测 7 例 + style 白名单回归 1 例）；tsc / eslint / vite build 全绿
+- 版本：package.json / package-lock / tauri.conf.json / Cargo.toml / Cargo.lock → 3.9.1
+
+## 3.9.0 (2026-08-19)
+
+批注交互、AI 面板、滚动/渲染性能、后台开销与 token 成本的一次系统性优化（12 项）。核心思路：流式写回定点化（不重建代码块）、DOM 维护管线合并为单通道、弹层定位「测量一次 + 缓存几何」、AI 请求体收敛到可配置预算。
+
+### 批注（问题 1–2：代码块批注闪烁/点不开、徽章二次点击）
+
+- **流式精炼不再整篇重写**：`updateAnnotationBody` 定点替换 ProseMirror 文档里的 `footnote_definition` 节点——代码块（CodeMirror 子编辑器）与其余块的 DOM/node view 原样保留，消除「代码块批注流式期间乱闪」。代码行元数据首帧整篇解析一次并缓存；找不到定义/解析失败/sv 模式自动回退旧的整篇写回。一步撤销契约不变（相邻帧合并 + `finalizeAnnotation` 以 baseline 收束）
+- **弹层存在性判定全部改为现场同步解析**：`AnnotationPopover` 改用 `getMarkdown()`（编辑器实时序列化）做打开查找与「批注消失」关闭判定，彻底不再依赖 150ms 防抖列表与 rAF 镜像；关闭判定还加 60ms 重试，镜像差一两帧不再误杀刚打开的弹层（「点一下没反应」根因）
+- **弹层定位「测量一次 + 缓存几何」**：打开时测量锚点与其他徽章几何（文档空间缓存）；滚动帧只用 scrollTop 做算术平移（每帧仅量锚点一个元素）；resize/编辑保存/切换徽章才整体重测。移除 `active?.content` 依赖——流式内容更新不再每帧全文档 querySelectorAll + getBoundingClientRect 批量强制布局（弹层跟着流式乱跳的根源）
+- **代码行高亮在重绘后自动恢复**：高亮锚点记录在 `lib/codeAnno.ts`（`setActiveCodeHighlight`），代码块节点视图被 ProseMirror 重绘后由 stamp 管线补画（不滚动、不闪）
+- **滚动时弹层跟随锚点**（算术修正，不重测），编辑保存后经 `layoutEpoch` 显式重测
+
+### AI 面板（问题 3：划选追问，新功能）
+
+- **回答正文划选追问**：在已完成的回答正文里划选文字，选区下缘出现「追问这段」浮动入口；选中片段作为 `<quote>` 显式上下文随追问发送，并在线程里以引用条展示。Esc/点击空白取消；Enter 发送、Shift+Enter 换行；选区两端须落在该回答正文内（跨行/跨代码块选中均支持，取纯文本）；流式未完成时不可追问
+- **追问草稿提升到面板层持有**：虚拟列表回收行时草稿与引用不丢失、不串行
+- 追问仍挂在原回答线程下（parentId 链），多层嵌套与 MAX_MESSAGES 截断降级行为不变
+
+### 渲染闪现（问题 4）
+
+- **MarkdownText 零空白帧**：渲染移入 layout effect + 同步 LRU 探针（`peekRenderedHtml`）——缓存命中（虚拟列表回收行）在同一帧内直出最终 HTML；未命中同步写入与最终排版同字号/行高的纯文本占位（`.md-ph`），管线完成后平滑替换。流式纯文本态与渲染态排版（13px/1.65）对齐，纯文本→富文本切换不再跳变
+
+### 滚动与渲染性能（问题 5–8）
+
+- **图片高度预留**：图片完成加载即记录自然尺寸（会话级缓存，捕获阶段 load 委托），后续渲染预盖 `aspect-ratio`——重渲/重开不再从占位高度突变到真实高度引发整篇回流与滚动锚定补偿（滚动抖动最强候选）。首次浏览仍会移动（解码前尺寸未知，这是无服务端尺寸信息下的物理极限）
+- **sv 平滑跳转抑制标志覆盖动画全程**：`jumpToLine` 的 `SmoothJumpFlag` 此前同步 dispatch 后即复位，动画窗口内任何选区事务的打字机居中都会瞬时滚动掐断动画；现在 scrollend/1.2s 超时兜底复位（与富文本路径一致）
+- **富文本打字机滚轮让位**：`centerCaret` 在用户滚轮后 350ms 内不强制居中——此前每次 selectionchange 同步量 rect 改 scrollTop，恰逢滚轮惯性期就与用户滚动互相拉扯；大纲平滑跳转也支持滚轮打断（打断即解除抑制，光标跟随恢复）
+- **编辑路径三通道合并为单通道**（问题 7）：批注徽章 stamp、图片懒加载/宽高 stamp、代码行高亮补画合并进 `useAnnotationMarkers` 的 MutationObserver（60ms 防抖 + rAF）单一调度；删除 `markdownUpdated` 里的冗余双 rAF stamp（此前每次键入跑两遍全树查询）。早退缓存扩展到图片（无注解无图片文档键入零 DOM 查询）
+- **批注侧栏锚点摘要批量化**：`getAnchorSnippets` 单次扫描解析全部批注的首个行内引用，替代 O(批注数×文档长度) 的逐条正则扫描（50 批注 500KB 文档每次防抖更新从 ~25MB 文本扫描降到一次全文扫描）
+- **reload 后滚动恢复重试**：250/600/1200ms 阶梯重试直到内容高度足够（此前大文档 250ms 单次常被钳位）
+- 标题走查维持既有微任务合并 + 签名去重（PM doc 遍历，无 DOM 查询），不变
+
+### 后台开销与系统级（问题 9–11）
+
+- **AI 悬浮按钮呼吸光晕合成器化**：动画属性从 box-shadow（绘制属性，空闲期每帧重绘）改为 transform + opacity（合成器属性，主线程零重绘）；窗口隐藏时自动暂停（`.app-idle`）；尊重 prefers-reduced-motion。视觉强度保持（柔和强调色脉冲圈）
+- **大文档遮罩一次性淡入**：1.4s 无限呼吸 + 常驻 will-change 合成层 → 0.3s 一次性淡入，遮罩静态在场，切换期间零周期性 repaint
+- **内存守护「可见、可避、可恢复」**（问题 10）：
+  - 用户输入/滚动后 30s 内推迟自愈（critical 临界除外——内存保护优先），每增长期提示一次「将在空闲时自动优化」；软重建 8s 复查的升级路径同样让位
+  - 重建前捕获滚动位置与光标上下文，新实例 ready 后按文本锚点恢复光标 + 恢复滚动（软重建从「无提示重置」变「几乎无感」）；idle 历史回收同样接入活动门控（活跃阅读/滚动时不打断）
+  - 巡检周期（10s）与阈值（默认 2500MB / 0.9 临界比）不变——内存保护第一目标不削弱
+  - 主动重建触发点清单：内存守护软重建（超阈值+冷却+空闲）、守护升级 reload（软重建无效或临界，空闲窗口）、idle 历史回收（大文档+1000 次编辑+3 分钟无编辑+堆 ≥80% 阈值+用户空闲）、big-doc 档位翻转重建（整篇载入跨越阈值，随文件切换自然发生）
+- **定时器审计**（问题 11）：全部 setInterval/setTimeout/rAF 站点核查——ThinkingDots 200ms（仅流式占位期间，卸载即清）、内存守护 10s（enabled 门控）、dev 堆探针 30s（IS_DEV）、状态栏时钟 2s、自动保存间隔、搜索/文件树/工具栏的防抖与轮询——均有卸载清理，无泄漏、无常驻空转
+
+### AI token 降本（问题 12）
+
+- **上下文截断策略**（`设置 → AI → 上下文策略`）：standard（默认，开头 6000 字）/ large（12000 字）/ smart（本地相关度节选：标题恒保留 + 头尾段 + 与提问字符级共现打分最高的段落，零额外请求）/ full（不截断，旧行为）
+- **对话历史 token 预算**（默认 8000，可调）：请求只携带预算内的最近问答对，超出从最早丢弃，孤儿回答一并修剪；UI 的 MAX_MESSAGES=100 上限不变
+- **追问降本**：全文追问带截断 note；选区追问不带 note（线程链 + 选区足够）
+- **批注精炼输入截断**：默认 4000 字符（可调），长回复精炼不再原样重发
+- **`aiMaxTokens` 默认 0 → 4096**：输出上限防失控（旧配置的 0/缺失经迁移统一升级）
+- **会话用量统计**：输入区下方常驻「本会话 ≈ 输入 X / 输出 Y tokens」（本地中英混合分词密度估算，零额外请求）
+- 预期收益：长文档多轮聊天输入 token 省 70–90%；长对话省 50%+；批注精炼省 60%+
+
+### 工程
+
+- 测试：149 通过（新增 `ai.test.ts` 17 例：估算/四策略/预算裁剪/孤儿修剪/精炼截断；新增 `annotations.test.ts` 6 例：批量锚点摘要等价性）
+- 版本：package.json / package-lock / tauri.conf.json / Cargo.toml / Cargo.lock → 3.9.0
+
+## 3.6.7 (2026-08-19)
+
+批注修复第二轮：代码行批注元数据在富文本往返中丢失（徽章孤儿化）、代码块批注横向排列在真实编辑器首次生效、弹窗遮挡相邻徽章、孤儿徽章点击静默无反应。
+
+### 功能正确性（批注）
+
+- **代码行批注元数据不再被解析丢弃（主根因）**：旧形态 `[^id]: <!--md:line…-->内容`（元数据令牌在正文开头）经 Milkdown/Crepe 解析往返后定义整个消失——徽章渲染成孤儿（可见但点不开），且 `nextAnnotationId` 还会复用该 id。修复：新写入把令牌挪到首行行尾（`内容 <!--…-->`），该形态可稳定往返；`stripCodeLineMeta` 兼容读取旧前缀形态。遗留：旧文档前缀形态在富文本模式保存时定义仍会丢——编辑该批注会自动迁移为新形态
+- **代码块批注横向排列在真实编辑器首次生效**：ProseMirror 给「只含标记」的段落自动塞 `<img.ProseMirror-separator>` 与 `<br.ProseMirror-trailingBreak>` 辅助节点，导致上轮打的 `anno-row-item` 类从未命中（横向排版实际未生效过）。修复：`isMarkerOnlyParagraph` 忽略这两类辅助节点后再判定
+- **弹窗卡片不再遮挡相邻徽章（「要点两次」主因）**：弹窗按固定方位（右侧）摆放时盖住相邻徽章，点击命中卡片被忽略，看起来像"要点两次"。修复：`placeCard` 按 右/左/右下/左下 候选择优——每个候选做视口钳位 + 与其他徽章矩形的碰撞检测，全部冲突才退回原钳位逻辑
+- **孤儿徽章不再静默失败**：点击的徽章在实时文档中找不到定义时，先等 60ms 重试一拍（覆盖 rAF 实时镜像滞后），仍缺失则渲染「内容缺失」卡片并给出「删除该标记」入口，而不是什么都不显示
+- **sv 模式连续批注行锚不丢**：`resolveCodeLines` 容忍标记同行前置的其他 `[^anno-*]` 标记（sv 插入在 fence 后同行堆叠多个标记时不再误判为散文锚定）
+- **「精炼中…」不再永久禁用**：AI 面板关闭/重开时复位 `annotatingId`，防止精炼流挂起时「批注」按钮停在禁用态
+
+### 工程
+
+- 版本：package.json / package-lock / tauri.conf.json / Cargo.toml / Cargo.lock → 3.6.7
+
 ## 3.6.6 (2026-08-18)
 
 批注交互修复（点击无反应 / 代码块批注竖向堆叠）+ 大纲跳转平滑滚动（富文本与 sv 双路径）。

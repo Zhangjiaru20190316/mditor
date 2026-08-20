@@ -44,6 +44,7 @@ import {
 } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { tags as t } from "@lezer/highlight";
+import { noteScrollWrite } from "./scrollDebug";
 
 /** textarea 形状的 sv 编辑面（适配器或回退的 <textarea> 本身）。 */
 export interface SvSurface {
@@ -266,9 +267,12 @@ export function createSvEditor(
       // 做一次平滑 scrollTo 到与瞬时路径相同的对齐目标。focus 的原生
       // 光标滚动在量坐标前发生，之后发起的平滑滚动是最后一次滚动指令，
       // 不再会被覆盖。尊重系统的减少动态效果偏好。
+      // v3.9：抑制标志覆盖动画全程（此前同步 dispatch 后就复位，动画
+      // 窗口内任何选区事务触发的打字机居中都会瞬时滚动掐断动画 —— 滚动
+      // 抖动候选根因）。scrollend（完成/被打断）或超时兜底复位，与富文本
+      // 路径 host.dataset.smoothJump 的清除策略一致。
       smoothJump.active = true;
       view.dispatch({ selection: { anchor: pos } });
-      smoothJump.active = false;
       view.focus();
       const scroller = view.scrollDOM;
       const block = view.lineBlockAt(pos);
@@ -278,10 +282,20 @@ export function createSvEditor(
         y === "center"
           ? viewportTop - rect.top - scroller.clientHeight / 2
           : viewportTop - rect.top;
+      const clear = () => {
+        smoothJump.active = false;
+      };
+      noteScrollWrite("sv-jump");
       scroller.scrollTo({
         top: Math.max(0, scroller.scrollTop + offset),
         behavior: prefersReducedMotion() ? "auto" : "smooth",
       });
+      if (prefersReducedMotion()) {
+        clear();
+        return;
+      }
+      scroller.addEventListener("scrollend", clear, { once: true });
+      window.setTimeout(clear, 1200);
     },
     destroy() {
       view.destroy();

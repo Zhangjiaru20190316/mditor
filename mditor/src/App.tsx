@@ -15,6 +15,10 @@ import { RecentList } from "./components/RecentList";
 import { AiPanel, type AiPanelHandle, type ApplyChangesPayload } from "./components/AiPanel";
 import { SelectionToolbar } from "./components/SelectionToolbar";
 import { AnnotationPopover } from "./components/AnnotationPopover";
+import { AnnoDiagnostics } from "./components/AnnoDiagnostics";
+import { setPendingJumpAnno } from "./lib/annoHandoff";
+import { noteScrollWrite } from "./lib/scrollDebug";
+import { noteOpError } from "./lib/opDebug";
 import { AnnotationList } from "./components/AnnotationList";
 import { SearchBar } from "./components/SearchBar";
 import { StatusBar } from "./components/StatusBar";
@@ -51,7 +55,7 @@ import { findHeadingLine } from "./lib/outline";
 import { buildAnnotationMessages, chatStream, isAiConfigured } from "./lib/ai";
 import { normalizeAnchorText } from "./lib/anchorSearch";
 import { baseName, pickFolder, dirOf, MD_EXT_RE } from "./lib/tauriFs";
-import { readCached, peekHoverContent } from "./lib/filePrefetch";
+import { readFresh, peekHoverContent } from "./lib/filePrefetch";
 import { prepareDoc } from "./lib/parsePipeline";
 import { toPosix } from "./lib/path-shim";
 import { exportHtml, exportPdf, exportPng, exportDocx } from "./lib/exporter";
@@ -360,6 +364,155 @@ export default function App() {
   const closeTabRef = useRef(closeTab);
   closeTabRef.current = closeTab;
 
+  // ---- 关闭前收尾（v3.9.5 优化：落盘优于弹窗）-----------------------------
+  // 点 X / Alt+F4 / 菜单退出默认直接结束进程，脏缓冲若没等到下一个自动保存
+  // 间隔就静默丢失。关闭/退出前把所有有路径的脏标签写回磁盘（活动标签取
+  // 编辑器实时内容，非活动标签取切换时的快照）；只有未命名脏缓冲（无处可
+  // 写）和保存失败的标签才询问。与 closeTab/activateTab 的静默保存同一哲学。
+  const flushDirtyTabs = useCallback(async (): Promise<{
+    savedFailed: boolean;
+    hasDirtyUntitled: boolean;
+  }> => {
+    const fa = fileApiRef.current;
+    let savedFailed = false;
+    let hasDirtyUntitled = false;
+    for (const t of tabsRef.current) {
+      if (t.key === activeKeyRef.current) {
+        const d = fa.doc;
+        if (!d.dirty) continue;
+        if (d.path) {
+          try {
+            await fa.writeOnly(() => getCurrentContent());
+          } catch {
+            savedFailed = true;
+          }
+        } else {
+          hasDirtyUntitled = true;
+        }
+        continue;
+      }
+      if (!t.dirty) continue;
+      if (t.path) {
+        try {
+          const { saveMd } = await import("./lib/tauriFs");
+          await saveMd(t.path, t.content);
+        } catch {
+          savedFailed = true;
+        }
+      } else {
+        hasDirtyUntitled = true;
+      }
+    }
+    return { savedFailed, hasDirtyUntitled };
+  }, [getCurrentContent]);
+
+  /** 关闭/退出共用序列：先落盘，再对「无处可写/写失败」的内容做最终确认。
+   *  返回 false = 用户取消，留在应用里。 */
+  const shutdownSequence = useCallback(async (): Promise<boolean> => {
+    // 落盘步骤加硬上限：任何一步 IPC 挂起（写盘/动态导入）都不能让窗口
+    // 永远关不掉——超时按「保存失败」继续走确认流程。自动保存间隔默认
+    // 30s，最坏丢 30s 编辑，远好于应用无法关闭（v3.9.6）。
+    let r: { savedFailed: boolean; hasDirtyUntitled: boolean };
+    try {
+      r = await Promise.race([
+        flushDirtyTabs(),
+        new Promise<never>((_, reject) =>
+          window.setTimeout(
+            () => reject(new Error("关闭前落盘超时（3s），按保存失败处理")),
+            3000
+          )
+        ),
+      ]);
+    } catch (err) {
+      noteOpError("shutdown-flush", err);
+      r = { savedFailed: true, hasDirtyUntitled: false };
+    }
+    if (r.hasDirtyUntitled || r.savedFailed) {
+      const msg = r.hasDirtyUntitled
+        ? "有未命名文档（或保存失败的文档）尚未落盘，关闭后将丢失这些内容。确定关闭？"
+        : "部分文档保存失败，关闭后将丢失这些修改。确定关闭？";
+      try {
+        const ok = await confirmDialog(msg);
+        if (!ok) return false;
+      } catch (err) {
+        // 关闭流程中的原生弹窗异常（窗口正在销毁等）→ 视为确认，继续关闭。
+        noteOpError("shutdown-confirm", err);
+      }
+    }
+    return true;
+  }, [flushDirtyTabs]);
+  const shutdownRef = useRef(shutdownSequence);
+  shutdownRef.current = shutdownSequence;
+  // 关闭拦截的共享状态：destroyingRef 防自己 destroy 的回声；shutdownInFlightRef
+  // 防重入（收尾期间的第二次关闭请求直接忽略，避免并发弹窗/并发 destroy）。
+  const destroyingRef = useRef(false);
+  const shutdownInFlightRef = useRef(false);
+
+  /** 强制关闭：destroy() 与 exit(0) 兜底**并行调度**。Tauri 在 Windows 上的
+   *  destroy 在 close-requested 回调内有被吞/挂起的已知不可靠记录——v3.9.6
+   *  把 exit 兜底排在 `await destroy()` 之后且延迟 1s，destroy 一挂起兜底就
+   *  永远排不上日程，第一击就此死等，用户只能靠第二击的放行路径关窗（「退出
+   *  要点两次」的根因）。现在 destroy 不等待，250ms 后进程仍在即 exit(0)
+   *  硬退（收尾已在上层完成，硬退无数据可丢），exit 再失败回头补一次
+   *  destroy（v3.9.7）。 */
+  const forceClose = useCallback(async () => {
+    destroyingRef.current = true;
+    void getCurrentWindow().destroy().catch(() => {
+      /* destroy 失败（窗口已不在/被吞）— 交给 exit 兜底 */
+    });
+    window.setTimeout(() => {
+      void exit(0).catch(() => {
+        /* exit 也失败（权限等）— 最后再试一次 destroy */
+        void getCurrentWindow().destroy().catch(() => {});
+      });
+    }, 250);
+  }, []);
+  const forceCloseRef = useRef(forceClose);
+  forceCloseRef.current = forceClose;
+
+  // 窗口关闭拦截：注册一次，回调经 ref 读最新序列。Tauri v2 存在异步
+  // close-requested 监听时窗口不会自行完成关闭（上游已知行为），故一律
+  // preventDefault 接管，收尾完成后 destroy（+ exit 兜底）保证能关。
+  // 防重入语义分两档（v3.9.7）：forceClose 已接管（destroyingRef）→ 放行
+  // 本次事件（不 preventDefault，Tauri wrapper 自行 destroy，成为第二条
+  // 关闭路径）；仅收尾进行中（shutdownInFlightRef，落盘/确认未完）→ 继续
+  // 拦截，防止连点 X 走 wrapper 自动 destroy 绕过在途落盘造成数据丢失。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    getCurrentWindow()
+      .onCloseRequested(async (ev) => {
+        if (destroyingRef.current) return;
+        if (shutdownInFlightRef.current) {
+          ev.preventDefault();
+          return;
+        }
+        shutdownInFlightRef.current = true;
+        try {
+          ev.preventDefault();
+          if (!(await shutdownRef.current())) return; // 用户取消，留在应用
+          await forceCloseRef.current();
+        } catch (err) {
+          // 任何异常都不得让窗口永远关不掉：记录后强制关闭。
+          noteOpError("window-close", err);
+          await forceCloseRef.current();
+        } finally {
+          shutdownInFlightRef.current = false;
+        }
+      })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {
+        /* 平台不支持 onCloseRequested → 维持旧行为（直接关闭） */
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
   // 活动 useFile 状态（saveAs 改路径 / dirty 变化）同步回标签记录。
   useEffect(() => {
     const doc = fileApi.doc;
@@ -433,9 +586,9 @@ export default function App() {
       // 跳过动画，体感上"动画没了"。
       const startedAt = performance.now();
       const token = beginSwitch(path, false);
-      // 优先查预读缓存（文件树 hover 时已预读）；命中则跳过 readTextFile。
-      const cached = readCached(path);
-      const readP = cached !== undefined ? Promise.resolve(cached) : readTextFile(path);
+      // 优先复用预读缓存（文件树 hover 时已预读）；readFresh 命中时会先
+      // stat 比对 size+mtime，保存过或外部改过则自动回源重读（v3.9.1）。
+      const readP = readFresh(path);
       await nextPaint();
       try {
         const content = await readP;
@@ -537,12 +690,26 @@ export default function App() {
     const restoreScroll = () => {
       if (snap.scrollTop <= 0) return;
       // Give Milkdown a beat to render the (possibly large) reopened document
-      // before pinning scroll; non-fatal if it lands slightly off.
-      window.setTimeout(() => {
-        if (cancelled) return;
-        const el = document.querySelector<HTMLElement>(".mditor-editor-host");
-        if (el) el.scrollTop = snap.scrollTop;
-      }, 250);
+      // before pinning scroll; non-fatal if it lands slightly off. Retry
+      // ladder: a tall doc may not have laid out by the first attempt, and a
+      // scrollTop write onto a short document is silently clamped — try again
+      // until the content is tall enough or the retries run out.
+      const tryScroll = (delay: number, tries: number) => {
+        window.setTimeout(() => {
+          if (cancelled) return;
+          const el = document.querySelector<HTMLElement>(".mditor-editor-host");
+          if (!el) return;
+          noteScrollWrite("heal-restore");
+          el.scrollTop = snap.scrollTop;
+          if (
+            Math.abs(el.scrollTop - snap.scrollTop) > 4 &&
+            tries > 0
+          ) {
+            tryScroll(600, tries - 1);
+          }
+        }, delay);
+      };
+      tryScroll(250, 2);
     };
 
     const apply = async () => {
@@ -797,6 +964,15 @@ export default function App() {
           e.preventDefault();
           setSidebarOpen((o) => !o);
           break;
+        case "d":
+          // Ctrl+Alt+D：批注诊断面板（v3.9.3）——设置项持久化，与设置
+          // 面板的开关同源。仅 Alt 组合生效，避免占用 Ctrl+D。
+          if (e.altKey) {
+            e.preventDefault();
+            const s = settingsRef.current;
+            void s.update({ annoDiagPanel: !s.settings.annoDiagPanel });
+          }
+          break;
         case "i":
           e.preventDefault();
           dispatchMenuRef.current("view_ai_assistant");
@@ -859,10 +1035,15 @@ export default function App() {
             "内联图片",
             "保留引用"
           );
+          flashStatus("正在导出…", 60_000);
           await exportHtml(ctx, `${name}.html`, { inlineImages: inline });
-        } else if (kind === "pdf") await exportPdf(ctx, `${name}.pdf`);
-        else if (kind === "docx") await exportDocx(ctx, `${name}.docx`);
-        else if (kind === "png") {
+        } else if (kind === "pdf") {
+          flashStatus("正在导出…", 60_000);
+          await exportPdf(ctx, `${name}.pdf`);
+        } else if (kind === "docx") {
+          flashStatus("正在导出…", 60_000);
+          await exportDocx(ctx, `${name}.docx`);
+        } else if (kind === "png") {
           const el = ed.previewEl();
           if (!el) {
             void showAlert(
@@ -876,13 +1057,17 @@ export default function App() {
             settingsApi.settings.theme === "dark" ||
             settingsApi.settings.theme === "claude-dark";
           const bg = isDarkTheme ? "#1e1e1e" : "#ffffff";
+          flashStatus("正在导出…", 60_000);
           await exportPng(el, `${name}.png`, bg);
         }
+        flashStatus("导出完成");
       } catch (e) {
+        flashStatus("导出失败", 5000);
         void showAlert(`导出失败：${String(e)}`, "Mditor", "error");
       }
     },
-    [fileApi.doc.path, settingsApi.settings.theme]
+    // flashStatus 为稳定 useCallback（空依赖），列入只为满足 exhaustive-deps。
+    [fileApi.doc.path, settingsApi.settings.theme, flashStatus]
   );
 
   const doCopyRich = useCallback(async () => {
@@ -1015,7 +1200,17 @@ export default function App() {
         setAboutOpen(true);
         break;
       case "app_exit":
-        void exit(0);
+        // 退出前收尾（v3.9.5）：exit(0) 直接结束进程、不会走窗口关闭事件，
+        // 这里先与「点 X」共用同一序列——有路径的脏标签静默落盘，未命名
+        // 脏缓冲确认后再退。序列带超时兜底，exit 失败时退回 forceClose。
+        void (async () => {
+          try {
+            if (await shutdownRef.current()) await exit(0);
+          } catch (err) {
+            noteOpError("menu-exit", err);
+            await forceCloseRef.current();
+          }
+        })();
         break;
       case "format_bold":
         editorRef.current?.toggleBold();
@@ -1168,6 +1363,7 @@ export default function App() {
         ? "center"
         : "start";
       if (reduced) {
+        noteScrollWrite("outline-jump");
         el.scrollIntoView({ behavior: "auto", block });
         return;
       }
@@ -1178,8 +1374,16 @@ export default function App() {
           delete host.dataset.smoothJump;
         };
         host.addEventListener("scrollend", clear, { once: true });
+        // 用户滚轮主动打断平滑动画时立即解除抑制，打字机居中即时恢复
+        // （否则最长 1.2s 内光标跟随都会被平滑标志压制）。
+        host.addEventListener(
+          "wheel",
+          () => clear(),
+          { once: true, passive: true }
+        );
         window.setTimeout(clear, 1200);
       }
+      noteScrollWrite("outline-jump");
       el.scrollIntoView({ behavior: "smooth", block });
     },
     [editMode]
@@ -1233,9 +1437,39 @@ export default function App() {
           `sup[data-type="footnote_reference"][data-label="${id}"]`
         );
       if (!marker) return;
+      // 预解析并 handoff 给弹层首击（v3.9.3）：防抖列表滞后时弹层拿不到
+      // codeLine，首击不会解析/高亮/滚动到代码行，跳转就停在 marker 行。
+      // 跳转是低频操作，这里同步解析一次可接受（与 sv 分支同款）。
+      setPendingJumpAnno(
+        parseAnnotations(editorRef.current?.getValue() ?? "").find(
+          (a) => a.id === id
+        ) ?? null
+      );
+      // Park the caret at the marker（同 jumpToHeading 的防御）：focus() 恢复
+      // 的旧选区若停在别处，随后的光标跟随滚动（打字机模式 / PM 选区回
+      // 同步）会把视口拽回旧位置——「跳了又被拽回去」的观感来源。
+      const first = marker.firstChild;
+      if (first) {
+        const range = document.createRange();
+        range.setStart(first, 0);
+        range.collapse(true);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      }
+      // 短暂置 smoothJump：跳转后的代码行 scrollIntoView + selectionchange
+      // rAF 链期间抑制打字机居中，避免落点被二次拉动（超时兜底解除）。
+      const host = document.querySelector<HTMLElement>(".mditor-editor-host");
+      if (host) {
+        host.dataset.smoothJump = "1";
+        window.setTimeout(() => {
+          delete host.dataset.smoothJump;
+        }, 350);
+      }
       // Use instant (not smooth) scrolling: the popover positions itself from the
       // marker's viewport rect right after this, so the marker must already be in
       // its final position or the card would stick to the pre-scroll spot.
+      noteScrollWrite("anno-jump");
       marker.scrollIntoView({ behavior: "auto", block: "center" });
       marker.dispatchEvent(
         new MouseEvent("mousedown", { bubbles: true, cancelable: true })
@@ -1358,7 +1592,8 @@ export default function App() {
   //
   // 流式 + 乐观挂载：点批注的瞬间就挂上占位 marker（"生成中…"），用户立刻在
   // 编辑器里看到反馈；随后精炼内容以流式片段实时写回 marker。
-  // updateAnnotation 触发整篇重写，用 rAF 节流到每帧最多一次。
+  // updateAnnotation 自 v3.9 起走定点替换（只改 footnote_definition 节点），
+  // 不再整篇重写；rAF 节流仍保留（多 chunk 合并为一帧一次）。
   //
   // 一步撤销（AI 写回契约）：进入前先记 baseline；流式帧各自合并进撤销组；
   // 结束时 finalizeAnnotation 以 baseline 为基线收束为单个撤销步骤——按一次
@@ -1385,13 +1620,18 @@ export default function App() {
       let rafId: number | null = null;
       const flush = () => {
         rafId = null;
-        editor.updateAnnotation(annoId, partial);
+        // transient：流式中间帧 —— 定点写失败（中间态解析不出定义）时跳帧
+        // 等下一帧/收尾，绝不整篇回退（每帧整篇 = 代码块/徽章连根重建闪烁）。
+        editor.updateAnnotation(annoId, partial, true);
       };
       try {
         await new Promise<void>((resolve, reject) => {
           chatStream({
             settings: s,
-            messages: buildAnnotationMessages(reply),
+            messages: buildAnnotationMessages(
+              reply,
+              s.aiAnnotateMaxChars || 4000
+            ),
             requestId: `anno-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             handlers: {
               onChunk: (delta) => {
@@ -1420,10 +1660,13 @@ export default function App() {
 
   // 跨文件搜索结果 → 打开文件并跳到命中处（V3.6）。sv 模式按行号跳；
   // 富文本按整行内容 reveal（anchorSearch 的空白归一比对可容忍行首缩进）。
+  // 300ms 延迟跳转若撞上用户滚动就是「自己动」形态之一——打点归因
+  // （scrollDebug 会话归因据此区分类别，不会误报 ghost）。
   const onOpenSearchResult = useCallback(
     async (path: string, hit: SearchHit) => {
       await openPath(path);
       window.setTimeout(() => {
+        noteScrollWrite("search-jump");
         if (editMode === "sv") {
           editorRef.current?.jumpToSourceLine(hit.line);
         } else {
@@ -1745,11 +1988,21 @@ export default function App() {
 
       <AnnotationPopover
         annotations={annotations}
-        markdown={liveMarkdown}
+        getMarkdown={getMarkdown}
         onUpdate={updateAnnotation}
         onDelete={deleteAnnotation}
         theme={settingsApi.settings.theme}
       />
+
+      {settingsApi.settings.annoDiagPanel && (
+        <AnnoDiagnostics
+          getMarkdown={getMarkdown}
+          onClose={() =>
+            void settingsApi.update({ annoDiagPanel: false })
+          }
+          theme={settingsApi.settings.theme}
+        />
+      )}
 
       <button
         className={`ai-fab${aiOpen ? " active" : ""}`}

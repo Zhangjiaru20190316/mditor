@@ -323,6 +323,17 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
             <span className="hint">光标行始终保持在窗口中部（两种编辑模式均生效）</span>
           </Field>
 
+          <Field label="批注诊断面板">
+            <input
+              type="checkbox"
+              checked={draft.annoDiagPanel}
+              onChange={(e) => set("annoDiagPanel", e.target.checked)}
+            />
+            <span className="hint">
+              批注链路事件流 / 整篇重写计数 / 批注体检（快捷键 Ctrl+Alt+D）
+            </span>
+          </Field>
+
           <Field label="自定义 CSS 文件">
             <div className="css-row">
               <input
@@ -422,13 +433,31 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
           <Field label="温度 (0-2)">
             <input
               type="number"
-              step={0.1}
+              step="0.1"
               min={0}
               max={2}
               value={draft.aiTemperature}
               onChange={(e) => set("aiTemperature", Number(e.target.value) || 0.7)}
             />
             <span className="hint">越高越随机发散，越低越确定保守。</span>
+          </Field>
+
+          <Field label="上下文策略">
+            <select
+              value={draft.aiContextStrategy}
+              onChange={(e) =>
+                set("aiContextStrategy", e.target.value as Settings["aiContextStrategy"])
+              }
+            >
+              <option value="standard">标准（开头 6000 字）</option>
+              <option value="large">较大（开头 12000 字）</option>
+              <option value="smart">智能节选（按提问相关度）</option>
+              <option value="full">完整全文（不截断）</option>
+            </select>
+            <span className="hint">
+              长笔记发往模型前的截断方式（省 token）。智能节选为本地算法，
+              保留标题、开头/结尾与和你问题最相关的段落。
+            </span>
           </Field>
 
           {/* Advanced sampling params — collapsed by default (平滑展开/收起)。 */}
@@ -457,6 +486,35 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                 仅对推理型模型生效（如 GLM-4.6、OpenAI o 系列、DeepSeek-R1）。
                 按服务商自动适配字段（OpenAI 系/DeepSeek 用 reasoning_effort，
                 智谱/Kimi 用 thinking.budget_tokens），关闭则不发送。
+              </span>
+            </Field>
+            <Field label="对话历史预算 (tokens)">
+              <input
+                type="number"
+                step={500}
+                min={1000}
+                value={draft.aiHistoryBudgetTokens}
+                onChange={(e) =>
+                  set("aiHistoryBudgetTokens", Math.max(1000, Number(e.target.value) || 8000))
+                }
+              />
+              <span className="hint">
+                每次请求携带的历史消息 token 上限（本地估算）：超出时从最早
+                的问答对开始丢弃，最近的对话始终完整发送。0 或过小按 8000 处理。
+              </span>
+            </Field>
+            <Field label="批注精炼上限 (字符)">
+              <input
+                type="number"
+                step={500}
+                min={500}
+                value={draft.aiAnnotateMaxChars}
+                onChange={(e) =>
+                  set("aiAnnotateMaxChars", Math.max(500, Number(e.target.value) || 4000))
+                }
+              />
+              <span className="hint">
+                把 AI 回复精炼成批注时，发往模型的输入截断上限（0 按默认 4000）。
               </span>
             </Field>
             <Field label="最大输出 tokens (0=不限)">

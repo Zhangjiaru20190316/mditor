@@ -7,7 +7,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AiModelConfig, Settings } from "../types";
+import type { AiModelConfig, AiContextStrategy, Settings } from "../types";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -17,6 +17,214 @@ export interface ChatMessage {
 export interface ChatOptions {
   settings: Settings;
   messages: ChatMessage[];
+}
+
+// ---------------------------------------------------------------------------
+// Token 降本（v3.9）：上下文截断 / 估算 / 历史预算
+// ---------------------------------------------------------------------------
+// DeepSeek 等 OpenAI 兼容服务的输入 token 密度高、计费敏感：旧实现把整篇
+// 笔记 + 全部历史原样塞进每次请求（长文档多轮聊天输入 token 轻松上探
+// 数万）。以下三个纯函数把请求体收敛到可配置预算内，全部本地计算、零
+// 额外请求；调用方（AiPanel / App）只负责传策略参数。
+
+/** 各策略保留的笔记正文字符预算（smart 的总预算同 large）。 */
+const STANDARD_NOTE_CHARS = 6000;
+const LARGE_NOTE_CHARS = 12000;
+/** 截断尾标 —— 让模型明确知道上文不完整，避免“复述全文”类任务漏内容。 */
+const TRUNCATED_MARK = "\n\n（笔记过长，已截断）";
+
+/**
+ * 中英混合 token 估算（逼近 DeepSeek/OpenAI 分词密度）：CJK 字符 ≈ 1.5
+ * 字符/token，其余（ASCII/空白/符号）≈ 4 字符/token。够准的量级估计，
+ * 用于预算裁剪与用量展示，不追求逐 token 精确。
+ */
+export function estimateTokens(text: string): number {
+  if (!text) return 0;
+  let cjk = 0;
+  let other = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    // CJK 统一表意文字 + 扩展A + 全角符号 + 假名 + 谚文
+    if (
+      (c >= 0x2e80 && c <= 0x9fff) ||
+      (c >= 0xf900 && c <= 0xfaff) ||
+      (c >= 0xff00 && c <= 0xffef) ||
+      (c >= 0x3040 && c <= 0x30ff) ||
+      (c >= 0xac00 && c <= 0xd7af)
+    ) {
+      cjk++;
+    } else {
+      other++;
+    }
+  }
+  return Math.ceil(cjk / 1.5 + other / 4);
+}
+
+/** 笔记按行切成“块”（空行分隔；围栏代码块整块不拆），供 smart 策略打分。 */
+function splitBlocks(note: string): string[] {
+  const lines = note.split(/\r?\n/);
+  const blocks: string[] = [];
+  let cur: string[] = [];
+  let inFence = false;
+  for (const line of lines) {
+    if (/^\s{0,3}(`{3,}|~{3,})/.test(line)) inFence = !inFence;
+    if (!inFence && line.trim() === "") {
+      if (cur.length) blocks.push(cur.join("\n"));
+      cur = [];
+      continue;
+    }
+    cur.push(line);
+  }
+  if (cur.length) blocks.push(cur.join("\n"));
+  return blocks;
+}
+
+/** 字符二元组集合（CJK 相关度打分用；ASCII 词整词进集合）。 */
+function textFingerprint(s: string): Set<string> {
+  const norm = s.toLowerCase();
+  const set = new Set<string>();
+  const asciiWords = norm.match(/[a-z0-9]+/g) ?? [];
+  for (const w of asciiWords) if (w.length >= 2) set.add(w);
+  for (let i = 0; i < norm.length - 1; i++) {
+    const a = norm.charCodeAt(i);
+    const b = norm.charCodeAt(i + 1);
+    if (a >= 0x2e80 && a <= 0x9fff && b >= 0x2e80 && b <= 0x9fff) {
+      set.add(norm.slice(i, i + 2));
+    }
+  }
+  return set;
+}
+
+/** 块与问题的相关度：指纹交集占块指纹的比例（标题行额外 +0.5 权重）。 */
+function blockScore(block: string, fp: Set<string>): number {
+  let hit = 0;
+  let total = 0;
+  const norm = block.toLowerCase();
+  const words = norm.match(/[a-z0-9]+/g) ?? [];
+  for (const w of words) {
+    if (w.length < 2) continue;
+    total++;
+    if (fp.has(w)) hit++;
+  }
+  for (let i = 0; i < norm.length - 1; i++) {
+    const a = norm.charCodeAt(i);
+    const b = norm.charCodeAt(i + 1);
+    if (a >= 0x2e80 && a <= 0x9fff && b >= 0x2e80 && b <= 0x9fff) {
+      total++;
+      if (fp.has(norm.slice(i, i + 2))) hit++;
+    }
+  }
+  const ratio = total === 0 ? 0 : hit / total;
+  return /^\s{0,3}#{1,6}\s/.test(block) ? ratio + 0.5 : ratio;
+}
+
+/**
+ * 按策略截断进 <note> 的笔记正文：
+ *   * full     — 不截断（用户显式选择，原样发送）；
+ *   * standard — 保留开头 6000 字符（默认）；
+ *   * large    — 12000 字符；
+ *   * smart    — 本地零成本保质量：按块打分（与提问的字符级共现相关度，
+ *                标题恒高权），拼「开头段 + 高相关中间块 + 结尾段」，
+ *                总预算同 large。无提问时退化为头尾保留。
+ */
+export function truncateNoteForContext(
+  note: string,
+  strategy: AiContextStrategy = "standard",
+  question?: string
+): string {
+  const trimmed = note.trim();
+  if (!trimmed) return "";
+  if (strategy === "full") return trimmed;
+  if (strategy === "standard") {
+    return trimmed.length <= STANDARD_NOTE_CHARS
+      ? trimmed
+      : trimmed.slice(0, STANDARD_NOTE_CHARS) + TRUNCATED_MARK;
+  }
+  if (strategy === "large") {
+    return trimmed.length <= LARGE_NOTE_CHARS
+      ? trimmed
+      : trimmed.slice(0, LARGE_NOTE_CHARS) + TRUNCATED_MARK;
+  }
+  // smart
+  const budget = LARGE_NOTE_CHARS;
+  if (trimmed.length <= budget) return trimmed;
+  const blocks = splitBlocks(trimmed);
+  if (blocks.length <= 2) return trimmed.slice(0, budget) + TRUNCATED_MARK;
+  const fp = textFingerprint(question ?? "");
+  const scored = blocks.map((b, i) => ({
+    i,
+    b,
+    score: fp.size > 0 ? blockScore(b, fp) : 0,
+    len: b.length,
+  }));
+  const head = scored[0];
+  const tail = scored[scored.length - 1];
+  const middle = scored.slice(1, -1);
+  // 头尾固定保留（文档走向 + 结论区），剩余预算按相关度装填。
+  let used = head.len + tail.len;
+  const picked = new Set<number>([head.i, tail.i]);
+  {
+    let room = budget - used - TRUNCATED_MARK.length * 2;
+    for (const c of [...middle].sort((a, b) => b.score - a.score)) {
+      if (c.len > room) continue;
+      picked.add(c.i);
+      used += c.len;
+      room -= c.len;
+    }
+  }
+  const parts: string[] = [];
+  let dropped = 0;
+  for (const c of scored) {
+    if (picked.has(c.i)) parts.push(c.b);
+    else dropped += c.len;
+  }
+  if (dropped > 0) parts.push("（笔记过长，已按相关度节选）");
+  return parts.join("\n\n");
+}
+
+/** 历史预算裁剪结果。 */
+export interface BudgetedHistory {
+  messages: ChatMessage[];
+  /** 因超预算被丢弃的消息条数（不含被修剪的孤儿回答）。 */
+  dropped: number;
+  /** 裁剪后消息集的 token 估算（含 system）。 */
+  estimate: number;
+}
+
+/**
+ * 把消息列表（通常 [system, ...历史, 新问题]）按 token 预算从后往前保留：
+ * 最新消息无条件保留（单条超预算也只能发）；超预算时丢弃更早的消息；
+ * 丢弃后若开头是“孤儿回答”（其问题已被裁掉），一并修剪以免上下文悬空。
+ * system 消息（第一条）恒保留。纯本地估算，零额外请求。
+ */
+export function buildHistoryWithBudget(
+  messages: ChatMessage[],
+  budgetTokens = 8000
+): BudgetedHistory {
+  if (messages.length === 0) {
+    return { messages: [], dropped: 0, estimate: 0 };
+  }
+  const sys: ChatMessage | null = messages[0].role === "system" ? messages[0] : null;
+  const rest = sys ? messages.slice(1) : [...messages];
+  let estimate = sys ? estimateTokens(sys.content) : 0;
+  const kept: ChatMessage[] = [];
+  let dropped = 0;
+  for (let i = rest.length - 1; i >= 0; i--) {
+    const t = estimateTokens(rest[i].content);
+    if (kept.length > 0 && estimate + t > budgetTokens) {
+      dropped = i + 1;
+      break;
+    }
+    estimate += t;
+    kept.unshift(rest[i]);
+  }
+  // 修剪孤儿回答：最早保留的消息若是 assistant，它对应的问题已被裁掉。
+  while (kept.length > 1 && kept[0].role === "assistant") {
+    kept.shift();
+    dropped++;
+  }
+  if (sys) kept.unshift(sys);
+  return { messages: kept, dropped, estimate };
 }
 
 /**
@@ -60,14 +268,22 @@ const DEFAULT_SYSTEM_PROMPT = [
 /**
  * Build the system prompt that gives the assistant the current note as context.
  * Prefers the user's custom prompt (if non-empty) over the built-in default.
+ * v3.9: the note runs through truncateNoteForContext first (strategy from
+ * settings; "full" preserves the old behaviour) — long notes no longer go to
+ * the API verbatim on every turn.
  */
-export function buildSystemPrompt(note: string, custom?: string): string {
+export function buildSystemPrompt(
+  note: string,
+  custom?: string,
+  strategy: AiContextStrategy = "standard"
+): string {
   const base = custom && custom.trim() ? custom.trim() : DEFAULT_SYSTEM_PROMPT;
+  const ctx = truncateNoteForContext(note, strategy);
   return [
     base,
     "",
     "<note>",
-    note.trim() || "（当前笔记为空）",
+    ctx || "（当前笔记为空）",
     "</note>",
   ].join("\n");
 }
@@ -76,7 +292,8 @@ export function buildSystemPrompt(note: string, custom?: string): string {
  * Build a "selection mode" system prompt: the user has highlighted a fragment
  * and wants the model to act on just that fragment (rewrite / translate /
  * explain / answer a question about it). The full note is provided read-only
- * as broader context, but the model should focus on the selection.
+ * as broader context (v3.9: truncated per strategy), but the model should
+ * focus on the selection.
  *
  * When `instruction` contains a `{selection}` placeholder, the selection is
  * spliced in there; otherwise it's appended under a <selection> tag.
@@ -86,18 +303,20 @@ export function buildSelectionMessages(opts: {
   selection: string;
   noteContext?: string;
   systemPromptOverride?: string;
+  strategy?: AiContextStrategy;
 }): ChatMessage[] {
-  const { instruction, selection, noteContext, systemPromptOverride } = opts;
+  const { instruction, selection, noteContext, systemPromptOverride, strategy } = opts;
   const sys = systemPromptOverride?.trim() || DEFAULT_SYSTEM_PROMPT;
+  const note = noteContext
+    ? truncateNoteForContext(noteContext, strategy ?? "standard")
+    : "";
   const system = [
     sys,
     "",
     "当前模式：用户选中了笔记中的一个片段，希望你针对【选中的片段】进行操作。",
     "修改类操作（润色/改写/翻译等）请只输出处理后的片段，不要任何解释或前后缀，",
     "以便用户直接替换选区。问答类操作（解释/提问）正常作答。",
-    noteContext && noteContext.trim()
-      ? `\n<note>\n${noteContext.trim()}\n</note>`
-      : "",
+    note ? `\n<note>\n${note}\n</note>` : "",
   ].join("\n");
 
   const user = instruction.includes("{selection}")
@@ -133,7 +352,10 @@ export function buildSelectionMessages(opts: {
  *   - 总长 150-400 字，信息密度高、避免空话，不得只输出一句话总结。
  *   - 只输出批注正文，无前后缀、无引号、无「批注：」之类前缀。
  */
-export function buildAnnotationMessages(reply: string): ChatMessage[] {
+export function buildAnnotationMessages(
+  reply: string,
+  maxChars = 4000
+): ChatMessage[] {
   const system = [
     "你是 Mditor 编辑器中的批注助手。把下面的内容精炼成一条结构清晰、高信息密度的 Markdown 批注，挂在用户选中的文字旁。",
     "",
@@ -153,7 +375,15 @@ export function buildAnnotationMessages(reply: string): ChatMessage[] {
   ].join("\n");
   return [
     { role: "system", content: system },
-    { role: "user", content: reply },
+    // v3.9 降本：长回复精炼不再原样重发 —— 输入截断到 maxChars（默认
+    // 4000，设置可调）。精炼任务是“压缩”，截断尾部对结果影响可控。
+    {
+      role: "user",
+      content:
+        reply.length <= maxChars
+          ? reply
+          : reply.slice(0, maxChars) + "\n\n（内容过长，已截断）",
+    },
   ];
 }
 

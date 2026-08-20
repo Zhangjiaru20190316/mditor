@@ -38,6 +38,13 @@ function migrateSettings(s: Settings, raw: Partial<Settings>): Settings {
   const hadModels = Array.isArray(raw.aiModels) && raw.aiModels.length > 0;
   let models = hadModels ? (s.aiModels || []).filter(Boolean) : [];
 
+  // v3.9 降本迁移：aiMaxTokens 旧默认 0（= 不发送字段，长回复输出失控的
+  // 隐患）。0 或缺失都视为“未配置”，统一升到新默认 4096；用户显式设置过
+  // 的非 0 值原样保留。
+  if (!s.aiMaxTokens || s.aiMaxTokens <= 0) {
+    s.aiMaxTokens = DEFAULT_SETTINGS.aiMaxTokens;
+  }
+
   // No stored model list: seed from legacy flat fields if the user configured
   // anything (non-empty baseUrl or model).
   const legacyConfigured =
@@ -83,7 +90,10 @@ let recentCache: RecentFile[] | null = null;
 
 export async function loadRecent(): Promise<RecentFile[]> {
   if (recentCache) return recentCache;
-  recentCache = (await store.get<RecentFile[]>("recent")) ?? [];
+  const stored = await store.get<RecentFile[]>("recent");
+  // mditor.json 手工编辑/写坏时 `recent` 可能不是数组；直接放行会让
+  // pushRecent 的 list.filter 抛 TypeError，此后每次打开文件都报错。
+  recentCache = Array.isArray(stored) ? stored : [];
   return recentCache;
 }
 

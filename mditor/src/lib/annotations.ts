@@ -97,10 +97,48 @@ export function nextAnnotationId(md: string): number {
  * the marker isn't found inline (e.g. only the definition exists).
  */
 export function getAnchorSnippet(md: string, id: string, maxBefore = 40): string {
-  const refRe = new RegExp(`\\[\\^${escapeRegExp(id)}\\](?!:)`, "g");
+  const refRe = new RegExp(`\\[\\^${escapeRegExp(id)}\\](?!:)`);
   const m = refRe.exec(md);
   if (!m) return "";
-  const idx = m.index;
+  return anchorSnippetFromIndex(md, m.index, maxBefore);
+}
+
+/**
+ * Batch variant of getAnchorSnippet for the annotation sidebar: ONE scan of
+ * the document locates the first inline `[^anno-N]` reference per id, then
+ * each snippet is derived from its index. Replaces the old per-annotation
+ * regex scan (O(annotations × document length) per deferred update — a 50-
+ * annotation 500KB document re-scanned ~25MB of text on every typing pause).
+ * Ids without an inline reference map to "".
+ */
+export function getAnchorSnippets(
+  md: string,
+  ids: readonly string[]
+): Map<string, string> {
+  const map = new Map<string, string>();
+  if (ids.length === 0) return map;
+  if (!md) {
+    for (const id of ids) map.set(id, "");
+    return map;
+  }
+  const wanted = new Set(ids);
+  const firstIdx = new Map<string, number>();
+  const refRe = /\[\^(anno-\d+)\](?!:)/g;
+  let m: RegExpExecArray | null;
+  while ((m = refRe.exec(md)) !== null) {
+    const label = m[1];
+    if (wanted.has(label) && !firstIdx.has(label)) firstIdx.set(label, m.index);
+  }
+  for (const id of wanted) {
+    const idx = firstIdx.get(id);
+    map.set(id, idx === undefined ? "" : anchorSnippetFromIndex(md, idx, 40));
+  }
+  return map;
+}
+
+/** Snippet derivation shared by getAnchorSnippet / getAnchorSnippets:
+ * `idx` is the position of the (first) inline `[^id]` reference. */
+function anchorSnippetFromIndex(md: string, idx: number, maxBefore: number): string {
   // A marker that sits alone on its line (no prose before it on that line)
   // anchors a block — typically a code / math block, whose annotation marker is
   // dropped on its own line right after the block. Surface that block's first

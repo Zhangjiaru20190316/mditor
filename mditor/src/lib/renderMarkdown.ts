@@ -81,6 +81,45 @@ const sanitizeSchema = {
   },
 };
 
+// v3.9.1：rehype-sanitize 对放行的 style 属性不做值级过滤，恶意 markdown /
+// AI 回复可用 style="position:fixed;inset:0" 全屏覆盖伪造界面。这里在
+// sanitize 之后把 span/mark 的内联 style 裁剪为仅保留 color /
+// background-color 声明（colorSpan 高亮功能所需的全部），其余一律丢弃。
+// KaTeX / highlight.js 在本插件之后运行，不受影响。
+const SAFE_STYLE_PROPS = new Set(["color", "background-color"]);
+
+interface HastNode {
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+}
+
+function pruneUnsafeStyleDeclarations(node: HastNode): void {
+  if (node.tagName === "span" || node.tagName === "mark") {
+    const raw = node.properties?.style;
+    if (typeof raw === "string" && raw) {
+      const kept = raw
+        .split(";")
+        .map((decl) => decl.trim())
+        .filter(
+          (decl) =>
+            decl.includes(":") &&
+            SAFE_STYLE_PROPS.has(decl.slice(0, decl.indexOf(":")).trim().toLowerCase())
+        )
+        .join("; ");
+      if (kept) (node.properties as Record<string, string>).style = kept;
+      else delete node.properties?.style;
+    }
+  }
+  for (const child of node.children ?? []) pruneUnsafeStyleDeclarations(child);
+}
+
+function rehypePruneStyle() {
+  return (tree: HastNode) => {
+    pruneUnsafeStyleDeclarations(tree);
+  };
+}
+
 // Build the configured pipeline once; the variable's type is inferred from the
 // builder so the per-plugin type narrowing (Root/Root/string) is preserved.
 function makeProcessor() {
@@ -104,6 +143,7 @@ function makeProcessor() {
     })
     .use(rehypeRaw) // turn raw html into real hast before transforms below
     .use(rehypeSanitize, sanitizeSchema) // strip scripts/event handlers/style vectors from raw html
+    .use(rehypePruneStyle) // span/mark 内联 style 仅保留 color/background-color
     .use(rehypeKatex) // math -> katex html (needs katex.css + fonts at runtime)
     .use(rehypeHighlight, {
       detect: true, // highlight even without an explicit language class
@@ -230,4 +270,16 @@ export async function renderMarkdown(md: string): Promise<string> {
   const html = String(file);
   cacheSet(md, html);
   return html;
+}
+
+/**
+ * Synchronous cache probe for the render result (v3.9): returns the cached
+ * HTML for `md` or undefined. MarkdownText uses this in its layout effect so a
+ * virtualizer-recycled row paints its final content in the SAME frame (zero
+ * blank flash); only genuine cache misses go through the async pipeline.
+ * Applies the same normalization as renderMarkdown (the cache key).
+ */
+export function peekRenderedHtml(md: string): string | undefined {
+  if (!md) return "";
+  return cacheGet(normalizeMathDelimiters(md));
 }

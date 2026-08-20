@@ -41,9 +41,11 @@ import {
   useState,
 } from "react";
 import {
+  buildHistoryWithBudget,
   buildSelectionMessages,
   buildSystemPrompt,
   chatStream,
+  estimateTokens,
   isAiConfigured,
   resolveActiveModel,
   type ChatMessage,
@@ -125,6 +127,9 @@ interface Msg {
   mode: CtxMode;
   /** The selection text, when mode === "selection" (kept so the tag can show). */
   selection?: string;
+  /** （v3.9 划选追问）本条追问显式引用的回答片段：渲染为引用条，并作为
+   *  <quote> 块随请求发送 —— 追问历史沿线程链自然携带它。 */
+  quote?: string;
   /** The selection's document positions {from,to}, captured when the user asked
    *  about it so the「批注」action can anchor the marker exactly (selection mode
    *  only). Stale once the document is edited; addAnnotation re-validates it. */
@@ -162,6 +167,15 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
   const [notice, setNotice] = useState("");
   /** 当前展开追问输入框的回答 id（-1 = 无）。 */
   const [followUpFor, setFollowUpFor] = useState(-1);
+  /** 追问输入框草稿（挂在 AiPanel 层而非 MsgRow：虚拟列表回收行时草稿
+   *  不丢失、不串行 —— 行卸载只是看不见，回来继续编辑）。 */
+  const [followUpDraft, setFollowUpDraft] = useState("");
+  /** 划选追问携带的引用片段（「追问这段」入口写入；普通「追问」为 null）。 */
+  const [followUpQuote, setFollowUpQuote] = useState<string | null>(null);
+  /** 本会话 token 用量（本地估算，仅展示）：输入累计 / 输出累计。 */
+  const [usage, setUsage] = useState<{ input: number; output: number }>({ input: 0, output: 0 });
+  /** 流式输出累计（flushDelta 写入；完成/出错/停止时结算进 usage）。 */
+  const streamOutRef = useRef("");
   /** 进行中的改动预览（非空时面板切换为审查视图）。 */
   const [review, setReview] = useState<ReviewState | null>(null);
   // Id of the assistant message currently being refined into an annotation
@@ -209,6 +223,7 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     const reasoningDelta = hasReasoning ? pendingReasoningRef.current.join("") : "";
     pendingDeltaRef.current = [];
     pendingReasoningRef.current = [];
+    streamOutRef.current += contentDelta;
     setMessages((prev) => {
       const next = [...prev];
       for (let i = next.length - 1; i >= 0; i--) {
@@ -264,7 +279,14 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
       setNotice("");
       setInput("");
       setFollowUpFor(-1);
+      setFollowUpDraft("");
+      setFollowUpQuote(null);
+      setUsage({ input: 0, output: 0 });
+      streamOutRef.current = "";
       setReview(null);
+      // 精炼流挂起（invoke 永不落地）时 handleAnnotate 的 finally 不会执行，
+      // 复位防「批注」按钮永久停在“精炼中…”禁用态。
+      setAnnotatingId(-1);
       activeSelectionRef.current = "";
     }
   }, [open]);
@@ -275,6 +297,7 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
       streamRef.current?.cancel();
       streamRef.current = null;
       setLoading(false);
+      setAnnotatingId(-1);
     }
   }, [open]);
 
@@ -352,7 +375,9 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
   // ---- selection-bar invocations and 追问. `mode` decides the system prompt
   // ---- shape and which write-back actions attach to the assistant reply;
   // ---- `parent` (追问) targets a specific answer: the new turn hangs under
-  // ---- it and its request history is that thread's chain, not the whole chat.
+  // ---- it and its request history is that thread's chain, not the whole chat;
+  // ---- `quote` (v3.9 划选追问) carries the explicitly-selected fragment of
+  // ---- the targeted answer as a <quote> block.
   const send = async (
     raw: string,
     opts: {
@@ -361,6 +386,8 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
       range?: { from: number; to: number } | null;
       /** 追问目标（被追问的那条回答）。 */
       parent?: Msg;
+      /** 划选追问引用的回答片段。 */
+      quote?: string;
     } = { mode: "full" }
   ) => {
     const text = raw.trim();
@@ -373,6 +400,7 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     setNotice("");
 
     const parent = opts.parent;
+    const quote = opts.quote?.trim() ? opts.quote.trim() : undefined;
     // 追问继承被追问回答的选区上下文；顶层提问维持原行为（显式 selection →
     // 会话选区 → 空）。
     const effSelection =
@@ -389,15 +417,28 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
       opts.mode === "selection" ? (opts.range ?? parent?.range ?? undefined) : undefined;
     const requestId = `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+    // v3.9 token 降本：笔记按策略截断；历史按 token 预算从后往前保留。
+    const strategy: Settings["aiContextStrategy"] =
+      settings.aiContextStrategy ?? "standard";
+    const budget =
+      settings.aiHistoryBudgetTokens > 0 ? settings.aiHistoryBudgetTokens : 8000;
+    const userContent = quote
+      ? `${text}\n\n<quote>\n${quote}\n</quote>`
+      : text;
+
     let history: ChatMessage[];
     if (parent) {
-      // 追问：沿 parentId×repliedUser 链回溯目标线程，聚焦该线程的上下文。
-      const chain = buildThreadHistory(messages, parent.id);
+      // 追问：沿 parentId×repliedUser 链回溯目标线程，聚焦该线程的上下文；
+      // 链同样过 token 预算（长线程丢早期、保最近）。
+      const chain = buildHistoryWithBudget(
+        buildThreadHistory(messages, parent.id),
+        budget
+      ).messages;
       if (opts.mode === "selection" && effSelection) {
+        // 选区追问不带 note（线程链 + 选区足够）。
         const [sys] = buildSelectionMessages({
           instruction: text,
           selection: effSelection,
-          noteContext: getNote(),
           systemPromptOverride: settings.aiSystemPrompt,
         });
         history = [
@@ -410,9 +451,9 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
         ];
       } else {
         history = [
-          { role: "system", content: buildSystemPrompt(getNote(), settings.aiSystemPrompt) },
+          { role: "system", content: buildSystemPrompt(getNote(), settings.aiSystemPrompt, strategy) },
           ...chain,
-          { role: "user", content: text },
+          { role: "user", content: userContent },
         ];
       }
     } else if (opts.mode === "selection" && effSelection) {
@@ -421,18 +462,31 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
         selection: effSelection,
         noteContext: getNote(),
         systemPromptOverride: settings.aiSystemPrompt,
+        strategy,
       });
       activeSelectionRef.current = effSelection;
     } else {
-      history = [
-        { role: "system", content: buildSystemPrompt(getNote(), settings.aiSystemPrompt) },
-        ...messages
-          .filter((m) => !m.streaming)
-          .map((m) => ({ role: m.role, content: m.content }) as ChatMessage),
-        { role: "user", content: text },
-      ];
+      // 顶层全文问答：全部历史 + 新问题按 token 预算裁剪（本地估算，
+      // 零额外请求）；最近的问答对始终完整发送。
+      const sys: ChatMessage = {
+        role: "system",
+        content: buildSystemPrompt(getNote(), settings.aiSystemPrompt, strategy),
+      };
+      const past = messages
+        .filter((m) => !m.streaming)
+        .map((m) => ({ role: m.role, content: m.content }) as ChatMessage);
+      history = buildHistoryWithBudget(
+        [sys, ...past, { role: "user", content: userContent }],
+        budget
+      ).messages;
       if (opts.mode === "full") activeSelectionRef.current = "";
     }
+
+    // 本会话输入用量累计（本地估算）。
+    setUsage((u) => ({
+      ...u,
+      input: u.input + history.reduce((n, m) => n + estimateTokens(m.content), 0),
+    }));
 
     // 在 updater 外铸造消息 id（保持 updater 纯函数），并记录本轮滚动锚点。
     const userMsgId = ++msgIdRef.current;
@@ -447,6 +501,7 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
           content: text,
           mode: opts.mode,
           selection: effSelection,
+          quote,
           range,
           parentId: parent?.id,
         },
@@ -477,6 +532,9 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     });
     setInput("");
     setFollowUpFor(-1);
+    setFollowUpDraft("");
+    setFollowUpQuote(null);
+    streamOutRef.current = "";
     setLoading(true);
 
     streamRef.current = chatStream({
@@ -520,6 +578,7 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
             }
             return next;
           });
+          tallyOutput();
           setLoading(false);
           streamRef.current = null;
         },
@@ -546,6 +605,7 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
             }
             return next;
           });
+          tallyOutput();
           setLoading(false);
           streamRef.current = null;
         },
@@ -553,9 +613,17 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     });
   };
 
+  // 结算一次流式输出的本地 token 估算（完成/出错/停止/清空时调用）。
+  const tallyOutput = useCallback(() => {
+    const out = streamOutRef.current;
+    streamOutRef.current = "";
+    if (out) setUsage((u) => ({ ...u, output: u.output + estimateTokens(out) }));
+  }, []);
+
   const stop = () => {
     streamRef.current?.cancel();
     streamRef.current = null;
+    tallyOutput();
     setLoading(false);
     setMessages((prev) => {
       const next = [...prev];
@@ -573,11 +641,15 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
   const clearChat = () => {
     streamRef.current?.cancel();
     streamRef.current = null;
+    tallyOutput();
     setMessages([]);
     setError("");
     setNotice("");
     setInput("");
     setFollowUpFor(-1);
+    setFollowUpDraft("");
+    setFollowUpQuote(null);
+    setUsage({ input: 0, output: 0 });
     setReview(null);
     activeSelectionRef.current = "";
   };
@@ -586,18 +658,44 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
 
   const startFollowUp = useCallback((id: number) => {
     setFollowUpFor(id);
+    setFollowUpDraft("");
+    setFollowUpQuote(null);
   }, []);
 
-  const closeFollowUp = useCallback(() => setFollowUpFor(-1), []);
-
-  // 行内追问输入框的提交（MsgRow 内部持有草稿文本，这里只接收结果）。
-  const submitFollowUp = useCallback((id: number, text: string) => {
-    const target = messagesRef.current.find(
-      (m) => m.id === id && m.role === "assistant"
-    );
-    if (!target || target.streaming) return;
-    void sendRef.current(text, { mode: target.mode, parent: target });
+  /** 划选追问入口：携带选中的回答片段打开行内输入框。 */
+  const startQuoteFollowUp = useCallback((id: number, quote: string) => {
+    setFollowUpFor(id);
+    setFollowUpDraft("");
+    setFollowUpQuote(quote);
+    window.getSelection()?.removeAllRanges();
   }, []);
+
+  const closeFollowUp = useCallback(() => {
+    setFollowUpFor(-1);
+    setFollowUpDraft("");
+    setFollowUpQuote(null);
+  }, []);
+
+  // followUpQuote 的 ref 镜像（submitFollowUp 保持稳定身份，MsgRow memo 有效）。
+  const followUpQuoteRef = useRef<string | null>(null);
+  followUpQuoteRef.current = followUpQuote;
+
+  /** 追问草稿变更（稳定回调，行内输入框直接写面板状态）。 */
+  const changeFollowUpDraft = useCallback((t: string) => setFollowUpDraft(t), []);
+
+  // 行内追问输入框的提交（草稿与引用片段由面板持有：虚拟列表回收行时
+  // 草稿不丢失、不串行 —— 行只是暂时看不见）。
+  const submitFollowUp = useCallback(
+    (id: number, text: string) => {
+      const target = messagesRef.current.find(
+        (m) => m.id === id && m.role === "assistant"
+      );
+      if (!target || target.streaming) return;
+      const quote = followUpQuoteRef.current ?? undefined;
+      void sendRef.current(text, { mode: target.mode, parent: target, quote });
+    },
+    []
+  );
 
   // ---- 改动预览（修改类回复的应用前审查）------------------------------------
 
@@ -834,7 +932,11 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
                         theme={settings.theme}
                         busy={loading}
                         followUpActive={followUpFor === m.id}
+                        followUpDraft={followUpFor === m.id ? followUpDraft : ""}
+                        followUpQuote={followUpFor === m.id ? followUpQuote : null}
                         onStartFollowUp={startFollowUp}
+                        onStartQuoteFollowUp={startQuoteFollowUp}
+                        onFollowUpDraftChange={changeFollowUpDraft}
                         onSubmitFollowUp={submitFollowUp}
                         onCloseFollowUp={closeFollowUp}
                         onInsert={() => onInsert(m.content)}
@@ -887,6 +989,15 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
               </button>
             )}
           </div>
+
+          {/* v3.9 用量统计：本地估算（零额外请求），重开面板/清空时归零。 */}
+          <div
+            className="ai-usage"
+            title="本地估算（按中英混合分词密度近似），仅供参考；精确用量以服务商账单为准。可在「设置 → AI」调整上下文策略与历史预算来降低输入成本。"
+          >
+            本会话 ≈ 输入 {(usage.input / 1000).toFixed(1)}k / 输出{" "}
+            {(usage.output / 1000).toFixed(1)}k tokens
+          </div>
         </>
       )}
     </div>
@@ -905,7 +1016,14 @@ interface MsgRowProps {
   busy: boolean;
   /** 追问输入框是否展开在本行下方。 */
   followUpActive: boolean;
+  /** 追问草稿（面板持有；本行未展开时为 ""）。 */
+  followUpDraft: string;
+  /** 划选追问携带的引用片段（本行未展开时为 null）。 */
+  followUpQuote: string | null;
   onStartFollowUp: (id: number) => void;
+  /** 划选追问入口：携带选中的回答片段打开输入框。 */
+  onStartQuoteFollowUp: (id: number, quote: string) => void;
+  onFollowUpDraftChange: (text: string) => void;
   onSubmitFollowUp: (id: number, text: string) => void;
   onCloseFollowUp: () => void;
   onInsert: () => void;
@@ -950,7 +1068,11 @@ const MsgRow = memo(function MsgRow({
   theme,
   busy,
   followUpActive,
+  followUpDraft,
+  followUpQuote,
   onStartFollowUp,
+  onStartQuoteFollowUp,
+  onFollowUpDraftChange,
   onSubmitFollowUp,
   onCloseFollowUp,
   onInsert,
@@ -964,15 +1086,74 @@ const MsgRow = memo(function MsgRow({
   const hasContent = msg.content.length > 0;
   const hasReasoning = !!(msg.reasoning && msg.reasoning.length > 0);
   const isThread = depth > 0;
-  // 追问草稿：输入框挂在本行内部，草稿随之局部化——别的行重渲染不受打字影响。
-  const [followUpText, setFollowUpText] = useState("");
   const fuRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
-    if (followUpActive) {
-      setFollowUpText("");
-      fuRef.current?.focus();
-    }
+    if (followUpActive) fuRef.current?.focus();
   }, [followUpActive]);
+
+  // ---- 划选追问（v3.9）：回答正文里划选文字 → 出现「追问这段」浮动入口。
+  // 仅对已完成且有正文的回答开放（流式未完成时不可追问）；选区两端都落
+  // 在本行正文内才有效。Esc / 点击空白（选区塌陷）自动消失；入口按钮
+  // mousedown preventDefault，不与操作按钮争抢焦点/选区。
+  const rowRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const selectable = isAssistant && !msg.streaming && hasContent;
+  const [selChip, setSelChip] = useState<{
+    x: number;
+    y: number;
+    quote: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!selectable) {
+      setSelChip(null);
+      return;
+    }
+    const update = () => {
+      const body = bodyRef.current;
+      const s = window.getSelection();
+      if (!body || !s || s.rangeCount === 0 || s.isCollapsed) {
+        setSelChip(null);
+        return;
+      }
+      const anchor = s.anchorNode;
+      const focus = s.focusNode;
+      if (
+        !anchor ||
+        !focus ||
+        !body.contains(anchor) ||
+        !body.contains(focus)
+      ) {
+        setSelChip(null);
+        return;
+      }
+      const text = s.toString().replace(/\s+/g, " ").trim();
+      if (!text) {
+        setSelChip(null);
+        return;
+      }
+      const rect = s.getRangeAt(0).getBoundingClientRect();
+      const rowRect = rowRef.current?.getBoundingClientRect();
+      if (!rowRect) return;
+      // 行内绝对定位：钳在行宽内，贴选区下缘。
+      const x = Math.min(
+        Math.max(rect.left - rowRect.left, 0),
+        Math.max(0, rowRect.width - 150)
+      );
+      setSelChip({ x, y: rect.bottom - rowRect.top + 6, quote: text });
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        window.getSelection()?.removeAllRanges();
+        setSelChip(null);
+      }
+    };
+    document.addEventListener("selectionchange", update);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("selectionchange", update);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [selectable]);
 
   // 思考过程折叠态：reasoning 首次有内容时自动展开，正文开始流入时自动折叠，
   // 之后交给用户手动控制。用 ref 追踪上一次的空/非空状态以检测"首次到达"，
@@ -999,10 +1180,16 @@ const MsgRow = memo(function MsgRow({
   if (!isAssistant) {
     return (
       <div
+        ref={rowRef}
         className={`ai-msg ai-msg-user${isThread ? " ai-msg-thread" : ""}`}
         style={threadStyle}
       >
         {isThread && <span className="ai-thread-tag">追问</span>}
+        {msg.quote && (
+          <div className="ai-quote-chip" title={msg.quote}>
+            {msg.quote}
+          </div>
+        )}
         <div className="ai-msg-content">{msg.content}</div>
       </div>
     );
@@ -1010,6 +1197,7 @@ const MsgRow = memo(function MsgRow({
 
   return (
     <div
+      ref={rowRef}
       className={`ai-msg ai-msg-assistant${isThread ? " ai-msg-thread" : ""}`}
       style={threadStyle}
     >
@@ -1048,12 +1236,32 @@ const MsgRow = memo(function MsgRow({
           <ThinkingDots />
         )
       ) : hasContent ? (
-        <MarkdownText
-          content={msg.content}
-          theme={theme}
-          className="ai-msg-content"
-        />
+        <div ref={bodyRef} className="ai-msg-body">
+          <MarkdownText
+            content={msg.content}
+            theme={theme}
+            className="ai-msg-content"
+          />
+        </div>
       ) : null}
+      {/* 划选追问入口：仅已完成回答的正文上方划选时出现。 */}
+      {selChip && (
+        <div
+          className="ai-sel-followup"
+          style={{ left: `${selChip.x}px`, top: `${selChip.y}px` }}
+        >
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              onStartQuoteFollowUp(msg.id, selChip.quote);
+              setSelChip(null);
+            }}
+            title="把选中的这段回答作为显式上下文发起追问"
+          >
+            追问这段
+          </button>
+        </div>
+      )}
       {!msg.streaming && hasContent && (
         <div className="ai-actions">
           {msg.mode === "selection" ? (
@@ -1091,27 +1299,37 @@ const MsgRow = memo(function MsgRow({
           <button
             onClick={() => onStartFollowUp(msg.id)}
             disabled={busy}
-            title={busy ? "等待当前回答完成" : "针对这条回答继续追问（挂在其下方，可多层嵌套）"}
+            title={busy ? "等待当前回答完成" : "针对这条回答继续追问（挂在其下方，可多层嵌套；也可在回答正文中划选后「追问这段」）"}
           >
             追问
           </button>
         </div>
       )}
       {/* 行内追问输入框：挂在被追问的回答正下方（actions 之内）。提交后
-          新的问答对以缩进线程渲染在本回答之下。 */}
+          新的问答对以缩进线程渲染在本回答之下。草稿与引用片段由面板层
+          持有 —— 虚拟列表回收本行后再滚回来，草稿仍在。 */}
       {followUpActive && (
         <div className="ai-followup">
+          {followUpQuote && (
+            <div className="ai-quote-chip active" title={followUpQuote}>
+              追问范围：{followUpQuote}
+            </div>
+          )}
           <textarea
             ref={fuRef}
             className="ai-followup-input"
             rows={2}
-            value={followUpText}
-            placeholder="针对这条回答继续追问…（Enter 发送，Shift+Enter 换行）"
-            onChange={(e) => setFollowUpText(e.target.value)}
+            value={followUpDraft}
+            placeholder={
+              followUpQuote
+                ? "针对选中的这段回答追问…（Enter 发送，Shift+Enter 换行，Esc 取消）"
+                : "针对这条回答继续追问…（Enter 发送，Shift+Enter 换行）"
+            }
+            onChange={(e) => onFollowUpDraftChange(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                if (followUpText.trim()) onSubmitFollowUp(msg.id, followUpText);
+                if (followUpDraft.trim()) onSubmitFollowUp(msg.id, followUpDraft);
               }
               if (e.key === "Escape") {
                 e.preventDefault();
@@ -1122,8 +1340,8 @@ const MsgRow = memo(function MsgRow({
           <div className="ai-followup-actions">
             <button
               className="ai-followup-send"
-              disabled={!followUpText.trim() || busy}
-              onClick={() => onSubmitFollowUp(msg.id, followUpText)}
+              disabled={!followUpDraft.trim() || busy}
+              onClick={() => onSubmitFollowUp(msg.id, followUpDraft)}
             >
               发送追问
             </button>

@@ -14,7 +14,7 @@
 
 import { memo, useCallback, useDeferredValue, useMemo, useState } from "react";
 import type { Annotation } from "../lib/annotations";
-import { getAnchorSnippet } from "../lib/annotations";
+import { getAnchorSnippets } from "../lib/annotations";
 import { confirmDialog } from "../lib/dialogs";
 
 interface Props {
@@ -56,13 +56,12 @@ export const AnnotationList = memo(function AnnotationList({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
 
-  // Anchor snippets depend only on (deferred) markdown + ids; recompute cheaply.
+  // Anchor snippets: ONE document scan resolves every annotation's first
+  // inline ref (getAnchorSnippets) — the old per-annotation regex scan was
+  // O(annotations × document length) on every deferred markdown change.
   const snippets = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const a of deferredAnnos) {
-      map.set(a.id, getAnchorSnippet(deferredMd, a.id));
-    }
-    return map;
+    const ids = deferredAnnos.map((a) => a.id);
+    return getAnchorSnippets(deferredMd, ids);
   }, [deferredAnnos, deferredMd]);
 
   const beginEdit = useCallback((a: Annotation) => {

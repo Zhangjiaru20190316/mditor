@@ -115,16 +115,27 @@ function handleMark(
  * mdast-util-to-markdown internals (a transitive dep), so we keep the types
  * loose and cast at the registration sites. `this` is the unified Processor,
  * which provides `data()` for stashing remark-stringify options.
+ *
+ * 序列化处理器必须挂到 `data.toMarkdownExtensions`（v3.9.7 修复）：remark-
+ * stringify v11 的 compiler 只读这一个键（`extensions: self.data('toMarkdown-
+ * Extensions') || []`，逐项经 mdast-util-to-markdown 的 configure 合并
+ * handlers/unsafe），与 remark-gfm 同款注册路径。旧版写到 `data.toMarkdown`
+ * ——没有任何消费者读它，`mark` 节点序列化时落到 unknown handler 直接抛
+ * `Cannot handle unknown node 'mark'`，编辑器 getMarkdown() 整体失败回退旧
+ * 缓存——「高光存不下来」的根因：解析方向（==x== → mark）一直正常，唯独
+ * 保存方向丢标记。
  */
 export function remarkMark(this: {
   data(): Record<string, unknown>;
 }) {
-  const data = this.data() as Record<string, Record<string, unknown> | unknown[]>;
-  const toMarkdown = (data.toMarkdown || (data.toMarkdown = {})) as Record<string, unknown>;
-  const handlers = (toMarkdown.handlers || (toMarkdown.handlers = {})) as Record<string, unknown>;
-  handlers.mark = handleMark;
-  const unsafe = (toMarkdown.unsafe || (toMarkdown.unsafe = [])) as unknown[];
-  unsafe.push({ character: "=", inConstruct: "phrasing", notInConstruct: CONSTRUCTS_WITHOUT_MARK });
+  const data = this.data() as Record<string, unknown[]>;
+  const extensions = data.toMarkdownExtensions || (data.toMarkdownExtensions = []);
+  extensions.push({
+    handlers: { mark: handleMark },
+    unsafe: [
+      { character: "=", inConstruct: "phrasing", notInConstruct: CONSTRUCTS_WITHOUT_MARK },
+    ],
+  });
 
   return (tree: unknown) => {
     transformMarks(tree as unknown as MdastNode);

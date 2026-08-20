@@ -34,7 +34,8 @@ import {
   markdownToSlice,
   callCommand,
 } from "@milkdown/utils";
-import { editorViewCtx, parserCtx, schemaCtx } from "@milkdown/core";
+import { editorViewCtx, parserCtx, schemaCtx, serializerCtx } from "@milkdown/core";
+import type { Ctx } from "@milkdown/ctx";
 import { closeHistory } from "@milkdown/prose/history";
 import { toggleMark } from "@milkdown/prose/commands";
 import {
@@ -47,12 +48,14 @@ import {
 } from "@milkdown/prose/tables";
 import { TextSelection } from "@milkdown/prose/state";
 import { Slice, Node } from "@milkdown/prose/model";
-import type { Node as PMNode } from "@milkdown/prose/model";
+import type { Node as PMNode, DOMOutputSpec } from "@milkdown/prose/model";
 import { headingIdGenerator, toggleInlineCodeCommand } from "@milkdown/kit/preset/commonmark";
 import { syntaxHighlighting } from "@codemirror/language";
 import { classHighlighter } from "@lezer/highlight";
 import { highlightPlugins } from "../lib/highlightMark";
 import { textColorPlugins } from "../lib/textColorMark";
+import { noteScrollWrite } from "../lib/scrollDebug";
+import { noteOpError } from "../lib/opDebug";
 import { createSvEditor } from "../lib/svCodeMirror";
 import type { SvEditorHandle, SvSurface } from "../lib/svCodeMirror";
 import "@milkdown/crepe/theme/common/style.css";
@@ -69,8 +72,22 @@ import {
   nearestOccurrenceEnd,
 } from "../lib/anchorSearch";
 import type { CodeLineMeta } from "../lib/codeAnno";
+import {
+  appendDefinitionOp,
+  finalizeAnnotationOp,
+  removeAnnoOp,
+  replaceDefinitionOp,
+  type TargetedOpResult,
+} from "../lib/annotationOps";
 import { stampAnnotationMarkers } from "./useAnnotationMarkers";
-import { stampEditorImageLazyAttrs } from "../lib/imageLazy";
+import { isUserActive } from "../lib/activity";
+import {
+  annoCount,
+  annoEmit,
+  registerAnnoProbe,
+  registerPmObserverGate,
+  type AnnoEditorProbe,
+} from "../lib/annoDebug";
 import {
   applyParsedDoc,
   bindEditor,
@@ -102,12 +119,149 @@ import {
   deleteBlockCommand,
 } from "../lib/blockCommands";
 
+/* -------------------------------------------------------------------------- */
+/* 批注徽章编号内建化（B2，v3.9.3）+ 诊断探针                                   */
+/* -------------------------------------------------------------------------- */
+
+const ANNO_LABEL_NUM_RE = /^anno-(\d+)$/;
+
+/**
+ * 把 footnote_reference 的 schema toDOM 包一层：label 匹配 `anno-N` 时在
+ * 渲染产物 attrs 里直接注入 `data-anno-num=N`。此前编号只靠 useAnnotation-
+ * Markers 的防抖盖章（60–250ms）写入 DOM 属性——ProseMirror 任何重建
+ * （整篇回退 / finalize 原位重放 / 节点视图重绘）都会先渲染一个无编号的
+ * 空 <sup>，重建越频繁编号越补不回（「徽章不显示数字」根因）。补丁后
+ * 编号随 DOM 创建即存在，任何重建零延迟恢复；盖章管线保留为兜底（幂等，
+ * 值相同时不写）。NodeType.spec 是普通可变对象（prosemirror-model 构造
+ * 函数 `this.spec = spec`），包裹式 patch 不改原渲染结构；每次 crepe
+ * 重建产生新 schema，需重新打（__annoBadge 哨兵防重复）。
+ */
+function patchFootnoteRefBadge(ctx: Ctx): void {
+  try {
+    const view = ctx.get(editorViewCtx);
+    const type = view.state.schema.nodes.footnote_reference;
+    if (!type) return;
+    const spec = type.spec as {
+      toDOM?: (node: PMNode) => DOMOutputSpec;
+    } & { __annoBadge?: boolean };
+    const orig = spec.toDOM;
+    if (!orig || spec.__annoBadge) return;
+    const wrapped = (node: PMNode): DOMOutputSpec => {
+      const out = orig.call(spec, node);
+      const m = ANNO_LABEL_NUM_RE.exec(String(node.attrs.label ?? ""));
+      if (!m || !Array.isArray(out)) return out;
+      const attrs = out[1];
+      if (attrs != null && typeof attrs === "object" && !Array.isArray(attrs)) {
+        return [out[0], { ...attrs, "data-anno-num": m[1] }, ...out.slice(2)];
+      }
+      return [out[0] as string, { "data-anno-num": m[1] }, ...out.slice(1)];
+    };
+    (wrapped as { __annoBadge?: boolean }).__annoBadge = true;
+    spec.toDOM = wrapped;
+  } catch (e) {
+    annoEmit("badge.patch.error", "footnote_reference toDOM 补丁失败（编号回退盖章路径）", {
+      level: "warn",
+      data: { error: String(e) },
+    });
+  }
+}
+
+/** findDefinitionNode 的通用形式：在 doc 里找 label 匹配的节点。 */
+function findNodeByLabel(
+  doc: PMNode,
+  typeName: string,
+  label: string
+): PMNode | null {
+  let hit: PMNode | null = null;
+  doc.descendants((n) => {
+    if (hit) return false;
+    if (n.type.name === typeName && n.attrs.label === label) {
+      hit = n;
+      return false;
+    }
+    return true;
+  });
+  return hit;
+}
+
+/**
+ * 诊断探针（批注体检用）：暴露真实 ProseMirror 文档与 Milkdown 解析器，
+ * 让 annoDebug.runAnnoHealthCheck 能做「文本层 → 节点层 → 真实解析器层」
+ * 的分层核查。每次 crepe 重建重新注册；销毁置 null（探针持有 ctx 引用）。
+ */
+function annoProbeFromCtx(ctx: Ctx): AnnoEditorProbe {
+  return {
+    hasDefInDoc(id) {
+      try {
+        const view = ctx.get(editorViewCtx);
+        return findNodeByLabel(view.state.doc, "footnote_definition", id) != null;
+      } catch {
+        return false;
+      }
+    },
+    parseStandalone(defText, id) {
+      try {
+        const parsed = ctx.get(parserCtx)(defText);
+        return parsed ? findNodeByLabel(parsed, "footnote_definition", id) != null : false;
+      } catch {
+        return false;
+      }
+    },
+    serializeDef(id) {
+      try {
+        const view = ctx.get(editorViewCtx);
+        const node = findNodeByLabel(view.state.doc, "footnote_definition", id);
+        if (!node) return null;
+        const serialize = ctx.get(serializerCtx);
+        // serializer 期望顶层 doc（getMarkdown 对 range 切片也是先包 doc），
+        // 单定义节点包一层再序列化，产物即该定义自己的 markdown。
+        const doc = view.state.schema.topNodeType.createAndFill(null, node);
+        return doc ? serialize(doc) : null;
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+
 /** Imperative ops Editor.tsx composes its EditorHandle from. Mirrors the subset
  *  of the Vditor instance Editor.tsx called (getValue/setValue/getHTML/
  *  getSelection/insertValue/updateValue/focus). */
 export interface MilkdownFacade {
   getValue: () => string;
   setValue: (md: string, clearStack?: boolean) => void;
+  /** 定点更新一条批注的定义（流式精炼热路径）：只替换 doc 里的
+   *  footnote_definition 节点，其余块（含 CodeMirror 代码块子编辑器）的
+   *  DOM/node view 原样保留。失败返回 TargetedOpResult 的原因——流式
+   *  中间态（no-parse/no-def）应由调用方跳帧，只有 surface（sv 模式等
+   *  整篇写回代价低的表面）才回退整篇写回。 */
+  updateAnnotationBody: (
+    id: string,
+    content: string,
+    meta: CodeLineMeta | null
+  ) => TargetedOpResult;
+  /** 定点追加一条批注定义到文档末尾（创建批注热路径）：marker 插入后不再
+   *  整篇 setValue，代码块 DOM 不动。事务与 marker 插入合并为一步撤销。
+   *  返回 false 时调用方回退整篇写回。 */
+  appendAnnoDefinition: (
+    id: string,
+    content: string,
+    meta: CodeLineMeta | null
+  ) => boolean;
+  /** 定点收尾（流式精炼结束，v3.9.1 不再依赖 baseline）：无痕删除该批注
+   *  全部落点后单事务原位放回 marker + 最终定义（closeHistory），两次都只
+   *  触碰批注自己的节点（一次 Ctrl+Z 回批注前，契约不变；整篇重写触发
+   *  代码块重建的路径只剩回退）。内部事务被抑制回声，由 Editor 调用方
+   *  统一补 markDirty + onInput。返回 false 时调用方回退 aiWriteFinalize。 */
+  finalizeAnnotationBody: (
+    id: string,
+    content: string,
+    meta: CodeLineMeta | null
+  ) => boolean;
+  /** 定点删除批注：单事务删定义 + 全部同 id 引用（+ 因此变空的 marker 段）。
+   *  返回 false（定义不存在/sv）时调用方回退整篇 removeAnnotationFromMd。 */
+  removeAnno: (id: string) => boolean;
   getHTML: () => string;
   getSelection: () => string;
   insertValue: (md: string) => void;
@@ -367,6 +521,13 @@ export function useMilkdown(opts: Options): MilkdownHandle {
   // that, when it fires, may trigger a recreate to drop the undo stack.
   const editsSinceTrimRef = useRef(0);
   const idleTrimTimerRef = useRef<number | null>(null);
+  // 重建（内存守护软重建 / idle 历史回收）前捕获的滚动位置与光标上下文，
+  // 新实例 ready 后尽力恢复 —— 重建从“无提示的位置重置”变成“几乎无感”。
+  const pendingRestoreRef = useRef<{
+    scrollTop: number;
+    anchor: string;
+    hint: number;
+  } | null>(null);
 
   const settingsRef = useRef(opts.settings);
   settingsRef.current = opts.settings;
@@ -385,23 +546,6 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     svHtmlCacheRef.current = { md: null, html: "" };
     let destroyed = false;
     let instance: Crepe | null = null;
-    // Pending double-rAF for annotation stamping. Coalesced (only one walk
-    // queued at a time) and cancellable, so a typing burst doesn't queue a walk
-    // per keystroke and teardown can cancel any in-flight walk before destroy.
-    let pendingRaf: number | null = null;
-    const scheduleStamp = () => {
-      if (pendingRaf != null) return;
-      // Milkdown finalizes footnote node attrs over a couple of frames after the
-      // transaction, so double-rAF walks the settled DOM.
-      pendingRaf = requestAnimationFrame(() => {
-        pendingRaf = requestAnimationFrame(() => {
-          pendingRaf = null;
-          stampAnnotationMarkers();
-          // T0: lazy-load off-screen editor images (idempotent, no-op w/o imgs).
-          stampEditorImageLazyAttrs();
-        });
-      });
-    };
 
     // Serialize destroy→create: wait for the PREVIOUS instance to finish tearing
     // down before mounting a fresh view. Crepe.destroy() is async; without this,
@@ -472,6 +616,9 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           if (destroyed) return;
           if (!bigDocRef.current) return;
           if (editsSinceTrimRef.current < IDLE_HISTORY_TRIM_EDITS) return;
+          // 用户还在阅读/滚动/输入时不打断 —— 重建会重置光标与滚动位置，
+          // 这个主动优化只应发生在真正的空闲窗口（下一次真实编辑会重新武装）。
+          if (isUserActive(120_000)) return;
           const heap = getHeapUsage();
           const thresholdBytes =
             settingsRef.current.memoryGuardThresholdMb * 1024 * 1024;
@@ -490,9 +637,11 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         l.markdownUpdated((_c, md) => {
           // Only echo user-visible input when we aren't applying a programmatic
           // replaceAll (setValue/seed/switchMode) — those notify the caller
-          // themselves. Annotation stamping, however, must run on EVERY doc
-          // change (including programmatic ones like file load) so the badges/
-          // hidden defs stay correct regardless of how the DOM came to be.
+          // themselves. DOM stamping (annotation badges + image lazy attrs) is
+          // NOT scheduled here anymore: useAnnotationMarkers' MutationObserver
+          // already debounces+coalesces the very DOM changes these transactions
+          // produce (60ms + rAF), so the old double-rAF per markdownUpdated
+          // merely duplicated every stamp walk per keystroke.
           if (!suppressRef.current) {
             contentRef.current = md;
             onInputRef.current(md);
@@ -500,7 +649,6 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             editsSinceTrimRef.current++;
             scheduleIdleTrim();
           }
-          scheduleStamp();
         });
         // Feed the outline from the LIVE document: ids here are Milkdown's
         // attrs.id — identical to the rendered <hN id> — so outline jumps
@@ -600,6 +748,30 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       // worker 哨兵校验都基于它）。每次 recreate 都会重新绑定。放在 seed 之前，
       // 让 seed 的整篇解析也能正确回填缓存。
       bindEditor(crepe.editor.ctx);
+      // B2：footnote_reference toDOM 注入 data-anno-num（编号随 DOM 创建即
+      // 存在，重建零延迟恢复）+ 诊断探针（批注体检用，重建时重绑）+
+      // PM 观察器暂停门（盖章战争根修，见 annoDebug.withPmObserverPaused）。
+      crepe.editor.action((ctx) => patchFootnoteRefBadge(ctx));
+      registerAnnoProbe(annoProbeFromCtx(crepe.editor.ctx));
+      registerPmObserverGate((fn) => {
+        const v = crepe.editor.ctx.get(editorViewCtx);
+        const obs = (
+          v as unknown as {
+            domObserver?: { stop(): void; start(): void };
+          }
+        ).domObserver;
+        if (!obs || typeof obs.stop !== "function" || typeof obs.start !== "function") {
+          fn();
+          return;
+        }
+        obs.stop();
+        try {
+          fn();
+        } finally {
+          obs.start();
+        }
+      });
+      annoEmit("editor.ready", "Milkdown 实例就绪（徽章 toDOM 补丁 + 探针 + PM 门已挂）");
       // Seed content with flush=true so headings pick up the generator AND the
       // undo history starts clean for this document.
       if (seed) {
@@ -622,10 +794,9 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     return () => {
       destroyed = true;
       crepeRef.current = null;
+      registerAnnoProbe(null);
+      registerPmObserverGate(null);
       unbindEditor();
-      // Cancel any in-flight annotation stamp so it doesn't run against the
-      // about-to-be-destroyed DOM.
-      if (pendingRaf != null) cancelAnimationFrame(pendingRaf);
       // T6: cancel any pending proactive history-reclaim timer.
       if (idleTrimTimerRef.current != null) {
         window.clearTimeout(idleTrimTimerRef.current);
@@ -781,8 +952,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           const mt = view.state.schema.marks[name];
           if (mt) toggleMark(mt)(view.state, view.dispatch);
         });
-      } catch {
-        /* not ready */
+      } catch (e) {
+        noteOpError(`toggleMark:${name}`, e);
       }
     };
     /** 当前选区纯文本（两种模式）。 */
@@ -824,6 +995,10 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           contentRef.current = md;
           return;
         }
+        // 诊断：非载入（clearStack!==true）的 setValue 是程序化整篇重写——
+        // 会重建全部代码块子编辑器与批注徽章（闪烁来源），计数以便定位
+        // 「谁还在整篇写」（文件载入不计入）。
+        if (clearStack !== true) annoCount("fulldoc.setValue");
         // A full-document load that flips the big-doc cutoff would parse the
         // doc twice: once for this load, then again when the recreate below
         // seeds the new instance with the same content. Skip the doomed load —
@@ -845,11 +1020,70 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         suppressRef.current = true;
         try {
           crepe.editor.action(replaceAll(md, false));
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("setValue", e);
         }
         suppressRef.current = false;
         contentRef.current = md;
+      },
+      updateAnnotationBody: (id, content, meta) => {
+        // 流式精炼热路径：整篇 replaceAll 每帧把所有代码块的 CodeMirror
+        // 子编辑器连根重建（视觉上“乱闪”），且撤销栈被大量全文档步压满。
+        // 这里只替换目标 footnote_definition 节点 —— ProseMirror 只重渲染
+        // 变化区间，代码块与其余块不动。事务照常进历史：相邻帧由
+        // prosemirror-history 的 newGroupDelay 合并，收尾仍由
+        // aiWriteFinalize(baseline) 收束为一步撤销（契约不变）。
+        // 实现见 lib/annotationOps.replaceDefinitionOp。
+        if (modeRef.current === "sv") return { ok: false, reason: "surface" };
+        const crepe = crepeRef.current;
+        if (!crepe) return { ok: false, reason: "surface" };
+        return crepe.editor.action((ctx) =>
+          replaceDefinitionOp(ctx, id, content, meta)
+        );
+      },
+      appendAnnoDefinition: (id, content, meta) => {
+        // 创建批注热路径：marker 已定点插入，定义也定点追加（文档末尾），
+        // 不再整篇 setValue —— 代码块 DOM 全程不动，创建瞬间不闪。
+        // 与 insertAnnoMarker 一样抑制回声：Editor 随后统一补一次
+        // markDirty + onInput（避免监听器 + 手动路径双重上抛）。
+        if (modeRef.current === "sv") return false;
+        const crepe = crepeRef.current;
+        if (!crepe) return false;
+        suppressRef.current = true;
+        try {
+          return crepe.editor.action((ctx) =>
+            appendDefinitionOp(ctx, id, content, meta)
+          );
+        } catch {
+          return false;
+        } finally {
+          suppressRef.current = false;
+        }
+      },
+      finalizeAnnotationBody: (id, content, meta) => {
+        // 流式收尾热路径（v3.9.1 去 baseline 版，见 annotationOps）：无痕
+        // 删除批注落点 + 原位放回，收尾瞬间代码块不再重建。两步事务被抑制
+        // 回声（避免中间态镜像），Editor 调用方统一补 markDirty + onInput。
+        if (modeRef.current === "sv") return false;
+        const crepe = crepeRef.current;
+        if (!crepe) return false;
+        suppressRef.current = true;
+        try {
+          return crepe.editor.action((ctx) =>
+            finalizeAnnotationOp(ctx, id, content, meta)
+          );
+        } catch {
+          return false;
+        } finally {
+          suppressRef.current = false;
+        }
+      },
+      removeAnno: (id) => {
+        // 删除热路径：单事务删定义 + 引用，不整篇重写。
+        if (modeRef.current === "sv") return false;
+        const crepe = crepeRef.current;
+        if (!crepe) return false;
+        return crepe.editor.action((ctx) => removeAnnoOp(ctx, id));
       },
       getHTML: () => {
         const crepe = crepeRef.current;
@@ -916,8 +1150,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         suppressRef.current = true;
         try {
           crepe.editor.action(insert(md));
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("insertValue", e);
         }
         suppressRef.current = false;
       },
@@ -940,8 +1174,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             const { from, to } = view.state.selection;
             replaceRange(md, { from, to })(ctx);
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("updateValue", e);
         }
         suppressRef.current = false;
       },
@@ -969,8 +1203,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             // leaving the original selection intact.
             insertPos(md, to)(ctx);
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("insertAfter", e);
         }
         suppressRef.current = false;
       },
@@ -1036,8 +1270,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             }
             insertPos(md, pos, true)(ctx);
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("insertAtPos", e);
         }
         suppressRef.current = false;
       },
@@ -1128,6 +1362,10 @@ export function useMilkdown(opts: Options): MilkdownHandle {
               view.dispatch(
                 view.state.tr.insert(pos, fnType.create({ label: id }))
               );
+              // 同步盖章（幂等、有早退）：徽章编号在浏览器绘制前就位。
+              // 等 MutationObserver 的 60ms 防抖意味着新徽章先以空药丸
+              // 渲染一拍再蹦出编号 —— 创建瞬间可见的「闪一下」。
+              stampAnnotationMarkers();
               return true;
             }
             // 3) Anchor is inside a block that can't hold the marker
@@ -1140,6 +1378,11 @@ export function useMilkdown(opts: Options): MilkdownHandle {
               const paraType = schema.nodes.paragraph;
               const para = paraType ? paraType.create(null, fn) : fn;
               view.dispatch(view.state.tr.insert(after, para));
+              // 同上；这里还多一层：marker 段落先以普通块级段落（~44px 行
+              // 盒 + 段距）渲染，60ms 盖上 anno-row-item 后才 inline 化
+              // （~24px）——布局塌陷 + 滚动锚定补偿 = 创建瞬间「先沉后弹」
+              // 双跳。同步盖章让 inline 形态首帧生效，双跳消失。
+              stampAnnotationMarkers();
               return true;
             }
             return false;
@@ -1230,8 +1473,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
               )
             );
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("aiWriteDoc", e);
         }
         suppressRef.current = false;
         contentRef.current = md;
@@ -1261,8 +1504,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             const slice = markdownToSlice(md)(ctx);
             view.dispatch(closeHistory(view.state.tr.replaceRange(f, t, slice)));
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("aiWriteRange", e);
         }
         suppressRef.current = false;
       },
@@ -1282,10 +1525,11 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           crepe.editor.action((ctx) => {
             const view = ctx.get(editorViewCtx);
             const slice = markdownToSlice(md)(ctx);
+            noteScrollWrite("pm-insert");
             view.dispatch(closeHistory(view.state.tr.replaceSelection(slice).scrollIntoView()));
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("aiWriteInsert", e);
         }
         suppressRef.current = false;
       },
@@ -1310,6 +1554,12 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         const crepe = crepeRef.current;
         if (!crepe) return;
         suppressRef.current = true;
+        annoCount("fulldoc.aiWriteFinalize", 2);
+        annoEmit(
+          "anno.finalize.full",
+          "aiWriteFinalize：baseline 还原 + 写入 next（整篇×2，一次性）",
+          { level: "warn" }
+        );
         try {
           crepe.editor.action((ctx) => {
             const view = ctx.get(editorViewCtx);
@@ -1336,8 +1586,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
               );
             }
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("aiWriteFinalize", e);
         }
         suppressRef.current = false;
         contentRef.current = next;
@@ -1405,10 +1655,11 @@ export function useMilkdown(opts: Options): MilkdownHandle {
               TextSelection.near(view.state.doc.resolve(pos), -1)
             );
             tr.scrollIntoView();
+            noteScrollWrite("reveal");
             view.dispatch(tr);
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("revealText", e);
         }
       },
       findTextRange: (needle, hint) => {
@@ -1476,8 +1727,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         }
         try {
           crepeRef.current!.editor.action(callCommand(toggleInlineCodeCommand.key));
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("toggleInlineCode", e);
         }
       },
       insertLink: (href, text) => {
@@ -1506,8 +1757,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             const { from, to } = view.state.selection;
             replaceRange(md, { from, to })(ctx);
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("insertLink", e);
         }
         suppressRef.current = false;
       },
@@ -1553,8 +1804,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             const next = cur.replace(/\s+$/, "") + def;
             try {
               crepeRef.current?.editor.action(replaceAll(next, false));
-            } catch {
-              /* not ready */
+            } catch (e) {
+              noteOpError("insertFootnote", e);
             }
             contentRef.current = next;
           });
@@ -1635,8 +1886,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
               .addMark(from, to, mt.create({ color }));
             view.dispatch(tr);
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("setTextColor", e);
         }
       },
       clearTextColor: () => {
@@ -1657,8 +1908,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             const { from, to } = view.state.selection;
             view.dispatch(view.state.tr.removeMark(from, to, mt));
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("clearTextColor", e);
         }
       },
       /* ---- 块级右键菜单命令（富文本模式；sv 由调用方拦截，不弹菜单） ---- */
@@ -1735,8 +1986,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           crepeRef.current!.editor.action((ctx) => {
             applyBlockTarget(ctx.get(editorViewCtx), kind, level);
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("setBlockType", e);
         }
       },
       moveBlock: (dir) => {
@@ -1745,7 +1996,10 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           return crepeRef.current!.editor.action((ctx) =>
             moveBlockCommand(ctx.get(editorViewCtx), dir)
           );
-        } catch {
+        } catch (e) {
+          // 返回 false 对调用方是「无可移动」的正常信号，但异常路径（命令
+          // 内部抛错）在这里本不可见——接入 opDebug，静默失败必须留痕。
+          noteOpError("moveBlock", e);
           return false;
         }
       },
@@ -1755,8 +2009,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           crepeRef.current!.editor.action((ctx) => {
             duplicateBlockCommand(ctx.get(editorViewCtx));
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("duplicateBlock", e);
         }
       },
       deleteBlock: () => {
@@ -1765,8 +2019,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           crepeRef.current!.editor.action((ctx) => {
             deleteBlockCommand(ctx.get(editorViewCtx));
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("deleteBlock", e);
         }
       },
       tableOp: (op) => {
@@ -1784,8 +2038,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             const view = ctx.get(editorViewCtx);
             cmds[op](view.state, view.dispatch);
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("tableOp", e);
         }
       },
       updateLinkHref: (from, to, href) => {
@@ -1811,8 +2065,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
               view.state.tr.addMark(from, to, linkType.create({ href, title }))
             );
           });
-        } catch {
-          /* not ready */
+        } catch (e) {
+          noteOpError("updateLinkHref", e);
         }
       },
       deleteNodeAt: (pos) => {
@@ -1933,12 +2187,76 @@ export function useMilkdown(opts: Options): MilkdownHandle {
   );
 
   const recreate = useCallback(() => {
+    // 重建前快照滚动 + 光标上下文（富文本模式）：新实例 seed 后按文本
+    // 重新锚定光标并恢复滚动位置。sv 模式不需要（表面常驻、内容不重置）。
+    if (modeRef.current !== "sv") {
+      try {
+        const scroller = document.querySelector<HTMLElement>(".mditor-editor-host");
+        crepeRef.current?.editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+          const head = view.state.selection.head;
+          const from = Math.max(0, head - 48);
+          const to = Math.min(view.state.doc.content.size, head + 48);
+          const anchor = view.state.doc.textBetween(from, to, "\n").trim();
+          if (anchor) {
+            pendingRestoreRef.current = {
+              scrollTop: scroller?.scrollTop ?? 0,
+              anchor,
+              hint: head,
+            };
+          }
+        });
+      } catch {
+        /* best-effort — 重建照常进行 */
+      }
+    }
     contentRef.current =
       modeRef.current === "sv"
         ? svSurface()?.value ?? sourceTextRef.current ?? contentRef.current
         : (crepeRef.current?.getMarkdown() ?? contentRef.current);
     setRecreateToken((t) => t + 1);
   }, [svSurface]);
+
+  // 重建完成后恢复光标与滚动位置（尽力而为：按文本锚点重定位，找不到就
+  // 保持新实例的默认状态）。双 rAF 等新视图完成首次布局再写 scrollTop。
+  useEffect(() => {
+    if (!ready) return;
+    const r = pendingRestoreRef.current;
+    if (!r) return;
+    pendingRestoreRef.current = null;
+    let raf2: number | null = null;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        raf2 = null;
+        if (modeRef.current === "sv") return;
+        try {
+          crepeRef.current?.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const range = findAnchorRange(view.state.doc, r.anchor, r.hint);
+            if (range) {
+              const pos = Math.min(range.from, view.state.doc.content.size);
+              view.dispatch(
+                view.state.tr.setSelection(
+                  TextSelection.near(view.state.doc.resolve(pos))
+                )
+              );
+            }
+          });
+        } catch {
+          /* best-effort */
+        }
+        const scroller = document.querySelector<HTMLElement>(".mditor-editor-host");
+        if (scroller && r.scrollTop > 0) {
+          noteScrollWrite("rebuild-restore");
+          scroller.scrollTop = r.scrollTop;
+        }
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2 != null) cancelAnimationFrame(raf2);
+    };
+  }, [ready]);
 
   const applyTheme = useCallback((s: Settings) => {
     applyProseVars(s);

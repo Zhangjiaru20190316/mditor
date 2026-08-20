@@ -7,10 +7,22 @@
 
 import { lift, setBlockType as pmSetBlockType, wrapIn } from "@milkdown/prose/commands";
 import { liftListItem, wrapInList } from "@milkdown/prose/schema-list";
-import { TextSelection } from "@milkdown/prose/state";
+import { TextSelection, type Transaction } from "@milkdown/prose/state";
 import type { EditorView } from "@milkdown/prose/view";
 import type { Mark, Node as PMNode, ResolvedPos } from "@milkdown/prose/model";
 import type { BlockInfo, BlockTargetKind } from "../types";
+import { noteScrollWrite } from "./scrollDebug";
+
+/** 块命令的滚动派发统一出口：打点后再 scrollIntoView，scrollDebug 的会话
+ *  归因才不会把块操作滚动误判成 ghost（键盘快捷键路径没有用户输入信号）。
+ *  v3.9.5：这里曾误写成自递归（dispatchScrolled 调用自己、从不
+ *  view.dispatch）——6 条块命令的事务从不派发，且 facade 的 catch 把
+ *  RangeError 静默吞掉，表现为「块操作编辑全部存不下来」。
+ *  blockCommands.test.ts 用 dispatch 间谍钉死这条回归。 */
+function dispatchScrolled(view: EditorView, tr: Transaction): void {
+  noteScrollWrite("block-op");
+  view.dispatch(tr.scrollIntoView());
+}
 
 /** The "movable unit" at $pos: the top-level block, or — inside a top-level
  *  list — the shallowest list_item (the visible whole item). */
@@ -165,7 +177,7 @@ function switchListKind(view: EditorView, kind: BlockTargetKind): void {
       p += c.nodeSize;
     }
   }
-  view.dispatch(tr.scrollIntoView());
+  dispatchScrolled(view, tr);
 }
 
 /** Apply a block-type target chosen from the context menu, with toggle
@@ -249,7 +261,7 @@ export function applyBlockTarget(
       tr.setSelection(
         TextSelection.near(tr.doc.resolve(Math.min(after + 1, tr.doc.content.size)), 1)
       );
-      view.dispatch(tr.scrollIntoView());
+      dispatchScrolled(view, tr);
       break;
     }
   }
@@ -295,7 +307,7 @@ export function moveBlockCommand(view: EditorView, dir: "up" | "down"): boolean 
   const ins = tr.mapping.map(dir === "down" ? tEnd : tStart);
   tr.insert(ins, copy);
   tr.setSelection(TextSelection.near(tr.doc.resolve(ins + headOff), 1));
-  view.dispatch(tr.scrollIntoView());
+  dispatchScrolled(view, tr);
   return true;
 }
 
@@ -314,7 +326,7 @@ export function duplicateBlockCommand(view: EditorView): void {
   );
   const tr = state.tr.insert(end, unit.node.copy(unit.node.content));
   tr.setSelection(TextSelection.near(tr.doc.resolve(end + headOff), 1));
-  view.dispatch(tr.scrollIntoView());
+  dispatchScrolled(view, tr);
 }
 
 /** Delete the movable unit; caret falls to the end of the preceding neighbour
@@ -330,5 +342,5 @@ export function deleteBlockCommand(view: EditorView): void {
   tr.setSelection(
     TextSelection.near(tr.doc.resolve(Math.min(start, tr.doc.content.size)), -1)
   );
-  view.dispatch(tr.scrollIntoView());
+  dispatchScrolled(view, tr);
 }

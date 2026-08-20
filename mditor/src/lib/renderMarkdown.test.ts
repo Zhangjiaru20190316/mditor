@@ -39,6 +39,23 @@ describe("renderMarkdown sanitize", () => {
     expect(html).toContain("color:red");
   });
 
+  it("prunes non-color declarations from inline styles (v3.9.1)", async () => {
+    // rehype-sanitize 放行的 style 属性不做值级过滤；管线在 sanitize 之后
+    // 把 span/mark 的内联 style 裁剪为仅 color / background-color。
+    const html = await renderMarkdown(
+      '<span style="color:red;position:fixed;inset:0">t</span>'
+    );
+    expect(html).toContain("color:red");
+    expect(html).not.toContain("position:fixed");
+    expect(html).not.toContain("inset");
+    // mark 上的危险声明同样被裁剪，安全声明保留。
+    const html2 = await renderMarkdown(
+      '<mark style="background-color:yellow;transform:translate(0)">t</mark>'
+    );
+    expect(html2).toContain("background-color:yellow");
+    expect(html2).not.toContain("transform");
+  });
+
   it("keeps math classes for KaTeX", async () => {
     const html = await renderMarkdown("$x^2$");
     expect(html).toContain("katex");

@@ -13,6 +13,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { openMd, saveMd, saveMdAs, baseName } from "../lib/tauriFs";
 import { pushRecent } from "../lib/store";
+import { invalidatePrefetch } from "../lib/filePrefetch";
 import type { DocState } from "../types";
 
 export interface FileApi {
@@ -135,7 +136,11 @@ export function useFile(): FileApi {
       const suggest = d.path ? baseName(d.path) : title || "untitled.md";
       const path = await saveMdAs(content, suggest.endsWith(".md") ? suggest : `${suggest}.md`);
       if (!path) return false;
-      setDoc({ path, content, dirty: false });
+      invalidatePrefetch(path);
+      // 对话框期间到达的编辑不在本次落盘内容里：保持 dirty，让自动保存/
+      // Ctrl+S 把它们写入新路径，而不是被误标为已保存。
+      const live = getContent();
+      setDoc((prev) => ({ ...prev, path, content: live, dirty: live !== content }));
       await pushRecent({
         path,
         name: baseName(path),
@@ -146,13 +151,31 @@ export function useFile(): FileApi {
     []
   );
 
+  // 落盘后的收尾（save/writeOnly 共用）：只有缓冲区在写盘窗口内没被别人
+  // 动过（prev.content 仍等于提交时的快照）才回写状态。dirty 按「当前实时
+  // 内容是否等于提交内容」判定 —— 写盘期间的新击键保持 dirty，由下一次
+  // 自动保存补写，不会被误清（v3.9.1 修复：旧版无条件清脏+回写旧内容，
+  // 会把 IPC 窗口内的输入静默丢弃）。
+  const settleAfterWrite = useCallback(
+    (getContent: () => string, submitted: string, contentAtSubmit: string) => {
+      const live = getContent();
+      setDoc((prev) =>
+        prev.content === contentAtSubmit
+          ? { ...prev, content: live, dirty: live !== submitted }
+          : prev
+      );
+    },
+    []
+  );
+
   const save = useCallback(
     async (getContent: () => string) => {
       const d = docRef.current;
       if (!d.path) return saveAs(getContent);
       const content = getContent();
       await saveMd(d.path, content);
-      setDoc((prev) => ({ ...prev, content, dirty: false }));
+      invalidatePrefetch(d.path);
+      settleAfterWrite(getContent, content, d.content);
       await pushRecent({
         path: d.path,
         name: baseName(d.path),
@@ -160,21 +183,25 @@ export function useFile(): FileApi {
       });
       return true;
     },
-    [saveAs]
+    [saveAs, settleAfterWrite]
   );
 
   // Lightweight disk write for autosave: skip the recent-list churn. The path
   // is already in the recent list from open/saveAs, so re-serializing the whole
   // store every 30s is pure waste — and over a long editing session that steady
   // IPC/JSON churn is a leading cause of webview memory growth.
-  const writeOnly = useCallback(async (getContent: () => string) => {
-    const d = docRef.current;
-    if (!d.path) return false;
-    const content = getContent();
-    await saveMd(d.path, content);
-    setDoc((prev) => ({ ...prev, content, dirty: false }));
-    return true;
-  }, []);
+  const writeOnly = useCallback(
+    async (getContent: () => string) => {
+      const d = docRef.current;
+      if (!d.path) return false;
+      const content = getContent();
+      await saveMd(d.path, content);
+      invalidatePrefetch(d.path);
+      settleAfterWrite(getContent, content, d.content);
+      return true;
+    },
+    [settleAfterWrite]
+  );
 
   const markDirty = useCallback(() => {
     setDoc((d) => (d.dirty ? d : { ...d, dirty: true }));
@@ -185,6 +212,10 @@ export function useFile(): FileApi {
   }, []);
 
   const noteExternalReload = useCallback((content: string) => {
+    // 外部程序改写了磁盘：预读缓存里的旧内容必须失效，否则下次打开该
+    // 文件会把缓存里的过期版本当作最新（v3.9.1）。
+    const path = docRef.current.path;
+    if (path) invalidatePrefetch(path);
     setDoc((d) => ({ ...d, content, dirty: false }));
   }, []);
 

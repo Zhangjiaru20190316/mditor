@@ -90,6 +90,10 @@ export function useSettings(): SettingsApi {
       try {
         const s = await loadSettings();
         setSettings(s);
+      } catch (e) {
+        // mditor.json 损坏/不可读：保持默认设置可用（否则是未处理 rejection
+        // + 界面无反馈）。不在这轮写入回存，避免用默认值覆盖原配置。
+        console.warn("[mditor] 设置加载失败，使用默认设置：", e);
       } finally {
         setLoading(false);
       }

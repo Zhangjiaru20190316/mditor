@@ -8,10 +8,17 @@
 // 选择；Esc / 点击外部关闭；悬浮到已展开菜单的相邻菜单自动切换。下拉层
 // position:fixed + 视口钳制（对齐 FileTree 的 ContextMenu 写法）。
 //
+// 下拉层经 createPortal 挂到 document.body：.titlebar 是 position:relative +
+// z-index:85 的层叠上下文，会把内部 z-index:95 的下拉层封顶在 85 —— v3.9.4
+// 把 .tabbar/.sb-status 升到 85 后（DOM 顺序靠后，同值后者胜），菜单卡片
+// 被标签栏整片盖住。Portal 到 body 后 94/95 直接参与根层叠竞争，稳压
+// chrome 层(85)/批注弹层(70)/右键菜单(90-91)，仍低于弹窗(100)。
+//
 // React.memo：App 每次按键都重渲染，但本组件 props（focusMode/theme/
 // onDispatch）只在模式或主题变化时才变 —— 打字期间完全跳过重渲染。
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { CheckIcon } from "./icons";
 
 /** 单个菜单条目：自定义项（id 转发 dispatchMenu）或分隔线。 */
@@ -246,41 +253,43 @@ export const MenuBar = memo(function MenuBar({ focusMode, theme, typewriter, onD
         </button>
       ))}
 
-      {open !== null && (
-        <>
-          {/* 点击外部关闭：背板从标题栏下缘开始，标题栏上的菜单按钮保持可点
-              （点击相邻菜单 = 直接切换，无需先关再开）。 */}
-          <div
-            className="mb-backdrop"
-            onMouseDown={close}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              close();
-            }}
-          />
-          <div className="mb-dropdown" role="menu" style={pos} ref={dropdownRef}>
-            {menus[open].entries.map((entry, j) =>
-              entry.kind === "sep" ? (
-                <div key={`sep-${j}`} className="mb-sep" />
-              ) : (
-                <button
-                  key={entry.id}
-                  className="mb-item"
-                  role="menuitem"
-                  onClick={() => activate(entry)}
-                >
-                  <span className="mb-item-mark">
-                    {entry.marked && entry.mark === "check" && <CheckIcon size={12} />}
-                    {entry.marked && entry.mark === "dot" && <span className="mb-dot" />}
-                  </span>
-                  <span className="mb-item-label">{entry.label}</span>
-                  {entry.hint && <span className="mb-item-hint">{entry.hint}</span>}
-                </button>
-              )
-            )}
-          </div>
-        </>
-      )}
+      {open !== null &&
+        createPortal(
+          <>
+            {/* 点击外部关闭：背板从标题栏下缘开始，标题栏上的菜单按钮保持可点
+                （点击相邻菜单 = 直接切换，无需先关再开）。 */}
+            <div
+              className="mb-backdrop"
+              onMouseDown={close}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                close();
+              }}
+            />
+            <div className="mb-dropdown" role="menu" style={pos} ref={dropdownRef}>
+              {menus[open].entries.map((entry, j) =>
+                entry.kind === "sep" ? (
+                  <div key={`sep-${j}`} className="mb-sep" />
+                ) : (
+                  <button
+                    key={entry.id}
+                    className="mb-item"
+                    role="menuitem"
+                    onClick={() => activate(entry)}
+                  >
+                    <span className="mb-item-mark">
+                      {entry.marked && entry.mark === "check" && <CheckIcon size={12} />}
+                      {entry.marked && entry.mark === "dot" && <span className="mb-dot" />}
+                    </span>
+                    <span className="mb-item-label">{entry.label}</span>
+                    {entry.hint && <span className="mb-item-hint">{entry.hint}</span>}
+                  </button>
+                )
+              )}
+            </div>
+          </>,
+          document.body
+        )}
     </nav>
   );
 });

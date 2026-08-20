@@ -27,22 +27,35 @@ import { useFileWatcher } from "../hooks/useFileWatcher";
 import { useMemoryGuard } from "../hooks/useMemoryGuard";
 import { BlockContextMenu } from "./BlockContextMenu";
 import { persistImage } from "../lib/imageManager";
+import { attachScrollWatch, noteScrollWrite } from "../lib/scrollDebug";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { basename } from "../lib/path-shim";
 import {
   appendAnnotationDefinition,
   nextAnnotationId,
+  parseAnnotations,
   refToken,
   removeAnnotationFromMd,
   updateAnnotationInMd,
 } from "../lib/annotations";
-import type { CodeLineMeta } from "../lib/codeAnno";
+import { withCodeLineMeta, type CodeLineMeta } from "../lib/codeAnno";
+import { annoCount, annoEmit } from "../lib/annoDebug";
 import { formatBytes, getHeapUsage, IS_DEV } from "../lib/memory";
 import { normalizeAnchorText } from "../lib/anchorSearch";
 import { logMemory } from "../lib/diagnostics";
 import { saveHealSnapshot } from "../lib/session";
 import type { EditMode, Settings, BlockInfo, FlatHeading } from "../types";
+
+// 批注定点写失败诊断的限频出口：流式每帧都可能失败一次，无限频会把控制台
+// 刷爆（真实环境确认失败原因用），2 秒最多一条。
+let lastAnnoTargetedWarnAt = 0;
+function warnAnnoTargeted(msg: string): void {
+  const now = Date.now();
+  if (now - lastAnnoTargetedWarnAt < 2000) return;
+  lastAnnoTargetedWarnAt = now;
+  console.warn(msg);
+}
 
 export interface EditorHandle {
   getValue: () => string;
@@ -123,8 +136,10 @@ export interface EditorHandle {
     anchorText?: string,
     range?: { from: number; to: number } | null
   ) => string | null;
-  /** Replace the body of an existing annotation definition. */
-  updateAnnotation: (id: string, content: string) => void;
+  /** Replace the body of an existing annotation definition. `transient: true`
+   *  表示这是 AI 流式中间帧（下一帧会覆盖、收尾有权威写入）：定点失败时
+   *  跳帧而不是整篇回退（整篇每帧一次 = 代码块/徽章连根重建闪烁）。 */
+  updateAnnotation: (id: string, content: string, transient?: boolean) => void;
   /** Remove an annotation entirely: strips its marker(s) and definition. */
   removeAnnotation: (id: string) => void;
   /* ---- AI 写回（一步撤销）----
@@ -184,6 +199,8 @@ export const Editor = memo(
     ref
   ) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  // 根 div .mditor-editor-host —— 富文本/IR 真正滚动的容器（scrollDebug 观察器挂载点）。
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
   const sourceRef = useRef<HTMLTextAreaElement | null>(null);
   // sv 模式的 CodeMirror 宿主（V3.6）。
   const svHostRef = useRef<HTMLDivElement | null>(null);
@@ -201,6 +218,19 @@ export const Editor = memo(
   // Content that arrived via fileApi.onLoaded while Milkdown was still
   // initializing. Replayed into the editor once it becomes ready.
   const pendingContentRef = useRef<string | null>(null);
+  // 批注流式热路径的代码行元数据缓存（id → meta，undefined = 未解析过）：
+  // 首帧整篇解析一次，后续帧直接复用（见 updateAnnotation）。
+  const annoMetaCacheRef = useRef(new Map<string, CodeLineMeta | null>());
+  // 定点写批注失败的断路器状态（流式跳帧守卫，见 updateAnnotation）：
+  // - no-parse（定义体形态解析不出节点）→ 一律跳帧，绝不整篇回退——
+  //   下一帧还是同形态，整篇重写不解决问题，v3.9.2 的「连续 3 帧失败
+  //   整篇自愈」在持续失败形态下退化为 1/3 帧率的整篇重写死循环
+  //   （徽章无编号 + 下方代码块连片闪的直接来源，v3.9.3 断路器终结）；
+  // - no-def（定义节点不在文档）→ 整篇自愈至多一次，再失败进 degraded
+  //   静默跳帧，等收尾 finalizeAnnotationBody 权威写入。
+  const annoHealRef = useRef(
+    new Map<string, { heals: number; degraded: boolean }>()
+  );
 
   // fileApi is consumed through a ref so effects below don't re-subscribe on
   // every fileApi identity change. CRITICAL: useFile memoises fileApi on
@@ -239,6 +269,10 @@ export const Editor = memo(
   // when the editor instance changes is both correct and loop-free.
   useEffect(() => {
     fileApiRef.current.setOnLoaded((content) => {
+      // 换了文档：代码行批注的元数据缓存按批注 id（anno-N）索引，不清空
+      // 会把上一篇文档同号批注的 codeLine 注入新文档（v3.9.1）。
+      annoMetaCacheRef.current.clear();
+      annoHealRef.current.clear();
       const ed = handle.editor;
       if (ed) {
         // 整篇文档载入：clearStack=true 清空 undo/redo 栈（Milkdown 的
@@ -266,6 +300,18 @@ export const Editor = memo(
     }
   }, [handle.ready, handle.editor]);
 
+  // 滚动观察器（scrollDebug）：会话归因 / 视口位移哨兵 / 高度突变 / 长任务。
+  // 常驻（每帧常数次属性读取，亚毫秒级），窗口失焦 rAF 自动暂停。
+  // 必须挂真正滚动的根 div（.mditor-editor-host）——hostRef 指向的
+  // .mditor-milkdown 是内容层，scrollTop 恒 0：挂它归因哑火、正常滚动
+  // 每帧误报 layout:shift。sv 模式下 host 不滚（.cm-scroller 内滚），
+  // 观察器自然休眠（见 scrollDebug.ts 头注）。
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    return attachScrollWatch(scroller);
+  }, [handle.ready]);
+
   // Apply theme whenever settings change.
   useEffect(() => {
     handle.applyTheme(settings);
@@ -283,11 +329,23 @@ export const Editor = memo(
 
   // 打字机模式（富文本路径，V3.6）：光标行保持在视口中部。sv 模式由
   // CodeMirror 的 isTypewriter 钩子在编辑器内部处理。
+  // v3.9.4：让位从「wheel 后 350ms 黑out」改为「滚动静止检测」。wheel 时间
+  // 戳盖不住触摸板/滚轮的惯性期（WebView2 上惯性可远超 350ms）——黑out
+  // 一到、惯性未止，任何 selectionchange（点击残留选区被 PM 重读、AI 写入
+  // 等）触发的居中都会反向拽 scrollTop，与用户惯性对拉 =「页面自己动」。
+  // scroll 事件在整个惯性期持续触发，以其静止 400ms 作为恢复条件天然覆盖
+  // 全程（也顺带覆盖键盘滚动 PageDown/空格：滚动进行中绝不居中）。
+  // centerCaret 自己写 scrollTop 也会触发 scroll → 自我抑制一拍，防自激。
   useEffect(() => {
     if (!settings.typewriterMode || handle.mode === "sv") return;
     let raf: number | null = null;
+    let lastScrollAt = 0;
+    const onScroll = () => {
+      lastScrollAt = performance.now();
+    };
     const centerCaret = () => {
       raf = null;
+      if (performance.now() - lastScrollAt < 400) return;
       const sel = window.getSelection();
       if (!sel || sel.rangeCount === 0) return;
       const node = sel.anchorNode;
@@ -311,14 +369,18 @@ export const Editor = memo(
       const delta = rect.top + rect.height / 2 - (hostRect.top + host.clientHeight / 2);
       // 死区：半个行高以内不滚，避免每个字符的微抖。
       if (Math.abs(delta) < 16) return;
+      noteScrollWrite("typewriter");
       host.scrollTop += delta;
     };
     const schedule = () => {
       if (raf != null) return;
       raf = requestAnimationFrame(centerCaret);
     };
+    const hostEl = document.querySelector<HTMLElement>(".mditor-editor-host");
+    hostEl?.addEventListener("scroll", onScroll, { passive: true });
     document.addEventListener("selectionchange", schedule);
     return () => {
+      hostEl?.removeEventListener("scroll", onScroll);
       document.removeEventListener("selectionchange", schedule);
       if (raf != null) cancelAnimationFrame(raf);
     };
@@ -531,7 +593,16 @@ export const Editor = memo(
     ref,
     (): EditorHandle => ({
       getValue: () => handle.editor?.getValue() ?? "",
-      setValue: (md) => handle.editor?.setValue(md, true),
+      // v3.9.1：与 replaceContent 同路径补 markDirty + onInput。setValue 的
+      // 编辑器侧监听被抑制（不回声），若不手动置脏，「全部替换」后的内容
+      // 既不进自动保存，切标签时还会被旧快照静默回滚（数据丢失）。
+      setValue: (md) => {
+        const ed = handle.editor;
+        if (!ed) return;
+        ed.setValue(md, true);
+        fileApiRef.current.markDirty();
+        onInputRef.current?.(md);
+      },
       getHTML: () => handle.editor?.getHTML() ?? "",
       insertAtCursor: (md) => {
         const ed = handle.editor;
@@ -698,7 +769,23 @@ export const Editor = memo(
         // silently rejected by the schema, which is why annotating code used
         // to leave a dangling definition with no badge). Returns false when
         // no usable spot exists, in which case we fall back to the tail below.
-        if (ed.insertAnnoMarker(id, range ?? null, anchorText)) {
+        // v3.9.1：marker 与定义都定点写入（appendAnnoDefinition），不再整篇
+        // setValue —— 创建批注的瞬间代码块 CodeMirror 子编辑器不重建（不闪）。
+        const markerOk = ed.insertAnnoMarker(id, range ?? null, anchorText);
+        if (markerOk && ed.appendAnnoDefinition(id, content, codeLine)) {
+          annoEmit("anno.append.targeted", `创建 ${id}（定点，代码块不重建）`, {
+            data: { id, codeLine: !!codeLine },
+          });
+          fileApiRef.current.markDirty();
+          onInputRef.current?.(ed.getValue());
+          return id;
+        }
+        annoEmit("anno.append.full", `创建 ${id} 回退整篇重写`, {
+          level: "warn",
+          data: { id, markerOk },
+        });
+        // 定点路径失败（定义解析不了/sv 之外的边缘）→ 整篇回退（旧行为）。
+        if (markerOk) {
           withMarker = ed.getValue() ?? "";
         }
         // No usable anchor — append the marker to the end of the body so it
@@ -714,25 +801,111 @@ export const Editor = memo(
         onInputRef.current?.(ed.getValue());
         return id;
       },
-      updateAnnotation: (id, content) => {
+      updateAnnotation: (id, content, transient = false) => {
         const ed = handle.editor;
         if (!ed) return;
+        // 流式精炼热路径（v3.9）：定点替换 footnote_definition 节点 ——
+        // 代码块（CodeMirror 子编辑器）与其余块的 DOM 不重建，消除
+        // “代码块批注流式期间乱闪”。代码行元数据首帧整篇解析一次并缓存
+        // （O(doc) 只付一次），后续帧零解析。markdownUpdated 监听器负责
+        // markDirty + 上抛镜像（与用户输入同一条路径）。
+        let meta = annoMetaCacheRef.current.get(id);
+        if (meta === undefined) {
+          meta =
+            parseAnnotations(ed.getValue() ?? "").find((a) => a.id === id)
+              ?.codeLine ?? null;
+          annoMetaCacheRef.current.set(id, meta);
+        }
+        const body = withCodeLineMeta(content, meta);
+        const r = ed.updateAnnotationBody(id, body, meta);
+        if (r.ok) {
+          annoHealRef.current.delete(id);
+          annoCount("stream.targeted.ok");
+          return;
+        }
+        const reasonLabel =
+          r.reason === "no-def" ? "定义未找到" : r.reason === "no-parse" ? "解析失败" : "表面不支持";
+        // sv 等表面：定点操作本来就不适用，整篇写回代价低（单 CM 实例，
+        // 无代码块子编辑器可重建），照旧回退。
+        if (r.reason !== "surface" && transient) {
+          // rich 模式流式帧断路器（v3.9.3）：
+          //  * no-parse —— 定义体形态解析不出节点。整篇 setValue 走的是
+          //    同一个解析器，下一帧同形态还会失败：v3.9.2 的「连续 ≥3 帧
+          //    失败整篇自愈」在这种持续失败形态下变成 1/3 帧率的整篇重写
+          //    死循环——所有代码块的 CodeMirror 子编辑器连根重建（占位符
+          //    ↔CM 闪烁）+ 全部徽章重建（编号 60ms 内补不回 = 无编号、
+          //    悬停闪烁）。流式中间态本就可能解析不出：跳帧，等下一帧或
+          //    收尾 finalizeAnnotation 的权威写入。
+          //  * no-def —— 定义节点不在文档（孤儿/被解析丢弃）。整篇自愈
+          //    至多一次；再失败说明自愈无效（解析器持续丢弃该形态），
+          //    进 degraded 静默跳帧，同样等收尾。
+          if (r.reason === "no-parse") {
+            annoCount("stream.skip.no-parse");
+            warnAnnoTargeted(
+              `[mditor] updateAnnotationBody 跳帧（${reasonLabel}，id=${id}）——流式中间态，等待后续帧/收尾（不整篇回退）`
+            );
+            return;
+          }
+          const st = annoHealRef.current.get(id) ?? { heals: 0, degraded: false };
+          if (st.degraded) {
+            annoCount("stream.skip.degraded");
+            return;
+          }
+          if (st.heals >= 1) {
+            st.degraded = true;
+            annoHealRef.current.set(id, st);
+            annoEmit("stream.degraded", `流式 ${id} 自愈无效，进入降级跳帧（等收尾）`, {
+              level: "warn",
+              data: { id },
+            });
+            return;
+          }
+          st.heals += 1;
+          annoHealRef.current.set(id, st);
+          annoEmit("stream.heal", `流式 ${id} 定义缺失，整篇自愈一次`, {
+            level: "warn",
+            data: { id },
+          });
+        } else {
+          annoHealRef.current.delete(id);
+        }
+        // 手动保存（非流式）/ surface / no-def 首次自愈：整篇回退（旧行为）。
+        // warn 限频，便于在真实环境确认回退频率与原因。
+        annoEmit("anno.update.full", `更新 ${id} 整篇重写（${reasonLabel}${transient ? "，自愈" : ""}）`, {
+          level: "warn",
+          data: { id, reason: r.reason, transient },
+        });
+        warnAnnoTargeted(
+          `[mditor] updateAnnotationBody 回退整篇重写（${reasonLabel}，id=${id}）`
+        );
         const md = ed.getValue() ?? "";
         const next = updateAnnotationInMd(md, id, content);
         if (next === md) return;
         // flush=false：流式更新按相邻合并进同一撤销组；收尾（finalizeAnnotation）
         // 用 baseline 收束为一步。
         ed.setValue(next);
+        annoCount("fulldoc.setValue");
         fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
       removeAnnotation: (id) => {
         const ed = handle.editor;
         if (!ed) return;
+        // 定点删除：单事务删定义 + 引用（代码块不重建，删除不闪）。
+        // 定义已不存在（孤儿标记）时返回 false → 整篇回退清残留引用。
+        if (ed.removeAnno(id)) {
+          annoEmit("anno.remove.targeted", `删除 ${id}（定点）`, { data: { id } });
+          return;
+        }
+        annoEmit("anno.remove.full", `删除 ${id} 回退整篇重写（孤儿标记清理）`, {
+          level: "warn",
+          data: { id },
+        });
         const md = ed.getValue() ?? "";
         const next = removeAnnotationFromMd(md, id);
         if (next === md) return;
         ed.setValue(next);
+        annoCount("fulldoc.setValue");
         fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
@@ -769,6 +942,32 @@ export const Editor = memo(
           // 此时走 baseline 回卷会把流式期间的其他编辑一并卷掉。
           return;
         }
+        // v3.9.1 定点收尾（不再依赖 baseline——真实调用链的 baseline 捕获于
+        // 创建之前，旧实现从中找不到本批注定义、必然回退整篇 aiWriteFinalize，
+        // 代码块被重建两遍，即「收尾闪烁」）：无痕删除批注落点 + 原位放回
+        // marker 与最终定义。两步都只触碰批注自己的节点。一次 Ctrl+Z 仍回到
+        // 批注前。失败回退整篇路径（保留 aiWriteFinalize 语义作安全网）。
+        let meta = annoMetaCacheRef.current.get(id);
+        if (meta === undefined) {
+          meta =
+            parseAnnotations(md).find((a) => a.id === id)?.codeLine ?? null;
+          annoMetaCacheRef.current.set(id, meta);
+        }
+        if (ed.finalizeAnnotationBody(id, content, meta)) {
+          annoEmit(
+            "anno.finalize.targeted",
+            `收尾 ${id}（定点，代码块不重建）`,
+            { data: { id } }
+          );
+          // 定点路径抑制了内部回声，统一补一次桥接（与 aiWrite* 同款）。
+          fileApiRef.current.markDirty();
+          onInputRef.current?.(ed.getValue());
+          return;
+        }
+        annoEmit("anno.finalize.full", `收尾 ${id} 回退 aiWriteFinalize（整篇×2，一次性）`, {
+          level: "warn",
+          data: { id },
+        });
         ed.aiWriteFinalize(baseline, next);
         fileApiRef.current.markDirty();
         onInputRef.current?.(next);
@@ -802,6 +1001,7 @@ export const Editor = memo(
 
   return (
     <div
+      ref={scrollerRef}
       id={EDITOR_ID}
       className="mditor-editor-host"
       data-big={handle.bigDoc ? "" : undefined}
