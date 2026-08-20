@@ -10,6 +10,16 @@ HeapSnapshot-*.json
 
 # Session/tool files
 .zcode/
+.mimosa/
+.openclaw/
+
+# Agent 工具运行时状态（hook 会话快照/工作区状态，非仓库内容）
+deepseek-free-api/
+
+# 运行时日志（不纳入版本控制）
+server.log
+server.err.log
+tauri-build.log
 
 # Promotion drafts (not part of the repo)
 promo/
