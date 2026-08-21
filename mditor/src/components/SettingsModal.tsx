@@ -1,5 +1,10 @@
 // Settings dialog. Edits the Settings object via useSettings.update.
 //
+// v4.0.0: items are grouped into sections (外观 / 排版 / 编辑行为 / 性能与
+// 诊断 / AI 助手 / 快捷操作 / 工作区) instead of one flat list. Pure UI
+// reorganization — the draft/apply read-write flow, every control and every
+// default are unchanged (anchored by types.test.ts's settings inventory).
+//
 // Custom CSS: pick a .css file on disk; we read it and inject it live.
 
 import { useEffect, useState } from "react";
@@ -47,6 +52,9 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
   const [testMsg, setTestMsg] = useState("");
   const [testOk, setTestOk] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // 「性能与诊断」折叠组（v4.0.0 分区重构）：内存守护 / 阈值 / 批注诊断
+  // 默认收起，低频设置不与常用项平铺争夺注意力。
+  const [showPerf, setShowPerf] = useState(false);
 
   if (!open) return null;
 
@@ -164,6 +172,11 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
         </header>
 
         <section className="modal-body">
+          {/* v4.0.0 分区重组：外观 / 排版 / 编辑行为 / 性能与诊断（折叠）/
+              AI 助手 / 快捷操作 / 工作区。纯 UI 重组——每项 Field 的控件与
+              draft 读写完全不变（设置项清单有 types.test.ts 快照锚定）。 */}
+          <div className="field-section">外观</div>
+
           <Field label="主题">
             <select
               value={draft.theme}
@@ -175,73 +188,6 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
               <option value="claude">Claude（暖纸感）</option>
               <option value="claude-dark">Claude Dark</option>
             </select>
-          </Field>
-
-          <Field label="正文字号 (px)">
-            <input
-              type="number"
-              min={12}
-              max={28}
-              value={draft.fontSize}
-              onChange={(e) => set("fontSize", Number(e.target.value) || 16)}
-            />
-          </Field>
-
-          <Field label="行高">
-            <input
-              type="number"
-              step={0.05}
-              min={1}
-              max={2.5}
-              value={draft.lineHeight}
-              onChange={(e) => set("lineHeight", Number(e.target.value) || 1.75)}
-            />
-          </Field>
-
-          <Field label="段落间距 (px)">
-            <input
-              type="number"
-              min={0}
-              max={48}
-              value={draft.paragraphSpacing}
-              onChange={(e) => set("paragraphSpacing", Number(e.target.value) || 16)}
-            />
-          </Field>
-
-          <Field label="自动保存间隔 (毫秒, 0=关闭)">
-            <input
-              type="number"
-              step={1000}
-              min={0}
-              value={draft.autosaveIntervalMs}
-              onChange={(e) => set("autosaveIntervalMs", Number(e.target.value) || 0)}
-            />
-          </Field>
-
-          <Field label="内存自动优化">
-            <input
-              type="checkbox"
-              checked={draft.memoryGuard}
-              onChange={(e) => set("memoryGuard", e.target.checked)}
-            />
-            <span className="hint">
-              长时间编辑后编辑器（Markdown 解析引擎）内存只增不减。开启后，自动保存时若
-              内存超过阈值会静默重建编辑器以释放内存（内容已保存，撤销历史会清空）。
-            </span>
-          </Field>
-
-          <Field label="内存优化阈值 (MB)">
-            <input
-              type="number"
-              step={100}
-              min={256}
-              disabled={!draft.memoryGuard}
-              value={draft.memoryGuardThresholdMb}
-              onChange={(e) =>
-                set("memoryGuardThresholdMb", Number(e.target.value) || 0)
-              }
-            />
-            <span className="hint">JS 堆占用超过此值时触发重建（默认 1200）。</span>
           </Field>
 
           <Field label="字体预设">
@@ -305,6 +251,57 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
             />
           </Field>
 
+          <Field label="自定义 CSS 文件">
+            <div className="css-row">
+              <input
+                type="text"
+                className="mono"
+                placeholder="选择一个 .css 文件，或留空"
+                value={draft.customCssPath}
+                onChange={(e) => set("customCssPath", e.target.value)}
+              />
+              <button onClick={pickCss}>浏览…</button>
+            </div>
+            <span className="hint">
+              自定义样式会覆盖主题，类似 Typora 的自定义 CSS。
+            </span>
+          </Field>
+
+          <div className="field-section">排版</div>
+
+          <Field label="正文字号 (px)">
+            <input
+              type="number"
+              min={12}
+              max={28}
+              value={draft.fontSize}
+              onChange={(e) => set("fontSize", Number(e.target.value) || 16)}
+            />
+          </Field>
+
+          <Field label="行高">
+            <input
+              type="number"
+              step={0.05}
+              min={1}
+              max={2.5}
+              value={draft.lineHeight}
+              onChange={(e) => set("lineHeight", Number(e.target.value) || 1.75)}
+            />
+          </Field>
+
+          <Field label="段落间距 (px)">
+            <input
+              type="number"
+              min={0}
+              max={48}
+              value={draft.paragraphSpacing}
+              onChange={(e) => set("paragraphSpacing", Number(e.target.value) || 16)}
+            />
+          </Field>
+
+          <div className="field-section">编辑行为</div>
+
           <Field label="拼写检查">
             <input
               type="checkbox"
@@ -323,32 +320,61 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
             <span className="hint">光标行始终保持在窗口中部（两种编辑模式均生效）</span>
           </Field>
 
-          <Field label="批注诊断面板">
+          <Field label="自动保存间隔 (毫秒, 0=关闭)">
             <input
-              type="checkbox"
-              checked={draft.annoDiagPanel}
-              onChange={(e) => set("annoDiagPanel", e.target.checked)}
+              type="number"
+              step={1000}
+              min={0}
+              value={draft.autosaveIntervalMs}
+              onChange={(e) => set("autosaveIntervalMs", Number(e.target.value) || 0)}
             />
-            <span className="hint">
-              批注链路事件流 / 整篇重写计数 / 批注体检（快捷键 Ctrl+Alt+D）
-            </span>
           </Field>
 
-          <Field label="自定义 CSS 文件">
-            <div className="css-row">
+          {/* 性能与诊断 — 默认收起（复用 field-collapsible 既有折叠模式） */}
+          <button
+            type="button"
+            className="field-collapsible"
+            onClick={() => setShowPerf((s) => !s)}
+            aria-expanded={showPerf}
+          >
+            <ChevronRightIcon size={11} className={`chevron${showPerf ? " open" : ""}`} /> 性能与诊断
+          </button>
+          <div className={`field-collapse${showPerf ? " open" : ""}`}>
+            <Field label="内存自动优化">
               <input
-                type="text"
-                className="mono"
-                placeholder="选择一个 .css 文件，或留空"
-                value={draft.customCssPath}
-                onChange={(e) => set("customCssPath", e.target.value)}
+                type="checkbox"
+                checked={draft.memoryGuard}
+                onChange={(e) => set("memoryGuard", e.target.checked)}
               />
-              <button onClick={pickCss}>浏览…</button>
-            </div>
-            <span className="hint">
-              自定义样式会覆盖主题，类似 Typora 的自定义 CSS。
-            </span>
-          </Field>
+              <span className="hint">
+                长时间编辑后编辑器（Markdown 解析引擎）内存只增不减。开启后，自动保存时若
+                内存超过阈值会静默重建编辑器以释放内存（内容已保存，撤销历史会清空）。
+              </span>
+            </Field>
+            <Field label="内存优化阈值 (MB)">
+              <input
+                type="number"
+                step={100}
+                min={256}
+                disabled={!draft.memoryGuard}
+                value={draft.memoryGuardThresholdMb}
+                onChange={(e) =>
+                  set("memoryGuardThresholdMb", Number(e.target.value) || 0)
+                }
+              />
+              <span className="hint">JS 堆占用超过此值时触发重建（默认 1200）。</span>
+            </Field>
+            <Field label="批注诊断面板">
+              <input
+                type="checkbox"
+                checked={draft.annoDiagPanel}
+                onChange={(e) => set("annoDiagPanel", e.target.checked)}
+              />
+              <span className="hint">
+                批注链路事件流 / 整篇重写计数 / 批注体检（快捷键 Ctrl+Alt+D）
+              </span>
+            </Field>
+          </div>
 
           <div className="field-section">AI 助手（OpenAI 兼容协议）</div>
 
@@ -553,6 +579,15 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
             </span>
           </Field>
 
+          {/* 测试连接针对上方的模型/参数配置，紧随其后（原排在快捷操作之后，
+              与被测对象相隔一个分区，易误解为与快捷操作相关） */}
+          <div className="ai-test-row">
+            <button className="btn-ghost" onClick={runTest} disabled={testing}>
+              {testing ? "测试中…" : "测试连接"}
+            </button>
+            {testMsg && <span className={testOk ? "ai-test-ok" : "ai-test-err"}>{testMsg}</span>}
+          </div>
+
           <div className="field-section">快捷操作</div>
           <span className="hint" style={{ marginTop: -4 }}>
             作用域「全文」的操作显示在 AI 面板顶部；「选区」操作显示在选中文字的工具条。
@@ -598,14 +633,7 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
             </button>
           </div>
 
-          <div className="ai-test-row">
-            <button className="btn-ghost" onClick={runTest} disabled={testing}>
-              {testing ? "测试中…" : "测试连接"}
-            </button>
-            {testMsg && <span className={testOk ? "ai-test-ok" : "ai-test-err"}>{testMsg}</span>}
-          </div>
-
-          <div className="field-section">已从工作区移除的项目</div>
+          <div className="field-section">工作区</div>
           <div className="excluded-hint">
             以下项仅从文件树隐藏，磁盘文件未删除；点「恢复」可在文件树重新显示。
           </div>
