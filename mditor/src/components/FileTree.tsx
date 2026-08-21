@@ -9,16 +9,29 @@
 //   * childrenMap : dir path → its loaded children (root included)
 //   * expanded    : set of expanded dir paths
 //   * loadingDirs : dirs whose children are currently being read
-// FileNode receives its own `expanded`/`childNodes`/`loading` as props (so
-// React.memo still skips unchanged siblings) plus stable ref-backed accessors
-// to compute its children's props. The active file's ancestor chain is loaded +
+// FileNode reads its own `expanded`/`childNodes`/`loading` via
+// useSyncExternalStore subscriptions on that centralized state (notified
+// after every FileTree render): toggling a folder deep in the tree re-renders
+// exactly the affected row, and React.memo still skips unchanged siblings.
+// (v4.0.0 — these three used to be props computed inside the PARENT row's
+// render; when a deeper folder toggled, the parent's own props were unchanged
+// so its memo skip froze the whole subtree: depth ≥ 2 folders expanded in
+// state but never visibly.) The active file's ancestor chain is loaded +
 // expanded automatically so the open file stays visible.
 //
 // Performance: FileTree and FileNode are both React.memo'd. `onOpen`/`onChanged`
 // are stable callbacks from App (read via refs). Batch/selection props only
 // change during management interactions — never while typing in the editor.
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ContextMenu } from "./ContextMenu";
 import type { CtxEntry } from "./ContextMenu";
 import {
@@ -145,6 +158,27 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
   expandedRef.current = expanded;
   const loadingDirsRef = useRef(loadingDirs);
   loadingDirsRef.current = loadingDirs;
+
+  // ---- row-level state subscription (v4.0.0) -------------------------------
+  // Nested rows' expanded / childNodes / loading derive from the centralized
+  // state above. Computing them as props inside the PARENT row's render let
+  // the parent's React.memo skip freeze every deeper level: a depth ≥ 2 toggle
+  // changed no prop of the intermediate rows, so their subtrees never
+  // re-rendered and the click looked dead. Rows now subscribe directly —
+  // FileTree notifies subscribers after each of its renders (any useState
+  // change re-renders it), and each row's snapshots are primitives /
+  // identity-stable arrays, so only the row(s) whose OWN state changed
+  // re-render. Sibling memo behavior is untouched.
+  const rowListenersRef = useRef(new Set<() => void>());
+  const subscribeRow = useCallback((fn: () => void) => {
+    rowListenersRef.current.add(fn);
+    return () => {
+      rowListenersRef.current.delete(fn);
+    };
+  }, []);
+  useEffect(() => {
+    for (const fn of rowListenersRef.current) fn();
+  });
 
   // Show a transient message in the tree header; auto-clears after 4s.
   const flash = useCallback((msg: string) => {
@@ -701,12 +735,10 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
                 selected={selected.has(n.path)}
                 isSelected={isSelected}
                 renamingPath={renamingPath}
-                expanded={isExpanded(n.path)}
-                childNodes={getChildNodes(n.path)}
-                loading={isLoading(n.path)}
                 isExpanded={isExpanded}
                 getChildNodes={getChildNodes}
                 isLoading={isLoading}
+                subscribeRow={subscribeRow}
                 onToggle={toggleDir}
                 onToggleSelect={toggleSelect}
                 onContext={openMenu}
@@ -753,12 +785,10 @@ const FileNode = memo(function FileNode({
   selected,
   isSelected,
   renamingPath,
-  expanded,
-  childNodes,
-  loading,
   isExpanded,
   getChildNodes,
   isLoading,
+  subscribeRow,
   onToggle,
   onToggleSelect,
   onContext,
@@ -781,17 +811,14 @@ const FileNode = memo(function FileNode({
    *  its descendants — the old boolean `renaming` prop gave every descendant
    *  of a renamed directory its own autoFocus input). */
   renamingPath: string | null;
-  /** Whether THIS directory is expanded (from centralized state). */
-  expanded: boolean;
-  /** THIS directory's loaded children (undefined until first expansion). */
-  childNodes?: TreeNode[];
-  /** True while THIS directory's children are being read. */
-  loading: boolean;
-  /** Stable, ref-backed accessors used to compute each child's props so memo
-   *  only re-renders the branch whose state actually changed. */
+  /** Stable, ref-backed accessors over the centralized lazy-tree state. Each
+   *  row reads its OWN expanded / children / loading through them (see the
+   *  subscriptions below) and passes them on so children can do the same. */
   isExpanded: (p: string) => boolean;
   getChildNodes: (p: string) => TreeNode[] | undefined;
   isLoading: (p: string) => boolean;
+  /** Stable subscription into FileTree's post-render row notification. */
+  subscribeRow: (fn: () => void) => () => void;
   onToggle: (p: string) => void;
   onToggleSelect: (p: string) => void;
   onContext: (e: React.MouseEvent, node: TreeNode) => void;
@@ -804,6 +831,23 @@ const FileNode = memo(function FileNode({
   // Chunked mounting for huge directories (see CHILD_CHUNK): reveal more on
   // demand instead of mounting thousands of rows the moment the dir expands.
   const [visibleCount, setVisibleCount] = useState(CHILD_CHUNK);
+  // Own-state subscriptions (v4.0.0): this row re-renders when ITS expanded /
+  // loaded children / loading flag changes, however deep it sits — the old
+  // props-from-parent scheme froze subtrees under any memo-skipped ancestor,
+  // so depth ≥ 2 folders never visibly expanded. Snapshots are booleans or
+  // identity-stable arrays, so unrelated rows stay skipped by memo.
+  const expanded = useSyncExternalStore(
+    subscribeRow,
+    () => isExpanded(node.path)
+  );
+  const childNodes = useSyncExternalStore(
+    subscribeRow,
+    () => getChildNodes(node.path)
+  );
+  const loading = useSyncExternalStore(
+    subscribeRow,
+    () => isLoading(node.path)
+  );
 
   const handleRowClick = () => {
     if (batchMode) {
@@ -877,12 +921,10 @@ const FileNode = memo(function FileNode({
                 selected={isSelected(c.path)}
                 isSelected={isSelected}
                 renamingPath={renamingPath}
-                expanded={isExpanded(c.path)}
-                childNodes={getChildNodes(c.path)}
-                loading={isLoading(c.path)}
                 isExpanded={isExpanded}
                 getChildNodes={getChildNodes}
                 isLoading={isLoading}
+                subscribeRow={subscribeRow}
                 onToggle={onToggle}
                 onToggleSelect={onToggleSelect}
                 onContext={onContext}
