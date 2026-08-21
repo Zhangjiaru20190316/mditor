@@ -1658,24 +1658,22 @@ export default function App() {
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeAi = useCallback(() => setAiOpen(false), []);
 
-  // 跨文件搜索结果 → 打开文件并跳到命中处（V3.6）。sv 模式按行号跳；
-  // 富文本按整行内容 reveal（anchorSearch 的空白归一比对可容忍行首缩进）。
-  // 300ms 延迟跳转若撞上用户滚动就是「自己动」形态之一——打点归因
-  // （scrollDebug 会话归因据此区分类别，不会误报 ghost）。
+  // 跨文件搜索结果 → 打开文件并跳到命中处（V3.6；v4.0.0 改确定性时机）。
+  // sv 模式按行号跳；富文本按整行内容 reveal（anchorSearch 的空白归一比对
+  // 可容忍行首缩进）。定位经 Editor 的 revealAfterLoad 排队，在文档内容于
+  // 编辑器落地后触发——旧实现固定 300ms 延时竞速，冷缓存 / 大文档预解析 /
+  // 编辑器重建超过 300ms 时跳转打在未就绪的编辑器上被静默吞掉，用户看到
+  // 的就是「只打开了文件、没定位」。滚动打点（search-jump 归因）随跳转
+  // 移入 Editor 的执行点，与真正的滚动写入同步。
   const onOpenSearchResult = useCallback(
     async (path: string, hit: SearchHit) => {
       await openPath(path);
-      window.setTimeout(() => {
-        noteScrollWrite("search-jump");
-        if (editMode === "sv") {
-          editorRef.current?.jumpToSourceLine(hit.line);
-        } else {
-          const needle = hit.full.trim();
-          if (needle) editorRef.current?.revealText(needle);
-        }
-      }, 300);
+      editorRef.current?.revealAfterLoad({
+        line: hit.line,
+        text: hit.full.trim(),
+      });
     },
-    [openPath, editMode]
+    [openPath]
   );
 
   // 「插入链接」弹窗确认 → 编辑器写回（V3.6）。

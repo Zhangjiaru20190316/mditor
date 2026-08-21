@@ -155,6 +155,13 @@ export interface EditorHandle {
   finalizeAnnotation: (id: string, content: string, baseline: string) => void;
   /** 滚动到 needle 首次出现处（改动审查「查看上下文」跳转）。 */
   revealText: (needle: string) => void;
+  /** 搜索结果定位（v4.0.0）：打开文件后跳到匹配处——sv 模式按行号
+   *  （jumpToLine），富文本按整行文本 reveal，按触发时刻的模式二选一。
+   *  执行时机是确定性的：编辑器就绪且内容已应用时立即执行；否则排队，
+   *  由内容应用点（onLoaded 的同步 setValue / 未就绪缓冲的就绪重放）
+   *  触发——替代调用方固定延时与编辑器重建竞速、跳转被静默吞掉的旧
+   *  方案。目标随新一次文档载入作废（onLoaded 清队），不会串档。 */
+  revealAfterLoad: (target: { line: number; text: string }) => void;
   /** 按内容定位文档区间（选区失效时的回退锚定）。 */
   findTextRange: (needle: string, hint?: number) => { from: number; to: number } | null;
   /** [from,to) 的纯文本（选区有效性校验）。 */
@@ -218,6 +225,9 @@ export const Editor = memo(
   // Content that arrived via fileApi.onLoaded while Milkdown was still
   // initializing. Replayed into the editor once it becomes ready.
   const pendingContentRef = useRef<string | null>(null);
+  // 排队中的搜索定位（revealAfterLoad）：待文档内容在编辑器里确定落地后
+  // 执行（见 execPendingReveal 的两个触发点）。
+  const pendingRevealRef = useRef<{ line: number; text: string } | null>(null);
   // 批注流式热路径的代码行元数据缓存（id → meta，undefined = 未解析过）：
   // 首帧整篇解析一次，后续帧直接复用（见 updateAnnotation）。
   const annoMetaCacheRef = useRef(new Map<string, CodeLineMeta | null>());
@@ -263,6 +273,17 @@ export const Editor = memo(
   // CSS can restyle markers into badges and hide their definition blocks.
   useAnnotationMarkers(handle.ready);
 
+  // 执行排队中的搜索定位（见 revealAfterLoad）。模式在触发时刻读取——
+  // 排队期间用户可能切换了 sv/富文本，按当下模式选行号或文本定位。
+  const execPendingReveal = useCallback(() => {
+    const t = pendingRevealRef.current;
+    if (!t) return;
+    pendingRevealRef.current = null;
+    noteScrollWrite("search-jump");
+    if (handle.mode === "sv") handle.editor?.jumpToLine(t.line);
+    else if (t.text) handle.editor?.revealText(t.text);
+  }, [handle]);
+
   // Wire fileApi.onLoaded so opening a file pushes content into the editor.
   // `fileApi` is deliberately NOT in the dep array — see fileApiRef above. The
   // callback only closes over handle.editor + refs, so re-subscribing purely
@@ -273,6 +294,10 @@ export const Editor = memo(
       // 会把上一篇文档同号批注的 codeLine 注入新文档（v3.9.1）。
       annoMetaCacheRef.current.clear();
       annoHealRef.current.clear();
+      // 新文档落地：上一文档遗留的排队定位作废（本回调先于调用方的
+      // revealAfterLoad 请求执行——fileApi.openPath 内同步触发 onLoaded，
+      // 调用方在 await 之后才排队，故这里清的只可能是过期目标）。
+      pendingRevealRef.current = null;
       const ed = handle.editor;
       if (ed) {
         // 整篇文档载入：clearStack=true 清空 undo/redo 栈（Milkdown 的
@@ -298,7 +323,11 @@ export const Editor = memo(
       handle.editor?.setValue(pendingContentRef.current, true);
       pendingContentRef.current = null;
     }
-  }, [handle.ready, handle.editor]);
+    // 就绪即触发排队中的搜索定位：缓冲重放后内容确定落地；重建但无缓冲
+    // （内容随新实例种子就位）时同样成立。onLoaded 已清队，剩下的排队
+    // 目标必然属于当前文档。
+    if (handle.ready) execPendingReveal();
+  }, [handle.ready, handle.editor, execPendingReveal]);
 
   // 滚动观察器（scrollDebug）：会话归因 / 视口位移哨兵 / 高度突变 / 长任务。
   // 常驻（每帧常数次属性读取，亚毫秒级），窗口失焦 rAF 自动暂停。
@@ -973,6 +1002,13 @@ export const Editor = memo(
         onInputRef.current?.(next);
       },
       revealText: (needle) => handle.editor?.revealText(needle),
+      revealAfterLoad: (target) => {
+        pendingRevealRef.current = target;
+        // onLoaded 在 fileApi.openPath 内同步触发：编辑器就绪时内容此刻已
+        // 同步应用（setValue），立即定位；未就绪 → 排队，等就绪重放落地
+        // 后由 execPendingReveal 触发。
+        if (handle.ready) execPendingReveal();
+      },
       findTextRange: (needle, hint) =>
         handle.editor?.findTextRange(needle, hint) ?? null,
       getTextAt: (from, to) => handle.editor?.getTextAt(from, to) ?? "",
@@ -996,7 +1032,7 @@ export const Editor = memo(
     // fileApi 经 fileApiRef.current 读取：markDirty 目前是稳定回调，但走 ref
     // 让「工厂体永不闭包过期的 fileApi」显式成立——未来往工厂里加任何
     // fileApi 依赖都不会静默过期。handle 是唯一真正变化的依赖（编辑器重建）。
-    [handle]
+    [handle, execPendingReveal]
   );
 
   return (
