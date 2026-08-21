@@ -1,6 +1,6 @@
 [package]
 name = "mditor"
-version = "3.9.7"
+version = "4.0.0"
 description = "A local-first Markdown editor inspired by Typora"
 authors = ["Mditor"]
 edition = "2021"
