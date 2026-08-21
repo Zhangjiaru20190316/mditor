@@ -923,6 +923,17 @@ body.is-resizing .sidebar {
   margin: 0;
   padding: 0;
 }
+/* 大纲滚动容器：.sb-panel 是 overflow:hidden 的 flex 列，.ol-root 作为其
+   直接子级必须自带 flex:1 + min-height:0 + overflow-y:auto 才能滚动（与
+   .ft-scroll 同款三件套），否则长大纲被整列裁掉且无法查看下方条目。 */
+.ol-root {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* 滚动到边界不冒泡到 body（与 .ft-scroll 一致） */
+  overscroll-behavior: contain;
+  padding: 4px 0 12px;
+}
 .ol-row {
   position: relative;
   margin: 0 6px;
