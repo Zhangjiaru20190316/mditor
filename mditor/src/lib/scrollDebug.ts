@@ -4,11 +4,17 @@
 // 载、盖章战争……），但始终缺少运行时证据来区分到底是哪条链路在动滚动
 // 位置。本模块把滚动相关的关键事实收进环形缓冲 + 计数器：
 //
-//  1. 滚动会话归因（session:*）：每次「滚动从静止开始动」判定发起者——
-//     用户输入（wheel/触摸/滚动键/滚动条拖拽）200ms 内 → user；
-//     已知程序写入（noteScrollWrite 打点）250ms 内 → write:<tag>；
-//     两者都不是 → ghost（「页面自己动」实锤，附最近一次写入 tag 供排查）。
-//     惯性滚动天然归属其发起会话（会话期间持续位移不重判）。
+//  1. 滚动会话归因（session:*，v3.9.5 状态机化）：每次「滚动从静止开始
+//     动」判定发起者——用户输入（wheel/触摸/滚动键/滚动条拖拽）200ms 内
+//     → user；已知程序写入（noteScrollWrite 打点）250ms 内 → write:<tag>，
+//     平滑跳转类 tag（outline-jump / anno-jump / sv-jump）的归因窗与 App
+//     侧 smoothJump 抑制窗口对齐（scrollend / 用户 wheel / 1200ms 超时，
+//     标志在位或 1250ms 内均归属写入方）；|delta|<2px 且同帧有高度变化的
+//     微位移 → layout:clamp（浏览器 clamping 型调整，不计 ghost）；都不是
+//     → ghost。会话以「连续 5 帧静止」确认关闭——longtask 阻断 rAF 后的
+//     平滑滚动尾段恢复不再被拦腰判成 ghost（2026-08-22 复现：outline-jump
+//     尾段 1px 被误标 ghost，lastWrite@1494ms 前超窗）。惯性滚动天然归属
+//     其发起会话。
 //  2. 视口内容位移（layout:shift）：scrollTop 没变、但视口顶部哨兵块的
 //     文档坐标变了 → 内容在自己动（content-visibility 高度重估 / 图片加载
 //     / 盖章行内化 / PM 重排），这是 scrollTop 写入检测抓不到的另一半
@@ -168,6 +174,102 @@ export function classifyPmBatch(removed: number, added: number): "edit" | "shape
 }
 
 /* -------------------------------------------------------------------------- */
+/* 纯逻辑：滚动会话状态机（v3.9.5，可单测）                                    */
+/* -------------------------------------------------------------------------- */
+
+/** 会话静止确认帧数：连续 N 帧不动才关闭会话。单帧静止即复位（旧行为）会把
+ *  longtask 阻断后的平滑滚动尾段拦腰判成新会话 → 超窗误标 ghost。 */
+export const STILL_CONFIRM_FRAMES = 5;
+/** 用户输入归因窗。 */
+export const USER_WINDOW_MS = 200;
+/** 常规程序写入归因窗。 */
+export const WRITE_WINDOW_MS = 250;
+/** 平滑跳转类写入的归因窗：覆盖 App/svCodeMirror 侧 smoothJump 抑制窗口
+ *  （scrollend / 用户 wheel / 1200ms 超时）全程 + 尾段余量。 */
+export const SMOOTH_JUMP_WINDOW_MS = 1250;
+/** 平滑跳转类 tag（与 smoothJump 生命周期对齐，见 App.tsx jumpToHeading /
+ * jumpToAnnotation、svCodeMirror.ts jumpToLine）。 */
+const SMOOTH_JUMP_TAGS = new Set(["outline-jump", "anno-jump", "sv-jump"]);
+
+export function isSmoothJumpTag(tag: string): boolean {
+  return SMOOTH_JUMP_TAGS.has(tag);
+}
+
+/** 会话状态：当前归因 tag + 连续静止帧数。 */
+export interface SessionState {
+  tag: string | null;
+  stillFrames: number;
+}
+
+/** 单帧输入（时间 / 位移 / 高度变化 / 用户与写入信号，均由调用方采集）。 */
+export interface SessionInput {
+  now: number;
+  /** 本帧 scrollTop 位移（相对上帧）。 */
+  delta: number;
+  /** 本帧 scrollHeight 变化（相对上帧）。 */
+  heightDelta: number;
+  userIntentAt: number;
+  lastWrite: { tag: string; at: number } | null;
+  /** App 侧 smoothJump 抑制标志当前是否在位（host.dataset.smoothJump）。 */
+  smoothJumpActive: boolean;
+}
+
+/** 会话判定结果。continue = 会话跨短暂静止（未达确认阈值）延续，不重判、
+ *  不计数——longtask 阻断后恢复 / 平滑动画帧间停顿的尾段归属靠它。 */
+export type SessionVerdict =
+  | { type: "none" }
+  | { type: "continue" }
+  | { type: "user" }
+  | { type: "write"; tag: string }
+  | { type: "clamp"; delta: number; heightDelta: number }
+  | { type: "ghost" };
+
+/**
+ * 推进一帧会话状态机：静止帧累计静止确认；运动帧在会话存活时延续，否则
+ * 分类新会话（user > write > clamp > ghost）。clamp 会话立即关闭（微位移
+ * 是单帧事件，紧随其后的更大位移需要独立分类，避免吞掉真 ghost）。
+ */
+export function stepSession(
+  state: SessionState,
+  input: SessionInput
+): { state: SessionState; verdict: SessionVerdict } {
+  const moving = Math.abs(input.delta) > 0.5;
+  if (!moving) {
+    const stillFrames = state.stillFrames + 1;
+    const tag = stillFrames >= STILL_CONFIRM_FRAMES ? null : state.tag;
+    return { state: { tag, stillFrames }, verdict: { type: "none" } };
+  }
+  if (state.tag != null && state.tag !== "clamp") {
+    // 会话存活（静止未达确认阈值或连续运动中）→ 延续，不重判。
+    return {
+      state: { tag: state.tag, stillFrames: 0 },
+      verdict: state.stillFrames > 0 ? { type: "continue" } : { type: "none" },
+    };
+  }
+  if (input.now - input.userIntentAt < USER_WINDOW_MS) {
+    return { state: { tag: "user", stillFrames: 0 }, verdict: { type: "user" } };
+  }
+  const w = input.lastWrite;
+  const smoothAlive =
+    w != null &&
+    isSmoothJumpTag(w.tag) &&
+    (input.smoothJumpActive || input.now - w.at < SMOOTH_JUMP_WINDOW_MS);
+  if (w && (input.now - w.at < WRITE_WINDOW_MS || smoothAlive)) {
+    return {
+      state: { tag: `write:${w.tag}`, stillFrames: 0 },
+      verdict: { type: "write", tag: w.tag },
+    };
+  }
+  if (Math.abs(input.delta) < 2 && Math.abs(input.heightDelta) >= 1) {
+    return {
+      state: { tag: "clamp", stillFrames: STILL_CONFIRM_FRAMES },
+      verdict: { type: "clamp", delta: input.delta, heightDelta: input.heightDelta },
+    };
+  }
+  return { state: { tag: "ghost", stillFrames: 0 }, verdict: { type: "ghost" } };
+}
+
+/* -------------------------------------------------------------------------- */
 /* 写入打点                                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -242,9 +344,9 @@ export function attachScrollWatch(host: HTMLElement): () => void {
   let userIntentAt = 0;
   let prevSt = host.scrollTop;
   let prevH = host.scrollHeight;
-  let prevMoving = false;
   // 会话归因（延续期间不重判，惯性自动归属发起者）。
   let sessionTag: string | null = null;
+  let sessionStill = 0;
   // 哨兵：视口顶部的 ProseMirror 顶层块（element + 上帧文档坐标 top）。
   let sentinel: { el: Element; docTop: number } | null = null;
   let raf = 0;
@@ -453,49 +555,75 @@ export function attachScrollWatch(host: HTMLElement): () => void {
 
       ensurePmObserver(now);
 
-      // --- 滚动会话归因：从静止转动的第一帧判定发起者。
-      if (moving && !prevMoving) {
-        if (now - userIntentAt < 200) {
-          sessionTag = "user";
-          scrollCount("session.user");
-        } else if (recentWrite && now - recentWrite.at < 250) {
-          sessionTag = `write:${recentWrite.tag}`;
-          scrollCount(`session.write.${recentWrite.tag}`);
-        } else {
-          // 既无用户输入也无已知写入 —— 「页面自己动」的实锤。
-          sessionTag = "ghost";
-          const e: ScrollDebugEvent = {
-            ts: Date.now(),
-            level: "warn",
-            kind: "session:ghost",
-            msg: `检测到不明来源滚动 ${st - prevSt >= 0 ? "↓" : "↑"} ${Math.abs(st - prevSt).toFixed(0)}px`,
+      // --- 滚动会话归因（v3.9.5 状态机）：静止→运动的第一帧判定发起者；
+      // 会话以连续 STILL_CONFIRM_FRAMES 帧静止确认关闭（longtask 阻断后的
+      // 尾段恢复、平滑动画帧间停顿不再重判），微位移与平滑跳转尾段有专属
+      // 分类（clamp / 扩展归因窗），ghost 只留给真正不明的滚动。
+      const step = stepSession(
+        { tag: sessionTag, stillFrames: sessionStill },
+        {
+          now,
+          delta: st - prevSt,
+          heightDelta: h - prevH,
+          userIntentAt,
+          lastWrite: recentWrite,
+          smoothJumpActive: host.dataset.smoothJump !== undefined,
+        }
+      );
+      sessionTag = step.state.tag;
+      sessionStill = step.state.stillFrames;
+      if (step.verdict.type === "user") {
+        scrollCount("session.user");
+      } else if (step.verdict.type === "write") {
+        scrollCount(`session.write.${step.verdict.tag}`);
+      } else if (step.verdict.type === "clamp") {
+        scrollEmit(
+          "layout:clamp",
+          `微位移 ${step.verdict.delta >= 0 ? "↓" : "↑"}${Math.abs(step.verdict.delta).toFixed(1)}px（同帧高度 ${step.verdict.heightDelta >= 0 ? "+" : ""}${Math.round(step.verdict.heightDelta)}px，clamping 型，不计 ghost）`,
+          {
             data: {
-              delta: Math.round(st - prevSt),
+              delta: Math.round(step.verdict.delta),
+              heightDelta: Math.round(step.verdict.heightDelta),
               scrollTop: Math.round(st),
-              // v3.9.5：定罪上下文——同帧高度变化量（clamping 型位移的标志）
-              // 与是否贴底（浏览器 scrollHeight 收缩时的强制回弹）。
-              heightDelta: Math.round(h - prevH),
-              atBottom: st + host.clientHeight >= h - 2,
               lastWrite: recentWrite
                 ? `${recentWrite.tag}@${Math.round(now - recentWrite.at)}ms前`
                 : null,
             },
-          };
-          events.push(e);
-          if (events.length > EVENT_CAPACITY) events.shift();
-          scrollCount("session.ghost");
-          stats.lastGhost = e;
-          for (const fn of subscribers) {
-            try {
-              fn(e);
-            } catch {
-              subscribers.delete(fn);
-            }
           }
-          openBlockWindow();
+        );
+        openBlockWindow();
+      } else if (step.verdict.type === "ghost") {
+        // 既无用户输入也无已知写入 —— 「页面自己动」的实锤。
+        const e: ScrollDebugEvent = {
+          ts: Date.now(),
+          level: "warn",
+          kind: "session:ghost",
+          msg: `检测到不明来源滚动 ${st - prevSt >= 0 ? "↓" : "↑"} ${Math.abs(st - prevSt).toFixed(0)}px`,
+          data: {
+            delta: Math.round(st - prevSt),
+            scrollTop: Math.round(st),
+            // v3.9.5：定罪上下文——同帧高度变化量（clamping 型位移的标志）
+            // 与是否贴底（浏览器 scrollHeight 收缩时的强制回弹）。
+            heightDelta: Math.round(h - prevH),
+            atBottom: st + host.clientHeight >= h - 2,
+            lastWrite: recentWrite
+              ? `${recentWrite.tag}@${Math.round(now - recentWrite.at)}ms前`
+              : null,
+          },
+        };
+        events.push(e);
+        if (events.length > EVENT_CAPACITY) events.shift();
+        scrollCount("session.ghost");
+        stats.lastGhost = e;
+        for (const fn of subscribers) {
+          try {
+            fn(e);
+          } catch {
+            subscribers.delete(fn);
+          }
         }
+        openBlockWindow();
       }
-      if (!moving) sessionTag = null;
 
       // --- 视口内容位移（scrollTop 不变而哨兵文档坐标变了）。
       let shift: number | null = null;
@@ -582,7 +710,6 @@ export function attachScrollWatch(host: HTMLElement): () => void {
 
       prevSt = st;
       prevH = h;
-      prevMoving = moving;
     } catch {
       /* 诊断永不抛错 */
     }

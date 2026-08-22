@@ -8,7 +8,9 @@ import {
   scrollEmit,
   scrollEvents,
   scrollSubscribe,
+  stepSession,
   type BlockRow,
+  type SessionState,
 } from "./scrollDebug";
 
 afterEach(() => scrollDebugClear());
@@ -108,5 +110,115 @@ describe("classifyPmBatch（pm:rebuild 检测）", () => {
   it("large pure append/remove → shape", () => {
     expect(classifyPmBatch(0, 9)).toBe("shape");
     expect(classifyPmBatch(9, 0)).toBe("shape");
+  });
+});
+
+describe("stepSession（会话归因状态机，v3.9.5）", () => {
+  const idle: SessionState = { tag: null, stillFrames: 99 };
+  const input = (over: Partial<Parameters<typeof stepSession>[1]>) => ({
+    now: 10_000,
+    delta: 40,
+    heightDelta: 0,
+    userIntentAt: 0,
+    lastWrite: null,
+    smoothJumpActive: false,
+    ...over,
+  });
+
+  it("user input within 200ms wins over everything", () => {
+    const r = stepSession(idle, input({ userIntentAt: 9_900 }));
+    expect(r.verdict).toEqual({ type: "user" });
+    expect(r.state.tag).toBe("user");
+  });
+
+  it("marked write within 250ms → write:<tag>", () => {
+    const r = stepSession(idle, input({ lastWrite: { tag: "typewriter", at: 9_800 } }));
+    expect(r.verdict).toEqual({ type: "write", tag: "typewriter" });
+    expect(r.state.tag).toBe("write:typewriter");
+  });
+
+  it("no signal → ghost", () => {
+    const r = stepSession(idle, input({}));
+    expect(r.verdict.type).toBe("ghost");
+    expect(r.state.tag).toBe("ghost");
+  });
+
+  it("smooth-jump tail beyond 250ms stays attributed while the jump cycle lives", () => {
+    // 复现 2026-08-22 证据：outline-jump@1494ms 前的 1px 尾段。
+    // (a) smoothJump 标志仍在位（scrollend 未到/超时未到）→ write。
+    const a = stepSession(
+      idle,
+      input({
+        delta: 1,
+        lastWrite: { tag: "outline-jump", at: 8_506 },
+        smoothJumpActive: true,
+      })
+    );
+    expect(a.verdict).toEqual({ type: "write", tag: "outline-jump" });
+    // (b) 标志已清但仍在 1250ms 对齐窗内 → write。
+    const b = stepSession(
+      idle,
+      input({
+        delta: 1,
+        lastWrite: { tag: "anno-jump", at: 9_000 },
+        smoothJumpActive: false,
+      })
+    );
+    expect(b.verdict.type).toBe("write");
+    // (c) 窗外且无标志 → 不再归 write。
+    const c = stepSession(
+      idle,
+      input({
+        delta: 1,
+        lastWrite: { tag: "outline-jump", at: 8_500 },
+        smoothJumpActive: false,
+      })
+    );
+    expect(c.verdict.type).not.toBe("write");
+  });
+
+  it("non-smooth tags never get the extended window", () => {
+    const r = stepSession(
+      idle,
+      input({ lastWrite: { tag: "typewriter", at: 9_000 }, smoothJumpActive: true })
+    );
+    expect(r.verdict.type).toBe("ghost");
+  });
+
+  it("sub-2px displacement with same-frame height change → clamp, not ghost", () => {
+    const r = stepSession(idle, input({ delta: 1, heightDelta: -51 }));
+    expect(r.verdict.type).toBe("clamp");
+    // 无高度变化的 1px 位移仍走 ghost（真正不明）。
+    const g = stepSession(idle, input({ delta: 1, heightDelta: 0 }));
+    expect(g.verdict.type).toBe("ghost");
+    // 有高度变化的大位移也走 ghost（真实滚动量，不是 clamping）。
+    const big = stepSession(idle, input({ delta: 30, heightDelta: -51 }));
+    expect(big.verdict.type).toBe("ghost");
+  });
+
+  it("clamp session closes immediately so a following real ghost is not swallowed", () => {
+    const c = stepSession(idle, input({ delta: 1, heightDelta: -51 }));
+    const next = stepSession(c.state, input({ delta: 40, heightDelta: 0 }));
+    expect(next.verdict.type).toBe("ghost");
+  });
+
+  it("stillness confirmation: session survives 1-4 still frames（longtask 尾段恢复）", () => {
+    // 平滑滚动进行中 → 静止 3 帧 → 1px 尾段：必须延续 write 会话，不得重判。
+    let st: SessionState = { tag: "write:outline-jump", stillFrames: 0 };
+    for (let i = 0; i < 3; i++) {
+      st = stepSession(st, input({ delta: 0 })).state;
+      expect(st.tag).toBe("write:outline-jump");
+    }
+    const resume = stepSession(st, input({ delta: 1, lastWrite: { tag: "outline-jump", at: 8_000 } }));
+    expect(resume.verdict.type).toBe("continue");
+    expect(resume.state.tag).toBe("write:outline-jump");
+  });
+
+  it("session closes after STILL_CONFIRM_FRAMES still frames and reclassifies", () => {
+    let st: SessionState = { tag: "user", stillFrames: 0 };
+    for (let i = 0; i < 5; i++) st = stepSession(st, input({ delta: 0 })).state;
+    expect(st.tag).toBeNull();
+    const fresh = stepSession(st, input({ userIntentAt: 9_950 }));
+    expect(fresh.verdict.type).toBe("user");
   });
 });
