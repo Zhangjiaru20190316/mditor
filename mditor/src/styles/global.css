@@ -1716,6 +1716,112 @@ body.is-resizing .sidebar {
   filter: brightness(1.08);
 }
 
+/* ---------- 设置弹窗：左导航双栏（v4.1） ---------- */
+/* 弹窗加宽承载双栏（保留 max-width 92vw 兜底窄窗口）；左列固定导航 +
+   右列仅渲染当前分区（滚动只发生在右列）。 */
+.settings-card {
+  width: 720px;
+}
+.settings-body {
+  flex: 1;
+  min-height: 0;
+  flex-direction: row;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.settings-nav {
+  flex: 0 0 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 8px;
+  border-right: 1px solid var(--border);
+  position: relative;
+  overflow-y: auto;
+}
+.settings-nav-btn {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 13px;
+  font-family: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.13s ease, color 0.13s ease;
+}
+.settings-nav-btn:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.settings-nav-btn.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.settings-nav-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* 签名点睛：激活指示条随分区切换平滑滑动（等距 translateY，只动 transform）。
+   top 对齐 nav 的 12px 上内边距，步长 = 项高 34px + 间距 4px（SettingsModal
+   的 NAV_ITEM_H / NAV_STEP 常量）。 */
+.settings-nav-ind {
+  position: absolute;
+  left: 0;
+  top: 12px;
+  width: 3px;
+  height: 34px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: translateY(0);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.settings-pane {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* 三段式选择控件（动效强度等）：inline 胶囊组，激活段 accent 浅底 */
+.seg {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.seg-btn {
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12.5px;
+  font-family: inherit;
+  padding: 5px 16px;
+  cursor: pointer;
+  transition: background-color 0.13s ease, color 0.13s ease;
+}
+.seg-btn + .seg-btn {
+  border-left: 1px solid var(--border);
+}
+.seg-btn:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.seg-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* ---------- AI panel ---------- */
 .ai-panel {
   grid-area: ai;
