@@ -50,7 +50,7 @@ import { useResizable } from "./hooks/useResizable";
 import { useAnnotations } from "./hooks/useAnnotations";
 import { useSwitchFlow, nextPaint } from "./hooks/useSwitchFlow";
 import { findAnnotationRefLine, parseAnnotations } from "./lib/annotations";
-import { resolveCodeLines } from "./lib/codeAnno";
+import { resolveCodeLines, highlightCodeLines } from "./lib/codeAnno";
 import { findHeadingLine } from "./lib/outline";
 import { buildAnnotationMessages, chatStream, isAiConfigured } from "./lib/ai";
 import { normalizeAnchorText } from "./lib/anchorSearch";
@@ -1403,8 +1403,13 @@ export default function App() {
   // reuse that exact open path (keeps positioning/behaviour identical to a
   // real click). No-op if the marker isn't currently rendered (e.g. split-view
   // mode where markers aren't badged).
+  // v4.1 动效三档：当前生效档位支持动效时改为「先平滑滚到位，落定后再定位
+  // 并打开弹层」——弹层按滚动后的 marker rect 精确落位；「无」档保持瞬时。
+  // 跳转序号防串扰：快速连点第二条批注时，前一条的落定回调作废。
+  const annoJumpSeqRef = useRef(0);
   const jumpToAnnotation = useCallback(
     (id: string) => {
+      const smooth = motionEnabled(settingsRef.current.settings);
       // sv mode: the Milkdown DOM is hidden (display:none) but STILL in the
       // document, so a querySelector would find its marker — an element with
       // no layout box. scrollIntoView on it is a no-op and the popover would
@@ -1423,12 +1428,15 @@ export default function App() {
         if (meta) {
           const r = resolveCodeLines(md, id, meta);
           if (r) {
-            editorRef.current?.jumpToSourceLine(r.blockStartLine + r.start - 1);
+            editorRef.current?.jumpToSourceLine(
+              r.blockStartLine + r.start - 1,
+              smooth
+            );
             return;
           }
         }
         const line = findAnnotationRefLine(md, id);
-        if (line != null) editorRef.current?.jumpToSourceLine(line);
+        if (line != null) editorRef.current?.jumpToSourceLine(line, smooth);
         return;
       }
       // Focus the editor surface FIRST — same reason as jumpToHeading above:
@@ -1448,11 +1456,11 @@ export default function App() {
       // 预解析并 handoff 给弹层首击（v3.9.3）：防抖列表滞后时弹层拿不到
       // codeLine，首击不会解析/高亮/滚动到代码行，跳转就停在 marker 行。
       // 跳转是低频操作，这里同步解析一次可接受（与 sv 分支同款）。
-      setPendingJumpAnno(
+      const anno =
         parseAnnotations(editorRef.current?.getValue() ?? "").find(
           (a) => a.id === id
-        ) ?? null
-      );
+        ) ?? null;
+      setPendingJumpAnno(anno);
       // Park the caret at the marker（同 jumpToHeading 的防御）：focus() 恢复
       // 的旧选区若停在别处，随后的光标跟随滚动（打字机模式 / PM 选区回
       // 同步）会把视口拽回旧位置——「跳了又被拽回去」的观感来源。
@@ -1465,23 +1473,79 @@ export default function App() {
         sel?.removeAllRanges();
         sel?.addRange(range);
       }
-      // 短暂置 smoothJump：跳转后的代码行 scrollIntoView + selectionchange
-      // rAF 链期间抑制打字机居中，避免落点被二次拉动（超时兜底解除）。
       const host = document.querySelector<HTMLElement>(".mditor-editor-host");
-      if (host) {
-        host.dataset.smoothJump = "1";
-        window.setTimeout(() => {
-          delete host.dataset.smoothJump;
-        }, 350);
+      /** 旧路径（瞬时 / 无 host 兜底）：立即滚到位并同步打开弹层。 */
+      const jumpInstant = () => {
+        if (host) {
+          host.dataset.smoothJump = "1";
+          window.setTimeout(() => {
+            delete host.dataset.smoothJump;
+          }, 350);
+        }
+        noteScrollWrite("anno-jump");
+        marker.scrollIntoView({ behavior: "auto", block: "center" });
+        marker.dispatchEvent(
+          new MouseEvent("mousedown", { bubbles: true, cancelable: true })
+        );
+      };
+      if (!smooth || !host) {
+        jumpInstant();
+        return;
       }
-      // Use instant (not smooth) scrolling: the popover positions itself from the
-      // marker's viewport rect right after this, so the marker must already be in
-      // its final position or the card would stick to the pre-scroll spot.
-      noteScrollWrite("anno-jump");
-      marker.scrollIntoView({ behavior: "auto", block: "center" });
-      marker.dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true, cancelable: true })
+      // ---- 平滑路径：先滚到位，落定后再派发 mousedown 打开弹层 -----------
+      // 代码行批注优先滚到被批注的代码行本身（提前高亮，滚动途中即见落点；
+      // 弹层打开时 highlightCodeLines 的瞬时校正只剩极小位移）。
+      let target: HTMLElement = marker;
+      if (anno?.codeLine) {
+        const r = resolveCodeLines(
+          editorRef.current?.getValue() ?? "",
+          id,
+          anno.codeLine
+        );
+        if (r) {
+          const lineEl = highlightCodeLines(marker, r.start, r.end, {
+            scroll: false,
+            blockIndex: r.blockIndex,
+          });
+          if (lineEl) target = lineEl;
+        }
+      }
+      const seq = ++annoJumpSeqRef.current;
+      // 抑制打字机居中：覆盖动画全程（scrollend / 用户滚轮打断 / 1200ms
+      // 超时兜底清除，与 jumpToHeading 同款；跳转被新跳转取代时不动新标志）。
+      host.dataset.smoothJump = "1";
+      let cleared = false;
+      const clearJump = () => {
+        if (cleared || annoJumpSeqRef.current !== seq) return;
+        cleared = true;
+        delete host.dataset.smoothJump;
+      };
+      host.addEventListener("scrollend", clearJump, { once: true });
+      host.addEventListener("wheel", clearJump, { once: true, passive: true });
+      window.setTimeout(clearJump, 1200);
+      // 落定检测（一次性，禁止轮询）：scrollend 为主信号；两帧内 scrollTop
+      // 未动（目标已在视口，平滑滚动不会发起，也就没有 scrollend）则直接
+      // 视为落定；1200ms 上限兜底。全部事件/定时器一次性可清理。
+      let opened = false;
+      const openAtRest = () => {
+        if (opened || annoJumpSeqRef.current !== seq) return;
+        opened = true;
+        host.removeEventListener("scrollend", openAtRest);
+        window.clearTimeout(capTimer);
+        marker.dispatchEvent(
+          new MouseEvent("mousedown", { bubbles: true, cancelable: true })
+        );
+      };
+      const capTimer = window.setTimeout(openAtRest, 1200);
+      host.addEventListener("scrollend", openAtRest, { once: true });
+      const startTop = host.scrollTop;
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (!opened && Math.abs(host.scrollTop - startTop) < 1) openAtRest();
+        })
       );
+      noteScrollWrite("anno-jump");
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
     },
     [editMode]
   );
