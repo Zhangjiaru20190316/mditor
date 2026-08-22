@@ -21,6 +21,7 @@ import type {
 } from "../types";
 import { AI_PROVIDERS, AI_PROVIDER_BY_ID, emptyAiModel, FONT_PRESETS, MONO_FONT_PRESETS } from "../types";
 import { testConnection } from "../lib/ai";
+import { useDelayedUnmount } from "../hooks/useDelayedUnmount";
 import { CloseIcon, ChevronRightIcon } from "./icons";
 
 /** 分区导航项（固定高度，供滑动指示条做等距 translateY 定位）。 */
@@ -42,6 +43,9 @@ const MOTION_LEVELS: Array<{ value: MotionLevel; label: string }> = [
   { value: "balanced", label: "平衡" },
   { value: "lively", label: "生动" },
 ];
+
+/** 关闭时的退场动画时长（useDelayedUnmount，与 CSS .closing 动画对齐）。 */
+const EXIT_MS = 240;
 
 interface Props {
   open: boolean;
@@ -77,8 +81,10 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
   const [testMsg, setTestMsg] = useState("");
   const [testOk, setTestOk] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // v4.1 退场动效：关闭后保持挂载 240ms 播 .closing 动画再卸载。
+  const mounted = useDelayedUnmount(open, EXIT_MS);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
@@ -186,7 +192,7 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className={`modal-backdrop${open ? "" : " closing"}`} onClick={onClose}>
       <div className="modal-card settings-card" role="dialog" aria-label="设置" onClick={(e) => e.stopPropagation()}>
         <header className="modal-head">
           <h2>设置</h2>

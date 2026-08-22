@@ -55,6 +55,7 @@ import { applyHunks, diffText, unwrapWholeFence, type DiffHunk } from "../lib/di
 import { MarkdownText } from "./MarkdownText";
 import { DiffReview } from "./DiffReview";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useDelayedUnmount } from "../hooks/useDelayedUnmount";
 import { AiIcon, TrashIcon, CloseIcon, ChevronRightIcon } from "./icons";
 import type { Settings, Theme, ThinkingStrength } from "../types";
 
@@ -789,10 +790,15 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     []
   );
 
-  if (!open) return null;
+  // v4.1 退场动效：关闭后保持挂载 240ms 播 .closing 退场动画再卸载（重开
+  // 立即恢复，不与入场叠加）。流式取消/状态清理仍由上面 [open] 的 effect
+  // 即时执行——退场窗口内面板只是「看得见的残影」，不再有活动请求。
+  const mounted = useDelayedUnmount(open, 240);
+
+  if (!mounted) return null;
 
   return (
-    <div className="ai-panel">
+    <div className={`ai-panel${open ? "" : " closing"}`}>
       <div className="ai-head">
         <span className="ai-title"><AiIcon size={14} className="ai-title-icon" /> AI 助手</span>
         <div className="ai-head-actions">

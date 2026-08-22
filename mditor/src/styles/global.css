@@ -3427,6 +3427,51 @@ body {
   }
 }
 
+/* v4.1 退场动效：关闭时卡片 scale(0.96)+translateY(8px)+opacity 淡出、遮罩
+   同步淡出（约 0.2s，退场曲线）。组件经 useDelayedUnmount 保持挂载约 240ms
+   播完退场再卸载；退场期间 .closing 禁指针防误触。「无」档 / 系统减少动态
+   效果下被全局 kill switch 压成瞬时（元素即刻透明），仅剩卸载时序。 */
+.modal-backdrop.closing {
+  animation: modal-bg-out 0.2s cubic-bezier(0.4, 0, 0.2, 1) both;
+  pointer-events: none;
+}
+.modal-backdrop.closing .modal-card {
+  animation: modal-card-out 0.22s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+@keyframes modal-bg-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes modal-card-out {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+}
+/* AI 面板退场：向右淡出收回（与入场滑入镜像） */
+.ai-panel.closing {
+  animation: ai-panel-out 0.22s cubic-bezier(0.4, 0, 0.2, 1) both;
+  pointer-events: none;
+}
+@keyframes ai-panel-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+}
+
 /* B5. 设置面板可折叠区：max-height + opacity 平滑过渡
    （margin-top 用以抵消 modal-body 的 12px gap，折叠时不留空隙） */
 .field-collapse {

@@ -1,7 +1,9 @@
 // 「插入链接」迷你弹窗（V3.6）：显示文字 + 地址两栏，回车提交。文字默认
 // 填入当前选区（由调用方传入）。风格复用 modal-backdrop / modal-card。
+// v4.1：useDelayedUnmount 保持挂载约 240ms 播退场动画（.closing）再卸载。
 
 import { useEffect, useRef, useState } from "react";
+import { useDelayedUnmount } from "../hooks/useDelayedUnmount";
 
 interface Props {
   open: boolean;
@@ -11,10 +13,13 @@ interface Props {
   onClose: () => void;
 }
 
+const EXIT_MS = 240;
+
 export function LinkDialog({ open, initialText, onConfirm, onClose }: Props) {
   const [text, setText] = useState("");
   const [href, setHref] = useState("");
   const hrefRef = useRef<HTMLInputElement | null>(null);
+  const mounted = useDelayedUnmount(open, EXIT_MS);
 
   useEffect(() => {
     if (open) {
@@ -25,7 +30,7 @@ export function LinkDialog({ open, initialText, onConfirm, onClose }: Props) {
     }
   }, [open, initialText]);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   const submit = () => {
     const url = href.trim();
@@ -35,7 +40,7 @@ export function LinkDialog({ open, initialText, onConfirm, onClose }: Props) {
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className={`modal-backdrop${open ? "" : " closing"}`} onClick={onClose}>
       <div
         className="modal-card link-card"
         role="dialog"

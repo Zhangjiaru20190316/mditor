@@ -1,8 +1,10 @@
 // 「关于」迷你弹窗（帮助 → 关于）：logo + 版本 + 简介。
-// 风格仿 modal-backdrop / modal-card 体系。
+// 风格仿 modal-backdrop / modal-card 体系。v4.1：useDelayedUnmount 保持
+// 挂载约 240ms 播退场动画（.closing）再卸载。
 
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { useDelayedUnmount } from "../hooks/useDelayedUnmount";
 import { LogoIcon } from "./icons";
 
 interface Props {
@@ -10,8 +12,11 @@ interface Props {
   onClose: () => void;
 }
 
+const EXIT_MS = 240;
+
 export function AboutModal({ open, onClose }: Props) {
   const [version, setVersion] = useState("");
+  const mounted = useDelayedUnmount(open, EXIT_MS);
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -27,10 +32,10 @@ export function AboutModal({ open, onClose }: Props) {
     };
   }, [open]);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <div className={`modal-backdrop${open ? "" : " closing"}`} onClick={onClose}>
       <div
         className="modal-card about-card"
         role="dialog"
