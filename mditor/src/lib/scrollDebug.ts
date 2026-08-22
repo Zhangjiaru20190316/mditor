@@ -1,4 +1,4 @@
-// 滚动诊断体系（v3.9.5）——「页面自己动 / 滚动卡顿」的运行时证据采集。
+// 滚动诊断体系（v3.9.6）——「页面自己动 / 滚动卡顿」的运行时证据采集。
 //
 // 背景：滚动异常已多轮修复仍复发（打字机让位、overflow-anchor、图片懒加
 // 载、盖章战争……），但始终缺少运行时证据来区分到底是哪条链路在动滚动
@@ -40,6 +40,10 @@
 //     失 → 回落 3em 占位 → 批量 -N 塌缩）与块身份不变的高度往返（H2：图
 //     片占位 ↔ 真实高度）由此一锤定音。PM 根节点被整体替换（编辑器重建）
 //     单独报 pm:root-swap。
+//  7. 换行波定罪探针（v3.9.6）：layout:width（.ProseMirror 内容宽度，
+//     ResizeObserver）/ font:loaded（webfont 上屏）/ host:attr（祖先
+//     style/class 翻转带旧值）——针对「32 块同身份 ±1 行、数秒后回退」
+//     的全文换行波，三个候选源一次定罪。
 //
 // 接入：Editor.tsx 挂载 attachScrollWatch(滚动容器)——富文本/IR 模式是根
 // div .mditor-editor-host（真正 overflow:auto 的那层）；sv 模式它不滚
@@ -517,7 +521,112 @@ export function attachScrollWatch(host: HTMLElement): () => void {
       }
     });
     pmObs.observe(pm, { childList: true });
+    attachWidthProbe(pm);
   };
+
+  // --- 定罪探针 v3.9.6：±24px 全文换行波的三个候选源 ------------------------
+  // layout:width —— .ProseMirror 内容宽度变化（ResizeObserver，事件驱动零
+  //   轮询）。宽度变化 ⇒ 全部近边界文本块同时 ±1 行（2026-08-22 实测 32 块
+  //   ±24~52px、总高 ±1114px、7 秒后回退的波），此探针给出量级与时刻。
+  // font:loaded —— webfont 异步上屏（FontFaceSet loadingdone），字体度量
+  //   变化同样引发全文重排换行。
+  // host:attr —— html/body/host 的 style/class 属性翻转（带旧值），直接
+  //   定位是谁在写排版变量（applyToDom / applyProseVars / 主题切换……）。
+  //   三者均只读、try/catch、不参与任何布局写入，符合诊断纪律。
+  let widthObs: ResizeObserver | null = null;
+  let widthObsRoot: Element | null = null;
+  const attachWidthProbe = (pm: Element): void => {
+    if (widthObsRoot === pm) return;
+    try {
+      widthObs?.disconnect();
+      widthObsRoot = pm;
+      let lastW = -1;
+      widthObs = new ResizeObserver((entries) => {
+        try {
+          for (const en of entries) {
+            const w = en.contentRect.width;
+            if (lastW >= 0 && Math.abs(w - lastW) > 0.5) {
+              scrollEmit(
+                "layout:width",
+                `内容宽度 ${lastW.toFixed(0)} → ${w.toFixed(0)}（${w - lastW >= 0 ? "+" : ""}${(w - lastW).toFixed(1)}px）——换行重排定罪`,
+                { data: { from: Math.round(lastW), to: Math.round(w) } }
+              );
+              openBlockWindow();
+            }
+            lastW = w;
+          }
+        } catch {
+          /* never throw */
+        }
+      });
+      widthObs.observe(pm);
+    } catch {
+      /* 环境不支持 ResizeObserver 则跳过 */
+    }
+  };
+
+  const onFontsDone = (e: Event): void => {
+    try {
+      const faces = (e as FontFaceSetLoadEvent).fontfaces
+        .map((f) => f.family)
+        .slice(0, 4)
+        .join("、");
+      scrollEmit("font:loaded", `webfont 上屏：${faces || "未知"}（字体度量变化 → 全文重排候选）`);
+    } catch {
+      /* never throw */
+    }
+  };
+  try {
+    document.fonts.addEventListener("loadingdone", onFontsDone);
+  } catch {
+    /* 环境无 document.fonts 则跳过 */
+  }
+
+  let attrObs: MutationObserver | null = null;
+  try {
+    attrObs = new MutationObserver((records) => {
+      try {
+        for (const r of records) {
+          const name = r.attributeName ?? "?";
+          const el = r.target as Element;
+          const where =
+            el === document.documentElement
+              ? "html"
+              : el === document.body
+                ? "body"
+                : el === host
+                  ? "host"
+                  : el.tagName;
+          const oldV = (r.oldValue ?? "").replace(/\s+/g, " ").slice(0, 40);
+          const newV = (el.getAttribute(name) ?? "").replace(/\s+/g, " ").slice(0, 40);
+          scrollEmit(
+            "host:attr",
+            `${where} 的 ${name} 翻转：「${oldV || "∅"}」→「${newV || "∅"}」`,
+            { data: { where, attr: name, from: oldV, to: newV } }
+          );
+        }
+      } catch {
+        /* never throw */
+      }
+    });
+    attrObs.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["style", "class", "data-theme", "data-motion", "data-big", "data-mode"],
+      attributeOldValue: true,
+    });
+    attrObs.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["style", "class"],
+      attributeOldValue: true,
+    });
+    attrObs.observe(host, {
+      attributes: true,
+      attributeFilter: ["style", "class", "data-big", "data-mode"],
+      attributeOldValue: true,
+    });
+  } catch {
+    /* never throw */
+  }
 
   const onUserIntent = () => {
     userIntentAt = performance.now();
@@ -811,6 +920,16 @@ export function attachScrollWatch(host: HTMLElement): () => void {
     pmObs?.disconnect();
     pmObs = null;
     pmObsRoot = null;
+    widthObs?.disconnect();
+    widthObs = null;
+    widthObsRoot = null;
+    attrObs?.disconnect();
+    attrObs = null;
+    try {
+      document.fonts.removeEventListener("loadingdone", onFontsDone);
+    } catch {
+      /* never throw */
+    }
     host.removeEventListener("wheel", onUserIntent, { capture: true });
     host.removeEventListener("touchstart", onUserIntent, { capture: true });
     host.removeEventListener("pointerdown", onUserIntent, { capture: true });

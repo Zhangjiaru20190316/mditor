@@ -643,6 +643,9 @@ export const Editor = memo(
       insertAtCursor: (md) => {
         const ed = handle.editor;
         if (!ed) return;
+        // milkdown 的 insert() 事务带 scrollIntoView；调用方可能是异步回调
+        //（图片上传完成等），届时已无用户输入——不打点会被判成 ghost。
+        noteScrollWrite("pm-insert");
         ed.focus();
         ed.insertValue(md);
         // insertValue is suppressed on the listener; mark dirty so the change

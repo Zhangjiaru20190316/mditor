@@ -1,0 +1,63 @@
+diff --git a/node_modules/@milkdown/components/lib/code-block/index.js b/node_modules/@milkdown/components/lib/code-block/index.js
+index 7e1baef..abb12c2 100644
+--- a/node_modules/@milkdown/components/lib/code-block/index.js
++++ b/node_modules/@milkdown/components/lib/code-block/index.js
+@@ -746,6 +746,9 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+   initializeCodeMirror() {
+     if (this.initialized) return;
+     this.initialized = true;
++    // Lift the teardown height freeze before mounting the real editor.
++    this.dom.style.height = "";
++    this.dom.style.overflow = "";
+     this.cm = new EditorView({
+       doc: this.node.textContent,
+       root: this.view.root,
+@@ -774,6 +777,11 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+   teardownCodeMirror() {
+     if (!this.initialized) return;
+     if (this.cm.hasFocus || this.selected.value) return;
++    let frozenHeight = 0;
++    try {
++      frozenHeight = this.dom.offsetHeight;
++    } catch {
++    }
+     this.app.unmount();
+     this.cm.destroy();
+     this.initialized = false;
+@@ -782,6 +790,13 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+       this.dom.removeChild(this.dom.firstChild);
+     }
+     this.renderPlaceholder();
++    // Freeze the wrapper itself (not the placeholder <pre>, whose margins
++    // leak into the wrapper height) so the collapsed block keeps the exact
++    // last-rendered height.
++    if (frozenHeight > 0) {
++      this.dom.style.height = `${frozenHeight}px`;
++      this.dom.style.overflow = "hidden";
++    }
+   }
+   scheduleTeardown() {
+     this.cancelTeardown();
+@@ -853,9 +868,10 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+       try {
+         this.cm.dispatch({
+           changes: { from: change.from, to: change.to, insert: change.text },
+-          // Only follow the change when the user can actually be editing here,
+-          // so programmatic updates don't scroll a readonly editor around.
+-          scrollIntoView: this.view.editable
++          // Only follow the change when the user can actually be editing in
++          // this block, so programmatic updates (AI writes, full-doc sync)
++          // don't scroll the host scroller around.
++          scrollIntoView: this.cm.hasFocus
+         });
+       } finally {
+         this.updating = false;
+@@ -888,7 +904,7 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+   }
+ };
+ /** Delay before tearing down an off-screen CodeMirror instance. */
+-_CodeMirrorBlock.TEARDOWN_DELAY = 5e3;
++_CodeMirrorBlock.TEARDOWN_DELAY = 3e4;
+ let CodeMirrorBlock = _CodeMirrorBlock;
+ function computeChange(oldVal, newVal) {
+   if (oldVal === newVal) return null;

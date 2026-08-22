@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>scroll test</title>
+    <script type="module">
+      window.__bootErr = null;
+      // IAB guest 的渲染帧挂起时 IntersectionObserver 回调永不投递，组件
+      // 的进/出带生命周期无法靠真 IO 驱动。先装可控桩（记录实例，手动
+      // 触发 enter/leave），再加载测试主体——被测代码路径与真 IO 完全一致。
+      window.__fakeIO = { instances: [] };
+      window.IntersectionObserver = class {
+        constructor(cb) {
+          this.cb = cb;
+          this.targets = new Set();
+          window.__fakeIO.instances.push(this);
+        }
+        observe(t) { this.targets.add(t); }
+        unobserve(t) { this.targets.delete(t); }
+        disconnect() { this.targets.clear(); }
+      };
+      window.__ioFire = (el, isIntersecting) => {
+        for (const io of window.__fakeIO.instances) {
+          if (io.targets.has(el)) {
+            io.cb([{ target: el, isIntersecting }], io);
+          }
+        }
+      };
+      import("/scrolltest/main.js").catch((e) => {
+        window.__bootErr = String((e && e.stack) || e);
+        document.getElementById("bar").textContent = "BOOT ERR: " + window.__bootErr;
+      });
+    </script>
+    <style>
+      html, body { margin: 0; padding: 0; }
+      #frame { display: flex; flex-direction: column; height: 100vh; }
+      #bar { font: 12px monospace; padding: 4px 8px; background: #eee; white-space: pre; }
+      /* 复刻应用里的滚动容器结构：.mditor-editor-host（真滚动层）> .mditor-milkdown（Crepe 内容层） */
+      #host.mditor-editor-host { height: 600px; flex: none; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <div id="frame">
+      <div id="bar">booting…</div>
+      <div id="host" class="mditor-editor-host">
+        <div id="milk" class="mditor-milkdown"></div>
+      </div>
+    </div>
+  </body>
+</html>

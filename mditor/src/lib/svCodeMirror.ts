@@ -251,6 +251,9 @@ export function createSvEditor(
       );
     },
     jumpToLine(line: number, smooth = false) {
+      // 两个分支都写滚动位置（瞬时：CM scrollIntoView + focus；平滑：
+      // scroller.scrollTo），入口统一打点，瞬时分支此前漏登记。
+      noteScrollWrite("sv-jump");
       const l = Math.max(0, Math.min(line, view.state.doc.lines - 1));
       const pos = view.state.doc.line(l + 1).from;
       const y: "start" | "center" = opts.isTypewriter?.() ? "center" : "start";
@@ -285,7 +288,6 @@ export function createSvEditor(
       const clear = () => {
         smoothJump.active = false;
       };
-      noteScrollWrite("sv-jump");
       scroller.scrollTo({
         top: Math.max(0, scroller.scrollTop + offset),
         behavior: prefersReducedMotion() ? "auto" : "smooth",

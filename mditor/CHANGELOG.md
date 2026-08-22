@@ -1,5 +1,23 @@
 # Changelog
 
+## 4.1.2 (2026-08-22)
+
+「代码块振荡 + ghost 滚动」根修（v4.1.1 后复发案）。依据用户导出的三份滚动诊断定罪：**元凶是 Milkdown 代码块组件（@milkdown/components CodeMirrorBlock）的懒生命周期**——共享 IntersectionObserver（viewport±200px）进带挂载完整 CodeMirror、离带 5 秒拆除为裸 `<pre>` 占位符且不保留高度。用户文档中代码块在 110↔157 / 163↔224 / 233↔313px 两种形态间随滚动反复横跳：块高度振荡、文档高度 ±134~1114px 波动、视口内容位移（scrollTop 未变而内容自己动）；贴底时上方块拆除使文档收缩 830px，浏览器钳制 scrollTop 产生「↑230px 无来源滚动」（atBottom+heightDelta:-830 实锤）；AI 流式/整篇回写改到代码块内容时，组件 `update()` 的 `cm.dispatch({scrollIntoView: this.view.editable})` 借 CodeMirror scrollRectIntoView 逐级爬祖先直接写主容器 scrollTop，产生「↓55px ghost」（案发时 AI 流式活跃 + 70ms longtask + 滚后新块进带变高三细节吻合）。
+
+### 修复
+
+- **patch-package 补丁 @milkdown/components@7.22.1**（patch 机制 + postinstall 固化，重装/CI 不丢）：
+  - **拆除高度冻结**：`teardownCodeMirror()` 量取 wrapper 实测高并冻结在 wrapper 上（`height+overflow:hidden`，盖 wrapper 而非占位符——pre 的外边距会漏进 wrapper 高度），重新挂载时清除——拆/挂对布局完全中性，振荡/贴底钳制/视口位移三类症状同根根除
+  - **拔掉程序化滚动劫持**：`update()` 的 `scrollIntoView: this.view.editable` → `this.cm.hasFocus`——外部内容写入（AI 流式、整篇回退、查找替换）不再移动视口，用户正编辑的块行为不变
+  - **TEARDOWN_DELAY 5s→30s**：减少滚动中 CM 反复重建造成的 50-70ms longtask 卡顿
+- **滚动打点补漏**：`Editor.insertAtCursor` 补 `noteScrollWrite("pm-insert")`（milkdown insert() 事务带 scrollIntoView，图片上传异步回调落地时已无用户输入，此前会被误判 ghost）；`svCodeMirror.jumpToLine` 打点提至入口覆盖瞬时分支
+- **scrollDebug v3.9.6 换行波定罪探针**：诊断数据中另有「32 块同身份 ±1 行（+24~52px）、总高瞬变 ±1114px、约 7 秒后整体回退」的全文换行波，与 pm:rebuild 无关（计数未涨）、静态穷尽无周期性样式写入者。新增三个只读探针下次导出即可定罪：`layout:width`（.ProseMirror 内容宽度 ResizeObserver）、`font:loaded`（webfont 上屏）、`host:attr`（html/body/host 的 style/class 翻转带旧值）
+
+### 验证
+
+- `scrolltest.html`（新增，dev server 专属验证页，不进 dist）：真 Crepe 实例 + 16 个代码块长文档，可控 IO 桩驱动完整生命周期，5 项断言全过——离带拆除后块高 335→335 精确不变、文档高度仅 1px 亚像素漂移、贴底 scrollTop 稳定、程序化写入（未聚焦 CM + 光标在视口外下方，即 ghost 触发条件）delta=0、无组件异常
+- `npm run build`（tsc + vite）与 `npm test`（228 例）全绿
+
 ## 4.1.1 (2026-08-22)
 
 「ghost 滚动」四连修：大文档下「页面自己动」（内容自己位移 / 跳转落点漂移 / ±N 高度震荡 / ghost 误报）全链路根修。核心成果：首次为该问题族拿到运行时定罪证据（新增块级归因 + PM 重建检测诊断），**推翻「PM 重渲替换」假设（全程 pm.childlist=0），实锤 Chromium 对 content-visibility remembered size 的距离驱逐机制**，并以「内容寻址高度记忆（PM decoration 承载）+ 加载后分块预热」根除。
