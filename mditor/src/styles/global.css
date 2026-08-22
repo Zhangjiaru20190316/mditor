@@ -3681,6 +3681,191 @@ body {
   }
 }
 
+/* ---------- B14. v4.1 点位动效（平衡档基线） ------------------------------
+   全部一次性入场/退场（mount / .closing 类触发），只动 transform/opacity；
+   「无」档与 prefers-reduced-motion 由 B12 kill switch 统一压成瞬时。 */
+
+/* Tab 增删：新标签挂载淡入微扩；关闭标签由 TabsBar 的 180ms 残影播淡出缩收 */
+.tabbar-tab {
+  animation: tab-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.tabbar-tab.closing {
+  animation: tab-out 0.16s cubic-bezier(0.4, 0, 0.2, 1) both;
+  pointer-events: none;
+}
+@keyframes tab-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes tab-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
+
+/* 编辑器模式切换（wysiwyg/ir/sv 销毁重建）：重建出的新表面淡入。结构不改，
+   只对宿主直接子级生效——内容更新（setValue/输入）不重挂载，不会重放。 */
+.mditor-milkdown > *,
+.mditor-sv > * {
+  animation: editor-surface-in 0.2s ease both;
+}
+@keyframes editor-surface-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 设置分区切换（SettingsModal 右列 key 重挂载）：淡入 + 上移 6px（参照
+   .sb-panel-in） */
+.settings-pane {
+  animation: settings-pane-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes settings-pane-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---------- B15. 生动档专属动效（html[data-motion="lively"] 前缀承载） ----
+   惰性规则：属性选择器前缀，平衡/无档下不产生任何额外样式计算；
+   级联延迟 25ms/项（≤60ms/项），整组总时长封顶 300ms；
+   「无」档与 prefers-reduced-motion 下以上全部不触发（B12 kill switch）。 */
+
+/* 级联入场：侧栏面板（直接子级数量天然有界） */
+html[data-motion="lively"] .sb-panel > * {
+  animation-duration: 0.2s;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+html[data-motion="lively"] .sb-panel > *:nth-child(2) {
+  animation-delay: 25ms;
+}
+html[data-motion="lively"] .sb-panel > *:nth-child(3) {
+  animation-delay: 50ms;
+}
+html[data-motion="lively"] .sb-panel > *:nth-child(n + 4) {
+  animation-delay: 75ms;
+}
+
+/* 级联入场：设置分区右列各 Field（第 5 项起延迟封顶 100ms，总时长 ≤300ms）。
+   容器自身的入场动画关闭，避免与子级级联叠加成双重淡入。 */
+html[data-motion="lively"] .settings-pane {
+  animation: none;
+}
+html[data-motion="lively"] .settings-pane > * {
+  animation: settings-field-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+html[data-motion="lively"] .settings-pane > *:nth-child(2) {
+  animation-delay: 25ms;
+}
+html[data-motion="lively"] .settings-pane > *:nth-child(3) {
+  animation-delay: 50ms;
+}
+html[data-motion="lively"] .settings-pane > *:nth-child(4) {
+  animation-delay: 75ms;
+}
+html[data-motion="lively"] .settings-pane > *:nth-child(n + 5) {
+  animation-delay: 100ms;
+}
+@keyframes settings-field-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 弹窗与下拉入场弹性曲线：轻微过冲（scale 从更小处弹入）。
+   注意退场优先：spring 入场的特异性与 .modal-backdrop.closing .modal-card
+   打平且源顺序靠后，这里显式补一条更高特异性的退场规则防止盖过淡出。 */
+html[data-motion="lively"] .modal-card {
+  animation: modal-card-in-spring 0.32s cubic-bezier(0.34, 1.4, 0.5, 1) both;
+}
+html[data-motion="lively"] .modal-backdrop.closing .modal-card {
+  animation: modal-card-out 0.22s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+@keyframes modal-card-in-spring {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+html[data-motion="lively"] .mb-dropdown {
+  animation-name: mb-in-spring;
+  animation-duration: 0.18s;
+  animation-timing-function: cubic-bezier(0.34, 1.4, 0.5, 1);
+}
+@keyframes mb-in-spring {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+html[data-motion="lively"] .ctx-menu {
+  animation-timing-function: cubic-bezier(0.34, 1.4, 0.5, 1);
+}
+
+/* hover 抬升增强：卡片类 translateY(-2px) + 阴影加深（阴影为静态值直换，
+   不参与过渡——过渡属性白名单禁 box-shadow） */
+html[data-motion="lively"] .ai-quick-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+html[data-motion="lively"] .template-item {
+  transition:
+    transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 0.13s ease,
+    border-color 0.13s ease,
+    color 0.13s ease;
+}
+html[data-motion="lively"] .template-item:hover,
+html[data-motion="lively"] .template-item:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+html[data-motion="lively"] .anno-item:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+/* AI FAB 交互反馈更弹：按下快压、松手带回弹（纯事件驱动一次性，无循环） */
+html[data-motion="lively"] .ai-fab {
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+html[data-motion="lively"] .ai-fab:active {
+  transform: scale(0.88) rotate(-3deg);
+  transition: transform 0.1s ease;
+}
+
 /* B12. 尊重系统「减少动态效果」设置：统一近乎禁用所有动效。
    v4.1 动效三档：「无」档（html[data-motion="none"]，useSettings 直写）与
    prefers-reduced-motion 并列同一套 kill switch —— 用户选「无」时无论系统
