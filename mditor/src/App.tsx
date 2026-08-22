@@ -262,7 +262,11 @@ export default function App() {
       );
       setActiveKey(key);
       activeKeyRef.current = key;
-      fileApiRef.current.showDoc({ path: target.path, content, dirty: target.dirty });
+      // tabKey 透传：Editor 的 per-tab 滚动记忆按它索引（切回恢复原位）。
+      fileApiRef.current.showDoc(
+        { path: target.path, content, dirty: target.dirty },
+        target.key
+      );
       finishSwitch(token, startedAt);
       scheduleFollowUpPreparse(() => preparseTargetRef.current());
     },
@@ -281,8 +285,8 @@ export default function App() {
         !curActive.dirty &&
         curActive.content === "";
       if (replaceCurrent && curActive) {
-        // 原地清空即可（内容本就是空）。
-        fileApiRef.current.newDoc();
+        // 原位清空即可（内容本就是空）。key 沿用原标签，滚动记忆连续。
+        fileApiRef.current.newDoc(curActive.key);
         return;
       }
       snapshotActiveTab();
@@ -296,7 +300,10 @@ export default function App() {
       // 同一 token 收发：内容是空/模板（小），只走顶栏，并保证最短可见时长。
       const startedAt = performance.now();
       const token = beginSwitch(null, false);
-      fileApiRef.current.showDoc({ path: null, content, dirty: content !== "" });
+      fileApiRef.current.showDoc(
+        { path: null, content, dirty: content !== "" },
+        key
+      );
       finishSwitch(token, startedAt);
     },
     [snapshotActiveTab, beginSwitch, finishSwitch]
@@ -341,7 +348,7 @@ export default function App() {
         setTabs([{ key: k, path: null, name: "未命名.md", dirty: false, content: "" }]);
         setActiveKey(k);
         activeKeyRef.current = k;
-        fileApiRef.current.newDoc();
+        fileApiRef.current.newDoc(k);
         return;
       }
       setTabs(remaining);
@@ -349,11 +356,14 @@ export default function App() {
         const next = remaining[Math.min(idx, remaining.length - 1)];
         setActiveKey(next.key);
         activeKeyRef.current = next.key;
-        fileApiRef.current.showDoc({
-          path: next.path,
-          content: next.content,
-          dirty: next.dirty,
-        });
+        fileApiRef.current.showDoc(
+          {
+            path: next.path,
+            content: next.content,
+            dirty: next.dirty,
+          },
+          next.key
+        );
       }
     },
     [getCurrentContent]
@@ -643,7 +653,7 @@ export default function App() {
           }
           setActiveKey(key);
           activeKeyRef.current = key;
-          await fileApiRef.current.openPath(path, content);
+          await fileApiRef.current.openPath(path, content, key);
         }
         if (isStale(token)) return;
         setRecentKey((k) => k + 1);

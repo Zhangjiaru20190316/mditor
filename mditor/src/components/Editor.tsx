@@ -20,7 +20,7 @@ import {
   useState,
 } from "react";
 import { useMilkdown } from "../hooks/useMilkdown";
-import { useAnnotationMarkers } from "../hooks/useAnnotationMarkers";
+import { useAnnotationMarkers, stampAnnotationMarkers } from "../hooks/useAnnotationMarkers";
 import { useFile } from "../hooks/useFile";
 import { useAutosave } from "../hooks/useAutosave";
 import { useFileWatcher } from "../hooks/useFileWatcher";
@@ -284,12 +284,141 @@ export const Editor = memo(
     else if (t.text) handle.editor?.revealText(t.text);
   }, [handle]);
 
+  // ---- per-tab 视口记忆 + 载入归零（v4.1.3）------------------------------
+  // 换文档从不重置滚动容器（.mditor-editor-host / .cm-scroller 均常驻），
+  // 旧文档的 scrollTop 原样残留 —— 「打开新文件不从开头载入」的根因。
+  // 会话级 Map 按 App 层 tab key（file-*/untitled-*）记忆两套容器各自的
+  // scrollTop：离开的标签（onLoaded 开头，内容尚未替换）捕获，新文档归零，
+  // 切回的标签恢复。条目是双数字对象，会话量级可忽略，关闭标签不清理
+  // （同 key 重开自然复用）。
+  const scrollMemoRef = useRef(new Map<string, { rich: number; sv: number }>());
+  const lastTabKeyRef = useRef<string | null>(null);
+  // 恢复重试梯子的活动句柄（大文档高度未稳时恢复被钳制，等高度长齐补写）。
+  const viewportRetryRef = useRef<number | null>(null);
+  // 载入后兜底盖章的定时器句柄。
+  const stampFallbackTimerRef = useRef<number | null>(null);
+
+  const svScrollerEl = useCallback(
+    (): HTMLElement | null =>
+      svHostRef.current?.querySelector<HTMLElement>(".cm-scroller") ?? null,
+    []
+  );
+
+  /** 把离开的文档（lastTabKey）此刻的视口位置存入记忆。必须在 setValue
+   *  之前调用：内容一换视口即被按新文档高度钳制，旧位置读不回来。 */
+  const captureScrollMemo = useCallback(() => {
+    const key = lastTabKeyRef.current;
+    if (!key) return;
+    scrollMemoRef.current.set(key, {
+      rich: scrollerRef.current?.scrollTop ?? 0,
+      sv: svScrollerEl()?.scrollTop ?? 0,
+    });
+  }, [svScrollerEl]);
+
+  /** 写视口顶部。恢复（>0）时挂 smoothJump 标志 —— 在位期间 anchor-comp
+   *  绝不补偿（scrollDebug 惯例），重试窗口内的文档高度震荡不会被误补偿
+   *  成反向位移；收尾（达标/放弃/被人滚动）删除。 */
+  const writeViewportTop = useCallback(
+    (richTop: number, svTop: number) => {
+      // 换目标前先撤旧梯子：定时器与 smoothJump 残留会让 anchor-comp
+      // 永久静默（快速连续切标签场景）。
+      if (viewportRetryRef.current != null) {
+        window.clearTimeout(viewportRetryRef.current);
+        viewportRetryRef.current = null;
+        if (scrollerRef.current) delete scrollerRef.current.dataset.smoothJump;
+      }
+      const host = scrollerRef.current;
+      if (host) {
+        noteScrollWrite(richTop > 0 ? "tab-restore" : "file-open");
+        host.scrollTop = richTop;
+      }
+      const sv = svScrollerEl();
+      if (sv) {
+        // sv 表面 scrollDebug 观察器休眠（挂在宿主），打点无归因副作用，
+        // 与 rich 保持对称便于日志对齐。
+        noteScrollWrite(svTop > 0 ? "tab-restore" : "file-open");
+        sv.scrollTop = svTop;
+      }
+      // 大文档恢复可能被当前高度钳制（代码块懒挂载/cvMemory 预热完成前
+      // 高度不足）：250ms×4 重试梯子，仅当视口没人动过（仍停在上次落点）
+      // 且未达目标才补写；目标 0 永远可达，无需梯子。
+      if (richTop > 0 && host) {
+        let tries = 0;
+        let lastLanded = host.scrollTop; // 初次写入后的实际落点（可能被钳）
+        const retry = () => {
+          viewportRetryRef.current = null;
+          const el = scrollerRef.current;
+          if (!el) return;
+          // 有人滚动过 → 尊重现状放弃；达标或次数用尽 → 收尾。
+          const untouched = Math.abs(el.scrollTop - lastLanded) <= 2;
+          const settled = Math.abs(el.scrollTop - richTop) <= 2;
+          if (!untouched || settled || tries >= 4) {
+            delete el.dataset.smoothJump;
+            return;
+          }
+          tries++;
+          noteScrollWrite("tab-restore");
+          el.scrollTop = richTop;
+          lastLanded = el.scrollTop;
+          viewportRetryRef.current = window.setTimeout(retry, 250);
+        };
+        host.dataset.smoothJump = "1";
+        viewportRetryRef.current = window.setTimeout(retry, 250);
+      }
+    },
+    [svScrollerEl]
+  );
+
+  /** 换文档后的视口落位：记忆有此 key（切回的标签）恢复各自位置，否则
+   *  （新文档/未命名）归零 —— 从开头载入。 */
+  const applyViewportForTab = useCallback(
+    (tabKey: string | null) => {
+      const memo = tabKey != null ? scrollMemoRef.current.get(tabKey) : undefined;
+      lastTabKeyRef.current = tabKey;
+      writeViewportTop(memo ? memo.rich : 0, memo ? memo.sv : 0);
+    },
+    [writeViewportTop]
+  );
+
+  /** 载入后的兜底盖章：300ms 再盖一次（覆盖 big 档位重建/异步渲染路径），
+   *  盖过仍缺号则发诊断事件留证（自愈 + 定罪证据）。 */
+  const scheduleStampFallback = useCallback(() => {
+    if (stampFallbackTimerRef.current != null) {
+      window.clearTimeout(stampFallbackTimerRef.current);
+    }
+    stampFallbackTimerRef.current = window.setTimeout(() => {
+      stampFallbackTimerRef.current = null;
+      if (!stampAnnotationMarkers()) return;
+      const bare = document.querySelectorAll(
+        'sup[data-type="footnote_reference"][data-label^="anno-"]:not([data-anno-num])'
+      ).length;
+      if (bare > 0) {
+        annoEmit("stamp.bare-after-load", `载入兜底后仍有 ${bare} 个徽章缺编号`, {
+          level: "warn",
+        });
+      }
+    }, 300);
+  }, []);
+
+  // 会话级定时器收尾（Editor 是应用级常驻组件，纯防御性清理）。
+  useEffect(
+    () => () => {
+      if (viewportRetryRef.current != null) {
+        window.clearTimeout(viewportRetryRef.current);
+      }
+      if (stampFallbackTimerRef.current != null) {
+        window.clearTimeout(stampFallbackTimerRef.current);
+      }
+    },
+    []
+  );
+
   // Wire fileApi.onLoaded so opening a file pushes content into the editor.
   // `fileApi` is deliberately NOT in the dep array — see fileApiRef above. The
   // callback only closes over handle.editor + refs, so re-subscribing purely
   // when the editor instance changes is both correct and loop-free.
   useEffect(() => {
-    fileApiRef.current.setOnLoaded((content) => {
+    fileApiRef.current.setOnLoaded((content, tabKey) => {
       // 换了文档：代码行批注的元数据缓存按批注 id（anno-N）索引，不清空
       // 会把上一篇文档同号批注的 codeLine 注入新文档（v3.9.1）。
       annoMetaCacheRef.current.clear();
@@ -298,6 +427,9 @@ export const Editor = memo(
       // revealAfterLoad 请求执行——fileApi.openPath 内同步触发 onLoaded，
       // 调用方在 await 之后才排队，故这里清的只可能是过期目标）。
       pendingRevealRef.current = null;
+      // 离开的文档此刻的视口位置存入记忆 —— 必须在 setValue 之前（内容
+      // 一换位置即被钳制丢失）。
+      captureScrollMemo();
       const ed = handle.editor;
       if (ed) {
         // 整篇文档载入：clearStack=true 清空 undo/redo 栈（Milkdown 的
@@ -309,25 +441,47 @@ export const Editor = memo(
         // ready — otherwise the open is lost and the editor stays blank.
         pendingContentRef.current = content;
       }
+      // 视口落位：新文档归零（宿主容器常驻、旧 scrollTop 残留是本 bug
+      // 根因），切回的标签恢复记忆位置。缓冲路径此处写下的值会在 ready
+      // 重放后再确认一次。
+      applyViewportForTab(tabKey);
+      // 载入后同步盖章：数字不赌 MutationObserver 的 60ms 防抖 —— 载入那
+      // 批 records 一旦没触发 stamp，静止文档永远不会补盖（正式版「圆形
+      // 无数字」的根因）。PM updateState 同步写 DOM，此刻 sup 已在；幂等
+      // 有早退，顺带消灭首帧空药丸一拍。
+      stampAnnotationMarkers();
+      scheduleStampFallback();
       getContentRef.current = () => content;
       // setValue does NOT echo through the onInput listener (it is suppressed),
       // so push the content up manually so the outline / word count update.
       onInputRef.current?.(content);
       void logMemory("file-load");
     });
-  }, [handle.editor, handle.ready]);
+  }, [
+    handle.editor,
+    handle.ready,
+    captureScrollMemo,
+    applyViewportForTab,
+    scheduleStampFallback,
+  ]);
 
   // Replay buffered content once Milkdown finishes initializing.
   useEffect(() => {
     if (handle.ready && pendingContentRef.current != null) {
       handle.editor?.setValue(pendingContentRef.current, true);
       pendingContentRef.current = null;
+      // 缓冲重放路径补齐视口落位与盖章（onLoaded 触发时编辑器未就绪，
+      // 内容此刻才真正进 DOM）。execPendingReveal 随后执行，搜索定位
+      // 晚于归零/恢复，顺序天然正确。
+      applyViewportForTab(lastTabKeyRef.current);
+      stampAnnotationMarkers();
+      scheduleStampFallback();
     }
     // 就绪即触发排队中的搜索定位：缓冲重放后内容确定落地；重建但无缓冲
     // （内容随新实例种子就位）时同样成立。onLoaded 已清队，剩下的排队
     // 目标必然属于当前文档。
     if (handle.ready) execPendingReveal();
-  }, [handle.ready, handle.editor, execPendingReveal]);
+  }, [handle.ready, handle.editor, execPendingReveal, applyViewportForTab, scheduleStampFallback]);
 
   // 滚动观察器（scrollDebug）：会话归因 / 视口位移哨兵 / 高度突变 / 长任务。
   // 常驻（每帧常数次属性读取，亚毫秒级），窗口失焦 rAF 自动暂停。

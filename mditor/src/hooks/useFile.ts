@@ -25,18 +25,25 @@ export interface FileApi {
   // Editor's setOnLoaded effect that formed a self-sustaining render storm that
   // leaked the fileApi useMemo closure at ~MB/s. Callers that need loaded
   // content register via setOnLoaded.
-  /** Set the callback the editor uses to receive freshly loaded content. */
-  setOnLoaded: (cb: ((content: string) => void) | null) => void;
-  newDoc: () => void;
+  /** Set the callback the editor uses to receive freshly loaded content.
+   *  `tabKey` identifies the tab the document belongs to (App 层的 tab key，
+   *  未命名标签也唯一)——Editor 用它做 per-tab 滚动位置记忆。 */
+  setOnLoaded: (
+    cb: ((content: string, tabKey: string | null) => void) | null
+  ) => void;
+  /** Replace the buffer with a blank document. `tabKey` 见 setOnLoaded. */
+  newDoc: (tabKey?: string | null) => void;
   open: () => Promise<boolean>;
-  openPath: (path: string, content: string) => Promise<void>;
+  /** `tabKey` 见 setOnLoaded. */
+  openPath: (path: string, content: string, tabKey?: string | null) => Promise<void>;
   /**
    * Restore a full DocState into the buffer WITHOUT touching the recent list —
    * the tab-switch path (V3.6 多标签页). Pushes the content into the editor via
    * onLoaded exactly like openPath, but skips the pushRecent IPC chain so
    * flipping between tabs doesn't churn mditor.json / reorder 最近.
+   * `tabKey` 见 setOnLoaded.
    */
-  showDoc: (doc: DocState) => void;
+  showDoc: (doc: DocState, tabKey?: string | null) => void;
   save: (getContent: () => string) => Promise<boolean>;
   /**
    * Persist the buffer to disk WITHOUT touching the recent list. Used by
@@ -72,7 +79,7 @@ export function useFile(): FileApi {
     dirty: false,
   });
   const [onLoaded, setOnLoadedState] =
-    useState<((content: string) => void) | null>(null);
+    useState<((content: string, tabKey: string | null) => void) | null>(null);
 
   // Refs holding the latest state so callbacks can stay referentially stable
   // (empty deps) while still reading fresh values at call time.
@@ -81,17 +88,20 @@ export function useFile(): FileApi {
   const onLoadedRef = useRef(onLoaded);
   onLoadedRef.current = onLoaded;
 
-  const setOnLoaded = useCallback((cb: ((content: string) => void) | null) => {
-    setOnLoadedState(() => cb); // wrap so React treats it as a value, not a thunk
-  }, []);
+  const setOnLoaded = useCallback(
+    (cb: ((content: string, tabKey: string | null) => void) | null) => {
+      setOnLoadedState(() => cb); // wrap so React treats it as a value, not a thunk
+    },
+    []
+  );
 
-  const newDoc = useCallback(() => {
+  const newDoc = useCallback((tabKey?: string | null) => {
     setDoc({ path: null, content: "", dirty: false });
-    onLoadedRef.current?.("");
+    onLoadedRef.current?.("", tabKey ?? null);
   }, []);
 
   const openPath = useCallback(
-    async (path: string, content: string) => {
+    async (path: string, content: string, tabKey?: string | null) => {
       setDoc({ path, content, dirty: false });
       // CRITICAL ORDERING: push the content into the editor BEFORE awaiting the
       // recent-list IPC chain. pushRecent does loadRecent + set + save (three
@@ -99,7 +109,7 @@ export function useFile(): FileApi {
       // content by that whole window. Now the editor paints the new document
       // immediately, and the recent-list update (invisible to the user while
       // they're looking at the editor) runs right after.
-      onLoadedRef.current?.(content);
+      onLoadedRef.current?.(content, tabKey ?? null);
       await pushRecent({
         path,
         name: baseName(path),
@@ -116,9 +126,9 @@ export function useFile(): FileApi {
     return true;
   }, [openPath]);
 
-  const showDoc = useCallback((d: DocState) => {
+  const showDoc = useCallback((d: DocState, tabKey?: string | null) => {
     setDoc({ path: d.path, content: d.content, dirty: d.dirty });
-    onLoadedRef.current?.(d.content);
+    onLoadedRef.current?.(d.content, tabKey ?? null);
   }, []);
 
   const saveAs = useCallback(

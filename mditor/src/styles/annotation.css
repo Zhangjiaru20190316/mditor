@@ -28,7 +28,8 @@
   color: var(--accent);
   background: var(--accent-soft);
   border: 1px solid var(--accent);
-  border-radius: var(--radius-l);
+  /* 数字徽章是胶囊形：token 政策里特形保留字面量（同 .sb-count），勿映射 --radius-* */
+  border-radius: 999px;
   cursor: pointer;
   user-select: none;
   transition: transform 0.12s ease, background 0.12s ease;
@@ -38,7 +39,9 @@
 .mditor-milkdown sup[data-type="footnote_reference"][data-label^="anno-"]::before {
   /* the number comes from data-anno-num, stamped by useAnnotationMarkers */
   content: attr(data-anno-num);
-  font-size: var(--font-size-xs);
+  /* 必须带 fallback：sup 自身 font-size:0 隐藏字面文本，var 失解析时
+     ::before 会继承 0 → 数字以 0px 渲染（圆形空徽章） */
+  font-size: var(--font-size-xs, 11px);
   font-weight: 700;
   color: var(--accent);
 }
@@ -290,14 +293,15 @@
   min-width: 15px;
   height: 15px;
   padding: 0 4px;
-  font-size: var(--font-size-xs);
+  /* fallback 同 marker 徽章 ::before：数字类小件不赌 token 解析 */
+  font-size: var(--font-size-xs, 11px);
   font-weight: 700;
   line-height: 15px;
   text-align: center;
   color: #fff;
   /* 渐变 accent 底（135°） */
   background: linear-gradient(135deg, var(--accent), var(--accent-soft));
-  border-radius: var(--radius-l);
+  border-radius: 999px;
   box-shadow: var(--shadow);
   pointer-events: none;
   animation: sb-badge-pop 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -356,13 +360,14 @@
   min-width: 20px;
   height: 18px;
   padding: 0 5px;
-  font-size: var(--font-size-xs);
+  /* fallback 同 marker 徽章 ::before：数字类小件不赌 token 解析 */
+  font-size: var(--font-size-xs, 11px);
   font-weight: 700;
   line-height: 18px;
   text-align: center;
   color: #fff;
   background: linear-gradient(135deg, var(--accent), var(--accent-soft));
-  border-radius: var(--radius-l);
+  border-radius: 999px;
 }
 .anno-item-anchor {
   flex: 1;

@@ -1,11 +1,12 @@
 // ESLint 9 flat config — 前端 TS/TSX only（src-tauri 是 Rust，由 cargo fmt/clippy 管；
-// scripts/ 是 Node 构建脚本，不在前端 lint 范围）。
+// scripts/ 是 Node 构建脚本，不在前端 lint 范围；scrolltest/ 是纯浏览器
+// 独立验证页（.js + 内联全局），同样不在前端 lint 范围）。
 import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
 
 export default tseslint.config(
-  { ignores: ["dist", "node_modules", "src-tauri", "scripts", "*.config.*"] },
+  { ignores: ["dist", "node_modules", "src-tauri", "scripts", "scrolltest", "*.config.*"] },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
