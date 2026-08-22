@@ -1,4 +1,4 @@
-// 滚动诊断体系（v3.9.4）——「页面自己动 / 滚动卡顿」的运行时证据采集。
+// 滚动诊断体系（v3.9.5）——「页面自己动 / 滚动卡顿」的运行时证据采集。
 //
 // 背景：滚动异常已多轮修复仍复发（打字机让位、overflow-anchor、图片懒加
 // 载、盖章战争……），但始终缺少运行时证据来区分到底是哪条链路在动滚动
@@ -12,10 +12,23 @@
 //  2. 视口内容位移（layout:shift）：scrollTop 没变、但视口顶部哨兵块的
 //     文档坐标变了 → 内容在自己动（content-visibility 高度重估 / 图片加载
 //     / 盖章行内化 / PM 重排），这是 scrollTop 写入检测抓不到的另一半
-//     「自己动」。哨兵用二分选取，失效自动重选。
+//     「自己动」。哨兵用二分选取，失效自动重选。与文档高度突变同帧发生
+//     时合并为一条事件输出（位移的原因大概率就是同帧的高度变化）。
 //  3. 文档高度突变（layout:height）：scrollHeight 变化 >8px——c-v 块首次
 //     进入视口时 3em 占位 → 实际高度的跳变证据。
 //  4. 长任务（perf:longtask）：主线程阻塞 >50ms（滚动卡顿的直接证据）。
+//  5. 块级高度归因（layout:block，v3.9.5）：layout:height 只报文档总高
+//     delta，定不了罪。ghost / 位移 / 高度突变触发后的短窗口（2s）内逐
+//     块比对 ProseMirror 顶层块高度，定位 ±N 变化发生在哪个块（索引 +
+//     tagName + 首行摘要 + delta）；平时休眠，big 模式（data-big）下至多
+//     1s 一次静默刷新基线，触发窗口内 100ms 一次比对——常驻路径每帧仍
+//     只有常数次属性读取。
+//  6. PM 重建检测（pm:rebuild / pm:shape，v3.9.5）：对 .ProseMirror 挂只
+//     读 MutationObserver（仅顶层 childList）。顶层块成批同位替换（H1：
+//     DOM 替换 → contain-intrinsic-size 的 remembered size 随元素消亡丢
+//     失 → 回落 3em 占位 → 批量 -N 塌缩）与块身份不变的高度往返（H2：图
+//     片占位 ↔ 真实高度）由此一锤定音。PM 根节点被整体替换（编辑器重建）
+//     单独报 pm:root-swap。
 //
 // 接入：Editor.tsx 挂载 attachScrollWatch(滚动容器)——富文本/IR 模式是根
 // div .mditor-editor-host（真正 overflow:auto 的那层）；sv 模式它不滚
@@ -23,8 +36,10 @@
 // 覆盖范围。所有写 scrollTop / scrollIntoView 的路径先 noteScrollWrite("<tag>") 打点。
 // 出口：window.__scrollDebug = { events, counters, clear, recent }。
 //
-// 纪律：诊断代码绝不能影响编辑器——所有公开入口 try/catch，每帧成本为
-// 常数次属性读取（亚毫秒级）。
+// 纪律：诊断代码绝不能影响编辑器——所有公开入口 try/catch，MutationObserver
+// 只读（绝不写 PM 管辖 DOM，写它就是触发重渲、污染证据），每帧成本为
+// 常数次属性读取（亚毫秒级）；逐块详细比对只在触发后的短窗口按 100ms
+// 步频开启。
 
 /** 事件级别（面板按级别着色）。 */
 export type ScrollDebugLevel = "info" | "warn" | "error";
@@ -104,6 +119,55 @@ export function scrollDebugClear(): void {
 }
 
 /* -------------------------------------------------------------------------- */
+/* 纯逻辑：块高度比对 / PM 批次分类（可单测，无 DOM 依赖）                      */
+/* -------------------------------------------------------------------------- */
+
+/** 顶层块快照行（layout:block 归因用）：el 身份 + 上次高度。 */
+export interface BlockRow {
+  el: Element;
+  h: number;
+}
+
+/** diffBlocks 产物。 */
+export interface BlockDiff {
+  /** 同位元素身份变化（PM 重建）——高度比对失效，调用方需整体重基线，
+   *  替换原因由 pm:rebuild / pm:shape 事件给出。 */
+  replaced: boolean;
+  /** 高度发生变化的块（仅身份保持的行，按索引升序）。 */
+  changes: Array<{ index: number; from: number; to: number }>;
+  /** 顶层块数量变化（尾部增删，正 = 增）。 */
+  lenDelta: number;
+}
+
+/** 比对两份顶层块快照：身份保持的行报高度变化，身份变化整体标记 replaced。 */
+export function diffBlocks(prev: BlockRow[], next: BlockRow[]): BlockDiff {
+  const n = Math.min(prev.length, next.length);
+  const changes: BlockDiff["changes"] = [];
+  let replaced = false;
+  for (let i = 0; i < n; i++) {
+    if (prev[i].el !== next[i].el) {
+      replaced = true;
+      continue;
+    }
+    if (Math.abs(prev[i].h - next[i].h) > 0.5) {
+      changes.push({ index: i, from: prev[i].h, to: next[i].h });
+    }
+  }
+  return { replaced, changes, lenDelta: next.length - prev.length };
+}
+
+/** PM 顶层 childList 突变批次分类：
+ *  * rebuild —— 同批大量删除 + 大量新增（同位替换）：H1（PM 重渲批量替换
+ *    顶层块）的签名，remembered size 随旧元素消亡而丢失；
+ *  * shape —— 大量纯增删（粘贴/大段删除），块身份本来就该变；
+ *  * edit —— 日常编辑（拆段/合段 1~2 个），只计数不发事件。 */
+export function classifyPmBatch(removed: number, added: number): "edit" | "shape" | "rebuild" {
+  if (removed >= 3 && added >= 3) return "rebuild";
+  if (removed + added >= 8) return "shape";
+  return "edit";
+}
+
+/* -------------------------------------------------------------------------- */
 /* 写入打点                                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -138,6 +202,17 @@ const USER_INPUT_KEYS = new Set([
   " ",
 ]);
 
+/** ghost / 位移 / 高度突变触发后，逐块比对窗口的时长。 */
+const BLOCK_WINDOW_MS = 2000;
+/** 触发窗口内的比对步频（ms/次）。 */
+const BLOCK_WALK_WINDOW_MS = 100;
+/** 休眠期（big 模式）基线刷新步频（ms/次）。 */
+const BLOCK_WALK_IDLE_MS = 1000;
+/** 单块高度变化的报告阈值（px），过滤亚像素/边框级噪音。 */
+const BLOCK_MIN_DELTA = 4;
+/** 一次 layout:block 事件最多列出的块数。 */
+const BLOCK_MAX_LISTED = 8;
+
 export interface ScrollWatchStats {
   /** 最近一次 ghost 的摘要（面板展示 / 排查入口）。 */
   lastGhost: ScrollDebugEvent | null;
@@ -151,6 +226,9 @@ export function scrollWatchStats(): ScrollWatchStats {
   return stats;
 }
 
+/** 会话内观察器挂载序号（watch:attach 事件携带；>1 即存在重复挂载/重建链路）。 */
+let attachSeq = 0;
+
 /**
  * 在主编辑滚动容器上挂观察器（Editor 挂载时调用一次，返回卸载函数）。
  * rAF 每帧：读 scrollTop / scrollHeight / 哨兵 rect（均为布局缓存读取，
@@ -159,6 +237,7 @@ export function scrollWatchStats(): ScrollWatchStats {
 export function attachScrollWatch(host: HTMLElement): () => void {
   if (stats.watching) return () => undefined;
   stats.watching = true;
+  const seq = ++attachSeq;
 
   let userIntentAt = 0;
   let prevSt = host.scrollTop;
@@ -170,6 +249,159 @@ export function attachScrollWatch(host: HTMLElement): () => void {
   let sentinel: { el: Element; docTop: number } | null = null;
   let raf = 0;
   let disposed = false;
+
+  // --- layout:block：顶层块高度基线 + 触发窗口 ------------------------------
+  let blockBase: BlockRow[] | null = null;
+  let blockWalkAt = 0;
+  let blockWindowUntil = 0;
+
+  const openBlockWindow = () => {
+    try {
+      blockWindowUntil = performance.now() + BLOCK_WINDOW_MS;
+    } catch {
+      /* never throw */
+    }
+  };
+
+  const blockLabel = (el: Element | undefined): string => {
+    if (!el) return "";
+    try {
+      return (el.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 24);
+    } catch {
+      return "";
+    }
+  };
+
+  /** 逐块比对（步频受控：窗口内 100ms、休眠 1s；非 big 且无窗口时休眠并
+   *  释放基线）。只读 offsetHeight（布局缓存读取），绝不写 DOM。 */
+  const walkBlocks = (now: number) => {
+    const windowActive = now < blockWindowUntil;
+    const big = host.dataset.big !== undefined;
+    if (!windowActive && !big) {
+      blockBase = null;
+      return;
+    }
+    const cadence = windowActive ? BLOCK_WALK_WINDOW_MS : BLOCK_WALK_IDLE_MS;
+    if (now - blockWalkAt < cadence) return;
+    blockWalkAt = now;
+    const pm = host.querySelector(".ProseMirror");
+    if (!pm) {
+      blockBase = null;
+      return;
+    }
+    const kids = pm.children;
+    const cur: BlockRow[] = new Array(kids.length);
+    for (let i = 0; i < kids.length; i++) {
+      cur[i] = { el: kids[i], h: (kids[i] as HTMLElement).offsetHeight };
+    }
+    const base = blockBase;
+    blockBase = cur;
+    if (!base) return;
+    const d = diffBlocks(base, cur);
+    if (d.replaced) {
+      // 顶层块身份变化：高度比对无意义，重基线。替换原因由同刻的
+      // pm:rebuild / pm:shape 事件（MutationObserver）给出。
+      scrollCount("block.rebase");
+      return;
+    }
+    const changes = d.changes.filter(
+      (c) => Math.abs(c.to - c.from) >= BLOCK_MIN_DELTA
+    );
+    if (changes.length === 0 && d.lenDelta === 0) return;
+    const parts: string[] = [];
+    const shown = changes.slice(0, BLOCK_MAX_LISTED);
+    for (const c of shown) {
+      const el = cur[c.index]?.el;
+      const delta = c.to - c.from;
+      parts.push(
+        `#${c.index} ${el?.tagName ?? "?"}「${blockLabel(el)}」${c.from}→${c.to}（${delta >= 0 ? "+" : ""}${Math.round(delta)}px）`
+      );
+    }
+    if (changes.length > shown.length) {
+      parts.push(`…另有 ${changes.length - shown.length} 块`);
+    }
+    if (d.lenDelta !== 0) {
+      parts.push(`块数 ${base.length}→${cur.length}（${d.lenDelta >= 0 ? "+" : ""}${d.lenDelta}）`);
+    }
+    scrollEmit(
+      "layout:block",
+      `块高度变化 ${changes.length} 处：${parts.join("；")}`,
+      {
+        level: changes.length >= 3 ? "warn" : "info",
+        data: { changes: changes.length, lenDelta: d.lenDelta },
+      }
+    );
+  };
+
+  // --- pm:rebuild：只读观察 ProseMirror 顶层 childList ----------------------
+  let pmObs: MutationObserver | null = null;
+  let pmObsRoot: Element | null = null;
+  let pmProbeAt = 0;
+
+  const sampleText = (n: Node): string => {
+    try {
+      return (n.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 32);
+    } catch {
+      return "";
+    }
+  };
+
+  /** 惰性挂接 PM 根（挂载时 PM 可能尚不存在；编辑器重建换根时自动跟进，
+   *  并报 pm:root-swap）。探测按 500ms 节流，常驻每帧只花一次 isConnected。 */
+  const ensurePmObserver = (now: number) => {
+    if (pmObs && pmObsRoot && pmObsRoot.isConnected) return;
+    if (now - pmProbeAt < 500) return;
+    pmProbeAt = now;
+    const pm = host.querySelector(".ProseMirror");
+    if (!pm || pm === pmObsRoot) return;
+    if (pmObsRoot != null) {
+      scrollEmit("pm:root-swap", "ProseMirror 根节点被替换（编辑器重建）", {
+        level: "warn",
+      });
+    }
+    pmObs?.disconnect();
+    pmObsRoot = pm;
+    pmObs = new MutationObserver((records) => {
+      try {
+        let removed = 0;
+        let added = 0;
+        const rmSamples: string[] = [];
+        const addSamples: string[] = [];
+        for (const r of records) {
+          if (r.type !== "childList") continue;
+          for (const n of r.removedNodes) {
+            removed++;
+            if (rmSamples.length < 3) rmSamples.push(sampleText(n));
+          }
+          for (const n of r.addedNodes) {
+            added++;
+            if (addSamples.length < 3) addSamples.push(sampleText(n));
+          }
+        }
+        if (removed === 0 && added === 0) return;
+        scrollCount("pm.childlist");
+        const verdict = classifyPmBatch(removed, added);
+        if (verdict === "edit") return;
+        if (verdict === "rebuild") {
+          scrollEmit(
+            "pm:rebuild",
+            `PM 顶层块批量替换 -${removed}/+${added}（remembered size 随旧元素消亡丢失 → 回落 3em 占位）如「${rmSamples[0] ?? ""}」`,
+            {
+              level: "warn",
+              data: { removed, added, rmSamples, addSamples },
+            }
+          );
+        } else {
+          scrollEmit("pm:shape", `PM 顶层块大量增删 -${removed}/+${added}`, {
+            data: { removed, added, rmSamples, addSamples },
+          });
+        }
+      } catch {
+        /* 诊断永不抛错 */
+      }
+    });
+    pmObs.observe(pm, { childList: true });
+  };
 
   const onUserIntent = () => {
     userIntentAt = performance.now();
@@ -219,6 +451,8 @@ export function attachScrollWatch(host: HTMLElement): () => void {
       const h = host.scrollHeight;
       const moving = Math.abs(st - prevSt) > 0.5;
 
+      ensurePmObserver(now);
+
       // --- 滚动会话归因：从静止转动的第一帧判定发起者。
       if (moving && !prevMoving) {
         if (now - userIntentAt < 200) {
@@ -238,6 +472,10 @@ export function attachScrollWatch(host: HTMLElement): () => void {
             data: {
               delta: Math.round(st - prevSt),
               scrollTop: Math.round(st),
+              // v3.9.5：定罪上下文——同帧高度变化量（clamping 型位移的标志）
+              // 与是否贴底（浏览器 scrollHeight 收缩时的强制回弹）。
+              heightDelta: Math.round(h - prevH),
+              atBottom: st + host.clientHeight >= h - 2,
               lastWrite: recentWrite
                 ? `${recentWrite.tag}@${Math.round(now - recentWrite.at)}ms前`
                 : null,
@@ -254,23 +492,14 @@ export function attachScrollWatch(host: HTMLElement): () => void {
               subscribers.delete(fn);
             }
           }
+          openBlockWindow();
         }
       }
       if (!moving) sessionTag = null;
 
-      // --- 文档高度突变（c-v 高度重估 / 图片加载 / 大改写）。
-      if (Math.abs(h - prevH) > 8) {
-        scrollEmit("layout:height", `文档高度 ${prevH} → ${h}（${h - prevH >= 0 ? "+" : ""}${Math.round(h - prevH)}px）`, {
-          level: "info",
-          data: {
-            delta: Math.round(h - prevH),
-            scrollTop: Math.round(st),
-            session: sessionTag,
-          },
-        });
-      }
-
       // --- 视口内容位移（scrollTop 不变而哨兵文档坐标变了）。
+      let shift: number | null = null;
+      let shiftTag: string | undefined;
       if (!moving && Math.abs(st - prevSt) < 0.5) {
         if (
           !sentinel ||
@@ -281,21 +510,10 @@ export function attachScrollWatch(host: HTMLElement): () => void {
         } else {
           const r = sentinel.el.getBoundingClientRect();
           const docTop = r.top + st;
-          const shift = docTop - sentinel.docTop;
-          if (Math.abs(shift) > 2) {
-            scrollEmit(
-              "layout:shift",
-              `视口内容位移 ${shift >= 0 ? "↓" : "↑"} ${Math.abs(shift).toFixed(0)}px（scrollTop 未变）`,
-              {
-                level: Math.abs(shift) > 24 ? "warn" : "info",
-                data: {
-                  delta: Math.round(shift),
-                  scrollTop: Math.round(st),
-                  height: Math.round(h),
-                  tag: sentinel.el.tagName,
-                },
-              }
-            );
+          const s = docTop - sentinel.docTop;
+          if (Math.abs(s) > 2) {
+            shift = s;
+            shiftTag = sentinel.el.tagName;
             // 位移后重选哨兵：块可能已被重建/换位，旧 docTop 不再可比。
             sentinel = pickSentinel();
           } else {
@@ -303,6 +521,64 @@ export function attachScrollWatch(host: HTMLElement): () => void {
           }
         }
       }
+
+      // --- 文档高度突变（c-v 高度重估 / 图片加载 / 大改写）；与同帧位移合并。
+      const hDelta = h - prevH;
+      const heightHit = Math.abs(hDelta) > 8;
+      if (shift != null && heightHit) {
+        // 位移的原因大概率就是同帧的高度变化：合并为一条，双计数器保持口径。
+        scrollEmit(
+          "layout:shift",
+          `视口内容位移 ${shift >= 0 ? "↓" : "↑"} ${Math.abs(shift).toFixed(0)}px（scrollTop 未变）· 同帧文档高度 ${prevH} → ${h}（${hDelta >= 0 ? "+" : ""}${Math.round(hDelta)}px）`,
+          {
+            level: Math.abs(shift) > 24 ? "warn" : "info",
+            data: {
+              delta: Math.round(shift),
+              heightDelta: Math.round(hDelta),
+              scrollTop: Math.round(st),
+              height: Math.round(h),
+              tag: shiftTag,
+              session: sessionTag,
+            },
+          }
+        );
+        scrollCount("layout:height");
+        openBlockWindow();
+      } else {
+        if (heightHit) {
+          scrollEmit(
+            "layout:height",
+            `文档高度 ${prevH} → ${h}（${hDelta >= 0 ? "+" : ""}${Math.round(hDelta)}px）`,
+            {
+              level: "info",
+              data: {
+                delta: Math.round(hDelta),
+                scrollTop: Math.round(st),
+                session: sessionTag,
+              },
+            }
+          );
+          openBlockWindow();
+        }
+        if (shift != null) {
+          scrollEmit(
+            "layout:shift",
+            `视口内容位移 ${shift >= 0 ? "↓" : "↑"} ${Math.abs(shift).toFixed(0)}px（scrollTop 未变）`,
+            {
+              level: Math.abs(shift) > 24 ? "warn" : "info",
+            data: {
+              delta: Math.round(shift),
+              scrollTop: Math.round(st),
+              height: Math.round(h),
+              tag: shiftTag,
+            },
+            }
+          );
+          openBlockWindow();
+        }
+      }
+
+      walkBlocks(now);
 
       prevSt = st;
       prevH = h;
@@ -330,13 +606,21 @@ export function attachScrollWatch(host: HTMLElement): () => void {
   }
 
   scrollEmit("watch:attach", "滚动观察器已挂载", {
-    data: { scrollTop: Math.round(host.scrollTop), scrollHeight: host.scrollHeight },
+    data: {
+      seq,
+      scrollTop: Math.round(host.scrollTop),
+      scrollHeight: Math.round(host.scrollHeight),
+    },
   });
 
   return () => {
     disposed = true;
     stats.watching = false;
+    blockBase = null;
     cancelAnimationFrame(raf);
+    pmObs?.disconnect();
+    pmObs = null;
+    pmObsRoot = null;
     host.removeEventListener("wheel", onUserIntent, { capture: true });
     host.removeEventListener("touchstart", onUserIntent, { capture: true });
     host.removeEventListener("pointerdown", onUserIntent, { capture: true });

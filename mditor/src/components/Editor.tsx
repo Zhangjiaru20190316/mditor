@@ -335,11 +335,18 @@ export const Editor = memo(
   // .mditor-milkdown 是内容层，scrollTop 恒 0：挂它归因哑火、正常滚动
   // 每帧误报 layout:shift。sv 模式下 host 不滚（.cm-scroller 内滚），
   // 观察器自然休眠（见 scrollDebug.ts 头注）。
+  // v3.9.5：依赖改 []（整个 Editor 生命周期挂一次）。此前依赖 [handle.ready]
+  // ——mount（ready=false）与 ready 翻真各挂一次，一次正常会话出现
+  // watch:attach=2 而 editor.ready=1，看起来像「宿主重建」实则是观察器
+  // 自己卸了重挂（还顺带重置 prevH/prevSt，可能制造假 layout 事件）。宿主
+  // div 在 Editor 生命周期内不变；编辑器重建只换 .mditor-milkdown 内部，
+  // 观察器无需重挂（PM 根更换由 scrollDebug 的 500ms 探测跟进并报
+  // pm:root-swap）。
   useEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
     return attachScrollWatch(scroller);
-  }, [handle.ready]);
+  }, []);
 
   // Apply theme whenever settings change.
   useEffect(() => {
