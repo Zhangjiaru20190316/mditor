@@ -4,9 +4,27 @@
  * CSS variables set by useSettings (useSettings.ts → applyToDom):
  *   --font-prose, --font-mono, --font-size, --line-height, --para-spacing
  *
- * We deliberately keep selectors tight and avoid Vditor internals beyond what's
- * documented (the .vditor-reset / .vditor-toolbar class names are stable).
+ * Design tokens（v4.1 收敛，全局 :root、与主题无关）：
+ *   * 圆角三档：--radius-s 4px（小件/菜单项/内联标记）、--radius-m 6px
+ *     （按钮/输入框/行）、--radius-l 10px（卡片/弹窗/下拉/代码块）；
+ *     收敛映射：4/5/3→s，6→m，8/9/10/12→l；胶囊 999px、圆 50%、聊天气泡
+ *     尾角等特形保留原值。
+ *   * 字号阶梯（chrome 层；正文 --font-size 不动）：--font-size-xs 11px、
+ *     -s 12px、-m 13px、-l 14px；收敛映射：10/10.5/11/11.5→xs，
+ *     12/12.5→s，13/13.5→m，14→l；标题 16/18 与图标按钮 15 保留原值。
+ *   * 语义色 --danger*/--success*/--diff-* 由各主题文件定义（深色主题
+ *     各自调值，消除亮块），此处不设兜底——五主题均完整定义。
  */
+
+:root {
+  --radius-s: 4px;
+  --radius-m: 6px;
+  --radius-l: 10px;
+  --font-size-xs: 11px;
+  --font-size-s: 12px;
+  --font-size-m: 13px;
+  --font-size-l: 14px;
+}
 
 *,
 *::before,
@@ -83,7 +101,7 @@ button:not(:disabled):active {
 .titlebar-app-name {
   margin-left: 6px;
   margin-right: 2px;
-  font-size: 12.5px;
+  font-size: var(--font-size-s);
   font-weight: 700;
   color: var(--fg);
   white-space: nowrap;
@@ -96,7 +114,7 @@ button:not(:disabled):active {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   color: var(--fg-muted);
   /* 穿透鼠标事件，让空白处点击继续落到 header 的拖拽区 */
   pointer-events: none;
@@ -150,10 +168,10 @@ button:not(:disabled):active {
 .mb-btn {
   padding: 4px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: transparent;
   color: var(--fg-muted);
-  font-size: 13px;
+  font-size: var(--font-size-m);
   font-family: inherit;
   line-height: 1.4;
   cursor: pointer;
@@ -191,7 +209,7 @@ button:not(:disabled):active {
   max-width: 380px;
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   box-shadow: var(--shadow-lg);
   padding: 5px;
   display: flex;
@@ -216,10 +234,10 @@ button:not(:disabled):active {
   width: 100%;
   padding: 5px 10px;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-s);
   background: transparent;
   color: var(--fg);
-  font-size: 13px;
+  font-size: var(--font-size-m);
   font-family: inherit;
   text-align: left;
   white-space: nowrap;
@@ -255,7 +273,7 @@ button:not(:disabled):active {
 .mb-item-hint {
   flex-shrink: 0;
   margin-left: 24px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 .mb-sep {
@@ -286,12 +304,12 @@ button:not(:disabled):active {
 }
 .about-version {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   color: var(--fg-muted);
 }
 .about-desc {
   margin: 10px 0 4px;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   line-height: 1.7;
   color: var(--fg-muted);
 }
@@ -394,7 +412,7 @@ body.is-resizing .sidebar {
   height: 72px;
   border: 1px solid var(--border);
   border-left: none;
-  border-radius: 0 8px 8px 0;
+  border-radius: 0 var(--radius-l) var(--radius-l) 0;
   background: var(--card-bg);
   color: var(--fg-muted);
   cursor: pointer;
@@ -403,7 +421,7 @@ body.is-resizing .sidebar {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   box-shadow: var(--shadow);
   transition: opacity 0.2s ease, color 0.2s ease;
 }
@@ -440,7 +458,7 @@ body.is-resizing .sidebar {
   border: none;
   background: transparent;
   color: var(--fg-muted);
-  border-radius: 9px;
+  border-radius: var(--radius-l);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -507,7 +525,7 @@ body.is-resizing .sidebar {
 }
 .sb-ws-name {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -516,7 +534,7 @@ body.is-resizing .sidebar {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--fg-muted);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 3px 5px;
   cursor: pointer;
   display: inline-flex;
@@ -541,7 +559,7 @@ body.is-resizing .sidebar {
   color: #fff;
   border: none;
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   cursor: pointer;
 }
 
@@ -559,9 +577,9 @@ body.is-resizing .sidebar {
   /* 圆角行 + 两侧留隙（配合激活态底色 / 左侧指示条） */
   margin: 0 4px;
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   color: var(--fg);
   white-space: nowrap;
   user-select: none;
@@ -619,7 +637,7 @@ body.is-resizing .sidebar {
   border: none;
   background: transparent;
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-size-s);
   line-height: 26px;
   text-align: left;
   cursor: pointer;
@@ -632,7 +650,7 @@ body.is-resizing .sidebar {
 .rc-empty {
   padding: 14px;
   color: var(--fg-muted);
-  font-size: 13px;
+  font-size: var(--font-size-m);
 }
 
 /* ---- file management: wrap / toolbar / batch bar / context menu ---- */
@@ -660,11 +678,11 @@ body.is-resizing .sidebar {
   border: none;
   background: transparent;
   color: var(--fg-muted);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   width: 26px;
   height: 26px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--font-size-l);
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -685,10 +703,10 @@ body.is-resizing .sidebar {
 .ft-notice {
   margin: 6px 8px 0;
   padding: 5px 10px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--accent);
   background: var(--accent-soft);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -701,8 +719,8 @@ body.is-resizing .sidebar {
   margin: 6px 8px 0;
   padding: 5px 10px;
   background: var(--accent-soft);
-  border-radius: 6px;
-  font-size: 12px;
+  border-radius: var(--radius-m);
+  font-size: var(--font-size-s);
   flex-shrink: 0;
 }
 .ft-batch-count {
@@ -714,20 +732,20 @@ body.is-resizing .sidebar {
   border: 1px solid var(--border);
   background: var(--card-bg);
   color: var(--fg);
-  border-radius: 5px;
+  border-radius: var(--radius-s);
   padding: 2px 8px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .ft-batch-btn:hover {
   background: var(--hover);
 }
 .ft-batch-btn.danger {
-  color: #c0392b;
-  border-color: #f5c6cb;
+  color: var(--danger);
+  border-color: var(--danger-border);
 }
 .ft-batch-btn.danger:hover {
-  background: #fde8e8;
+  background: var(--danger-soft);
 }
 .ft-scroll {
   flex: 1;
@@ -753,7 +771,7 @@ body.is-resizing .sidebar {
 .ft-loading {
   padding: 2px 8px 4px;
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-size-s);
   font-style: italic;
   opacity: 0.7;
 }
@@ -771,9 +789,9 @@ body.is-resizing .sidebar {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--accent);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   padding: 1px 4px;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   font-family: inherit;
   outline: none;
 }
@@ -791,7 +809,7 @@ body.is-resizing .sidebar {
   max-width: 280px;
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   box-shadow: var(--shadow-lg);
   padding: 4px;
   display: flex;
@@ -822,9 +840,9 @@ body.is-resizing .sidebar {
   color: var(--fg);
   text-align: left;
   padding: 5px 10px;
-  border-radius: 5px;
+  border-radius: var(--radius-s);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   font-family: inherit;
   white-space: nowrap;
   transition: background 0.1s ease, color 0.1s ease;
@@ -834,11 +852,11 @@ body.is-resizing .sidebar {
   color: var(--accent);
 }
 .ctx-menu-item.danger {
-  color: #c0392b;
+  color: var(--danger);
 }
 .ctx-menu-item.danger:hover:not(:disabled) {
-  background: #fde8e8;
-  color: #c0392b;
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .ctx-menu-item:disabled {
   opacity: 0.4;
@@ -848,7 +866,7 @@ body.is-resizing .sidebar {
 .ctx-check {
   flex: none;
   width: 14px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   color: var(--accent);
 }
 .ctx-menu-item:not(.active) .ctx-check {
@@ -858,7 +876,7 @@ body.is-resizing .sidebar {
 .ctx-hint {
   margin-left: auto;
   padding-left: 20px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 .ctx-menu-item:hover:not(:disabled) .ctx-hint {
@@ -866,13 +884,13 @@ body.is-resizing .sidebar {
   opacity: 0.75;
 }
 .ctx-menu-item.danger:hover:not(:disabled) .ctx-hint {
-  color: #c0392b;
+  color: var(--danger);
   opacity: 0.75;
 }
 /* 顶部灰字：当前块类型说明 */
 .ctx-menu-header {
   padding: 6px 10px 4px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   color: var(--fg-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -896,10 +914,10 @@ body.is-resizing .sidebar {
   flex: 1;
   min-width: 0;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-s);
   background: var(--bg);
   color: var(--fg);
-  font-size: 12px;
+  font-size: var(--font-size-s);
   font-family: inherit;
   padding: 4px 8px;
   outline: none;
@@ -910,10 +928,10 @@ body.is-resizing .sidebar {
 .ctx-input-ok {
   flex: none;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-s);
   background: var(--accent);
   color: #fff;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   cursor: pointer;
   width: 26px;
   height: 26px;
@@ -945,9 +963,9 @@ body.is-resizing .sidebar {
   position: relative;
   margin: 0 6px;
   padding: 4px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -997,8 +1015,8 @@ body.is-resizing .sidebar {
 .ol-h2 { font-weight: 600; padding-left: 24px; }
 .ol-h3 { font-weight: 500; padding-left: 36px; color: var(--fg-muted); }
 .ol-h4 { padding-left: 48px; color: var(--fg-muted); }
-.ol-h5 { padding-left: 60px; color: var(--fg-muted); font-size: 12px; }
-.ol-h6 { padding-left: 72px; color: var(--fg-muted); font-size: 12px; }
+.ol-h5 { padding-left: 60px; color: var(--fg-muted); font-size: var(--font-size-s); }
+.ol-h6 { padding-left: 72px; color: var(--fg-muted); font-size: var(--font-size-s); }
 
 /* recent list */
 .rc-root {
@@ -1013,9 +1031,9 @@ body.is-resizing .sidebar {
   gap: 8px;
   margin: 0 6px;
   padding: 7px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   transition: background 0.12s ease;
 }
 .rc-row:hover {
@@ -1036,7 +1054,7 @@ body.is-resizing .sidebar {
 }
 .rc-time {
   color: var(--fg-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   flex-shrink: 0;
 }
 
@@ -1211,20 +1229,20 @@ body.is-resizing .sidebar {
   --crepe-color-surface: var(--code-bg);
   --crepe-color-surface-low: var(--code-bg);
   border: 1px solid var(--code-border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   box-shadow: var(--shadow);
 }
 .mditor-milkdown .ProseMirror pre {
   background: var(--code-bg);
   border: 1px solid var(--code-border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   padding: 12px 14px;
   overflow: auto;
 }
 .mditor-milkdown .ProseMirror :not(pre) > code {
   background: var(--code-bg);
   border: 1px solid var(--code-border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   padding: 0.1em 0.35em;
   font-size: 0.9em;
 }
@@ -1242,7 +1260,7 @@ body.is-resizing .sidebar {
 .mditor-milkdown .ProseMirror blockquote {
   border-left: 4px solid var(--accent);
   background: var(--accent-soft);
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 var(--radius-m) var(--radius-m) 0;
   padding: 6px 14px;
   color: var(--fg);
 }
@@ -1266,6 +1284,7 @@ body.is-resizing .sidebar {
   resize: none;
   padding: 28px clamp(24px, 6vw, 64px) 40vh;
   font-family: var(--font-mono);
+  /* 源码模式的固定内容字号（编辑器正文层，不挂 chrome 字号 token） */
   font-size: 14px;
   line-height: var(--line-height);
   background: var(--bg);
@@ -1322,9 +1341,9 @@ body.is-resizing .sidebar {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   letter-spacing: 0.08em;
-  color: var(--muted, #888);
+  color: var(--fg-muted);
   background: color-mix(in srgb, var(--bg) 82%, transparent);
   z-index: 35; /* above editor content; the top bar (z-index 40) stays visible */
   pointer-events: none;
@@ -1376,7 +1395,7 @@ body.is-resizing .sidebar {
   z-index: 30;
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-l);
   box-shadow: var(--shadow);
   padding: 8px;
   display: flex;
@@ -1394,19 +1413,19 @@ body.is-resizing .sidebar {
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--fg);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 5px 8px;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   min-width: 0;
 }
 .sb-btn {
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--fg);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 4px 10px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-s);
 }
 .sb-btn:hover {
   background: var(--hover);
@@ -1424,13 +1443,13 @@ body.is-resizing .sidebar {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   color: var(--fg-muted);
   cursor: pointer;
   user-select: none;
 }
 .sb-count {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 .sb-close {
@@ -1438,12 +1457,12 @@ body.is-resizing .sidebar {
   background: transparent;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--font-size-l);
   padding: 2px 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 5px;
+  border-radius: var(--radius-s);
 }
 .sb-close:hover {
   background: var(--hover);
@@ -1461,7 +1480,7 @@ body.is-resizing .sidebar {
   background: var(--statusbar-bg);
   border-top: 1px solid var(--border);
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-size-s);
   /* 85 = chrome 层（见 .titlebar 注释）：此前 z-index:auto，被批注弹层(70)
      等编辑区 fixed 浮层盖住。焦点模式 display:none 时高度为 0，无影响。 */
   z-index: 85;
@@ -1493,11 +1512,11 @@ body.is-resizing .sidebar {
   border: 1px solid transparent;
   background: transparent;
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-size-s);
   font-family: inherit;
   line-height: 1.4;
   padding: 1px 4px;
-  border-radius: 5px;
+  border-radius: var(--radius-s);
   cursor: pointer;
 }
 .sb-status-mode:hover {
@@ -1524,7 +1543,7 @@ body.is-resizing .sidebar {
   color: var(--fg-muted);
   cursor: pointer;
   padding: 2px 5px;
-  border-radius: 5px;
+  border-radius: var(--radius-s);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1558,7 +1577,7 @@ body.is-resizing .sidebar {
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-top: none;
-  border-radius: 0 0 10px 10px;
+  border-radius: 0 0 var(--radius-l) var(--radius-l);
   box-shadow: var(--shadow);
   opacity: 0;
   transition:
@@ -1579,9 +1598,9 @@ body.is-resizing .sidebar {
   background: transparent;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   padding: 2px 6px;
-  border-radius: 5px;
+  border-radius: var(--radius-s);
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1607,7 +1626,7 @@ body.is-resizing .sidebar {
 .modal-card {
   background: var(--card-bg);
   color: var(--fg);
-  border-radius: 12px;
+  border-radius: var(--radius-l);
   width: 540px;
   max-width: 92vw;
   max-height: 86vh;
@@ -1636,7 +1655,7 @@ body.is-resizing .sidebar {
   align-items: center;
   justify-content: center;
   padding: 2px 4px;
-  border-radius: 5px;
+  border-radius: var(--radius-s);
 }
 .modal-x:hover {
   background: var(--hover);
@@ -1655,7 +1674,7 @@ body.is-resizing .sidebar {
   gap: 4px;
 }
 .field-label {
-  font-size: 12px;
+  font-size: var(--font-size-s);
   color: var(--fg-muted);
 }
 .field-control input[type="text"],
@@ -1665,17 +1684,17 @@ body.is-resizing .sidebar {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 6px 8px;
-  font-size: 13px;
+  font-size: var(--font-size-m);
 }
 .field-control .mono {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-s);
 }
 .field-control .hint {
   display: block;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   margin-top: 2px;
 }
@@ -1691,7 +1710,7 @@ body.is-resizing .sidebar {
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--fg);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 4px 10px;
   cursor: pointer;
 }
@@ -1704,10 +1723,10 @@ body.is-resizing .sidebar {
 }
 .btn-ghost,
 .btn-primary {
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 6px 16px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   border: 1px solid var(--border);
 }
 .btn-ghost {
@@ -1752,10 +1771,10 @@ body.is-resizing .sidebar {
   align-items: center;
   padding: 0 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: transparent;
   color: var(--fg-muted);
-  font-size: 13px;
+  font-size: var(--font-size-m);
   font-family: inherit;
   text-align: left;
   white-space: nowrap;
@@ -1803,14 +1822,14 @@ body.is-resizing .sidebar {
   display: inline-flex;
   align-self: flex-start;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   overflow: hidden;
 }
 .seg-btn {
   border: none;
   background: transparent;
   color: var(--fg-muted);
-  font-size: 12.5px;
+  font-size: var(--font-size-s);
   font-family: inherit;
   padding: 5px 16px;
   cursor: pointer;
@@ -1857,7 +1876,7 @@ body.is-resizing .ai-panel {
 }
 .ai-title {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1875,9 +1894,9 @@ body.is-resizing .ai-panel {
   background: transparent;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--font-size-l);
   padding: 2px 4px;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -1900,7 +1919,7 @@ body.is-resizing .ai-panel {
   cursor: pointer;
   font-size: 15px;
   padding: 2px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   line-height: 1;
   margin-left: 2px;
   display: inline-flex;
@@ -1915,11 +1934,11 @@ body.is-resizing .ai-panel {
 /* Compact selectors in the AI panel header (model switch + thinking strength). */
 .ai-model-select,
 .ai-thinking-select {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--fg);
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 2px 4px;
   max-width: 150px;
   cursor: pointer;
@@ -1937,8 +1956,8 @@ body.is-resizing .ai-panel {
   padding: 6px 10px;
   background: var(--accent-soft);
   color: var(--accent);
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--radius-l);
+  font-size: var(--font-size-s);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1952,15 +1971,15 @@ body.is-resizing .ai-panel {
   color: var(--accent);
   text-decoration: underline;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   flex-shrink: 0;
 }
 .ai-ctx-tag {
   align-self: flex-start;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   color: var(--accent);
   background: var(--accent-soft);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   padding: 1px 6px;
   line-height: 1.6;
 }
@@ -1969,8 +1988,8 @@ body.is-resizing .ai-panel {
   padding: 8px 12px;
   background: var(--accent-soft);
   color: var(--accent);
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--radius-l);
+  font-size: var(--font-size-s);
 }
 .ai-banner button {
   background: none;
@@ -1978,7 +1997,7 @@ body.is-resizing .ai-panel {
   color: var(--accent);
   text-decoration: underline;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-s);
 }
 .ai-quick {
   display: flex;
@@ -1995,10 +2014,10 @@ body.is-resizing .ai-panel {
   background: var(--card-bg);
   border: 1px solid var(--border);
   color: var(--fg);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   padding: 4px 12px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   font-family: inherit;
   box-shadow: var(--shadow);
   transition:
@@ -2037,7 +2056,7 @@ body.is-resizing .ai-panel {
 }
 .ai-empty {
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-size-s);
   line-height: 1.7;
   padding: 8px 4px;
 }
@@ -2066,7 +2085,7 @@ body.is-resizing .ai-panel {
   color: #fff;
   border-radius: 12px 12px 2px 12px;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2075,20 +2094,20 @@ body.is-resizing .ai-panel {
   border: 1px solid var(--border);
   border-radius: 12px 12px 12px 2px;
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
 }
 .ai-typing {
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-size-s);
   font-style: italic;
 }
 /* 思考过程折叠区（推理模型）：正文上方，纯文本，不复用 MarkdownText */
 .ai-reasoning-wrap {
   margin-bottom: 6px;
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   background: var(--hover);
   border-left: 3px solid var(--accent);
   overflow: hidden;
@@ -2102,7 +2121,7 @@ body.is-resizing .ai-panel {
   border: none;
   cursor: pointer;
   padding: 5px 10px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 .ai-reasoning-toggle:hover {
@@ -2110,11 +2129,11 @@ body.is-resizing .ai-panel {
   background: var(--accent-soft);
 }
 .ai-reasoning-caret {
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 .ai-reasoning-body {
   padding: 4px 10px 8px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   line-height: 1.6;
   color: var(--fg-muted);
   white-space: pre-wrap;
@@ -2131,7 +2150,7 @@ body.is-resizing .ai-panel {
 }
 .ai-thinking-label {
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-size-s);
   font-style: italic;
 }
 .ai-typing-dots {
@@ -2163,10 +2182,10 @@ body.is-resizing .ai-panel {
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--fg-muted);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 2px 8px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-family: inherit;
   transition: background-color 0.13s ease, border-color 0.13s ease, color 0.13s ease;
 }
@@ -2179,12 +2198,12 @@ body.is-resizing .ai-panel {
   outline-offset: 1px;
 }
 .ai-error {
-  background: #fde8e8;
-  color: #c0392b;
-  border: 1px solid #f5c6cb;
-  border-radius: 8px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-l);
   padding: 8px 12px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -2192,12 +2211,12 @@ body.is-resizing .ai-panel {
 /* 面板内轻提示（审查应用成功等），绿色系，区别于红色 .ai-error。 */
 .ai-notice {
   margin: 8px 14px 0;
-  background: var(--accent-soft, #e8f4ea);
-  color: #2e7d43;
-  border: 1px solid #cde8d2;
-  border-radius: 8px;
+  background: var(--success-soft);
+  color: var(--success);
+  border: 1px solid var(--success-border);
+  border-radius: var(--radius-l);
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
 }
 
 /* ---- 追问线程（对 AI 回答追问）------------------------------------------ */
@@ -2206,7 +2225,7 @@ body.is-resizing .ai-panel {
 .ai-msg.ai-msg-thread {
   border-left: 2px solid var(--border);
   padding-left: 10px;
-  border-radius: 0 8px 8px 0;
+  border-radius: 0 var(--radius-l) var(--radius-l) 0;
 }
 .ai-msg-user.ai-msg-thread {
   flex-direction: row;
@@ -2217,10 +2236,10 @@ body.is-resizing .ai-panel {
 .ai-thread-tag {
   flex: none;
   margin-top: 2px;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   line-height: 1;
   padding: 3px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: var(--accent);
   color: #fff;
   white-space: nowrap;
@@ -2233,17 +2252,17 @@ body.is-resizing .ai-panel {
   gap: 6px;
   padding: 8px;
   border: 1px solid var(--accent);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   background: var(--card-bg, var(--bg));
 }
 .ai-followup-input {
   resize: none;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   line-height: 1.5;
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg);
   color: var(--fg);
   outline: none;
@@ -2260,10 +2279,10 @@ body.is-resizing .ai-panel {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--fg-muted);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 3px 10px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-family: inherit;
   transition: background-color 0.13s ease, border-color 0.13s ease, color 0.13s ease;
 }
@@ -2301,14 +2320,14 @@ body.is-resizing .ai-panel {
 }
 .diff-title {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   display: inline-flex;
   align-items: baseline;
   gap: 8px;
 }
 .diff-count {
   font-weight: 400;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 .diff-head-actions {
@@ -2320,10 +2339,10 @@ body.is-resizing .ai-panel {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--fg-muted);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 2px 8px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .diff-mini:hover {
   background: var(--hover);
@@ -2335,7 +2354,7 @@ body.is-resizing .ai-panel {
   color: var(--fg-muted);
   cursor: pointer;
   padding: 2px 4px;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   display: inline-flex;
   align-items: center;
 }
@@ -2344,7 +2363,7 @@ body.is-resizing .ai-panel {
   color: var(--fg);
 }
 .diff-mode-tag {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   padding: 0 14px 8px;
   border-bottom: 1px solid var(--border);
@@ -2360,7 +2379,7 @@ body.is-resizing .ai-panel {
 }
 .diff-hunk {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   overflow: hidden;
   cursor: pointer;
   background: var(--card-bg, var(--bg));
@@ -2369,7 +2388,7 @@ body.is-resizing .ai-panel {
   border-color: var(--accent);
 }
 .diff-hunk.accepted {
-  border-color: #7fc98f;
+  border-color: var(--success-border);
 }
 .diff-hunk.rejected {
   opacity: 0.62;
@@ -2384,12 +2403,12 @@ body.is-resizing .ai-panel {
 }
 .diff-hunk-badge {
   flex: none;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--fg-muted);
 }
 .diff-hunk-kind {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--fg);
   flex: 1;
   min-width: 0;
@@ -2409,24 +2428,24 @@ body.is-resizing .ai-panel {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--fg-muted);
-  border-radius: 5px;
+  border-radius: var(--radius-s);
   padding: 2px 7px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .diff-act.accept:hover:not(:disabled),
 .diff-act.reject:hover:not(:disabled) {
   background: var(--hover);
 }
 .diff-act.accept.on {
-  background: #e5f4e8;
-  border-color: #7fc98f;
-  color: #2e7d43;
+  background: var(--success-soft);
+  border-color: var(--success-border);
+  color: var(--success);
 }
 .diff-act.reject.on {
-  background: #fdecec;
-  border-color: #e7a3a3;
-  color: #b03a3a;
+  background: var(--danger-soft);
+  border-color: var(--danger-border);
+  color: var(--danger);
 }
 .diff-act:disabled {
   cursor: default;
@@ -2441,20 +2460,20 @@ body.is-resizing .ai-panel {
 .diff-block {
   flex: 1;
   min-width: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 4px 6px;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--font-size-xs);
   line-height: 1.55;
   overflow-x: auto;
 }
 .diff-block-orig {
-  background: rgba(224, 82, 82, 0.09);
-  border: 1px solid rgba(224, 82, 82, 0.25);
+  background: var(--diff-del-bg);
+  border: 1px solid var(--diff-del-border);
 }
 .diff-block-new {
-  background: rgba(66, 165, 88, 0.1);
-  border: 1px solid rgba(66, 165, 88, 0.3);
+  background: var(--diff-add-bg);
+  border: 1px solid var(--diff-add-border);
 }
 .diff-block-none {
   display: flex;
@@ -2485,14 +2504,14 @@ body.is-resizing .ai-panel {
   color: inherit;
 }
 .diff-mark-orig {
-  background: rgba(224, 82, 82, 0.3);
+  background: var(--diff-del-mark);
 }
 .diff-mark-new {
-  background: rgba(66, 165, 88, 0.32);
+  background: var(--diff-add-mark);
 }
 .diff-more {
   color: var(--fg-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   padding-left: 12px;
 }
 .diff-arrow {
@@ -2510,7 +2529,7 @@ body.is-resizing .ai-panel {
 }
 .diff-hint {
   flex: 1;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 .diff-apply {
@@ -2518,10 +2537,10 @@ body.is-resizing .ai-panel {
   background: var(--accent);
   border: none;
   color: #fff;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 6px 14px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   font-weight: 600;
 }
 .diff-apply:hover:not(:disabled) {
@@ -2534,7 +2553,7 @@ body.is-resizing .ai-panel {
 .diff-empty {
   margin: 24px 14px;
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-size-s);
   text-align: center;
 }
 
@@ -2546,7 +2565,7 @@ body.is-resizing .ai-panel {
   word-break: break-word;
   color: var(--fg);
   opacity: 0.95;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   line-height: 1.65;
 }
 
@@ -2570,7 +2589,7 @@ body.is-resizing .ai-panel {
   z-index: 5;
 }
 .ai-sel-followup button {
-  font-size: 12px;
+  font-size: var(--font-size-s);
   padding: 3px 10px;
   border-radius: 999px;
   border: 1px solid var(--border);
@@ -2585,11 +2604,11 @@ body.is-resizing .ai-panel {
 
 /* 追问引用片段条（用户消息上方 / 追问输入框上方）。 */
 .ai-quote-chip {
-  font-size: 12px;
+  font-size: var(--font-size-s);
   color: var(--fg-muted, var(--fg));
   background: color-mix(in srgb, var(--fg) 6%, transparent);
   border-left: 2px solid var(--accent);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   padding: 4px 8px;
   margin: 2px 0 6px;
   max-height: 3.2em;
@@ -2607,7 +2626,7 @@ body.is-resizing .ai-panel {
 /* 会话用量统计行（输入区下方，本地估算）。 */
 .ai-usage {
   padding: 4px 12px 6px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted, #888);
   text-align: right;
   opacity: 0.85;
@@ -2619,7 +2638,7 @@ body.is-resizing .ai-panel {
   padding: 0;
   border: none;
   background: transparent;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   line-height: 1.65;
   overflow-wrap: anywhere;
   /* CRITICAL: reset the `white-space: pre-wrap` set on the plain assistant
@@ -2657,26 +2676,26 @@ body.is-resizing .ai-panel {
 .ai-msg-content.md-rendered pre {
   background: var(--code-bg);
   border: 1px solid var(--code-border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 8px 10px;
   overflow-x: auto;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   margin: 0 0 0.5em;
 }
 .ai-msg-content.md-rendered code {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-s);
 }
 .ai-msg-content.md-rendered :not(pre) > code {
   background: var(--code-bg);
   border: 1px solid var(--code-border);
   padding: 1px 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-s);
 }
 .ai-msg-content.md-rendered table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   margin: 0 0 0.5em;
 }
 .ai-msg-content.md-rendered th,
@@ -2690,7 +2709,7 @@ body.is-resizing .ai-panel {
   padding: 4px 12px;
   border-left: 4px solid var(--accent);
   background: var(--accent-soft);
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 var(--radius-m) var(--radius-m) 0;
   color: var(--fg);
 }
 .ai-msg-content.md-rendered a {
@@ -2698,8 +2717,8 @@ body.is-resizing .ai-panel {
 }
 
 .ai-stop-btn {
-  background: #c0392b !important;
-  border-color: #c0392b !important;
+  background: var(--danger) !important;
+  border-color: var(--danger) !important;
 }
 .ai-stop-btn:hover {
   filter: brightness(1.08);
@@ -2716,9 +2735,9 @@ body.is-resizing .ai-panel {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   font-family: var(--font-prose);
   line-height: 1.5;
 }
@@ -2731,10 +2750,10 @@ body.is-resizing .ai-panel {
   background: var(--accent);
   color: #fff;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   padding: 0 16px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   font-family: inherit;
   transition: filter 0.13s ease, opacity 0.13s ease;
 }
@@ -2812,7 +2831,7 @@ body.is-resizing .ai-panel {
 
 /* settings: AI section divider + test row */
 .field-section {
-  font-size: 12px;
+  font-size: var(--font-size-s);
   font-weight: 600;
   color: var(--accent);
   margin-top: 6px;
@@ -2826,12 +2845,12 @@ body.is-resizing .ai-panel {
   margin-top: 4px;
 }
 .ai-test-ok {
-  color: #2e8b57;
-  font-size: 12px;
+  color: var(--success);
+  font-size: var(--font-size-s);
 }
 .ai-test-err {
-  color: #c0392b;
-  font-size: 12px;
+  color: var(--danger);
+  font-size: var(--font-size-s);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2850,9 +2869,9 @@ body.is-resizing .ai-panel {
   padding: 4px;
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-l);
   box-shadow: var(--shadow-lg);
-  font-size: 12px;
+  font-size: var(--font-size-s);
   /* prevent the mousedown that keeps the editor selection from scrolling the page */
   user-select: none;
 }
@@ -2860,10 +2879,10 @@ body.is-resizing .ai-panel {
   background: transparent;
   border: none;
   color: var(--fg);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 4px 8px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   white-space: nowrap;
 }
 .sel-btn:hover {
@@ -2898,7 +2917,7 @@ body.is-resizing .ai-panel {
   max-width: 80vw;
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   padding: 6px;
   box-shadow: var(--shadow-lg);
 }
@@ -2915,9 +2934,9 @@ body.is-resizing .ai-panel {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 5px 8px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   font-family: var(--font-prose);
 }
 .sel-input:focus {
@@ -2943,7 +2962,7 @@ body.is-resizing .ai-panel {
   z-index: 61;
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   box-shadow: var(--shadow-lg);
   /* closed state */
   opacity: 0;
@@ -3018,7 +3037,7 @@ body.is-resizing .ai-panel {
   justify-content: center;
   background: var(--hover);
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-size-s);
   line-height: 1;
 }
 .sel-swatch-clear:hover {
@@ -3039,7 +3058,7 @@ body.is-resizing .ai-panel {
   width: 100%;
   text-align: left;
   justify-content: flex-start;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
 }
 .sel-menu-row {
   display: flex;
@@ -3051,10 +3070,10 @@ body.is-resizing .ai-panel {
 }
 .sel-dir {
   flex: 0 0 auto;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 3px 6px;
 }
 .sel-dir:hover {
@@ -3081,7 +3100,7 @@ body.is-resizing .ai-panel {
   text-align: left;
   padding: 8px 0 4px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   font-weight: 600;
 }
 .field-collapsible:hover {
@@ -3092,10 +3111,10 @@ body.is-resizing .ai-panel {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 8px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-s);
   line-height: 1.5;
   resize: vertical;
 }
@@ -3109,7 +3128,7 @@ body.is-resizing .ai-panel {
   gap: 6px;
   padding: 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   background: var(--bg);
 }
 .qa-row {
@@ -3122,9 +3141,9 @@ body.is-resizing .ai-panel {
   background: var(--card-bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 4px 6px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
 }
 .qa-prompt {
   flex: 1;
@@ -3132,43 +3151,43 @@ body.is-resizing .ai-panel {
   background: var(--card-bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 4px 6px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
 }
 .qa-scope {
   flex: 0 0 70px;
   background: var(--card-bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 4px 4px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
 }
 .qa-del {
   flex: 0 0 26px;
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fg-muted);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 4px 0;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-s);
 }
 .qa-del:hover {
-  background: #fde8e8;
-  border-color: #f5c6cb;
-  color: #c0392b;
+  background: var(--danger-soft);
+  border-color: var(--danger-border);
+  color: var(--danger);
 }
 .qa-add {
   align-self: flex-start;
   background: transparent;
   border: 1px dashed var(--border);
   color: var(--fg-muted);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 4px 12px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-s);
 }
 .qa-add:hover {
   color: var(--accent);
@@ -3182,7 +3201,7 @@ body.is-resizing .ai-panel {
   gap: 8px;
   padding: 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   background: var(--bg);
 }
 .model-row {
@@ -3191,7 +3210,7 @@ body.is-resizing .ai-panel {
   gap: 6px;
   padding: 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--card-bg);
 }
 .model-row-head {
@@ -3217,9 +3236,9 @@ body.is-resizing .ai-panel {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 4px 6px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   font-weight: 600;
 }
 .model-row-grid {
@@ -3238,9 +3257,9 @@ body.is-resizing .ai-panel {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 4px 6px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   min-width: 0;
 }
 .model-del {
@@ -3248,15 +3267,15 @@ body.is-resizing .ai-panel {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fg-muted);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 4px 0;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-s);
 }
 .model-del:hover:not(:disabled) {
-  background: #fde8e8;
-  border-color: #f5c6cb;
-  color: #c0392b;
+  background: var(--danger-soft);
+  border-color: var(--danger-border);
+  color: var(--danger);
 }
 .model-del:disabled {
   opacity: 0.4;
@@ -3267,10 +3286,10 @@ body.is-resizing .ai-panel {
   background: transparent;
   border: 1px dashed var(--border);
   color: var(--fg-muted);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 4px 12px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-s);
 }
 .model-add:hover {
   color: var(--accent);
@@ -3688,14 +3707,14 @@ html[data-motion="none"] *::after {
 
 /* 已从工作区移除的项目（设置 → 已从工作区移除的项目） */
 .excluded-hint {
-  font-size: 12px;
-  color: var(--muted, #888);
+  font-size: var(--font-size-s);
+  color: var(--fg-muted);
   margin: -4px 0 8px;
   line-height: 1.5;
 }
 .excluded-empty {
-  font-size: 13px;
-  color: var(--muted, #888);
+  font-size: var(--font-size-m);
+  color: var(--fg-muted);
   padding: 6px 2px;
 }
 .excluded-list {
@@ -3706,7 +3725,7 @@ html[data-motion="none"] *::after {
   flex-direction: column;
   gap: 6px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   background: var(--bg);
   max-height: 200px;
   overflow-y: auto;
@@ -3719,8 +3738,8 @@ html[data-motion="none"] *::after {
 .excluded-path {
   flex: 1;
   min-width: 0;
-  font-family: var(--mono-font, "JetBrains Mono", "Cascadia Code", Consolas, Menlo, monospace);
-  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-s);
   color: var(--fg);
   white-space: nowrap;
   overflow: hidden;
@@ -3729,7 +3748,7 @@ html[data-motion="none"] *::after {
 .excluded-restore {
   flex: 0 0 auto;
   padding: 2px 10px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
 }
 
 /* ===========================================================================
@@ -3995,7 +4014,7 @@ html[data-motion="none"] *::after {
 .tabbar-tab-name {
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 12.5px;
+  font-size: var(--font-size-s);
   line-height: 1;
   padding-block: 4px;
 }
@@ -4007,7 +4026,7 @@ html[data-motion="none"] *::after {
   width: 18px;
   height: 18px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   background: transparent;
   color: var(--fg-muted);
   cursor: pointer;
@@ -4050,7 +4069,7 @@ body.is-dragging-md::after {
   background: color-mix(in srgb, var(--bg) 82%, transparent);
   border: 2px dashed var(--accent);
   margin: 16px;
-  border-radius: 12px;
+  border-radius: var(--radius-l);
   pointer-events: none;
 }
 
@@ -4073,10 +4092,10 @@ body.is-dragging-md::after {
   min-width: 0;
   padding: 6px 9px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg);
   color: var(--fg);
-  font-size: 13px;
+  font-size: var(--font-size-m);
   outline: none;
 }
 .ws-input:focus {
@@ -4085,10 +4104,10 @@ body.is-dragging-md::after {
 .ws-toggle {
   padding: 5px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: transparent;
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-size-s);
   cursor: pointer;
 }
 .ws-toggle.active {
@@ -4097,7 +4116,7 @@ body.is-dragging-md::after {
   border-color: var(--accent);
 }
 .ws-status {
-  font-size: 11.5px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   padding: 2px 2px 8px;
   white-space: nowrap;
@@ -4116,7 +4135,7 @@ body.is-dragging-md::after {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   font-weight: 600;
   color: var(--fg);
   padding: 4px 2px;
@@ -4126,10 +4145,11 @@ body.is-dragging-md::after {
 }
 .ws-file-count {
   font-weight: 400;
-  font-size: 10.5px;
+  font-size: var(--font-size-xs);
   color: var(--accent);
   background: var(--accent-soft);
-  border-radius: 8px;
+  /* 计数胶囊（小高度圆角=胶囊形，归入 999px 特形） */
+  border-radius: 999px;
   padding: 1px 6px;
 }
 .ws-hit {
@@ -4140,9 +4160,9 @@ body.is-dragging-md::after {
   border: none;
   background: transparent;
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-size-s);
   padding: 4px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   cursor: pointer;
   align-items: baseline;
 }
@@ -4153,7 +4173,7 @@ body.is-dragging-md::after {
 .ws-hit-line {
   flex: 0 0 26px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--font-size-xs);
   color: var(--accent);
   text-align: right;
 }
@@ -4166,7 +4186,7 @@ body.is-dragging-md::after {
   font-family: var(--font-mono);
 }
 .ws-empty {
-  font-size: 12px;
+  font-size: var(--font-size-s);
   color: var(--fg-muted);
   padding: 12px 4px;
   line-height: 1.6;
@@ -4182,6 +4202,7 @@ body.is-dragging-md::after {
   height: 100%;
   background: transparent;
   font-family: var(--font-mono);
+  /* 源码模式的固定内容字号（编辑器正文层，不挂 chrome 字号 token） */
   font-size: 14px;
   line-height: var(--line-height);
 }
@@ -4220,7 +4241,7 @@ body.is-dragging-md::after {
   background: var(--accent-soft);
   color: var(--accent);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   padding: 0 6px;
 }
 .mditor-sv .cm-foldGutter span {
@@ -4246,7 +4267,7 @@ body.is-dragging-md::after {
   gap: 10px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   background: transparent;
   color: var(--fg);
   cursor: pointer;
@@ -4263,11 +4284,11 @@ body.is-dragging-md::after {
 }
 .template-item-name {
   font-weight: 600;
-  font-size: 13.5px;
+  font-size: var(--font-size-m);
 }
 .template-item-desc {
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--font-size-s);
 }
 .link-card {
   max-width: 440px;
@@ -4285,7 +4306,7 @@ body.is-dragging-md::after {
 }
 .link-label {
   flex: 0 0 64px;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   color: var(--fg-muted);
 }
 .link-input {
@@ -4293,10 +4314,10 @@ body.is-dragging-md::after {
   min-width: 0;
   padding: 7px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   background: var(--bg);
   color: var(--fg);
-  font-size: 13px;
+  font-size: var(--font-size-m);
   outline: none;
 }
 .link-input:focus {
@@ -4305,10 +4326,11 @@ body.is-dragging-md::after {
 
 /* ---------- 状态栏：选区字数 ---------- */
 .sb-status-sel {
-  font-size: 11.5px;
+  font-size: var(--font-size-xs);
   color: var(--accent);
   background: var(--accent-soft);
-  border-radius: 8px;
+  /* 计数胶囊（小高度圆角=胶囊形，归入 999px 特形） */
+  border-radius: 999px;
   padding: 2px 8px;
   white-space: nowrap;
 }

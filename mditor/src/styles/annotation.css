@@ -28,7 +28,7 @@
   color: var(--accent);
   background: var(--accent-soft);
   border: 1px solid var(--accent);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   cursor: pointer;
   user-select: none;
   transition: transform 0.12s ease, background 0.12s ease;
@@ -38,7 +38,7 @@
 .mditor-milkdown sup[data-type="footnote_reference"][data-label^="anno-"]::before {
   /* the number comes from data-anno-num, stamped by useAnnotationMarkers */
   content: attr(data-anno-num);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   color: var(--accent);
 }
@@ -96,7 +96,7 @@
   max-width: 90vw;
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-l);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
   display: flex;
@@ -123,7 +123,7 @@
   border-bottom: 1px solid var(--border);
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
 }
 .anno-popover-title {
@@ -140,10 +140,10 @@
   background: transparent;
   color: var(--accent);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--font-size-l);
   line-height: 1;
   padding: 0 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -153,7 +153,7 @@
 }
 .anno-popover-body {
   padding: 10px 12px;
-  font-size: 13.5px;
+  font-size: var(--font-size-m);
   line-height: 1.65;
   color: var(--fg);
   min-height: 48px;
@@ -171,7 +171,7 @@
   color: inherit;
 }
 .anno-popover-body .md-rendered {
-  font-size: 13.5px;
+  font-size: var(--font-size-m);
   line-height: 1.65;
   padding: 0;
 }
@@ -193,7 +193,7 @@
   margin-bottom: 0;
 }
 .anno-popover-body .md-rendered code {
-  font-size: 12.5px;
+  font-size: var(--font-size-s);
 }
 .anno-popover-body .md-rendered pre {
   margin: 6px 0;
@@ -213,10 +213,10 @@
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fg);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 3px 10px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .anno-btn:hover {
   background: var(--hover);
@@ -230,11 +230,11 @@
   filter: brightness(1.08);
 }
 .anno-btn.danger {
-  color: #c0392b;
-  border-color: #f5c6cb;
+  color: var(--danger);
+  border-color: var(--danger-border);
 }
 .anno-btn.danger:hover {
-  background: #fde8e8;
+  background: var(--danger-soft);
 }
 .anno-edit-area {
   width: 100%;
@@ -243,9 +243,9 @@
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 8px 10px;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   font-family: var(--font-prose);
   line-height: 1.55;
 }
@@ -290,14 +290,14 @@
   min-width: 15px;
   height: 15px;
   padding: 0 4px;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   line-height: 15px;
   text-align: center;
   color: #fff;
   /* 渐变 accent 底（135°） */
   background: linear-gradient(135deg, var(--accent), var(--accent-soft));
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   box-shadow: var(--shadow);
   pointer-events: none;
   animation: sb-badge-pop 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -328,7 +328,7 @@
   padding: 9px 12px;
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-l);
   cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.12s ease,
     border-color 0.15s ease;
@@ -356,18 +356,18 @@
   min-width: 20px;
   height: 18px;
   padding: 0 5px;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   line-height: 18px;
   text-align: center;
   color: #fff;
   background: linear-gradient(135deg, var(--accent), var(--accent-soft));
-  border-radius: 9px;
+  border-radius: var(--radius-l);
 }
 .anno-item-anchor {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--font-size-s);
   font-weight: 600;
   color: var(--fg);
   overflow: hidden;
@@ -390,9 +390,9 @@
   border: 1px solid var(--border);
   background: var(--card-bg);
   color: var(--fg);
-  border-radius: 5px;
+  border-radius: var(--radius-s);
   padding: 1px 8px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   cursor: pointer;
   line-height: 1.5;
 }
@@ -408,14 +408,14 @@
   filter: brightness(1.08);
 }
 .anno-item-btn.danger {
-  color: #c0392b;
-  border-color: #f5c6cb;
+  color: var(--danger);
+  border-color: var(--danger-border);
 }
 .anno-item-btn.danger:hover {
-  background: #fde8e8;
+  background: var(--danger-soft);
 }
 .anno-item-preview {
-  font-size: 12.5px;
+  font-size: var(--font-size-s);
   line-height: 1.5;
   color: var(--fg-muted);
   display: -webkit-box;
@@ -435,9 +435,9 @@
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 6px 8px;
-  font-size: 12.5px;
+  font-size: var(--font-size-s);
   font-family: var(--font-prose);
   line-height: 1.55;
 }
@@ -451,10 +451,10 @@
   flex-direction: column;
   gap: 6px;
   color: var(--fg-muted);
-  font-size: 13px;
+  font-size: var(--font-size-m);
 }
 .anno-list-empty .anno-list-hint {
-  font-size: 12px;
+  font-size: var(--font-size-s);
   line-height: 1.6;
   color: var(--fg-muted);
   opacity: 0.85;
@@ -462,7 +462,7 @@
 
 /* Make the sidebar head's count pill sit nicely next to the title. */
 .sb-head .sb-count {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--accent);
   background: var(--accent-soft);
@@ -486,22 +486,22 @@ pre.anno-code-line-hl {
 /* popover 标题里的代码行号徽标 */
 .anno-popover-lines {
   margin-left: 6px;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: 400;
   color: var(--fg-muted);
   background: var(--hover);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   padding: 2px 5px;
   white-space: nowrap;
 }
 /* 批注列表里的代码行标识 */
 .anno-item-lines {
   flex: none;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   color: var(--accent);
   background: var(--accent-soft, var(--hover));
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   padding: 2px 5px;
   white-space: nowrap;
 }
@@ -519,9 +519,9 @@ pre.anno-code-line-hl {
   flex-direction: column;
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-l);
   box-shadow: var(--shadow-lg);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   overflow: hidden;
 }
 .anno-diag-head {
@@ -543,12 +543,12 @@ pre.anno-code-line-hl {
 }
 .anno-diag-actions .anno-btn {
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 .anno-diag-body {
   padding: 8px 10px;
   overflow-y: auto;
-  font-family: var(--mono-font, ui-monospace, monospace);
+  font-family: var(--font-mono, monospace);
   line-height: 1.5;
 }
 .anno-diag-section {
@@ -560,7 +560,7 @@ pre.anno-code-line-hl {
   margin-top: 0;
 }
 .anno-diag-empty {
-  color: var(--muted, #888);
+  color: var(--fg-muted);
 }
 .anno-diag-counters {
   display: flex;
@@ -598,7 +598,7 @@ pre.anno-code-line-hl {
   gap: 8px;
 }
 .anno-diag-event .t {
-  color: var(--muted, #888);
+  color: var(--fg-muted);
   flex: none;
 }
 .anno-diag-event .k {

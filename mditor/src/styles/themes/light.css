@@ -19,6 +19,20 @@
   --accent: #4f46e5; /* indigo-600 */
   --accent-soft: #eef2ff;
   --mark-bg: rgba(255, 213, 79, 0.55); /* ==高光== 背景色（亮色主题） */
+  /* 语义色（v4.1 变量化）：danger/success/diff 由主题各自调值，深色主题
+     借此消除亮色块。浅色系沿用原硬编码值，观感零变化。 */
+  --danger: #c0392b;
+  --danger-soft: #fde8e8;
+  --danger-border: #f5c6cb;
+  --success: #2e7d43;
+  --success-soft: #e5f4e8;
+  --success-border: #7fc98f;
+  --diff-del-bg: rgba(224, 82, 82, 0.09);
+  --diff-del-border: rgba(224, 82, 82, 0.25);
+  --diff-del-mark: rgba(224, 82, 82, 0.3);
+  --diff-add-bg: rgba(66, 165, 88, 0.1);
+  --diff-add-border: rgba(66, 165, 88, 0.3);
+  --diff-add-mark: rgba(66, 165, 88, 0.32);
   --shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
   --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.16);
 }

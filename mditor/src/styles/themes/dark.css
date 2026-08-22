@@ -18,6 +18,20 @@
   --accent: #818cf8; /* indigo-400, brighter for dark bg */
   --accent-soft: #312e8155;
   --mark-bg: rgba(250, 204, 21, 0.32); /* ==高光== 背景色（深色主题，提亮） */
+  /* 语义色（v4.1 变量化）：文字提亮可读、底色转深——深色主题下不再出现
+     浅色粉/绿亮块（原 #fde8e8/#e5f4e8 在 #1e1e1e 上是刺眼亮块）。 */
+  --danger: #e5735f;
+  --danger-soft: #3a2422;
+  --danger-border: #5c3a35;
+  --success: #7fc98f;
+  --success-soft: #21362a;
+  --success-border: #3a5a44;
+  --diff-del-bg: rgba(224, 82, 82, 0.16);
+  --diff-del-border: rgba(224, 82, 82, 0.38);
+  --diff-del-mark: rgba(224, 82, 82, 0.42);
+  --diff-add-bg: rgba(66, 165, 88, 0.18);
+  --diff-add-border: rgba(66, 165, 88, 0.42);
+  --diff-add-mark: rgba(66, 165, 88, 0.45);
   --shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.6);
   color-scheme: dark;

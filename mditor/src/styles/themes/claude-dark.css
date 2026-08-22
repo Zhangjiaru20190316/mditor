@@ -18,6 +18,19 @@
   --accent: #d97757;        /* 品牌橙棕，暗底下提亮 */
   --accent-soft: #3a2a22;
   --mark-bg: rgba(250, 204, 21, 0.32); /* ==高光== 背景色（深色主题，提亮） */
+  /* 语义色（v4.1 变量化）：暖调暗色——文字暖提亮、底色深暖，无亮块 */
+  --danger: #e08573;
+  --danger-soft: #3a2a26;
+  --danger-border: #5a4038;
+  --success: #9ac9a0;
+  --success-soft: #26362b;
+  --success-border: #40584a;
+  --diff-del-bg: rgba(224, 130, 110, 0.14);
+  --diff-del-border: rgba(224, 130, 110, 0.36);
+  --diff-del-mark: rgba(224, 130, 110, 0.4);
+  --diff-add-bg: rgba(140, 190, 150, 0.14);
+  --diff-add-border: rgba(140, 190, 150, 0.36);
+  --diff-add-mark: rgba(140, 190, 150, 0.4);
   --shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.6);
   color-scheme: dark;

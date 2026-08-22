@@ -17,6 +17,19 @@
   --statusbar-bg: #f0e5cb;
   --accent: #b45309; /* amber-700 */
   --accent-soft: #f3e0c0;
+  /* 语义色（v4.1 变量化）：暖纸底沿用浅色系值 */
+  --danger: #c0392b;
+  --danger-soft: #fde8e8;
+  --danger-border: #f5c6cb;
+  --success: #2e7d43;
+  --success-soft: #e5f4e8;
+  --success-border: #7fc98f;
+  --diff-del-bg: rgba(224, 82, 82, 0.09);
+  --diff-del-border: rgba(224, 82, 82, 0.25);
+  --diff-del-mark: rgba(224, 82, 82, 0.3);
+  --diff-add-bg: rgba(66, 165, 88, 0.1);
+  --diff-add-border: rgba(66, 165, 88, 0.3);
+  --diff-add-mark: rgba(66, 165, 88, 0.32);
   --shadow: 0 4px 14px rgba(74, 63, 47, 0.12);
   --shadow-lg: 0 12px 40px rgba(74, 63, 47, 0.2);
   color-scheme: light;

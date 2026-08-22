@@ -22,6 +22,22 @@
   --statusbar-bg: #f5f4ed;
   --accent: #c96442;        /* Claude 橙棕 */
   --accent-soft: #f3e7df;   /* 强调色浅底 */
+  /* ==高光== 暖琥珀（v4.1 补齐：此前缺失，回落到 global.css 的黄色 fallback
+     与暖纸底脱节） */
+  --mark-bg: rgba(236, 197, 102, 0.48);
+  /* 语义色（v4.1 变量化）：米纸底沿用浅色系值 */
+  --danger: #c0392b;
+  --danger-soft: #fde8e8;
+  --danger-border: #f5c6cb;
+  --success: #2e7d43;
+  --success-soft: #e5f4e8;
+  --success-border: #7fc98f;
+  --diff-del-bg: rgba(224, 82, 82, 0.09);
+  --diff-del-border: rgba(224, 82, 82, 0.25);
+  --diff-del-mark: rgba(224, 82, 82, 0.3);
+  --diff-add-bg: rgba(66, 165, 88, 0.1);
+  --diff-add-border: rgba(66, 165, 88, 0.3);
+  --diff-add-mark: rgba(66, 165, 88, 0.32);
   --shadow: 0 4px 14px rgba(60, 50, 40, 0.08);
   --shadow-lg: 0 12px 40px rgba(60, 50, 40, 0.14);
   color-scheme: light;
