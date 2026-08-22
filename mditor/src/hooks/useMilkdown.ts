@@ -54,6 +54,7 @@ import { syntaxHighlighting } from "@codemirror/language";
 import { classHighlighter } from "@lezer/highlight";
 import { highlightPlugins } from "../lib/highlightMark";
 import { textColorPlugins } from "../lib/textColorMark";
+import { cvIntrinsicPlugin, startCvPrewarm } from "../lib/cvMemory";
 import { noteScrollWrite } from "../lib/scrollDebug";
 import { noteOpError } from "../lib/opDebug";
 import { createSvEditor } from "../lib/svCodeMirror";
@@ -474,6 +475,18 @@ function loadMarkdownFull(crepe: Crepe, md: string): void {
   }
 }
 
+/** 大文档 c-v 高度预热的调度入口（build 就绪 / 整篇载入后调用；尽力而为）。 */
+function scheduleCvPrewarm(crepe: Crepe, delayMs = 350): void {
+  try {
+    crepe.editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      window.setTimeout(() => startCvPrewarm(view), delayMs);
+    });
+  } catch {
+    /* 预热失败静默：视口学习（cvIntrinsicPlugin）会自然兜底 */
+  }
+}
+
 export function useMilkdown(opts: Options): MilkdownHandle {
   const { hostRef, sourceRef, svHostRef } = opts;
   const crepeRef = useRef<Crepe | null>(null);
@@ -713,6 +726,14 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       // schema + remark parse/serialize wiring, before create() builds the schema.
       crepe.editor.use(textColorPlugins);
 
+      // 大文档 c-v 高度记忆（v4.0.1 根修）：decoration 承载
+      // contain-intrinsic-size，让跳过渲染的块用「按内容寻址的真实高度」做
+      // 占位，消除 3em 占位 ↔ 真实高度的 ±N 往返与跳转落点漂移。仅 big
+      // 模式注册（小文档无 c-v，零开销）。见 lib/cvMemory.ts 头注。
+      if (bigDocRef.current) {
+        crepe.editor.use(cvIntrinsicPlugin);
+      }
+
       try {
         await crepe.create();
       } catch (e) {
@@ -784,6 +805,12 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       crepeRef.current = crepe;
       applyProseVars(settingsRef.current);
       setReady(true);
+      // big 实例就绪且内容已种子落地：空闲窗口分块预热高度表（冷启动首跳
+      // 即按真实高度计算目的地）。空实例（无 seed）由后续 setValue→重建/
+      // 载入路径触发，这里不空跑。
+      if (bigDocRef.current && seed) {
+        scheduleCvPrewarm(crepe);
+      }
     });
     // Defensive: never let an unexpected late rejection surface as unhandled.
     // The create-failure path above already logs; this only swallows surprises.
@@ -1015,6 +1042,9 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           loadMarkdownFull(crepe, md);
           suppressRef.current = false;
           contentRef.current = md;
+          // big→big 换文档（无重建）：新内容的高度表未填，重新预热——冷表
+          // 会让大纲跳转按 3em 占位计算目的地（落点漂移）。
+          if (bigDocRef.current) scheduleCvPrewarm(crepe);
           return;
         }
         suppressRef.current = true;

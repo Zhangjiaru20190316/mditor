@@ -1369,7 +1369,7 @@ body.is-resizing .sidebar {
  * 绘制。contain-intrinsic-size 给跳过的块一个保守的占位高度估计，避免滚
  * 动条抖动。仅作用于 big 模式（小文档无感知）。完整分区渲染/视口化的取
  * 舍见 docs/performance.md。 */
-.mditor-editor-host[data-big] .ProseMirror > * {
+.mditor-editor-host[data-big] .ProseMirror > *:not(.ProseMirror-widget) {
   content-visibility: auto;
   contain-intrinsic-size: auto 3em;
 }
