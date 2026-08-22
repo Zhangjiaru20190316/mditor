@@ -1882,6 +1882,7 @@ body.is-resizing .ai-panel {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  transition: background-color 0.13s ease, color 0.13s ease, opacity 0.13s ease;
 }
 .ai-clear-btn:hover:not(:disabled) {
   background: var(--hover);
@@ -1922,6 +1923,7 @@ body.is-resizing .ai-panel {
   padding: 2px 4px;
   max-width: 150px;
   cursor: pointer;
+  transition: border-color 0.13s ease, background-color 0.13s ease;
 }
 .ai-model-select:hover,
 .ai-thinking-select:hover {
@@ -1985,17 +1987,36 @@ body.is-resizing .ai-panel {
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
 }
+/* v4.1 快捷操作升级为主题化小卡片：--card-bg 底 + 边框 + 微阴影，与
+   --sidebar-bg 面板拉开层次；hover 微抬（translateY(-1px)）+ 暖色染色
+   （accent-soft 底 + accent 字），按下沿用全局 button:active 缩放。
+   只过渡颜色与 transform（合成器友好；阴影为静态值不参与过渡）。 */
 .ai-quick-btn {
-  background: var(--bg);
+  background: var(--card-bg);
   border: 1px solid var(--border);
   color: var(--fg);
-  border-radius: 14px;
-  padding: 3px 10px;
+  border-radius: 8px;
+  padding: 4px 12px;
   cursor: pointer;
   font-size: 12px;
+  font-family: inherit;
+  box-shadow: var(--shadow);
+  transition:
+    background-color 0.13s ease,
+    border-color 0.13s ease,
+    color 0.13s ease,
+    transform 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.13s ease;
 }
-.ai-quick-btn:hover {
-  background: var(--hover);
+.ai-quick-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+.ai-quick-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .ai-quick-btn:disabled {
   opacity: 0.5;
@@ -2146,10 +2167,16 @@ body.is-resizing .ai-panel {
   padding: 2px 8px;
   cursor: pointer;
   font-size: 11px;
+  font-family: inherit;
+  transition: background-color 0.13s ease, border-color 0.13s ease, color 0.13s ease;
 }
 .ai-actions button:hover {
   background: var(--hover);
   color: var(--fg);
+}
+.ai-actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .ai-error {
   background: #fde8e8;
@@ -2237,6 +2264,8 @@ body.is-resizing .ai-panel {
   padding: 3px 10px;
   cursor: pointer;
   font-size: 11px;
+  font-family: inherit;
+  transition: background-color 0.13s ease, border-color 0.13s ease, color 0.13s ease;
 }
 .ai-followup-actions button:hover:not(:disabled) {
   background: var(--hover);
@@ -2706,6 +2735,8 @@ body.is-resizing .ai-panel {
   padding: 0 16px;
   cursor: pointer;
   font-size: 13px;
+  font-family: inherit;
+  transition: filter 0.13s ease, opacity 0.13s ease;
 }
 .ai-send:disabled {
   opacity: 0.5;
