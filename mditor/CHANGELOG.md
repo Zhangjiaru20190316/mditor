@@ -1,5 +1,32 @@
 # Changelog
 
+## 4.1.0 (2026-08-22)
+
+UI 与动效美学全面升级（9 项）：动效强度三档制（无/平衡/生动）落地为正式设置并贯穿 CSS/JS 两层；设置弹窗改左导航双栏；claude 主题 hover 隐形根修；AI 快捷卡片主题化；批注跳转平滑滚动；弹窗与 AI 面板补退场动效；约 30 处 hover/focus 过渡补齐；设计 token 统一（圆角三档/语义色变量化/失效变量修复/字号阶梯）；点位动效 + 生动档专属动效集。设置项由 34 增至 35（新增 motionLevel，默认 balanced），旧 mditor.json 经既有默认值合并机制自然兼容。
+
+### 根因与修复
+
+- **动效三档基础设施（任务 1）**：全应用动效此前只有 prefers-reduced-motion 一档开关，用户无法调节强度，「生动」层微动效也没有承载机制。修复：Settings 新增 `motionLevel`（none/balanced/lively，默认 balanced），`useSettings.applyToDom` 与 data-theme 同机制直写 `<html data-motion>`（切换即时生效、无闪烁、不依赖重挂载）；CSS 侧 `html[data-motion="none"]` 与 prefers-reduced-motion 并列同一套全局 kill switch，「生动」档增强规则一律 `html[data-motion="lively"]` 前缀惰性承载（平衡/无档零额外样式计算）；JS 侧 `lib/motion.ts motionEnabled`（OS reduce 优先级最高，选中 lively 也按「无」处理），大纲跳转（富文本 smooth 分支 + sv jumpToSourceLine）经 settingsRef 镜像在事件回调内读取生效档位
+- **设置弹窗双栏化（任务 2）**：540px 单列长滚动、7 个分区仅靠 accent 小标题分层，层级弱且低频分区藏在折叠组里。修复：弹窗加宽至 720px（保留 max-width 92vw），左列竖排 7 个分区导航、右列仅渲染当前分区（切换只重渲染右列、滚动只发生在右列）；「性能与诊断」升为正式导航分区；「外观」新增动效强度三段式选择；签名点睛——左导航激活指示条随切换平滑滑动（等距 translateY 纯 transform 过渡）
+- **claude 主题菜单栏 hover 隐形（任务 3）**：claude.css 的 `--hover` 与 `--titlebar-bg` 同为 #f0ede5，hover 底色与标题栏底色完全同值，反馈不可见（侧栏图标钮等同病）。修复：`--hover` 加深为 #e6e0d2 拉开可辨差距；`.mb-btn` hover/open 改 accent 轻染底（color-mix 12%/14%），与下拉菜单项（accent-soft 底 + accent 字）形成同族暖色语言，五主题各自成色均清晰可见
+- **AI 快捷卡片主题化（任务 4）**：快捷操作胶囊用 `--bg` 底放在 `--sidebar-bg` 面板上无层次、hover 瞬切。修复：`--card-bg` 底 + 1px 边框 + 微阴影；hover 微抬（translateY(-1px)）+ 暖色染色；disabled 平滑过渡；AI 面板内模型选择/发送/追问/清除等按钮统一补 0.13s 颜色过渡
+- **批注跳转平滑滚动（任务 5）**：侧栏批注点击瞬时跳转，与大纲体验割裂（瞬跳是历史有意为之——弹层需按滚动前 marker 位置定位）。修复：改为「先平滑滚到位，落定后再定位并打开弹层」——scrollend 为主信号、两帧未起滚（目标已在视口）直接视为落定、1200ms 上限兜底，落定后才派发合成 mousedown，弹层按滚动后 rect 精确落位；代码行批注优先滚到被批注的代码行本身（提前高亮，滚动途中即见落点）；打字机抑制窗口统一为大纲同款；sv 模式传 smooth=true 复用 svCodeMirror 现成平滑分支；跳转序号防快速连点串扰
+- **弹窗与 AI 面板退场动效（任务 6）**：4 个弹窗与 AI 面板只有入场动画，关闭时 `if (!open) return null` 瞬消——全应用最大动效一致性缺口。修复：新增 `useDelayedUnmount`（关闭后保持挂载约 240ms 播 `.closing` 退场动画再卸载，重开立即恢复不叠加）；退场只动 transform/opacity（卡片 scale(0.96)+translateY(8px)+opacity 淡出、遮罩同步淡出、AI 面板向右收回），退场期间禁指针
+- **hover/focus 过渡补齐（任务 7）**：约 30 处按钮 hover 背景瞬跳、输入框 focus 边框瞬变。修复：集中一条组规则统一补 background-color/color/border-color 0.13s 过渡（只过渡颜色不引入位移，白名单属性）；输入类控件 focus 边框同曲线；高频交互件补 focus-visible 描绘环（accent 2px、offset 1px）
+- **设计 token 统一（任务 8）**：圆角 4/5/6/8/9/10/12/14px 多套并行、danger/success/diff 语义色硬编码散落 18 处、`--mono-font`/`--muted` 两处失效变量、claude 缺 `--mark-bg` 回落黄色 fallback、chrome 层 13 种字号。修复：8a 圆角三档 `--radius-s 4 / -m 6 / -l 10`（映射 3/4/5→s、6→m、8/9/10/12→l；胶囊 999px、圆 50%、聊天气泡尾角等特形保留）；8b 建主题变量 `--danger*/--success*/--diff-add-*/--diff-del-*` 五主题各自调值（深色两主题借此消除浅粉/浅绿亮块，`.ai-notice` 底色由误用的 accent-soft 修正为 success-soft）；8c `--mono-font`→`--font-mono`、`--muted`→`--fg-muted` 共 8 处修复，claude 补暖琥珀 `--mark-bg`；8d 字号四档 `--font-size-xs 11 / -s 12 / -m 13 / -l 14`（正文 `--font-size` 与源码模式固定 14px 不动）
+- **点位动效 + 生动档（任务 9）**：平衡档基线补 Tab 增删淡入/淡出缩收（关闭经 TabsBar 180ms 残影，保存/确认逻辑不等动画）、编辑器模式切换 0.2s 入场淡入（宿主直接子级，内容更新不重放）、设置分区切换淡入上移；生动档专属集（`html[data-motion="lively"]` 惰性前缀）——侧栏面板/设置分区 Field 级联入场（25ms/项、整组 ≤300ms 封顶）、弹窗与下拉弹性入场曲线（cubic-bezier(0.34,1.4,0.5,1) 轻微过冲）、卡片 hover 抬升增强（translateY(-2px) + 静态阴影直换）、AI FAB 按下快压松手回弹（纯事件驱动一次性）
+
+### 防回归
+
+- `types.test.ts` 快照由 34 键更新为 35 键（含 motionLevel: "balanced"）；新增 `motion.test.ts`（3 例）锚定档位生效逻辑（none 恒禁 / prefers-reduced-motion 压过 lively）
+- 性能红线全程遵守：新动效只动 transform/opacity、零常驻零循环、无 rAF 循环/轮询、hover 过渡白名单属性、生动档规则惰性（属性选择器前缀）、既有 contain 隔离/content-visibility/.app-idle 暂停/kill switch 全部未回退
+- 语义色浅色三主题沿用原值观感零变化；硬编码语义色残留扫描为零；`--mono-font`/`--muted` 失效引用清零
+
+### 验证
+
+- vitest **204/204**（+3：motion 档位逻辑）；tsc / eslint 0 错；vite build 过
+- 人工核验步骤（`npm run tauri dev`）：①设置 → 外观 → 动效强度逐档体验：「无」全部动画消失跳转瞬时 /「平衡」默认完整体验 /「生动」级联与弹性可见，切换后立即开弹窗/跳转验证即时生效；②设置双栏七分区逐项可用、导航指示条滑动流畅；③claude 主题菜单栏 hover 清晰可见、AI 快捷卡片 hover 微抬按下有缩放；④批注跳转平滑且弹层落位正确（富文本与源码各一次）；⑤全部弹窗开合均有完整进出动画；claude/dark/claude-dark 三主题无色块突兀；⑥5000+ 行大文档下切分区/开关弹窗/批注跳转/生动档全开均无可感知掉帧
+
 ## 4.0.0 (2026-08-21)
 
 两大交互 bug 根修 + 两项界面/体验重构：①长大纲面板被裁剪无法滚动；②文件树二级及更深文件夹点击展开无反应；③设置弹窗按功能域分区；④全局搜索点击结果精确定位到匹配行/文本（源码与富文本两模式）。设置项集合与默认值零变化（快照锚定），升级无迁移。
