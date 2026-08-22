@@ -8,7 +8,10 @@
   --fg: #2c2a26;            /* 深棕黑主文字 */
   --fg-muted: #6b6862;      /* 次级文字 */
   --border: #e8e5dd;
-  --hover: #f0ede5;
+  /* v4.1：原 #f0ede5 与 --titlebar-bg 完全同值，标题栏/切换条上的 hover
+     反馈完全不可见（菜单栏按钮、侧栏图标钮全部「隐形 hover」）。加深一档
+     暖米色，与标题栏底拉开可辨差距；面板/卡片上的 hover 对比同步增强。 */
+  --hover: #e6e0d2;
   --code-bg: #e6dfd0; /* 代码块底色（暖米灰，明显有别于米色背景） */
   --code-border: #dcd5c8; /* 代码块边框 */
   --card-bg: #ffffff;       /* 卡片用纯白，与背景形成层次 */

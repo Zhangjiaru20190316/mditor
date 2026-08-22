@@ -160,10 +160,17 @@ button:not(:disabled):active {
   white-space: nowrap;
   transition: background 0.1s ease, color 0.1s ease;
 }
-.mb-btn:hover,
-.mb-btn.open {
-  background: var(--hover);
+/* Claude 式同族暖色反馈（v4.1）：菜单按钮 hover/open 用 accent 轻染底，
+   与下拉菜单项（accent-soft 底 + accent 字）同一语言；color-mix 按
+   --accent 计算，五个主题各自成色、均清晰可见（claude 主题此前的
+   --hover 与标题栏同值导致 hover 隐形，已同步修主题变量）。 */
+.mb-btn:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--fg);
+}
+.mb-btn.open {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
 }
 /* 点击外部关闭的背板：从标题栏下缘开始（菜单按钮保持可点 = 直接切换）。
    背板与下拉层都由 MenuBar 经 createPortal 挂在 document.body —— 若留在
