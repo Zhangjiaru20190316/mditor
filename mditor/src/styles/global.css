@@ -3472,6 +3472,90 @@ body {
   }
 }
 
+/* ---------- B13. hover/focus 过渡补齐（v4.1） -----------------------------
+   约 30 处按钮 hover 背景瞬跳 / 输入框 focus 边框瞬变：统一补 0.13s 颜色
+   过渡——只过渡颜色（白名单属性），不引入位移；输入框 focus 边框同曲线。
+   集中一条组规则，后置覆盖各处原有的 0.1s/0.12s 零散过渡（含 .mb-item）。 */
+.sel-btn,
+.sb-btn,
+.sb-close,
+.modal-x,
+.css-row button,
+.btn-ghost,
+.btn-primary,
+.ft-batch-btn,
+.ft-more-btn,
+.ctx-input-ok,
+.ctx-menu-item,
+.mb-item,
+.sb-status-mode,
+.focus-toolbar button,
+.diff-mini,
+.diff-close,
+.diff-act,
+.diff-hunk,
+.ws-toggle,
+.ws-hit,
+.template-item,
+.tabbar-tab-close,
+.qa-del,
+.qa-add,
+.model-del,
+.model-add,
+.field-collapsible {
+  transition: background-color 0.13s ease, color 0.13s ease, border-color 0.13s ease;
+}
+/* 输入类控件：focus 边框瞬变 → 同曲线过渡 */
+.field-control input[type="text"],
+.field-control input[type="number"],
+.field-control select,
+.css-row input,
+.ctx-input,
+.ws-input,
+.link-input,
+.ai-input,
+.ai-followup-input,
+.ai-prompt-area,
+.sel-input,
+.sb-input,
+.ft-rename-input,
+.qa-label,
+.qa-prompt,
+.qa-scope,
+.model-name,
+.model-provider,
+.model-baseurl,
+.model-key,
+.model-name-id {
+  transition: border-color 0.13s ease, background-color 0.13s ease;
+}
+/* 高频交互件 focus-visible 描绘环（accent 色 2px、offset 1px）——键盘
+   导航可见性对齐 .mb-item / .sb-status-mode 既有写法 */
+.mb-btn:focus-visible,
+.sel-btn:focus-visible,
+.sb-btn:focus-visible,
+.sb-close:focus-visible,
+.modal-x:focus-visible,
+.css-row button:focus-visible,
+.btn-ghost:focus-visible,
+.btn-primary:focus-visible,
+.ai-send:focus-visible,
+.ctx-menu-item:focus-visible,
+.ft-batch-btn:focus-visible,
+.sb-status-mode:focus-visible,
+.focus-toolbar button:focus-visible,
+.ws-toggle:focus-visible,
+.ws-hit:focus-visible,
+.tabbar-tab-close:focus-visible,
+.qa-del:focus-visible,
+.qa-add:focus-visible,
+.model-del:focus-visible,
+.model-add:focus-visible,
+.seg-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* B5. 设置面板可折叠区：max-height + opacity 平滑过渡
    （margin-top 用以抵消 modal-body 的 12px gap，折叠时不留空隙） */
 .field-collapse {
