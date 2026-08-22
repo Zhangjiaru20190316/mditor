@@ -9,9 +9,10 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "./types";
 
-/** 重构前（v3.9.7）的 Settings 字段全集。 */
+/** 重构前（v3.9.7）的 Settings 字段全集 + v4.1 新增的 motionLevel。 */
 const SETTING_KEYS = [
   "theme",
+  "motionLevel",
   "fontFamily",
   "monoFontFamily",
   "fontPreset",
@@ -50,6 +51,7 @@ const SETTING_KEYS = [
 /** 重构前（v3.9.7）的标量默认值。 */
 const SCALAR_DEFAULTS: Record<string, unknown> = {
   theme: "light",
+  motionLevel: "balanced",
   fontFamily:
     '"Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
   monoFontFamily:

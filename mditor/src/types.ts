@@ -2,6 +2,19 @@
 
 export type Theme = "light" | "dark" | "sepia" | "claude" | "claude-dark";
 
+/**
+ * 动效强度三档（v4.1 动效体系）：
+ *   * none    — 全局禁用（等同 prefers-reduced-motion，跳转瞬时）；
+ *   * balanced — 默认档，完整基础动效（本次美学升级的基线）；
+ *   * lively  — balanced 全部内容 + 级联/弹性等极致微动效。
+ * 生效方式：useSettings.applyToDom 直写 <html data-motion="...">；
+ * CSS 侧「无」档并列 prefers-reduced-motion kill switch，
+ * 「生动」档增强规则一律以 html[data-motion="lively"] 前缀惰性承载。
+ * OS 检测到 prefers-reduced-motion: reduce 时无论用户选什么都按「无」生效
+ * （见 lib/motion.ts motionEnabled）。
+ */
+export type MotionLevel = "none" | "balanced" | "lively";
+
 export type EditMode = "wysiwyg" | "ir" | "sv";
 
 /**
@@ -151,6 +164,8 @@ export function emptyAiModel(preset?: AiProviderPreset): AiModelConfig {
 
 export interface Settings {
   theme: Theme;
+  /** 动效强度三档（见 MotionLevel）。默认 balanced。 */
+  motionLevel: MotionLevel;
   /** Prose font family stack. */
   fontFamily: string;
   /** Monospace font for code. */
@@ -260,6 +275,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "light",
+  motionLevel: "balanced",
   fontFamily:
     '"Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
   monoFontFamily:

@@ -67,6 +67,7 @@ import { dismissSplash } from "./lib/splash";
 import { takeHealSnapshot } from "./lib/session";
 import { countWords } from "./lib/textStats";
 import { isBigDoc } from "./lib/memory";
+import { motionEnabled } from "./lib/motion";
 import type { FlatHeading, OutlineNode, Settings, TabItem } from "./types";
 
 type SidebarTab = "tree" | "outline" | "recent" | "annotations" | "search";
@@ -1300,7 +1301,14 @@ export default function App() {
           node.text,
           node.occurrence ?? 0
         );
-        if (line != null) editorRef.current?.jumpToSourceLine(line, true);
+        // 平滑分支由当前生效动效档位决定（无→瞬时，见 lib/motion.ts）；
+        // svCodeMirror 内部另有 prefers-reduced-motion 兜底。
+        if (line != null) {
+          editorRef.current?.jumpToSourceLine(
+            line,
+            motionEnabled(settingsRef.current.settings)
+          );
+        }
         return;
       }
       // Rich mode: the outline can also be one commit behind the live doc.
@@ -1355,9 +1363,9 @@ export default function App() {
       // 平滑动画期间 host 置 smoothJump 标记，Editor 的打字机选区居中
       // （selectionchange → 瞬时 scrollTop）看到标记即跳过，否则会在动画
       // 起步时一帧掐断它。scrollend（动画完成/被打断）或超时兜底清除。
-      const reduced = window.matchMedia(
-        "(prefers-reduced-motion: reduce)"
-      ).matches;
+      // v4.1 动效三档：当前生效档位为「无」（用户选择或系统
+      // prefers-reduced-motion）时保持瞬时跳转。
+      const reduced = !motionEnabled(settingsRef.current.settings);
       const block: ScrollLogicalPosition = settingsRef.current.settings
         .typewriterMode
         ? "center"

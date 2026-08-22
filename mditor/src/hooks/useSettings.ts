@@ -150,6 +150,10 @@ export function useSettings(): SettingsApi {
 function applyToDom(s: Settings) {
   const root = document.documentElement;
   root.setAttribute("data-theme", s.theme);
+  // 动效三档（v4.1）：与 data-theme 同机制直写 <html>，档位切换即时生效、
+  // 无闪烁、不依赖组件重挂载。CSS 侧 kill switch / 生动档增强规则都挂在
+  // 这个属性上（global.css 动效区块）。
+  root.setAttribute("data-motion", s.motionLevel);
   root.style.setProperty("--font-prose", s.fontFamily);
   root.style.setProperty("--font-mono", s.monoFontFamily);
   root.style.setProperty("--font-size", `${s.fontSize}px`);

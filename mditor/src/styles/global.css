@@ -3389,7 +3389,11 @@ body {
   }
 }
 
-/* B12. 尊重系统「减少动态效果」设置：统一近乎禁用所有动效 */
+/* B12. 尊重系统「减少动态效果」设置：统一近乎禁用所有动效。
+   v4.1 动效三档：「无」档（html[data-motion="none"]，useSettings 直写）与
+   prefers-reduced-motion 并列同一套 kill switch —— 用户选「无」时无论系统
+   偏好如何都全部禁用；「生动」档增强规则见 html[data-motion="lively"] 前缀
+   区块（惰性，平衡/无档下不产生任何额外样式计算）。 */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -3399,6 +3403,14 @@ body {
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+html[data-motion="none"] *,
+html[data-motion="none"] *::before,
+html[data-motion="none"] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
 }
 
 /* 已从工作区移除的项目（设置 → 已从工作区移除的项目） */
