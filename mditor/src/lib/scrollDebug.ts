@@ -18,8 +18,13 @@
 //  2. 视口内容位移（layout:shift）：scrollTop 没变、但视口顶部哨兵块的
 //     文档坐标变了 → 内容在自己动（content-visibility 高度重估 / 图片加载
 //     / 盖章行内化 / PM 重排），这是 scrollTop 写入检测抓不到的另一半
-//     「自己动」。哨兵用二分选取，失效自动重选。与文档高度突变同帧发生
-//     时合并为一条事件输出（位移的原因大概率就是同帧的高度变化）。
+//     「自己动」。哨兵用二分选取，失效自动重选。连续静止帧确认制（单帧
+//     瞬态不报）；与文档高度突变同帧发生时合并为一条事件输出（位移的原因
+//     大概率就是同帧的高度变化）。data-big 模式下确认过的持续位移由
+//     anchor-comp 同步补偿（scrollTop += 位移，写入打点 write:anchor-comp，
+//     限幅 8000px/次）——这是「补偿」不是「劫持」，仅补内容位移，不碰用户
+//     滚动（运动帧不参与），也不重新启用 overflow-anchor（历史教训：
+//     它把盖章位移放大成视口来回跳，global.css:1082-1085 保持关闭）。
 //  3. 文档高度突变（layout:height）：scrollHeight 变化 >8px——c-v 块首次
 //     进入视口时 3em 占位 → 实际高度的跳变证据。
 //  4. 长任务（perf:longtask）：主线程阻塞 >50ms（滚动卡顿的直接证据）。
@@ -315,6 +320,13 @@ const BLOCK_MIN_DELTA = 4;
 /** 一次 layout:block 事件最多列出的块数。 */
 const BLOCK_MAX_LISTED = 8;
 
+/** anchor-comp 单次补偿限幅：确认过的持续位移全量补偿，但单写不超过此值
+ *  （防哨兵异常导致的灾难性误补偿；更大的漂移按帧收敛）。 */
+const ANCHOR_COMP_MAX = 8000;
+/** 位移确认阈值：连续静止帧同一哨兵位移 ≥ 此值才视为真实位移（单帧瞬态
+ *  ——预热/重建期间的哨兵毛刺——不补偿也不报事件）。 */
+const SHIFT_CONFIRM_MIN = 4;
+
 export interface ScrollWatchStats {
   /** 最近一次 ghost 的摘要（面板展示 / 排查入口）。 */
   lastGhost: ScrollDebugEvent | null;
@@ -349,6 +361,8 @@ export function attachScrollWatch(host: HTMLElement): () => void {
   let sessionStill = 0;
   // 哨兵：视口顶部的 ProseMirror 顶层块（element + 上帧文档坐标 top）。
   let sentinel: { el: Element; docTop: number } | null = null;
+  // 位移确认武装：第一帧检出位移时记录 {el, docTop}，下一静止帧复核。
+  let compArmed: { el: Element; docTop: number } | null = null;
   let raf = 0;
   let disposed = false;
 
@@ -572,6 +586,12 @@ export function attachScrollWatch(host: HTMLElement): () => void {
       );
       sessionTag = step.state.tag;
       sessionStill = step.state.stillFrames;
+      // 大幅位移帧（跳转/焦点瞬移）：旧哨兵的 docTop 已失义（瞬移后同帧
+      // docTop 差 = 瞬移量，会被误报成内容位移），作废重选。
+      if (moving && Math.abs(st - prevSt) > 500) {
+        sentinel = null;
+        compArmed = null;
+      }
       if (step.verdict.type === "user") {
         scrollCount("session.user");
       } else if (step.verdict.type === "write") {
@@ -626,8 +646,13 @@ export function attachScrollWatch(host: HTMLElement): () => void {
       }
 
       // --- 视口内容位移（scrollTop 不变而哨兵文档坐标变了）。
+      // v3.9.5：连续静止帧确认制——单帧瞬态（重建/预热期间的哨兵毛刺）不
+      // 报也不补；确认后的持续位移在 data-big 下由 anchor-comp 全量补偿
+      //（内容下移 S → scrollTop += S，视口内容视觉位置不变），补偿写入
+      // 打点 write:anchor-comp。
       let shift: number | null = null;
       let shiftTag: string | undefined;
+      let shiftCompensated = 0;
       if (!moving && Math.abs(st - prevSt) < 0.5) {
         if (
           !sentinel ||
@@ -635,19 +660,55 @@ export function attachScrollWatch(host: HTMLElement): () => void {
           sentinel.el.getBoundingClientRect().width === 0
         ) {
           sentinel = pickSentinel();
+          compArmed = null;
         } else {
           const r = sentinel.el.getBoundingClientRect();
           const docTop = r.top + st;
-          const s = docTop - sentinel.docTop;
-          if (Math.abs(s) > 2) {
-            shift = s;
-            shiftTag = sentinel.el.tagName;
-            // 位移后重选哨兵：块可能已被重建/换位，旧 docTop 不再可比。
+          // 哨兵按构造是视口顶的块（docTop ≈ scrollTop ± 块高）。差出数千
+          // px 只可能是失效哨兵（瞬移/重建/空矩形），重选而不比对——否则
+          // 会把瞬移量误报成内容位移（实测跳转点击瞬间的 ↓172037px 伪影）。
+          if (Math.abs(docTop - st) > 3000) {
             sentinel = pickSentinel();
+            compArmed = null;
           } else {
-            sentinel.docTop = docTop;
+            const s = docTop - sentinel.docTop;
+            if (Math.abs(s) > 2) {
+              if (
+                compArmed &&
+                compArmed.el === sentinel.el &&
+                Math.abs(docTop - compArmed.docTop) >= SHIFT_CONFIRM_MIN
+              ) {
+                // 第二帧确认：位移真实且持续 → 报告（+补偿）。
+                shift = docTop - compArmed.docTop;
+                shiftTag = sentinel.el.tagName;
+                const big = host.dataset.big !== undefined;
+                // 平滑跳转动画进行中（App 的 smoothJump 标志）绝不补偿：动画
+                // 中途写 scrollTop 会掐断 scrollIntoView（longtask 阻断帧造成
+                // 的「静止」不算静止）；残余位移等跳转收尾后再确认补偿。
+                if (big && host.dataset.smoothJump === undefined) {
+                  const comp = Math.max(-ANCHOR_COMP_MAX, Math.min(ANCHOR_COMP_MAX, shift));
+                  if (comp !== 0) {
+                    noteScrollWrite("anchor-comp");
+                    host.scrollTop += comp;
+                    shiftCompensated = comp;
+                    scrollCount("anchor.comp");
+                  }
+                }
+                compArmed = null;
+                // 位移后重选哨兵：块可能已被重建/换位，旧 docTop 不再可比。
+                sentinel = pickSentinel();
+              } else {
+                // 第一帧：只武装不动作——下一静止帧再确认。
+                compArmed = { el: sentinel.el, docTop: sentinel.docTop };
+              }
+            } else {
+              sentinel.docTop = docTop;
+              compArmed = null;
+            }
           }
         }
+      } else {
+        compArmed = null;
       }
 
       // --- 文档高度突变（c-v 高度重估 / 图片加载 / 大改写）；与同帧位移合并。
@@ -657,7 +718,7 @@ export function attachScrollWatch(host: HTMLElement): () => void {
         // 位移的原因大概率就是同帧的高度变化：合并为一条，双计数器保持口径。
         scrollEmit(
           "layout:shift",
-          `视口内容位移 ${shift >= 0 ? "↓" : "↑"} ${Math.abs(shift).toFixed(0)}px（scrollTop 未变）· 同帧文档高度 ${prevH} → ${h}（${hDelta >= 0 ? "+" : ""}${Math.round(hDelta)}px）`,
+          `视口内容位移 ${shift >= 0 ? "↓" : "↑"} ${Math.abs(shift).toFixed(0)}px（scrollTop 未变）· 同帧文档高度 ${prevH} → ${h}（${hDelta >= 0 ? "+" : ""}${Math.round(hDelta)}px）${shiftCompensated ? ` · 已补偿 ${Math.round(shiftCompensated)}px` : ""}`,
           {
             level: Math.abs(shift) > 24 ? "warn" : "info",
             data: {
@@ -667,6 +728,7 @@ export function attachScrollWatch(host: HTMLElement): () => void {
               height: Math.round(h),
               tag: shiftTag,
               session: sessionTag,
+              compensated: shiftCompensated || undefined,
             },
           }
         );
@@ -691,15 +753,16 @@ export function attachScrollWatch(host: HTMLElement): () => void {
         if (shift != null) {
           scrollEmit(
             "layout:shift",
-            `视口内容位移 ${shift >= 0 ? "↓" : "↑"} ${Math.abs(shift).toFixed(0)}px（scrollTop 未变）`,
+            `视口内容位移 ${shift >= 0 ? "↓" : "↑"} ${Math.abs(shift).toFixed(0)}px（scrollTop 未变）${shiftCompensated ? ` · 已补偿 ${Math.round(shiftCompensated)}px` : ""}`,
             {
               level: Math.abs(shift) > 24 ? "warn" : "info",
-            data: {
-              delta: Math.round(shift),
-              scrollTop: Math.round(st),
-              height: Math.round(h),
-              tag: shiftTag,
-            },
+              data: {
+                delta: Math.round(shift),
+                scrollTop: Math.round(st),
+                height: Math.round(h),
+                tag: shiftTag,
+                compensated: shiftCompensated || undefined,
+              },
             }
           );
           openBlockWindow();
