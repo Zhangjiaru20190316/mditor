@@ -1,5 +1,27 @@
 # Changelog
 
+## 4.1.1 (2026-08-22)
+
+「ghost 滚动」四连修：大文档下「页面自己动」（内容自己位移 / 跳转落点漂移 / ±N 高度震荡 / ghost 误报）全链路根修。核心成果：首次为该问题族拿到运行时定罪证据（新增块级归因 + PM 重建检测诊断），**推翻「PM 重渲替换」假设（全程 pm.childlist=0），实锤 Chromium 对 content-visibility remembered size 的距离驱逐机制**，并以「内容寻址高度记忆（PM decoration 承载）+ 加载后分块预热」根除。
+
+### 根因与修复（按任务）
+
+- **任务 0 · 诊断补强（scrollDebug v3.9.5）**：layout:height 只报文档总高 delta，无法定位哪个块、为何变化，-N 塌缩触发源无法定罪。修复：`layout:block` 块级归因（ghost/位移/高度突变触发后 2s 窗口内 100ms 步频逐块比对，报块索引+tagName+首行摘要+delta；平时休眠，big 模式至多 1s 一次基线刷新，常驻每帧仍为常数次属性读取）；`pm:rebuild`/`pm:shape`（对 .ProseMirror 挂只读 MutationObserver 顶层 childList，同批 -3/+3 以上同位替换报 rebuild——H1「DOM 替换」与 H2「图片高度往返」的一锤定音证据）；PM 根整体替换报 `pm:root-swap`；ghost 事件附同帧 scrollHeight 变化量与是否贴底；layout:shift 与 layout:height 同帧合并输出；watch:attach 携带挂载序号，并核实复现中 attach=2/ready=1 实为观察器 effect 依赖 [handle.ready] 的卸载重挂（非宿主重建），改挂载一次
+- **任务 1 · ghost 误归因修复**：outline-jump 平滑滚动尾段被 longtask 阻断，会话以「单帧静止即复位」关闭，恢复后 1px 尾段超 250ms 归因窗被误标 ghost（复现证据 lastWrite@1494ms 前）。修复：会话判定抽为纯状态机 `stepSession`（可单测）——连续 5 帧静止确认才关闭会话（longtask 阻断后的尾段恢复延续原会话）；平滑跳转类 tag（outline-jump/anno-jump/sv-jump）归因窗与 App 侧 smoothJump 抑制窗口对齐（标志在位或写入后 1250ms 内均归属写入方）；|delta|<2px 且同帧有高度变化的微位移单独计 `layout:clamp` 不计 ghost（clamp 会话立即关闭，不吞后续真 ghost）
+- **任务 2+3 · c-v 高度重估位移与 ±N 震荡（同根同修）**：浏览器自动化复现实锤（Edge headless + 3894 行文档）——全部 -N 塌缩发生在**身份不变**的块上（H2 112→48 恰为 3em 占位），全程 pm.childlist=0，「PM 重渲替换 / park Selection / stamp 循环」全部无罪；真凶是 Chromium 对 content-visibility:auto 块 remembered size 的**距离驱逐**：块离开视口相关区回落 3em 占位、接近时再变现，同一块反复横跳（用户复现 92 次 ±N 成对震荡的来源）；大纲平滑跳转沿路成批变现（单次 123 个 layout:height）使飞行中文档涨 15k+ px，动画目的地按起跳时占位高度计算 → 落点差 14633px、落定后内容再位移 15389px；静置期亦有 41 块/波的批量塌缩。修复（任务书方案 a，PM plugin/decoration 承载，绝不事后直写 PM DOM）：新增 `lib/cvMemory.ts` 内容寻址高度记忆——FNV-1a(节点类型+全文) 会话级高度表（跨编辑器重建存活、20000 条按插入序淘汰），每个顶层块装饰 `contain-intrinsic-size:<w>px <h>px`（占位=真实高度，变现/塌缩 delta≈0）；视口学习（二分定位 O(log n+k)、300ms 节流、学新才防抖重建装饰）持续修正；加载后分块预热（每 100 块临时 content-visibility:visible 强制渲染→量高→换块，双 rAF+让出主线程、覆盖率 ≥95% 跳过、编辑/销毁/新预热代际令牌即中止）——冷启动首跳即按真实高度计算目的地；块本体映射一律经 `view.nodeDOM(pos)`（DOM 子元素与 doc 顶层块因 Crepe 顶层 widget/nodeview 包裹**不可按索引对齐**，首版索引错位曾把图片块量成邻居段落 56px）；c-v 规则排除 .ProseMirror-widget（高 0 的 widget 被命中后跳过态虚占 48px）；useMilkdown 在 big 实例注册插件，并在 build 就绪（有 seed）/整篇载入（big→big 换文档）后调度预热
+- **任务 2 补偿层 · anchor-comp 自研锚定补偿**：主修复之外的残余位移兜底（编辑导致的高度变化、表未覆盖的首见块、量测误差）——data-big 下连续静止帧确认的持续视口位移同步补偿（内容下移 S → scrollTop += S，写入打点 write:anchor-comp、单次限幅 8000px、不重新启用 overflow-anchor）；smoothJump 动画期间绝不补偿（longtask 阻断帧造成的「静止」会让补偿掐断动画，实测曾把跳转拦在半途）；哨兵失效自愈（>500px 位移帧作废哨兵 + 比对前校验 |docTop−scrollTop|≤3000）消灭跳转点击瞬间 ↓17 万 px 位移伪影
+
+### 防回归
+
+- 13 处滚动写入打点一个不少；新增写入（anchor-comp）已打点；overflow-anchor 保持关闭、不引入虚拟滚动、data-big 阈值与大文档性能收益不变（c-v:auto 照旧生效，视口外 layout/paint 仍被跳过，预热为一次性空闲分块摊销）；大纲/批注跳转（平滑+瞬时两路径、动效三档）与 smoothJump 抑制打字机机制不回归；诊断面板（体检/复制/清空）与 Ctrl+Alt+D 开关不回归
+- 诊断纪律不变：MutationObserver 只读、全入口 try/catch、常驻每帧亚毫秒；预热分块可中止不泄漏；会话状态机 / 高度表 / 块比对 / PM 批次分类均有纯逻辑单测
+- 任务 0 的诊断工具常驻保留（下次复现「复制」即出定罪证据）
+
+### 验证
+
+- vitest **228/228**（+24：scrollDebug 事件总线/块比对/PM 批次分类/会话状态机 19 例 + cvMemory 哈希/容量淘汰/style 合成 5 例）；tsc / eslint 0 错；vite build 过
+- 浏览器自动化复现验收（3894 行大文档，修复前后同流程对照）：跳转 `session.ghost` 1→**0**（尾段正确归属 session.write.outline-jump）；`layout:shift` 累计 1250px（用户基线）→**0px**；跳转落点偏差 14633px→**48px**（目标标题精确对齐视口顶，全程目标文档坐标零漂移）；跳转期高度事件 123→**0**；3 轮往返滚动 ±N 震荡高度事件 28→**1**（余 1 为噪音）；静置 15s 塌缩波 41 块→**0**；全程 pm:rebuild=0（H1 无罪的反证留档）；watch:attach=1（观察器挂载正常）
+
 ## 4.1.0 (2026-08-22)
 
 UI 与动效美学全面升级（9 项）：动效强度三档制（无/平衡/生动）落地为正式设置并贯穿 CSS/JS 两层；设置弹窗改左导航双栏；claude 主题 hover 隐形根修；AI 快捷卡片主题化；批注跳转平滑滚动；弹窗与 AI 面板补退场动效；约 30 处 hover/focus 过渡补齐；设计 token 统一（圆角三档/语义色变量化/失效变量修复/字号阶梯）；点位动效 + 生动档专属动效集。设置项由 34 增至 35（新增 motionLevel，默认 balanced），旧 mditor.json 经既有默认值合并机制自然兼容。
