@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mditor — 本地优先的 Markdown 编辑器</title>
-  <meta name="description" content="Mditor：免费开源的本地优先 Markdown 编辑器，体验对标 Typora。所见即所得、AI 助手、批注与大纲、多格式导出。无云端、无遥测、无广告，你的文件始终保存在自己的电脑上。">
+  <meta name="description" content="Mditor：免费开源的本地优先 Markdown 编辑器，体验对标 Typora。所见即所得、AI 助手、批注与大纲、五套主题、多格式导出。无云端、无遥测、无广告，你的文件始终保存在自己的电脑上。">
   <link rel="icon" href="assets/icon.png">
   <link rel="stylesheet" href="assets/style.css">
 </head>
@@ -17,6 +17,7 @@
         <span class="nav-name">Mditor</span>
       </a>
       <div class="nav-links">
+        <a href="#try">在线试用</a>
         <a href="#features">功能</a>
         <a href="#guide">操作说明</a>
         <a href="#shortcuts">快捷键</a>
@@ -33,16 +34,63 @@
       <p class="tagline">本地优先的 Markdown 编辑器，体验对标 Typora</p>
       <p class="sub">免费 · 开源 · 无云端 · 无遥测 · 无广告 —— 你的文件始终保存在自己的电脑上</p>
       <div class="cta">
-        <a class="btn btn-primary" href="https://github.com/Zhangjiaru20190316/mditor/releases/latest/download/Mditor_3.6.6_x64-setup.exe">下载 Windows 版</a>
+        <a class="btn btn-primary" href="https://github.com/Zhangjiaru20190316/mditor/releases/latest/download/Mditor_4.1.1_x64-setup.exe">下载 Windows 版</a>
+        <a class="btn btn-ghost" href="#try">在线试用</a>
         <a class="btn btn-ghost" href="https://github.com/Zhangjiaru20190316/mditor">查看源码</a>
       </div>
       <div class="hero-badges">
-        <span>v3.6.6</span><span>Windows 10/11</span><span>5 MB 安装包</span><span>MIT 开源</span>
+        <span>v4.1.1</span><span>Windows 10/11</span><span>5 MB 安装包</span><span>MIT 开源</span>
       </div>
     </div>
   </header>
 
   <main>
+
+    <!-- ============ What's New ============ -->
+    <section class="whatsnew" id="whats-new">
+      <div class="section-title">
+        <p class="kicker">What's New</p>
+        <h2>更新亮点</h2>
+        <p class="subtitle">持续打磨每一次写作体验</p>
+      </div>
+      <div class="wn-list">
+        <article class="wn-item reveal">
+          <div class="wn-head">
+            <span class="wn-ver">v4.1.1</span>
+            <span class="wn-date">2026-08-22</span>
+            <span class="wn-tag">稳定性</span>
+          </div>
+          <h3>大文档滚动零漂移</h3>
+          <p>「页面自己动 / 跳转落点漂移 / ±N 高度震荡」全链路根修：内容寻址高度记忆 + 加载后分块预热 + 锚定补偿。3894 行实测文档：</p>
+          <ul class="wn-stats">
+            <li><b>14633px → 48px</b><span>跳转落点偏差</span></li>
+            <li><b>28 → 1</b><span>滚动震荡事件</span></li>
+            <li><b>41 块 → 0</b><span>静置期塌缩</span></li>
+          </ul>
+        </article>
+        <article class="wn-item reveal">
+          <div class="wn-head">
+            <span class="wn-ver">v4.1.0</span>
+            <span class="wn-date">2026-08-22</span>
+            <span class="wn-tag">体验</span>
+          </div>
+          <h3>动效与界面美学升级</h3>
+          <p>动效强度三档可调（无 / 平衡 / 生动）；设置弹窗改为左导航双栏；批注跳转平滑滚动；弹窗与面板补齐进退场动效；五套主题细节统一。</p>
+        </article>
+        <article class="wn-item reveal">
+          <div class="wn-head">
+            <span class="wn-ver">v4.0.0</span>
+            <span class="wn-date">2026-08-21</span>
+            <span class="wn-tag">效率</span>
+          </div>
+          <h3>搜索定位与设置分区</h3>
+          <p>全局搜索点击结果<b>精确定位到匹配行</b>（源码与富文本双模式）；约 20 项设置按功能域归入七个分区；长大纲滚动与文件树深层展开修复。</p>
+        </article>
+      </div>
+      <p class="wn-more reveal"><a href="https://github.com/Zhangjiaru20190316/mditor/blob/main/mditor/CHANGELOG.md">查看完整更新日志 →</a></p>
+    </section>
+
+    <!-- ============ Features ============ -->
     <section class="features" id="features">
       <div class="section-title">
         <p class="kicker">Features</p>
@@ -50,32 +98,32 @@
         <p class="subtitle">为认真写作的人打造</p>
       </div>
       <div class="grid">
-        <div class="card">
+        <div class="card reveal">
           <span class="card-icon">✍️</span>
           <h3>所见即所得</h3>
-          <p>Milkdown/ProseMirror 内核，支持 GFM、KaTeX 公式、代码高亮；所见即所得 / 即时渲染 / 源码三种模式一键切换。</p>
+          <p>Milkdown/ProseMirror 内核，支持 GFM、KaTeX 公式、代码高亮；高光、文字颜色随手标记；所见即所得 / 即时渲染 / 源码三种模式一键切换。</p>
         </div>
-        <div class="card">
+        <div class="card reveal">
           <span class="card-icon">🗂️</span>
           <h3>工作区文件树</h3>
-          <p>懒加载目录、批量操作、外部修改实时监听；多标签页 + 拖放打开，改动自动同步并给出冲突确认。</p>
+          <p>懒加载目录、深层文件夹秒展开、批量操作、外部修改实时监听；多标签页 + 拖放打开，关窗前脏标签自动落盘。</p>
         </div>
-        <div class="card">
+        <div class="card reveal">
           <span class="card-icon">✨</span>
           <h3>AI 写作助手</h3>
           <p>OpenAI 兼容接口，内置 DeepSeek / 智谱 / Kimi / OpenRouter / Ollama 预设；SSE 流式输出，选中文字即可改写、翻译、解释。</p>
         </div>
-        <div class="card">
+        <div class="card reveal">
           <span class="card-icon">📌</span>
           <h3>大纲与批注</h3>
-          <p>侧边栏大纲一键跳转；原生脚注语法的行内批注，支持 AI 一键生成，阅读与写作互不干扰。</p>
+          <p>侧边栏大纲一键跳转；原生脚注语法的行内批注，点击标记平滑滚动到位；支持 AI 一键生成，阅读与写作互不干扰。</p>
         </div>
-        <div class="card">
+        <div class="card reveal">
           <span class="card-icon">📤</span>
           <h3>多格式导出</h3>
           <p>HTML / PDF / PNG 长图 / Word (docx)，主题样式完整保留；支持复制富文本直接粘贴到微信、Word。</p>
         </div>
-        <div class="card">
+        <div class="card reveal">
           <span class="card-icon">🛡️</span>
           <h3>本地优先 · 隐私安全</h3>
           <p>设置与最近文件仅存于本机；严格 CSP、HTML 消毒、出站请求全部经 Rust 代理——没有遥测，没有数据上传。</p>
@@ -83,6 +131,115 @@
       </div>
     </section>
 
+    <!-- ============ 在线试用 ============ -->
+    <section class="try" id="try">
+      <div class="section-title">
+        <p class="kicker">Live Demo</p>
+        <h2>在线试用</h2>
+        <p class="subtitle">左边写 Markdown，右边实时渲染——选中文字后点工具栏即可包裹语法</p>
+      </div>
+      <div class="try-shell reveal">
+        <div class="try-pane">
+          <div class="try-toolbar" id="demo-toolbar">
+            <button type="button" data-md="bold" title="加粗"><b>B</b></button>
+            <button type="button" data-md="italic" title="斜体"><i>I</i></button>
+            <button type="button" data-md="code" title="行内代码">&lt;/&gt;</button>
+            <button type="button" data-md="mark" title="高光"><span class="tb-mark">高光</span></button>
+            <span class="tb-sep"></span>
+            <button type="button" data-md="h1" title="一级标题">H1</button>
+            <button type="button" data-md="h2" title="二级标题">H2</button>
+            <button type="button" data-md="ul" title="无序列表">• 列表</button>
+            <button type="button" data-md="quote" title="引用">❝ 引用</button>
+            <span class="tb-sep"></span>
+            <button type="button" data-md="link" title="链接">🔗 链接</button>
+            <button type="button" data-md="table" title="表格">▦ 表格</button>
+          </div>
+          <textarea id="demo-input" spellcheck="false" aria-label="Markdown 输入区"></textarea>
+        </div>
+        <div class="try-pane try-preview-pane">
+          <div class="try-pane-head">预览</div>
+          <div class="md-preview" id="demo-output" aria-live="polite"></div>
+        </div>
+      </div>
+      <p class="try-note">浏览器内为简化演示；桌面版由完整 Milkdown 内核驱动，另有公式、脚注批注、AI 助手与性能模式。<span id="demo-count" class="try-count"></span></p>
+    </section>
+
+    <!-- ============ 主题与模式 ============ -->
+    <section class="themes" id="themes">
+      <div class="section-title">
+        <p class="kicker">Themes &amp; Modes</p>
+        <h2>五套主题 · 三种模式</h2>
+        <p class="subtitle">点下方按钮，实时切换主题配色与编辑模式</p>
+      </div>
+      <div class="demo-editor reveal" id="demo-editor" data-demo-theme="light">
+        <div class="de-titlebar">
+          <span class="de-dots"><i></i><i></i><i></i></span>
+          <span class="de-title">会议纪要.md</span>
+        </div>
+        <div class="de-body">
+          <div class="de-sidebar">
+            <span class="de-side-head">大纲</span>
+            <span class="de-side-item de-side-active">会议纪要</span>
+            <span class="de-side-item">本周重点</span>
+            <span class="de-side-item">待办事项</span>
+          </div>
+          <div class="de-content">
+            <div class="de-mode" data-mode-view="wysiwyg">
+              <h2>会议纪要</h2>
+              <p><strong>本周重点</strong>：Mditor <code>v4.1.1</code> 正式发布，<mark>大文档滚动零漂移</mark>。</p>
+              <ul>
+                <li>五套主题 · 三种编辑模式</li>
+                <li>安装包仅 5 MB，秒开</li>
+              </ul>
+              <blockquote><p>本地优先，无遥测。</p></blockquote>
+            </div>
+            <div class="de-mode" data-mode-view="ir" hidden>
+              <h2><span class="de-mark">##</span> 会议纪要</h2>
+              <p><span class="de-mark">**</span><strong>本周重点</strong><span class="de-mark">**</span>：Mditor <span class="de-mark">`</span><code>v4.1.1</code><span class="de-mark">`</span> 正式发布，<span class="de-mark">==</span><mark>大文档滚动零漂移</mark><span class="de-mark">==</span>。</p>
+              <ul>
+                <li><span class="de-mark">-</span> 五套主题 · 三种编辑模式</li>
+                <li><span class="de-mark">-</span> 安装包仅 5 MB，秒开</li>
+              </ul>
+              <blockquote><p><span class="de-mark">&gt;</span> 本地优先，无遥测。</p></blockquote>
+            </div>
+            <div class="de-mode" data-mode-view="sv" hidden>
+              <pre>## 会议纪要
+**本周重点**：Mditor `v4.1.1` 正式发布，
+==大文档滚动零漂移==。
+
+- 五套主题 · 三种编辑模式
+- 安装包仅 5 MB，秒开
+
+&gt; 本地优先，无遥测。</pre>
+            </div>
+          </div>
+        </div>
+        <div class="de-statusbar"><span id="de-mode-label">所见即所得</span><span id="de-theme-label">浅色</span></div>
+      </div>
+      <div class="demo-controls reveal">
+        <div class="dc-row">
+          <span class="dc-label">主题</span>
+          <div class="dc-group" id="theme-switch" role="group" aria-label="切换主题">
+            <button type="button" class="dc-btn active" data-demo-theme="light">浅色</button>
+            <button type="button" class="dc-btn" data-demo-theme="dark">深色</button>
+            <button type="button" class="dc-btn" data-demo-theme="sepia">护眼</button>
+            <button type="button" class="dc-btn" data-demo-theme="claude">Claude</button>
+            <button type="button" class="dc-btn" data-demo-theme="claude-dark">Claude 深色</button>
+          </div>
+        </div>
+        <div class="dc-row">
+          <span class="dc-label">模式</span>
+          <div class="dc-group" id="mode-switch" role="group" aria-label="切换编辑模式">
+            <button type="button" class="dc-btn active" data-mode="wysiwyg">所见即所得</button>
+            <button type="button" class="dc-btn" data-mode="ir">即时渲染</button>
+            <button type="button" class="dc-btn" data-mode="sv">源码</button>
+          </div>
+        </div>
+      </div>
+      <p class="try-note reveal">桌面版还可调整<b>动效强度</b>（无 / 平衡 / 生动）、字体、字号、行距，设置弹窗按七个功能分区双栏排布。</p>
+    </section>
+
+    <!-- ============ Guide ============ -->
     <section class="guide" id="guide">
       <div class="section-title">
         <p class="kicker">Guide</p>
@@ -91,46 +248,46 @@
       </div>
 
       <div class="steps">
-        <div class="step">
+        <div class="step reveal">
           <span class="step-num">1</span>
           <h3>打开文件夹</h3>
           <p>「文件 → 打开文件夹」选择你的笔记目录，工作区文件树自动加载；也可以直接把 .md 文件拖进窗口快速打开。</p>
         </div>
-        <div class="step">
+        <div class="step reveal">
           <span class="step-num">2</span>
           <h3>开始写作</h3>
           <p>所见即所得，像用 Word 一样写 Markdown：表格、公式、任务清单、代码块全部实时渲染，状态栏实时显示字数。</p>
         </div>
-        <div class="step">
+        <div class="step reveal">
           <span class="step-num">3</span>
           <h3>保存与导出</h3>
-          <p>Ctrl+S 随时保存；写完导出 PDF / PNG 长图 / Word / HTML，或复制为富文本，分享投稿都方便。</p>
+          <p>Ctrl+S 随时保存，关闭窗口前脏标签自动落盘；写完导出 PDF / PNG 长图 / Word / HTML，或复制为富文本。</p>
         </div>
       </div>
 
-      <div class="highlight-band">
+      <div class="highlight-band reveal">
         <h3>核心优势</h3>
         <ul>
           <li><b>5 MB</b> 安装包，秒开</li>
           <li><b>本地优先</b>，文件永远属于你</li>
           <li><b>零遥测</b>，无广告无上报</li>
           <li><b>AI 助手</b>，自带多模型预设</li>
-          <li><b>大文档不卡</b>，性能模式兜底</li>
+          <li><b>大文档不卡</b>，滚动零漂移</li>
           <li><b>完全开源</b>，MIT 协议</li>
         </ul>
       </div>
 
       <!-- 1. 写作与三种模式 -->
-      <div class="shot-row">
-        <img src="assets/screens/2-wysiwyg.png" alt="Mditor 写作主界面截图">
+      <div class="shot-row reveal">
+        <img src="assets/screens/2-wysiwyg.png" alt="Mditor 写作主界面截图" loading="lazy">
         <div class="shot-text">
           <h3>1 · 写作与格式化</h3>
-          <p>主编辑区干净专注：标题、加粗（Ctrl+B）、高光（Ctrl+Shift+H）、斜体、删除线、行内代码全部即输即得；选中文字会弹出浮动工具栏，链接、图片、脚注一键插入。</p>
+          <p>主编辑区干净专注：标题、加粗（Ctrl+B）、高光（Ctrl+Shift+H）、<b>文字颜色</b>、斜体、删除线、行内代码全部即输即得；选中文字会弹出浮动工具栏，链接、图片、脚注一键插入。</p>
           <p>底部状态栏显示文档名、字数与当前模式；侧边栏（Ctrl+\）与 AI 面板（Ctrl+I）随时开关。</p>
         </div>
       </div>
-      <div class="shot-row flip">
-        <img src="assets/screens/7-source.png" alt="Mditor 源码模式截图">
+      <div class="shot-row flip reveal">
+        <img src="assets/screens/7-source.png" alt="Mditor 源码模式截图" loading="lazy">
         <div class="shot-text">
           <h3>2 · 三种编辑模式</h3>
           <p>状态栏下拉一键切换，初稿阶段用<b>所见即所得</b>，快速浏览用<b>即时渲染</b>，精确控制格式切<b>源码模式</b>——同一份文档随时互换，内容不会丢失。</p>
@@ -139,21 +296,21 @@
       </div>
 
       <!-- 3. 文件管理 -->
-      <div class="feature-band">
+      <div class="feature-band reveal">
         <h3>3 · 工作区与文件管理</h3>
         <div class="feature-grid">
-          <div class="feature-item"><b>文件树</b>：懒加载目录，新建 / 重命名 / 删除 / 批量多选</div>
+          <div class="feature-item"><b>文件树</b>：懒加载目录，深层文件夹即点即开，新建 / 重命名 / 删除 / 批量多选</div>
           <div class="feature-item"><b>多标签页</b>：Ctrl+Tab 轮换，Ctrl+W 关闭，脏标签切走自动保存</div>
           <div class="feature-item"><b>外部修改监听</b>：磁盘文件被其他程序修改时自动同步，有冲突先确认</div>
-          <div class="feature-item"><b>拖放打开</b>：把 .md 文件拖进窗口即开新标签</div>
+          <div class="feature-item"><b>关窗自动保存</b>：关闭窗口 / 退出前，所有脏标签自动写回磁盘</div>
+          <div class="feature-item"><b>拖放打开</b>：把 .md 文件拖进窗口即开新标签；双击文件转发给已运行实例</div>
           <div class="feature-item"><b>最近文档</b>：侧边栏「最近」标签，找回上次写的东西</div>
-          <div class="feature-item"><b>全局搜索</b>：Ctrl+Shift+F 跨文件搜索工作区；Ctrl+F 当前文档查找替换</div>
+          <div class="feature-item"><b>全局搜索</b>：Ctrl+Shift+F 跨文件搜索，点击结果精确定位到匹配行</div>
           <div class="feature-item"><b>模板新建</b>：会议纪要 / 周报 / 阅读笔记等内置模板，秒开常用结构</div>
-          <div class="feature-item"><b>富文本复制</b>：编辑菜单「复制为富文本」，粘贴到微信 / Word 保留格式</div>
         </div>
       </div>
-      <div class="shot-row">
-        <img src="assets/screens/6-template.png" alt="Mditor 从模板新建截图">
+      <div class="shot-row reveal">
+        <img src="assets/screens/6-template.png" alt="Mditor 从模板新建截图" loading="lazy">
         <div class="shot-text">
           <h3>4 · 从模板新建</h3>
           <p>「文件 → 从模板新建」内置空白文档、会议纪要、周报、阅读笔记、写作提纲等多种模板，日期自动填充，新建即用。</p>
@@ -162,18 +319,18 @@
       </div>
 
       <!-- 5. 大纲 -->
-      <div class="shot-row flip">
-        <img src="assets/screens/1-outline.png" alt="Mditor 大纲导航截图">
+      <div class="shot-row flip reveal">
+        <img src="assets/screens/1-outline.png" alt="Mditor 大纲导航截图" loading="lazy">
         <div class="shot-text">
           <h3>5 · 大纲导航</h3>
-          <p>侧边栏「大纲」自动提取全文标题，长文结构一目了然，点击任意标题即跳转；阅读与写作互不干扰。</p>
+          <p>侧边栏「大纲」自动提取全文标题，长文结构一目了然；列表再长也流畅滚动，点击任意标题即平滑跳转。</p>
           <p>侧边栏五个标签切换：<b>文件树 / 大纲 / 最近 / 批注 / 搜索</b>，批注标签带数量角标。</p>
         </div>
       </div>
 
       <!-- 6. 批注 -->
-      <div class="shot-row">
-        <img src="assets/screens/3-annotation.png" alt="Mditor 批注弹层截图">
+      <div class="shot-row reveal">
+        <img src="assets/screens/3-annotation.png" alt="Mditor 批注弹层截图" loading="lazy">
         <div class="shot-text">
           <h3>6 · 行内批注</h3>
           <p>选中任意文字点浮动工具栏的「批注」，即在该处生成脚注式标记；点击标记查看内容，随时编辑或删除。</p>
@@ -182,39 +339,40 @@
       </div>
 
       <!-- 7. AI -->
-      <div class="shot-row flip">
-        <img src="assets/screens/4-ai-panel.png" alt="Mditor AI 助手截图">
+      <div class="shot-row flip reveal">
+        <img src="assets/screens/4-ai-panel.png" alt="Mditor AI 助手截图" loading="lazy">
         <div class="shot-text">
           <h3>7 · AI 助手</h3>
           <p>支持任意 OpenAI 兼容接口（自定义 BaseURL / Key / 模型），内置 DeepSeek、智谱 GLM、Kimi、OpenRouter、Ollama 本地模型预设，多套配置可切换。</p>
-          <p>选中文字即可改写、翻译、解释、续写；SSE 流式输出，支持追问；所有请求经本地 Rust 代理转发，不会直连外网。</p>
+          <p>选中文字即可改写、翻译、解释、续写；SSE 流式输出，支持追问与改动审查；所有请求经本地 Rust 代理转发，不会直连外网。</p>
         </div>
       </div>
 
       <!-- 8. 设置与个性化 -->
-      <div class="shot-row">
-        <img src="assets/screens/5-settings.png" alt="Mditor 设置面板截图">
+      <div class="shot-row reveal">
+        <img src="assets/screens/5-settings.png" alt="Mditor 设置面板截图" loading="lazy">
         <div class="shot-text">
           <h3>8 · 设置与个性化</h3>
-          <p>「帮助 → 设置」中可调整：<b>主题</b>（浅色 / 深色 / 护眼 / Claude 双色）、<b>字体 / 字号 / 行距</b>、专注模式与打字机模式、拼写检查开关、侧边栏宽度等。</p>
+          <p>「帮助 → 设置」左导航双栏布局，约 20 项设置按功能分区：<b>外观</b>（五套主题、字体、动效强度三档）、<b>排版</b>（字号 / 行高 / 段距）、<b>编辑行为</b>、<b>性能与诊断</b>、<b>AI 助手</b>、<b>快捷操作</b>、<b>工作区</b>。</p>
           <p>所有设置保存在本机 mditor.json，换机器不带走任何数据——隐私与便携都归你。</p>
         </div>
       </div>
 
       <!-- 9. 性能与安全 -->
-      <div class="feature-band">
+      <div class="feature-band reveal">
         <h3>9 · 大文档性能与安全</h3>
         <div class="feature-grid">
+          <div class="feature-item"><b>滚动零漂移</b>：内容寻址高度记忆 + 分块预热，跳转落点精确到 48px 内</div>
           <div class="feature-item"><b>大文档性能模式</b>：超过阈值自动关闭代码高亮与公式渲染，打字依旧流畅</div>
           <div class="feature-item"><b>内存守护</b>：软重建 + 会话快照自愈，异常后自动恢复文档</div>
           <div class="feature-item"><b>严格 CSP</b>：无 unsafe-eval，AI 请求全部经 Rust 侧代理</div>
           <div class="feature-item"><b>HTML 消毒</b>：AI 回复与批注渲染管线内置 rehype-sanitize</div>
-          <div class="feature-item"><b>无自动更新器</b>：v3.5.0 起移除占位更新器，收窄权限面</div>
-          <div class="feature-item"><b>无遥测</b>：不采集任何使用数据</div>
+          <div class="feature-item"><b>无遥测</b>：不采集任何使用数据，出站请求仅你配置的 AI 接口</div>
         </div>
       </div>
     </section>
 
+    <!-- ============ Shortcuts ============ -->
     <section class="shortcuts" id="shortcuts">
       <div class="section-title">
         <p class="kicker">Shortcuts</p>
@@ -222,7 +380,7 @@
         <p class="subtitle">常用操作全部支持快捷键</p>
       </div>
       <div class="shortcut-cols">
-        <table class="shortcut-table">
+        <table class="shortcut-table reveal">
           <thead><tr><th>文件</th><th>快捷键</th></tr></thead>
           <tbody>
             <tr><td>新建文档</td><td><kbd>Ctrl</kbd>+<kbd>N</kbd></td></tr>
@@ -232,7 +390,7 @@
             <tr><td>导出（PDF / HTML / PNG / Word）</td><td>「文件」菜单</td></tr>
           </tbody>
         </table>
-        <table class="shortcut-table">
+        <table class="shortcut-table reveal">
           <thead><tr><th>编辑</th><th>快捷键</th></tr></thead>
           <tbody>
             <tr><td>撤销 / 重做</td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td></tr>
@@ -242,23 +400,27 @@
             <tr><td>复制为富文本</td><td>「编辑」菜单</td></tr>
           </tbody>
         </table>
-        <table class="shortcut-table">
+        <table class="shortcut-table reveal">
           <thead><tr><th>视图</th><th>快捷键</th></tr></thead>
           <tbody>
             <tr><td>侧边栏开关</td><td><kbd>Ctrl</kbd>+<kbd>\</kbd></td></tr>
             <tr><td>AI 助手</td><td><kbd>Ctrl</kbd>+<kbd>I</kbd></td></tr>
             <tr><td>工作区搜索</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></td></tr>
             <tr><td>切换标签页</td><td><kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd></td></tr>
-            <tr><td>关闭标签 / 全屏</td><td><kbd>Ctrl</kbd>+<kbd>W</kbd> / <kbd>F11</kbd></td></tr>
+            <tr><td>诊断面板（排查问题）</td><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd></td></tr>
           </tbody>
         </table>
       </div>
     </section>
 
+    <!-- ============ FAQ ============ -->
     <section class="faq" id="faq">
       <div class="section-title">
         <p class="kicker">FAQ</p>
         <h2>常见问题</h2>
+      </div>
+      <div class="faq-tools">
+        <button type="button" class="faq-toggle" id="faq-toggle">展开全部</button>
       </div>
       <div class="faq-list">
         <details>
@@ -278,12 +440,17 @@
           <p>AI 助手本身免费，但需要你自己配置模型接口（OpenAI 兼容即可，也可以用 DeepSeek、智谱、Kimi 或本地 Ollama）。不配置 AI 也不影响任何写作功能。</p>
         </details>
         <details>
+          <summary>大文档会卡吗？</summary>
+          <p>不会。超过阈值自动进入性能模式（关闭代码高亮与公式渲染）；v4.1.1 起大文档滚动零漂移——3894 行实测文档中，大纲跳转落点偏差仅 48px，长时间编辑无可感知掉帧。</p>
+        </details>
+        <details>
           <summary>如何参与或支持这个项目？</summary>
           <p>点个 Star、提 Issue、发 PR 都是最好的支持；也欢迎通过下方渠道请作者喝杯咖啡。</p>
         </details>
       </div>
     </section>
 
+    <!-- ============ Support ============ -->
     <section class="support" id="support">
       <div class="section-title">
         <p class="kicker">Support</p>
@@ -304,5 +471,11 @@
     <p class="footnote">MIT License · Built with Tauri 2 + React + Milkdown</p>
   </footer>
 
+  <button type="button" class="to-top" id="to-top" aria-label="返回顶部">↑</button>
+  <div class="lightbox" id="lightbox" hidden>
+    <img src="" alt="截图放大查看">
+  </div>
+
+  <script src="assets/main.js" defer></script>
 </body>
 </html>
