@@ -203,6 +203,15 @@ export interface Settings {
    */
   annoDiagPanel: boolean;
   /**
+   * 开发者模式（v4.2）：诊断总开关——开启后 lib/devMode.ts 记录器把滚动/
+   * 批注/编辑命令三条诊断总线的事件流、全局 JS 异常（含 ErrorBoundary 捕获
+   * 的渲染异常）与 30s 心跳摘要（堆/DOM/计数器）批量落盘到
+   * <app-data>/logs/dev-events.log，lib/devAnomaly.ts 同时把异常按 MD-XXXX
+   * 错误代码归类写入 dev-anomalies.log 并弹出警告卡（error 级额外原生弹窗，
+   * 每代码每会话一次）。关闭即全退订，零开销。仅排查问题时开启。
+   */
+  devMode: boolean;
+  /**
    * 内存守护：定期检查 JS 堆，超过 memoryGuardThresholdMb 时自愈——先尝试
    * 销毁重建编辑器（软），无效则升级为整页 reload（硬，唯一可靠回收手段）。
    * 编辑器是 Milkdown/ProseMirror（纯 JS，无 GopherJS），其状态全在 V8 堆上，
@@ -292,6 +301,7 @@ export const DEFAULT_SETTINGS: Settings = {
   typewriterMode: false,
   spellcheck: true,
   annoDiagPanel: false,
+  devMode: false,
   memoryGuard: true,
   memoryGuardThresholdMb: 2500,
   customCssPath: "",

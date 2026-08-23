@@ -32,6 +32,13 @@ import {
   scrollSubscribe,
   scrollWatchStats,
 } from "../lib/scrollDebug";
+import {
+  devModeEnabled,
+  openLogsDir,
+  recentAnomalies,
+  subscribeDevAlerts,
+} from "../lib/devMode";
+import { showAlert } from "../lib/dialogs";
 import type { Theme } from "../types";
 
 interface Props {
@@ -60,14 +67,17 @@ export const AnnoDiagnostics = memo(function AnnoDiagnostics({
   getMarkdown,
   onClose,
 }: Props) {
-  // 事件到达即重渲染（订阅推送；计数器/事件都从总线快照读取）。
+  // 事件到达即重渲染（订阅推送；计数器/事件都从总线快照读取）。异常累计
+  // 跟着告警放行流一起 bump（开发者模式开着时）。
   const [, bump] = useReducer((x: number) => x + 1, 0);
   useEffect(() => {
     const un1 = annoSubscribe(bump);
     const un2 = scrollSubscribe(bump);
+    const un3 = subscribeDevAlerts(bump);
     return () => {
       un1();
       un2();
+      un3();
     };
   }, []);
 
@@ -84,6 +94,18 @@ export const AnnoDiagnostics = memo(function AnnoDiagnostics({
     scrollDebugClear();
   }, []);
 
+  /** 打开 logs 目录（memory.log / dev-events.log / dev-anomalies.log 所在）。 */
+  const openLogs = useCallback(() => {
+    void openLogsDir().then((dir) => {
+      if (!dir) {
+        void showAlert(
+          "无法打开日志目录（shell 权限不可用）。日志位于应用数据目录的 logs/ 子目录。",
+          "Mditor"
+        ).catch(() => {});
+      }
+    });
+  }, []);
+
   const copyReport = useCallback(() => {
     const lines: string[] = [];
     lines.push(`# mditor 诊断（批注+滚动）@ ${new Date().toISOString()}`);
@@ -97,6 +119,15 @@ export const AnnoDiagnostics = memo(function AnnoDiagnostics({
       lines.push(
         `- ${new Date(ghost.ts).toISOString()} ${ghost.msg} ${JSON.stringify(ghost.data ?? {})}`
       );
+    }
+    const anoms = recentAnomalies();
+    if (anoms.length) {
+      lines.push("## 异常记录（开发者模式，冷却合并口径）");
+      for (const t of anoms) {
+        lines.push(
+          `- ${t.code} ×${t.count} ${t.title}｜最近 ${new Date(t.lastTs).toISOString()}：${t.lastDetail}`
+        );
+      }
     }
     if (health) {
       lines.push(`## 批注体检（${new Date(healthAt ?? 0).toISOString()}）`);
@@ -121,6 +152,7 @@ export const AnnoDiagnostics = memo(function AnnoDiagnostics({
 
   const counters = annoCounters();
   const scrollCnts = scrollCounters();
+  const anomalies = recentAnomalies();
   const counterEntries = [
     ...Object.entries(counters),
     ...Object.entries(scrollCnts),
@@ -138,6 +170,9 @@ export const AnnoDiagnostics = memo(function AnnoDiagnostics({
       <div className="anno-diag-head">
         <span className="anno-diag-title">诊断（批注 + 滚动）</span>
         <div className="anno-diag-actions">
+          <button className="anno-btn" onClick={openLogs} title="在资源管理器打开日志目录（memory.log / dev-events.log / dev-anomalies.log）">
+            日志
+          </button>
           <button className="anno-btn" onClick={runHealth} title="对当前文档逐条核查（真实解析器）">
             体检
           </button>
@@ -165,6 +200,32 @@ export const AnnoDiagnostics = memo(function AnnoDiagnostics({
               </span>
             </div>
           </>
+        )}
+        <div className="anno-diag-section">异常记录（开发者模式）</div>
+        {anomalies.length === 0 ? (
+          <div className="anno-diag-empty">
+            {devModeEnabled()
+              ? "暂无异常——异常出现时此处按 MD-XXXX 代码累计，并写入 dev-anomalies.log"
+              : "开发者模式未开启（设置 → 性能与诊断）"}
+          </div>
+        ) : (
+          <div className="anno-diag-events">
+            {anomalies.slice(0, 20).map((t) => (
+              <div
+                key={t.code}
+                className={`anno-diag-event ${t.level === "error" ? "error" : "warn"}`}
+              >
+                <span className="t">{fmtTime(t.lastTs)}</span>
+                <span className="k">
+                  {t.code}
+                  {t.count > 1 ? ` ×${t.count}` : ""}
+                </span>
+                <span className="m" title={t.lastDetail}>
+                  {t.title}｜{t.lastDetail}
+                </span>
+              </div>
+            ))}
+          </div>
         )}
         <div className="anno-diag-section">计数器</div>
         {counterEntries.length === 0 ? (

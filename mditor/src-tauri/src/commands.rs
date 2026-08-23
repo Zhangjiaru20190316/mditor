@@ -8,7 +8,7 @@
 
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::ai::http;
@@ -18,6 +18,15 @@ use tauri::{Manager, State};
 /// Upper bound for a single remote-image download (guard against pathological
 /// URLs pointed at huge files).
 const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+
+/// True when `p` is a file inside `logs_dir` — directly in it or in any
+/// subdirectory. Component-wise check (both sides derive from the same
+/// app_data_dir string the `app_data_dir` command returned, so no
+/// canonicalization is needed to make them comparable).
+fn is_log_path_confined(p: &Path, logs_dir: &Path) -> bool {
+    p.parent()
+        .is_some_and(|parent| parent.starts_with(logs_dir))
+}
 
 /// Append a single line to a log file, rotating it when it exceeds `max_bytes`.
 ///
@@ -41,14 +50,7 @@ pub async fn append_log(
         .map_err(|e| e.to_string())?
         .join("logs");
     let p = PathBuf::from(&path);
-    // Component-wise containment check (both sides derive from the same
-    // app_data_dir string the `app_data_dir` command returned, so no
-    // canonicalization is needed to make them comparable).
-    let confined = p
-        .parent()
-        .and_then(|parent| parent.strip_prefix(&logs_dir).ok())
-        .is_some_and(|rest| !rest.as_os_str().is_empty());
-    if !confined {
+    if !is_log_path_confined(&p, &logs_dir) {
         return Err("log path must be a file inside <app-data>/logs".into());
     }
     // Ensure parent directory exists (best-effort; app-data/logs may not yet).
@@ -134,4 +136,56 @@ pub async fn fetch_image(url: String) -> Result<tauri::ipc::Response, String> {
         ));
     }
     Ok(tauri::ipc::Response::new(bytes.to_vec()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    /// Regression (v4.1.2 → v4.2.0): the v3.9.1 confinement check rejected
+    /// files lying DIRECTLY in logs/ (only subdirectories passed), while the
+    /// frontend swallows append errors — memory.log silently stopped being
+    /// written for days before anyone noticed.
+    #[test]
+    fn confines_files_directly_inside_logs_dir() {
+        let logs = Path::new("C:/app-data/logs");
+        assert!(is_log_path_confined(
+            Path::new("C:/app-data/logs/memory.log"),
+            logs
+        ));
+        assert!(is_log_path_confined(
+            Path::new("C:/app-data/logs/dev-events.log"),
+            logs
+        ));
+    }
+
+    #[test]
+    fn confines_files_in_subdirectories() {
+        let logs = Path::new("C:/app-data/logs");
+        assert!(is_log_path_confined(
+            Path::new("C:/app-data/logs/dev/events.log"),
+            logs
+        ));
+    }
+
+    #[test]
+    fn rejects_paths_outside_logs_dir() {
+        let logs = Path::new("C:/app-data/logs");
+        assert!(!is_log_path_confined(
+            Path::new("C:/Users/me/.ssh/authorized_keys"),
+            logs
+        ));
+        assert!(!is_log_path_confined(
+            Path::new("C:/app-data/mditor.json"),
+            logs
+        ));
+        // A sibling that merely shares the "logs" prefix must not pass.
+        assert!(!is_log_path_confined(
+            Path::new("C:/app-data/logs-evil/x.log"),
+            logs
+        ));
+        // The directory itself is not a confinable file target.
+        assert!(!is_log_path_confined(Path::new("C:/app-data/logs"), logs));
+    }
 }

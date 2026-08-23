@@ -1,5 +1,33 @@
 # Changelog
 
+## 4.2.0 (2026-08-23)
+
+美学大版本：全局圆角圆润化 + 窗口框架「浮岛化」重构；同时收录开发者模式诊断告警体系。
+
+### 美学：圆角浮岛重构
+
+- **圆角三档 token 4/6/10 → 6/10/16px**（--radius-s/m/l，全局约 110 处引用一键圆润化），新增 `--frame-pad: 8px` 画布留白 token
+- **窗口框架浮岛化**：`.app` 变画布（新增 `--frame-bg` 五主题各配色：比面板深一档），标题栏/标签栏/侧边栏/主区/AI 面板/状态栏六卡片化——全边框 + 16px 圆角 + 柔和阴影；纵向间距用卡片 margin（避免空 tabbar 行塌缩出现双缝）、横向间距由 resizer 沟槽承担（宽 6→12px，透明即间距、hover 圆角高亮）
+- **最大化智能回退**：TitleBar 把最大化状态落到 `<html class="is-maximized">`，画布留白/圆角/阴影归零并恢复 v4.1 单侧细线（避免相邻卡片双边框叠 2px）；**焦点模式**画布归零全屏沉浸
+- **直角元素补齐**：文档标签页上圆角（Chrome 式，激活指示条内缩胶囊化）；编辑器/AI 消息/诊断面板三处表格改 separate 边框 + 表级圆角容器（末列/末行清线）；文件树/大纲/设置导航指示条 999px 胶囊；mark/diff-mark 圆角化；AI 聊天气泡 12→16px、尾角 2→4px；ErrorBoundary 内联圆角同步（10→16、6→10）
+- 保持不动：Windows 关窗键矩形惯例（已被标题栏卡片裁切）、胶囊 999px/圆 50% 特形、blockquote 左线不对称圆角
+
+### 开发者：诊断告警体系
+
+- **开发者模式总开关**（设置 → 性能与诊断）：分级混合告警——普通异常右上角浮动警告卡（按错误代码 60s 冷却合并），error 级/内存自愈额外原生弹窗（每代码每会话一次）；只接现有诊断源零新埋点
+- 新增模块：`lib/devAnomaly.ts`（MD-XXXX 错误代码表 + AnomalyTracker 冷却合并）、`lib/logBatcher.ts`（满 50 行或每秒合并 append_log，队列 500 溢出丢最旧）、`lib/devMode.ts`（订阅 scroll/anno/op 三总线 + window error/unhandledrejection + 30s 心跳 → dev-events.log / dev-anomalies.log，2MB 轮转）
+- **修复 append_log 路径囚禁检查写反**（v3.9.1 引入，memory.log 自 8/19 静默停写）：抽 `is_log_path_confined` 纯函数 + Rust 回归测试
+- AnnoDiagnostics 加异常小节 +「日志」按钮（plugin-shell 打开 logs 目录）；ErrorBoundary componentDidCatch 接入 noteRenderError
+
+### 版本
+
+- 4.1.2 → 4.2.0（package.json / tauri.conf.json / Cargo.toml / Cargo.lock）
+
+### 验证
+
+- 静态复刻页（真实 global.css + 五主题）计算样式硬校验 12 项全过：画布 8px/#e9ebf0、六卡片 16px、标签页 10/10/0/0、表格 separate+10px、气泡 16/16/4/16、resizer 沟槽 12px；浮岛布局经视觉模型确认
+- `npm test` 258 例全过（新增 devAnomaly 12 + logBatcher 6 + opDebug 订阅 1 + 徽章盖章 7）；cargo test 回归通过；`npm run build`（tsc + vite）全绿
+
 ## 4.1.2 (2026-08-22)
 
 「代码块振荡 + ghost 滚动」根修（v4.1.1 后复发案）。依据用户导出的三份滚动诊断定罪：**元凶是 Milkdown 代码块组件（@milkdown/components CodeMirrorBlock）的懒生命周期**——共享 IntersectionObserver（viewport±200px）进带挂载完整 CodeMirror、离带 5 秒拆除为裸 `<pre>` 占位符且不保留高度。用户文档中代码块在 110↔157 / 163↔224 / 233↔313px 两种形态间随滚动反复横跳：块高度振荡、文档高度 ±134~1114px 波动、视口内容位移（scrollTop 未变而内容自己动）；贴底时上方块拆除使文档收缩 830px，浏览器钳制 scrollTop 产生「↑230px 无来源滚动」（atBottom+heightDelta:-830 实锤）；AI 流式/整篇回写改到代码块内容时，组件 `update()` 的 `cm.dispatch({scrollIntoView: this.view.editable})` 借 CodeMirror scrollRectIntoView 逐级爬祖先直接写主容器 scrollTop，产生「↓55px ghost」（案发时 AI 流式活跃 + 70ms longtask + 滚后新块进带变高三细节吻合）。

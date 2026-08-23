@@ -23,6 +23,7 @@ const firstSeenAt = new Map<string, number>();
 const lastWarnAt = new Map<string, number>();
 /** 每个操作保留最近一条（面板/出口按 op 汇总，环形无必要）。 */
 const lastError = new Map<string, OpErrorRecord>();
+const subscribers = new Set<(r: OpErrorRecord) => void>();
 
 const WARN_INTERVAL_MS = 10_000;
 
@@ -33,7 +34,16 @@ export function noteOpError(op: string, err: unknown): void {
     counters.set(op, (counters.get(op) ?? 0) + 1);
     const msg =
       err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-    lastError.set(op, { ts: now, op, err: msg });
+    const rec: OpErrorRecord = { ts: now, op, err: msg };
+    lastError.set(op, rec);
+    // 订阅推送（开发者模式记录器用）；回调异常自动摘除，同 annoDebug。
+    for (const fn of subscribers) {
+      try {
+        fn(rec);
+      } catch {
+        subscribers.delete(fn);
+      }
+    }
     const last = lastWarnAt.get(op) ?? 0;
     if (now - last >= WARN_INTERVAL_MS) {
       lastWarnAt.set(op, now);
@@ -53,6 +63,12 @@ export function noteOpError(op: string, err: unknown): void {
   } catch {
     /* never throw */
   }
+}
+
+/** 订阅静默失败推送（开发者模式记录器用）。返回退订函数。 */
+export function opSubscribe(fn: (r: OpErrorRecord) => void): () => void {
+  subscribers.add(fn);
+  return () => subscribers.delete(fn);
 }
 
 /** 出口/面板读取：按 op 汇总的失败统计与最近错误。 */

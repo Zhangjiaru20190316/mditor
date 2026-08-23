@@ -16,9 +16,14 @@ import { AiPanel, type AiPanelHandle, type ApplyChangesPayload } from "./compone
 import { SelectionToolbar } from "./components/SelectionToolbar";
 import { AnnotationPopover } from "./components/AnnotationPopover";
 import { AnnoDiagnostics } from "./components/AnnoDiagnostics";
+import { DevAlerts } from "./components/DevAlerts";
 import { setPendingJumpAnno } from "./lib/annoHandoff";
 import { noteScrollWrite } from "./lib/scrollDebug";
 import { noteOpError } from "./lib/opDebug";
+import {
+  disableDevRecorder,
+  enableDevRecorder,
+} from "./lib/devMode";
 import { AnnotationList } from "./components/AnnotationList";
 import { SearchBar } from "./components/SearchBar";
 import { StatusBar } from "./components/StatusBar";
@@ -156,6 +161,15 @@ export default function App() {
     isStale,
     scheduleFollowUpPreparse,
   } = switchFlow;
+
+  // ---- 开发者模式（v4.2）---------------------------------------------------
+  // 启停记录器：订阅/钩子/心跳/落盘全在 lib/devMode 内部管理，这里只跟随
+  // 设置项切换；卸载兜底停一次（幂等）。关闭时全退订，零开销。
+  useEffect(() => {
+    if (settingsApi.settings.devMode) enableDevRecorder();
+    else disableDevRecorder();
+    return () => disableDevRecorder();
+  }, [settingsApi.settings.devMode]);
 
   // 空闲预解析目标（阶段 1，预算 1 个）：hover 预读的大文档优先，其次相邻
   // 标签的快照内容。经 ref 供 useSwitchFlow 收尾后的 idle 窗口读取。
@@ -2081,6 +2095,14 @@ export default function App() {
             void settingsApi.update({ annoDiagPanel: false })
           }
           theme={settingsApi.settings.theme}
+        />
+      )}
+
+      {settingsApi.settings.devMode && (
+        <DevAlerts
+          onOpenDiagnostics={() =>
+            void settingsApi.update({ annoDiagPanel: true })
+          }
         />
       )}
 

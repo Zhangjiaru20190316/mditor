@@ -7,6 +7,7 @@
 // of silently going blank.
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { noteRenderError } from "../lib/devMode";
 
 interface Props {
   children: ReactNode;
@@ -28,6 +29,13 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, info: ErrorInfo) {
     // Print the real stack so the cause is visible in Tauri's DevTools console.
     console.error("[ErrorBoundary]", this.props.label ?? "render", error, info);
+    try {
+      // 开发者模式开着时把渲染异常送进记录器（React 拦下了 window error
+      // 事件，全局监听收不到）；devMode 关闭时该函数是空操作。
+      noteRenderError(this.props.label ?? "", error);
+    } catch {
+      /* diagnostics must never break the boundary itself */
+    }
   }
 
   private handleReload = () => {
@@ -62,7 +70,7 @@ export class ErrorBoundary extends Component<Props, State> {
             maxWidth: 560,
             background: "#fff",
             border: "1px solid #e5e5e5",
-            borderRadius: 10,
+            borderRadius: 16,
             boxShadow: "0 10px 40px rgba(0,0,0,.12)",
             padding: 24,
           }}
@@ -79,7 +87,7 @@ export class ErrorBoundary extends Component<Props, State> {
               background: "#1e1e1e",
               color: "#ffb4b4",
               padding: 12,
-              borderRadius: 6,
+              borderRadius: 10,
               fontSize: 12,
               lineHeight: 1.5,
               overflow: "auto",
@@ -99,7 +107,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 background: "#3b82f6",
                 color: "#fff",
                 border: "none",
-                borderRadius: 6,
+                borderRadius: 10,
                 cursor: "pointer",
                 fontSize: 14,
               }}

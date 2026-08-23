@@ -16,6 +16,7 @@
   --titlebar-bg: #f6f7f9; /* 自绘标题栏（接近白，与 tabbar 同级） */
   --toolbar-bg: #fafbfc;
   --statusbar-bg: #fafbfc;
+  --frame-bg: #e9ebf0; /* v4.2 浮岛画布底色（比面板深一档的冷灰） */
   --accent: #4f46e5; /* indigo-600 */
   --accent-soft: #eef2ff;
   --mark-bg: rgba(255, 213, 79, 0.55); /* ==高光== 背景色（亮色主题） */

@@ -1,7 +1,8 @@
 // opDebug 的行为验证：计数聚合、最近错误记录、限频告警的确定性部分，
-// 以及「永不抛出」契约（诊断代码不能影响编辑器）。
+// 订阅推送（v4.2 开发者模式记录器用），以及「永不抛出」契约（诊断代码
+// 不能影响编辑器）。
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { noteOpError, opErrorStats } from "./opDebug";
+import { noteOpError, opErrorStats, opSubscribe } from "./opDebug";
 
 describe("opDebug", () => {
   beforeEach(() => {
@@ -38,5 +39,24 @@ describe("opDebug", () => {
     // 首次必报 + 首次附带的说明行；后续 10s 内静默只计数。
     expect(console.warn).toHaveBeenCalledTimes(2);
     expect(opErrorStats().ops.find((o) => o.op === "opA")?.count).toBe(3);
+  });
+
+  it("pushes every occurrence to subscribers and removes throwing ones", () => {
+    const got: string[] = [];
+    const unsub = opSubscribe((r) => got.push(`${r.op}:${r.err}`));
+    // 抛错的订阅者被自动摘除，不影响其他订阅者。
+    let throwOnce = true;
+    opSubscribe(() => {
+      if (throwOnce) {
+        throwOnce = false;
+        throw new Error("bad subscriber");
+      }
+    });
+    noteOpError("moveBlock", new Error("e1"));
+    noteOpError("moveBlock", new Error("e2"));
+    expect(got).toEqual(["moveBlock:Error: e1", "moveBlock:Error: e2"]);
+    unsub();
+    noteOpError("moveBlock", new Error("e3"));
+    expect(got).toHaveLength(2);
   });
 });

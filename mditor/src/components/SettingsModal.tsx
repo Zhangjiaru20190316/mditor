@@ -441,6 +441,19 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                     批注链路事件流 / 整篇重写计数 / 批注体检（快捷键 Ctrl+Alt+D）
                   </span>
                 </Field>
+                <Field label="开发者模式">
+                  <input
+                    type="checkbox"
+                    checked={draft.devMode}
+                    onChange={(e) => set("devMode", e.target.checked)}
+                  />
+                  <span className="hint">
+                    全量记录后台数据（滚动/批注/命令事件流、全局异常、内存心跳）到日志文件，
+                    自动分析异常并按 MD-XXXX 错误代码弹出警告（普通异常为右上角警告卡，
+                    严重异常原生弹窗）。日志在 应用数据目录/logs/ 下，自动轮转；仅排查
+                    问题时开启。
+                  </span>
+                </Field>
               </>
             )}
 

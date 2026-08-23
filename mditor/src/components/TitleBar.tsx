@@ -62,6 +62,12 @@ export const TitleBar = memo(function TitleBar({
     };
   }, []);
 
+  // 最大化状态同步到 <html class="is-maximized">：浮岛框架（global.css）
+  // 据此归零画布留白并回退单侧细线，平铺铺满屏幕。
+  useEffect(() => {
+    document.documentElement.classList.toggle("is-maximized", maximized);
+  }, [maximized]);
+
   return (
     <header className="titlebar" data-tauri-drag-region>
       <LogoIcon size={18} className="titlebar-logo" />

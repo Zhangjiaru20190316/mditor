@@ -34,10 +34,21 @@ const LOG_MAX_BYTES = 2 * 1024 * 1024;
 
 // ---- heavy DOM-metric sampling switch -----------------------------------
 // Gates the heavier DOM-metric sampling (domNodes/cmEditors/katex counts) so
-// normal use pays nothing. Enabled by: Vite dev (IS_DEV) or URL `?diag=1`.
-const diagEnabled =
+// normal use pays nothing. Enabled by: Vite dev (IS_DEV), URL `?diag=1`, or
+// the dev-mode recorder (lib/devMode.ts) while developer mode is on.
+const diagBase =
   IS_DEV ||
   (typeof location !== "undefined" && /[?&]diag=1\b/.test(location.search));
+let diagForced = false;
+
+/** Dev-mode recorder forces the heavy sampling on while developer mode is on. */
+export function setDiagForced(on: boolean): void {
+  diagForced = on;
+}
+
+function isDiagEnabled(): boolean {
+  return diagBase || diagForced;
+}
 
 export interface MemSample {
   /** epoch ms */
@@ -67,7 +78,7 @@ function sampleDomMetrics(): {
   cmEditors: number;
   katexNodes: number;
 } | null {
-  if (!diagEnabled) return null;
+  if (!isDiagEnabled()) return null;
   try {
     if (typeof document === "undefined") return null;
     return {

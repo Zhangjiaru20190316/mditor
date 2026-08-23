@@ -577,15 +577,28 @@ pre.anno-code-line-hl {
 }
 .anno-diag-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  overflow: clip;
   margin-bottom: 4px;
 }
 .anno-diag-table th,
 .anno-diag-table td {
-  border: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   padding: 2px 6px;
   text-align: left;
   white-space: nowrap;
+}
+.anno-diag-table th:last-child,
+.anno-diag-table td:last-child {
+  border-right: none;
+}
+.anno-diag-table tr:last-child th,
+.anno-diag-table tr:last-child td {
+  border-bottom: none;
 }
 .anno-diag-table td:last-child {
   white-space: normal;
@@ -620,4 +633,121 @@ pre.anno-code-line-hl {
 }
 .anno-diag-event.error .m {
   color: #d33;
+}
+
+/* ---- 开发者模式警告卡（v4.2，DevAlerts）----------------------------------
+   右上角浮动异常警告栈（低于错误边界 z-index）；容器 pointer-events:none
+   不挡编辑，卡片自身恢复接收。 */
+
+.dev-alerts {
+  position: fixed;
+  top: 44px; /* 标题栏 36px + 8px */
+  right: 16px;
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 380px;
+  max-width: 92vw;
+  pointer-events: none;
+}
+.dev-alert {
+  pointer-events: auto;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid #b80;
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-lg);
+  padding: 8px 10px;
+  font-size: var(--font-size-s);
+  animation: dev-alert-in 0.18s ease-out;
+}
+.dev-alert.error {
+  border-left-color: var(--danger, #d33);
+}
+.dev-alert-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dev-alert-code {
+  flex: none;
+  font-family: var(--font-mono, monospace);
+  font-weight: 700;
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+  background: var(--accent-soft);
+  border-radius: var(--radius-s);
+  padding: 1px 5px;
+}
+.dev-alert.error .dev-alert-code {
+  color: var(--danger, #d33);
+  background: var(--danger-soft, #fde8e8);
+}
+.dev-alert-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dev-alert-close {
+  flex: none;
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.dev-alert-close:hover {
+  color: var(--fg);
+}
+.dev-alert-detail {
+  margin-top: 4px;
+  color: var(--fg-muted);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono, monospace);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.dev-alert-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.dev-alert-actions button {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: var(--radius-s);
+  font-size: var(--font-size-xs);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.dev-alert-actions button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+@keyframes dev-alert-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+[data-motion="off"] .dev-alert {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dev-alert {
+    animation: none;
+  }
 }

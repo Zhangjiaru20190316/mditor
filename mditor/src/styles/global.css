@@ -4,11 +4,13 @@
  * CSS variables set by useSettings (useSettings.ts → applyToDom):
  *   --font-prose, --font-mono, --font-size, --line-height, --para-spacing
  *
- * Design tokens（v4.1 收敛，全局 :root、与主题无关）：
- *   * 圆角三档：--radius-s 4px（小件/菜单项/内联标记）、--radius-m 6px
- *     （按钮/输入框/行）、--radius-l 10px（卡片/弹窗/下拉/代码块）；
+ * Design tokens（v4.1 收敛、v4.2 圆润化，全局 :root、与主题无关）：
+ *   * 圆角三档：--radius-s 6px（小件/菜单项/内联标记）、--radius-m 10px
+ *     （按钮/输入框/行）、--radius-l 16px（卡片/弹窗/下拉/代码块/框架浮岛）；
  *     收敛映射：4/5/3→s，6→m，8/9/10/12→l；胶囊 999px、圆 50%、聊天气泡
  *     尾角等特形保留原值。
+ *   * --frame-pad 8px：浮岛框架画布留白（.app padding / 卡片间距），
+ *     最大化与焦点模式下归零（见 .is-maximized / .is-focus）。
  *   * 字号阶梯（chrome 层；正文 --font-size 不动）：--font-size-xs 11px、
  *     -s 12px、-m 13px、-l 14px；收敛映射：10/10.5/11/11.5→xs，
  *     12/12.5→s，13/13.5→m，14→l；标题 16/18 与图标按钮 15 保留原值。
@@ -17,9 +19,10 @@
  */
 
 :root {
-  --radius-s: 4px;
-  --radius-m: 6px;
-  --radius-l: 10px;
+  --radius-s: 6px;
+  --radius-m: 10px;
+  --radius-l: 16px;
+  --frame-pad: 8px;
   --font-size-xs: 11px;
   --font-size-s: 12px;
   --font-size-m: 13px;
@@ -63,7 +66,10 @@ button:not(:disabled):active {
   display: grid;
   /* 标题栏一行 + 标签栏一行（≥2 个标签时才有内容）+（侧边栏 | 侧栏分隔条 |
      主区 | AI 分隔条 | AI 面板）+ 状态栏 —— auto 列会跟随面板宽度（关闭/收起
-     时对应列自然塌缩为 0）；tabbar 为空时 auto 行同样塌缩为 0。 */
+     时对应列自然塌缩为 0）；tabbar 为空时 auto 行同样塌缩为 0。
+     v4.2 浮岛框架：.app 是画布（--frame-bg + padding），各框架区域是
+     圆角卡片；纵向间距用卡片 margin（不用 row-gap，避免空 tabbar 行
+     塌缩后出现双缝）、横向间距由 12px 宽的透明 resizer 沟槽承担。 */
   grid-template-columns: auto auto 1fr auto auto;
   grid-template-rows: auto auto 1fr auto;
   grid-template-areas:
@@ -72,6 +78,8 @@ button:not(:disabled):active {
     "sidebar sbres  main   aires ai"
     "status  status status status status";
   height: 100vh;
+  padding: var(--frame-pad);
+  background: var(--frame-bg, var(--bg));
 }
 
 /* ---------- 自绘标题栏（无边框窗口） ---------- */
@@ -81,7 +89,12 @@ button:not(:disabled):active {
   display: flex;
   align-items: center;
   background: var(--titlebar-bg, var(--tabbar-bg));
-  border-bottom: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow);
+  margin-bottom: var(--frame-pad);
+  /* 裁掉关闭键 hover 红块等子元素溢出圆角的直角 */
+  overflow: hidden;
   user-select: none;
   position: relative;
   /* 85 = chrome 层：必须压过 fixed 定位的编辑区浮层（批注弹层 70、选区
@@ -332,7 +345,9 @@ button:not(:disabled):active {
   display: flex;
   flex-direction: row;
   background: var(--sidebar-bg);
-  border-right: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow);
   transform: translateX(0);
   /* contain: isolate the sidebar's rendering so typing in the editor doesn't
      trigger layout/paint work here. layout+style are safe (no fixed children). */
@@ -347,14 +362,14 @@ button:not(:disabled):active {
 .sidebar.closed {
   width: 0;
   opacity: 0;
-  border-right: none;
+  border: none;
   pointer-events: none;
   transform: translateX(-12px);
 }
 .is-focus .sidebar {
   width: 0;
   opacity: 0;
-  border-right: none;
+  border: none;
   pointer-events: none;
   transform: translateX(-12px);
 }
@@ -365,13 +380,16 @@ body.is-resizing .sidebar {
   will-change: width;
 }
 
-/* ---------- 分隔条（可拖拽调节侧边栏 / AI 面板宽度） ---------- */
+/* ---------- 分隔条（可拖拽调节侧边栏 / AI 面板宽度） ----------
+   v4.2 浮岛框架：宽度即卡片间沟槽（.app 无 column-gap），透明背景
+   平时露出画布色，hover 整条圆角高亮。 */
 .resizer {
-  width: 6px;
+  width: 12px;
   cursor: col-resize;
   background: transparent;
   position: relative;
   z-index: 5;
+  border-radius: var(--radius-s);
   transition: background 0.15s ease;
 }
 .resizer::before {
@@ -405,7 +423,7 @@ body.is-resizing .sidebar {
 /* 侧边栏关闭时的「展开」按钮：贴在主区左缘，hover 才显现 */
 .sidebar-opener {
   position: fixed;
-  left: 0;
+  left: var(--frame-pad);
   top: 50%;
   transform: translateY(-50%);
   width: 14px;
@@ -439,6 +457,63 @@ body.is-resizing .sidebar {
 .is-focus .titlebar,
 .is-focus .tabbar {
   display: none !important;
+}
+/* 浮岛框架归零：沉浸写作全屏铺满（含 .is-focus .sidebar，见上方 closed 规则区） */
+.is-focus .app {
+  padding: 0;
+}
+.is-focus .main {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* ---------- 最大化：回退经典平铺布局（卡片贴合、单侧细线） ----------
+   TitleBar 把最大化状态落到 <html class="is-maximized">；缝隙归零后
+   相邻卡片双边框会叠成 2px，故各区域恢复 v4.1 的单侧 hairline。 */
+.is-maximized .app {
+  padding: 0;
+}
+.is-maximized .titlebar {
+  margin-bottom: 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+}
+.is-maximized .tabbar {
+  margin-bottom: 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+}
+.is-maximized .sb-status {
+  margin-top: 0;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+}
+.is-maximized .sidebar {
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+}
+.is-maximized .ai-panel {
+  border: none;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+}
+.is-maximized .main {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+.is-maximized .resizer {
+  width: 6px;
 }
 
 .sb-tabs {
@@ -601,7 +676,7 @@ body.is-resizing .sidebar {
   top: 20%;
   bottom: 20%;
   width: 2px;
-  border-radius: 1px;
+  border-radius: 999px;
   background: var(--accent);
 }
 .ft-twisty {
@@ -983,7 +1058,7 @@ body.is-resizing .sidebar {
   top: 20%;
   bottom: 20%;
   width: 2px;
-  border-radius: 1px;
+  border-radius: 999px;
   background: transparent;
   transition: background 0.15s ease;
 }
@@ -1067,6 +1142,9 @@ body.is-resizing .sidebar {
   overflow: hidden;
   position: relative;
   background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow);
   /* contain: isolate the editor area's layout/style so sidebar/AI panel
      changes don't trigger reflow here. Avoid `paint` because SearchBar uses
      position:absolute relative to this container. */
@@ -1252,7 +1330,7 @@ body.is-resizing .sidebar {
 .md-rendered mark {
   background: var(--mark-bg, rgba(255, 213, 79, 0.55));
   color: inherit;
-  border-radius: 2px;
+  border-radius: var(--radius-s);
   padding: 0.05em 0.12em;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
@@ -1264,13 +1342,28 @@ body.is-resizing .sidebar {
   padding: 6px 14px;
   color: var(--fg);
 }
+/* 表格整体圆角（v4.2）：separate 边框 + 表级边框圆角裁切，单元格只画
+   右/下内线，末列/末行清线避免与外框叠加。 */
 .mditor-milkdown .ProseMirror table {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  overflow: clip;
 }
 .mditor-milkdown .ProseMirror th,
 .mditor-milkdown .ProseMirror td {
-  border: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   padding: 6px 10px;
+}
+.mditor-milkdown .ProseMirror th:last-child,
+.mditor-milkdown .ProseMirror td:last-child {
+  border-right: none;
+}
+.mditor-milkdown .ProseMirror tr:last-child th,
+.mditor-milkdown .ProseMirror tr:last-child td {
+  border-bottom: none;
 }
 .mditor-milkdown .ProseMirror a {
   color: var(--accent);
@@ -1478,7 +1571,10 @@ body.is-resizing .sidebar {
   gap: 8px;
   padding: 0 14px;
   background: var(--statusbar-bg);
-  border-top: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow);
+  margin-top: var(--frame-pad);
   color: var(--fg-muted);
   font-size: var(--font-size-s);
   /* 85 = chrome 层（见 .titlebar 注释）：此前 z-index:auto，被批注弹层(70)
@@ -1802,7 +1898,7 @@ body.is-resizing .sidebar {
   top: 12px;
   width: 3px;
   height: 34px;
-  border-radius: 2px;
+  border-radius: 999px;
   background: var(--accent);
   transform: translateY(0);
   transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
@@ -1856,7 +1952,9 @@ body.is-resizing .sidebar {
   display: flex;
   flex-direction: column;
   background: var(--sidebar-bg);
-  border-left: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow);
   overflow: hidden;
   /* contain: isolate the AI panel's rendering from the rest of the layout. */
   contain: layout style;
@@ -2083,7 +2181,7 @@ body.is-resizing .ai-panel {
   align-self: flex-end;
   background: var(--accent);
   color: #fff;
-  border-radius: 12px 12px 2px 12px;
+  border-radius: 16px 16px 4px 16px;
   padding: 8px 12px;
   font-size: var(--font-size-m);
   white-space: pre-wrap;
@@ -2092,7 +2190,7 @@ body.is-resizing .ai-panel {
 .ai-msg-assistant .ai-msg-content {
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 12px 12px 12px 2px;
+  border-radius: 16px 16px 16px 4px;
   padding: 10px 12px;
   font-size: var(--font-size-m);
   line-height: 1.6;
@@ -2499,7 +2597,7 @@ body.is-resizing .ai-panel {
   font-style: italic;
 }
 .diff-mark {
-  border-radius: 2px;
+  border-radius: var(--radius-s);
   padding: 0 1px;
   color: inherit;
 }
@@ -2693,16 +2791,29 @@ body.is-resizing .ai-panel {
   border-radius: var(--radius-s);
 }
 .ai-msg-content.md-rendered table {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  overflow: clip;
   width: 100%;
   font-size: var(--font-size-s);
   margin: 0 0 0.5em;
 }
 .ai-msg-content.md-rendered th,
 .ai-msg-content.md-rendered td {
-  border: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   padding: 4px 8px;
   text-align: left;
+}
+.ai-msg-content.md-rendered th:last-child,
+.ai-msg-content.md-rendered td:last-child {
+  border-right: none;
+}
+.ai-msg-content.md-rendered tr:last-child th,
+.ai-msg-content.md-rendered tr:last-child td {
+  border-bottom: none;
 }
 .ai-msg-content.md-rendered blockquote {
   margin: 0 0 0.5em;
@@ -4149,7 +4260,10 @@ html[data-motion="none"] *::after {
   align-items: stretch;
   min-height: 34px;
   background: var(--titlebar-bg, var(--bg));
-  border-bottom: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow);
+  margin-bottom: var(--frame-pad);
   overflow-x: auto;
   overflow-y: hidden;
   user-select: none;
@@ -4169,6 +4283,8 @@ html[data-motion="none"] *::after {
   max-width: 220px;
   min-width: 120px;
   border-right: 1px solid var(--border);
+  /* 上圆角：hover/active 背景呈 Chrome 式圆角标签（tabbar 卡片顶部贴边） */
+  border-radius: var(--radius-m) var(--radius-m) 0 0;
   color: var(--fg-muted);
   cursor: pointer;
   position: relative;
@@ -4186,10 +4302,11 @@ html[data-motion="none"] *::after {
 .tabbar-tab.active::after {
   content: "";
   position: absolute;
-  left: 0;
-  right: 0;
+  left: 10px;
+  right: 10px;
   bottom: -1px;
   height: 2px;
+  border-radius: 999px;
   background: var(--accent);
 }
 .tabbar-tab-icon {

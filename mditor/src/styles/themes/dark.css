@@ -15,6 +15,7 @@
   --titlebar-bg: #252526; /* 自绘标题栏（VSCode 深色标题栏惯例色） */
   --toolbar-bg: #252526;
   --statusbar-bg: #007acc0d;
+  --frame-bg: #131314; /* v4.2 浮岛画布底色（深于面板一级的近黑） */
   --accent: #818cf8; /* indigo-400, brighter for dark bg */
   --accent-soft: #312e8155;
   --mark-bg: rgba(250, 204, 21, 0.32); /* ==高光== 背景色（深色主题，提亮） */

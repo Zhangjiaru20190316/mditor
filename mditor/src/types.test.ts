@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "./types";
 
-/** 重构前（v3.9.7）的 Settings 字段全集 + v4.1 新增的 motionLevel。 */
+/** 重构前（v3.9.7）的 Settings 字段全集 + v4.1 motionLevel + v4.2 devMode。 */
 const SETTING_KEYS = [
   "theme",
   "motionLevel",
@@ -27,6 +27,7 @@ const SETTING_KEYS = [
   "typewriterMode",
   "spellcheck",
   "annoDiagPanel",
+  "devMode",
   "memoryGuard",
   "memoryGuardThresholdMb",
   "customCssPath",
@@ -68,6 +69,7 @@ const SCALAR_DEFAULTS: Record<string, unknown> = {
   typewriterMode: false,
   spellcheck: true,
   annoDiagPanel: false,
+  devMode: false,
   memoryGuard: true,
   memoryGuardThresholdMb: 2500,
   customCssPath: "",

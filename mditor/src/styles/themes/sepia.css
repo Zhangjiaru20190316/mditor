@@ -15,6 +15,7 @@
   --titlebar-bg: #e9dcbb; /* 自绘标题栏（与 tabbar 同级暖纸色） */
   --toolbar-bg: #f0e5cb;
   --statusbar-bg: #f0e5cb;
+  --frame-bg: #e2d4b0; /* v4.2 浮岛画布底色（暖纸深一档） */
   --accent: #b45309; /* amber-700 */
   --accent-soft: #f3e0c0;
   /* 语义色（v4.1 变量化）：暖纸底沿用浅色系值 */

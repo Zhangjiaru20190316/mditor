@@ -20,6 +20,7 @@
   --titlebar-bg: #f0ede5;   /* 自绘标题栏（与 tabbar 同级暖米色） */
   --toolbar-bg: #f0ede5;    /* 编辑器工具栏 */
   --statusbar-bg: #f5f4ed;
+  --frame-bg: #e6e2d5; /* v4.2 浮岛画布底色（暖米深一档） */
   --accent: #c96442;        /* Claude 橙棕 */
   --accent-soft: #f3e7df;   /* 强调色浅底 */
   /* ==高光== 暖琥珀（v4.1 补齐：此前缺失，回落到 global.css 的黄色 fallback

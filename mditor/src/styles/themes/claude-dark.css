@@ -15,6 +15,7 @@
   --titlebar-bg: #1f1e1d; /* 自绘标题栏（与 tabbar 同级深暖色） */
   --toolbar-bg: #262624;
   --statusbar-bg: #262624;
+  --frame-bg: #161514; /* v4.2 浮岛画布底色（暖黑深一档） */
   --accent: #d97757;        /* 品牌橙棕，暗底下提亮 */
   --accent-soft: #3a2a22;
   --mark-bg: rgba(250, 204, 21, 0.32); /* ==高光== 背景色（深色主题，提亮） */
