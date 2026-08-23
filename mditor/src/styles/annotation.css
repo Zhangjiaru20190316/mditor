@@ -482,7 +482,7 @@
 .cm-line.anno-code-line-hl {
   background: rgba(255, 176, 32, 0.28) !important;
   box-shadow: inset 3px 0 0 var(--accent, #e0a032);
-  border-radius: 2px;
+  border-radius: var(--radius-s, 6px);
 }
 pre.anno-code-line-hl {
   background: rgba(255, 176, 32, 0.15) !important;

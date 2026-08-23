@@ -62,8 +62,8 @@ export const TitleBar = memo(function TitleBar({
     };
   }, []);
 
-  // 最大化状态同步到 <html class="is-maximized">：浮岛框架（global.css）
-  // 据此归零画布留白并回退单侧细线，平铺铺满屏幕。
+  // 最大化状态同步到 <html class="is-maximized">：v4.2.1 起最大化保留
+  // 浮岛圆角，无样式消费该状态，仅作标记供未来窗口级特殊处理使用。
   useEffect(() => {
     document.documentElement.classList.toggle("is-maximized", maximized);
   }, [maximized]);

@@ -10,7 +10,7 @@
  *     收敛映射：4/5/3→s，6→m，8/9/10/12→l；胶囊 999px、圆 50%、聊天气泡
  *     尾角等特形保留原值。
  *   * --frame-pad 8px：浮岛框架画布留白（.app padding / 卡片间距），
- *     最大化与焦点模式下归零（见 .is-maximized / .is-focus）。
+ *     焦点模式下归零（见 .is-focus）；v4.2.1 起最大化同样保留浮岛。
  *   * 字号阶梯（chrome 层；正文 --font-size 不动）：--font-size-xs 11px、
  *     -s 12px、-m 13px、-l 14px；收敛映射：10/10.5/11/11.5→xs，
  *     12/12.5→s，13/13.5→m，14→l；标题 16/18 与图标按钮 15 保留原值。
@@ -468,53 +468,10 @@ body.is-resizing .sidebar {
   box-shadow: none;
 }
 
-/* ---------- 最大化：回退经典平铺布局（卡片贴合、单侧细线） ----------
-   TitleBar 把最大化状态落到 <html class="is-maximized">；缝隙归零后
-   相邻卡片双边框会叠成 2px，故各区域恢复 v4.1 的单侧 hairline。 */
-.is-maximized .app {
-  padding: 0;
-}
-.is-maximized .titlebar {
-  margin-bottom: 0;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  border-radius: 0;
-  box-shadow: none;
-}
-.is-maximized .tabbar {
-  margin-bottom: 0;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  border-radius: 0;
-  box-shadow: none;
-}
-.is-maximized .sb-status {
-  margin-top: 0;
-  border: none;
-  border-top: 1px solid var(--border);
-  border-radius: 0;
-  box-shadow: none;
-}
-.is-maximized .sidebar {
-  border: none;
-  border-right: 1px solid var(--border);
-  border-radius: 0;
-  box-shadow: none;
-}
-.is-maximized .ai-panel {
-  border: none;
-  border-left: 1px solid var(--border);
-  border-radius: 0;
-  box-shadow: none;
-}
-.is-maximized .main {
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-}
-.is-maximized .resizer {
-  width: 6px;
-}
+/* 最大化保留浮岛（v4.2.1）：不再回退直角平铺，普通/最大化窗口全程
+   圆角一致（用户确认）。TitleBar 仍把最大化状态落到
+   <html class="is-maximized">，供未来窗口级特殊处理使用，当前无样式
+   消费该状态。沉浸式例外仅剩 .is-focus（专注模式全屏铺满）。 */
 
 .sb-tabs {
   width: 44px;
@@ -1185,6 +1142,86 @@ body.is-resizing .sidebar {
   z-index: 5;
   background: var(--toolbar-bg);
   border-bottom: 1px solid var(--border);
+}
+
+/* ---------- Crepe 自带浮层圆角收口（v4.2.1） ----------
+   vendor（@milkdown/crepe theme/common/*.css）浮层一律 4~12px 硬编码，
+   与浮岛 token 脱节；此处统一映射 --radius-l（下拉卡，同 .mb-dropdown）/
+   --radius-m（小型浮条）/ --radius-s（内部按钮）/ 999px（圆形图标钮，
+   同图片操作钮 50% 先例）。选择器 = vendor 原样加 .mditor-milkdown 前缀，
+   特异性恒高一级，不依赖打包后 CSS 顺序。 */
+
+/* 编辑工具条：上方已顶栏化（sticky 通栏），清掉 vendor 8px 残留 */
+.mditor-milkdown .milkdown .milkdown-toolbar {
+  border-radius: 0;
+}
+.mditor-milkdown .milkdown .milkdown-toolbar .toolbar-item {
+  border-radius: var(--radius-s);
+}
+
+/* 链接工具卡（悬停预览 / 选中编辑） */
+.mditor-milkdown .milkdown .milkdown-link-preview > .link-preview,
+.mditor-milkdown .milkdown .milkdown-link-edit > .link-edit {
+  border-radius: var(--radius-m);
+}
+.mditor-milkdown .milkdown .milkdown-link-preview > .link-preview > .link-icon,
+.mditor-milkdown .milkdown .milkdown-link-preview > .link-preview > .button,
+.mditor-milkdown .milkdown .milkdown-link-edit > .link-edit > .button {
+  border-radius: var(--radius-s);
+}
+
+/* 斜杠命令菜单 */
+.mditor-milkdown .milkdown .milkdown-slash-menu {
+  border-radius: var(--radius-l);
+}
+.mditor-milkdown .milkdown .milkdown-slash-menu ul li {
+  border-radius: var(--radius-s);
+}
+
+/* 块手柄按钮（32px 方形图标钮 → 圆钮） */
+.mditor-milkdown .milkdown .milkdown-block-handle .operation-item {
+  border-radius: 999px;
+}
+
+/* 表格：单元格浮动按钮组（按钮 hover 的 8px 是 vendor 更高特异性规则，一并压掉） */
+.mditor-milkdown .milkdown .milkdown-table-block .cell-handle .button-group {
+  border-radius: var(--radius-m);
+}
+.mditor-milkdown .milkdown .milkdown-table-block .cell-handle .button-group button,
+.mditor-milkdown .milkdown .milkdown-table-block .cell-handle .button-group button:hover {
+  border-radius: var(--radius-s);
+}
+
+/* 代码块：语言下拉、搜索框、cm 面板控件、工具条按钮（首尾 100px 胶囊帽
+   是 vendor 更高特异性的 first/last-child 规则，自然保留不动） */
+.mditor-milkdown .milkdown .milkdown-code-block .list-wrapper {
+  border-radius: var(--radius-l);
+}
+.mditor-milkdown .milkdown .milkdown-code-block .search-box {
+  border-radius: var(--radius-s);
+}
+.mditor-milkdown .milkdown .milkdown-code-block .cm-panel input,
+.mditor-milkdown .milkdown .milkdown-code-block .cm-panel > button,
+.mditor-milkdown .milkdown .milkdown-code-block .cm-panel > label input[type="checkbox"] {
+  border-radius: var(--radius-s);
+}
+.mditor-milkdown .milkdown .milkdown-code-block .tools .tools-button-group button,
+.mditor-milkdown .milkdown .milkdown-code-block .tools .language-button {
+  border-radius: var(--radius-s);
+}
+
+/* 行内图片占位卡 + LaTeX 行内编辑浮层 */
+.mditor-milkdown .milkdown .milkdown-image-inline .empty-image-inline {
+  border-radius: var(--radius-m);
+}
+.mditor-milkdown .milkdown .milkdown-image-inline .empty-image-inline .confirm {
+  border-radius: var(--radius-s);
+}
+.mditor-milkdown .milkdown .milkdown-latex-inline-edit {
+  border-radius: var(--radius-m);
+}
+.mditor-milkdown .milkdown .milkdown-latex-inline-edit .container button {
+  border-radius: var(--radius-s);
 }
 
 /* prose content uses our font vars */
@@ -3150,6 +3187,7 @@ body.is-resizing .ai-panel {
   color: var(--fg-muted);
   font-size: var(--font-size-s);
   line-height: 1;
+  border-radius: var(--radius-s);
 }
 .sel-swatch-clear:hover {
   color: var(--fg);
@@ -4551,6 +4589,8 @@ body.is-dragging-md::after {
 }
 .mditor-sv .cm-tooltip.cm-tooltip-autocomplete > ul {
   font-family: var(--font-mono);
+  /* CM 默认 4px；svCodeMirror 当前未启用 autocompletion，防御性收口 */
+  border-radius: var(--radius-m);
 }
 
 /* ---------- 从模板新建 / 插入链接 弹窗 ---------- */
