@@ -19,6 +19,8 @@ import { AnnoDiagnostics } from "./components/AnnoDiagnostics";
 import { DevAlerts } from "./components/DevAlerts";
 import { setPendingJumpAnno } from "./lib/annoHandoff";
 import { noteScrollWrite } from "./lib/scrollDebug";
+import { noteUserAction, setDevDocInfoProvider } from "./lib/devContext";
+import { sysEmit } from "./lib/sysDebug";
 import { noteOpError } from "./lib/opDebug";
 import {
   disableDevRecorder,
@@ -48,6 +50,7 @@ import {
   AiIcon,
   SidebarIcon,
   SearchIcon,
+  NewFolderIcon,
 } from "./components/icons";
 import { useSettings } from "./hooks/useSettings";
 import { useFile } from "./hooks/useFile";
@@ -59,7 +62,7 @@ import { resolveCodeLines, highlightCodeLines } from "./lib/codeAnno";
 import { findHeadingLine } from "./lib/outline";
 import { buildAnnotationMessages, chatStream, isAiConfigured } from "./lib/ai";
 import { normalizeAnchorText } from "./lib/anchorSearch";
-import { baseName, pickFolder, dirOf, MD_EXT_RE } from "./lib/tauriFs";
+import { baseName, pickFolder, MD_EXT_RE } from "./lib/tauriFs";
 import { readFresh, peekHoverContent } from "./lib/filePrefetch";
 import { prepareDoc } from "./lib/parsePipeline";
 import { toPosix } from "./lib/path-shim";
@@ -67,7 +70,14 @@ import { exportHtml, exportPdf, exportPng, exportDocx } from "./lib/exporter";
 import { copyRich } from "./lib/clipboard";
 import { collectThemeCss } from "./lib/themeCss";
 import { showAlert, confirmDialog, choiceDialog } from "./lib/dialogs";
-import { getWorkspace, setWorkspace, clearRecentPath } from "./lib/store";
+import {
+  clearRecentPath,
+  getWorkspaces,
+  setWorkspaces,
+  loadRecentWorkspaces,
+  pushRecentWorkspace,
+} from "./lib/store";
+import { dedupeRoots, samePathFold } from "./lib/workspaces";
 import { dismissSplash } from "./lib/splash";
 import { takeHealSnapshot } from "./lib/session";
 import { countWords } from "./lib/textStats";
@@ -97,11 +107,14 @@ export default function App() {
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("tree");
-  const [workspace, setWs] = useState<string | null>(null);
-  // Ref mirror of `workspace` so the stable `openPath` callback can read the
-  // current workspace without depending on it (keeps its dep array empty).
-  const workspaceRef = useRef(workspace);
-  workspaceRef.current = workspace;
+  // V4.4 多根工作区：根目录列表（VS Code 式 multi-root），空数组 = 未打开。
+  const [workspaces, setWsList] = useState<string[]>([]);
+  // Ref mirror of `workspaces` so stable callbacks (add/remove/replace) can
+  // read the current roots without depending on it (keeps dep arrays empty).
+  const workspacesRef = useRef(workspaces);
+  workspacesRef.current = workspaces;
+  // 空态「最近工作区」列表：boot 时加载，添加/替换工作区后刷新。
+  const [recentWs, setRecentWs] = useState<string[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -162,7 +175,7 @@ export default function App() {
     scheduleFollowUpPreparse,
   } = switchFlow;
 
-  // ---- 开发者模式（v4.2）---------------------------------------------------
+  // ---- 开发者模式（v4.2 建立 / v4.3 上下文升级）----------------------------
   // 启停记录器：订阅/钩子/心跳/落盘全在 lib/devMode 内部管理，这里只跟随
   // 设置项切换；卸载兜底停一次（幂等）。关闭时全退订，零开销。
   useEffect(() => {
@@ -170,6 +183,54 @@ export default function App() {
     else disableDevRecorder();
     return () => disableDevRecorder();
   }, [settingsApi.settings.devMode]);
+
+  // v4.3 诊断上下文：文档概况 provider（异常落盘/心跳快照时才现算一次，
+  // 常驻零成本）；liveMarkdown 用 ref 镜像避免 effect 频繁重注册。
+  const liveMarkdownRef = useRef(liveMarkdown);
+  liveMarkdownRef.current = liveMarkdown;
+  useEffect(() => {
+    setDevDocInfoProvider(() => {
+      try {
+        const ts = tabsRef.current;
+        const active = ts.find((t) => t.key === activeKeyRef.current) ?? null;
+        const md = liveMarkdownRef.current;
+        return {
+          tabs: ts.length,
+          activeTab: active?.name ?? "?",
+          path: active?.path ?? null,
+          chars: md.length,
+          lines: md ? md.split("\n").length : 0,
+          images: (md.match(/!\[/g) ?? []).length,
+        };
+      } catch {
+        return null;
+      }
+    });
+    return () => setDevDocInfoProvider(null);
+  }, []);
+
+  // v4.3 语义操作埋点：模式/标签切换写入「最近操作」环并留生命周期事件
+  // （异常附盘后可回溯用户刚做了什么）。首轮跳过（初始挂载不是切换）。
+  const firstModeRun = useRef(true);
+  useEffect(() => {
+    if (firstModeRun.current) {
+      firstModeRun.current = false;
+      return;
+    }
+    noteUserAction("ui", `模式切换→${editMode}`);
+    sysEmit("lifecycle:mode-switch", `编辑模式切换 → ${editMode}`, {
+      data: { mode: editMode },
+    });
+  }, [editMode]);
+  const firstTabRun = useRef(true);
+  useEffect(() => {
+    if (firstTabRun.current) {
+      firstTabRun.current = false;
+      return;
+    }
+    const t = tabsRef.current.find((x) => x.key === activeKeyRef.current);
+    noteUserAction("ui", `切标签→${t?.name ?? activeKeyRef.current}`);
+  }, [activeKey]);
 
   // 空闲预解析目标（阶段 1，预算 1 个）：hover 预读的大文档优先，其次相邻
   // 标签的快照内容。经 ref 供 useSwitchFlow 收尾后的 idle 窗口读取。
@@ -574,10 +635,10 @@ export default function App() {
   });
   const focusMode = settingsApi.settings.focusMode;
 
-  // load saved workspace on boot
+  // load saved workspace(s) on boot
   useEffect(() => {
-    getWorkspace()
-      .then(setWs)
+    getWorkspaces()
+      .then(setWsList)
       // 工作区恢复失败也要放行开屏，不能把用户挡在主界面外
       .catch(() => undefined)
       .finally(() => {
@@ -585,6 +646,7 @@ export default function App() {
         // 保证开屏下方不是空壳（与 openPath 里的双 rAF 同理）
         requestAnimationFrame(() => requestAnimationFrame(dismissSplash));
       });
+    loadRecentWorkspaces().then(setRecentWs).catch(() => undefined);
   }, []);
 
   // Cancel any pending live-markdown rAF on unmount so a late flush can't
@@ -671,18 +733,9 @@ export default function App() {
         }
         if (isStale(token)) return;
         setRecentKey((k) => k + 1);
-        // 外部打开的文件若不在当前工作区内，自动把其所在目录设为工作区，
-        // 使该文件出现在侧边栏文件树导航中（否则文件树只显示工作区内的文件）。
-        const fileDir = toPosix(dirOf(path));
-        const ws = workspaceRef.current;
-        const inWs = !!ws && (fileDir === toPosix(ws) || fileDir.startsWith(toPosix(ws) + "/"));
-        if (!inWs) {
-          const dir = dirOf(path);
-          setWs(dir);
-          await setWorkspace(dir);
-          setSidebarOpen(true);
-          setSidebarTab("tree");
-        }
+        // V4.4：不再自动切换工作区。旧版会把工作区劫持到外部文件所在目录
+        // （静默替换文件树、丢掉全部展开状态）；现在工作区外文件只进标签与
+        // 最近列表，想把它挂进文件树用「文件 → 添加文件夹到工作区…」。
       } catch (e) {
         if (isStale(token)) return;
         void showAlert(`打开失败：${String(e)}`, "Mditor", "error");
@@ -1039,6 +1092,82 @@ export default function App() {
     }, ms);
   }, []);
 
+  // ----- multi-root workspace helpers (V4.4) -----
+  // 添加一个根（大小写折叠去重；成功后开侧栏树页 + 记入最近工作区）。
+  const refreshRecentWs = useCallback(() => {
+    loadRecentWorkspaces().then(setRecentWs).catch(() => undefined);
+  }, []);
+
+  const addWorkspaceRoot = useCallback(
+    async (folder: string) => {
+      const cur = workspacesRef.current;
+      const next = dedupeRoots([...cur, folder]);
+      if (next.length === cur.length) {
+        flashStatus("该文件夹已在工作区中");
+        return;
+      }
+      workspacesRef.current = next;
+      setWsList(next);
+      await setWorkspaces(next);
+      await pushRecentWorkspace(folder);
+      refreshRecentWs();
+      setSidebarOpen(true);
+      setSidebarTab("tree");
+      flashStatus(`已添加 ${baseName(folder)}`);
+    },
+    [flashStatus, refreshRecentWs]
+  );
+
+  // 替换整个工作区为单个根（多根时先确认；磁盘不受影响）。
+  const replaceWorkspace = useCallback(
+    async (folder: string) => {
+      const cur = workspacesRef.current;
+      if (cur.length >= 2) {
+        const ok = await confirmDialog(
+          `将替换当前 ${cur.length} 个工作区文件夹？\n（磁盘文件不受影响）`
+        );
+        if (!ok) return;
+      }
+      workspacesRef.current = [folder];
+      setWsList([folder]);
+      await setWorkspaces([folder]);
+      await pushRecentWorkspace(folder);
+      refreshRecentWs();
+      setSidebarOpen(true);
+      setSidebarTab("tree");
+    },
+    [refreshRecentWs]
+  );
+
+  // 移除一个根（文件树区头的 ×）。不确认 —— 磁盘不动，重挂即可，VS Code 同款。
+  const removeWorkspaceRoot = useCallback(
+    async (root: string) => {
+      const next = workspacesRef.current.filter((r) => !samePathFold(r, root));
+      if (next.length === workspacesRef.current.length) return;
+      workspacesRef.current = next;
+      setWsList(next);
+      await setWorkspaces(next);
+      flashStatus(`已移除 ${baseName(root)}（磁盘文件不受影响）`);
+    },
+    [flashStatus]
+  );
+
+  // FileTree 的 memo 依赖 props 身份 —— onRemoveRoot 走稳定引用。
+  const handleRemoveRoot = useCallback(
+    (root: string) => void removeWorkspaceRoot(root),
+    [removeWorkspaceRoot]
+  );
+
+  const addFolderFromDialog = useCallback(async () => {
+    const f = await pickFolder();
+    if (f) await addWorkspaceRoot(f);
+  }, [addWorkspaceRoot]);
+
+  const replaceFolderFromDialog = useCallback(async () => {
+    const f = await pickFolder();
+    if (f) await replaceWorkspace(f);
+  }, [replaceWorkspace]);
+
   // ----- export & clipboard helpers -----
   const doExport = useCallback(
     async (kind: "html" | "pdf" | "png" | "docx") => {
@@ -1135,15 +1264,10 @@ export default function App() {
         })();
         break;
       case "file_open_folder":
-        void (async () => {
-          const f = await pickFolder();
-          if (f) {
-            setWs(f);
-            await setWorkspace(f);
-            setSidebarOpen(true);
-            setSidebarTab("tree");
-          }
-        })();
+        void replaceFolderFromDialog();
+        break;
+      case "file_add_folder":
+        void addFolderFromDialog();
         break;
       case "file_save":
         // 乐观反馈：立即提示「已保存」，不等待落盘；失败时覆盖为「保存失败」。
@@ -1302,10 +1426,11 @@ export default function App() {
         setSidebarTab("search");
         break;
     }
-    // 三个依赖都是稳定 useCallback（doCopyRich←flashStatus、newUntitledTab←
-    // snapshotActiveTab←getCurrentContent），列出只为满足 exhaustive-deps ——
-    // dispatchMenu 的身份仍然不变。
-  }, [doCopyRich, flashStatus, newUntitledTab]); // ← stable — reads live state via refs
+    // 全部依赖都是稳定 useCallback（doCopyRich←flashStatus、newUntitledTab←
+    // snapshotActiveTab←getCurrentContent、addFolder/replaceFolder←addWorkspaceRoot
+    // /replaceWorkspace←flashStatus+refreshRecentWs），列出只为满足
+    // exhaustive-deps —— dispatchMenu 的身份仍然不变。
+  }, [doCopyRich, flashStatus, newUntitledTab, addFolderFromDialog, replaceFolderFromDialog]); // ← stable — reads live state via refs
   // 上面「注册一次」的事件监听（menu 事件 / 全局快捷键）声明在本回调之前，
   // 但只在提交后才执行 —— 经 ref 镜像取调用时的最新 dispatchMenu。
   const dispatchMenuRef = useRef(dispatchMenu);
@@ -1905,52 +2030,63 @@ export default function App() {
         </nav>
         <div className="sb-panel">
           {sidebarTab === "tree" &&
-            (workspace ? (
+            (workspaces.length > 0 ? (
               <>
                 <div className="sb-head">
-                  <div className="sb-ws">
+                  <div className="sb-ws" title={workspaces.join("\n")}>
                     <FolderIcon size={14} className="sb-ws-icon" />
-                    <span className="sb-ws-name" title={workspace}>
-                      {baseName(workspace)}
+                    <span className="sb-ws-name">
+                      {workspaces.length > 1
+                        ? `工作区 (${workspaces.length})`
+                        : baseName(workspaces[0])}
                     </span>
                   </div>
                   <button
                     className="sb-tiny"
-                    title="切换工作区"
-                    onClick={async () => {
-                      const f = await pickFolder();
-                      if (f) {
-                        setWs(f);
-                        await setWorkspace(f);
-                      }
-                    }}
+                    title="添加文件夹到工作区"
+                    onClick={() => void addFolderFromDialog()}
+                  >
+                    <NewFolderIcon size={13} />
+                  </button>
+                  <button
+                    className="sb-tiny"
+                    title="替换工作区（打开文件夹…）"
+                    onClick={() => void replaceFolderFromDialog()}
                   >
                     <ExpandIcon size={13} />
                   </button>
                 </div>
                 <FileTree
-                  root={workspace}
+                  roots={workspaces}
                   activePath={pendingPath ?? fileApi.doc.path}
                   onOpen={openPath}
                   onChanged={onTreeChange}
                   excludedPaths={excludedSet}
                   onExclude={handleExclude}
+                  onRemoveRoot={handleRemoveRoot}
                 />
               </>
             ) : (
               <div className="sb-empty">
                 <p>未打开文件夹</p>
-                <button
-                  onClick={async () => {
-                    const f = await pickFolder();
-                    if (f) {
-                      setWs(f);
-                      await setWorkspace(f);
-                    }
-                  }}
-                >
+                <button onClick={() => void replaceFolderFromDialog()}>
                   打开文件夹…
                 </button>
+                {recentWs.length > 0 && (
+                  <div className="sb-recent-ws">
+                    <p className="sb-recent-ws-title">最近工作区</p>
+                    {recentWs.slice(0, 5).map((w) => (
+                      <button
+                        key={w}
+                        className="sb-recent-ws-item"
+                        title={w}
+                        onClick={() => void replaceWorkspace(w)}
+                      >
+                        {baseName(w)}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           {sidebarTab === "outline" && (
@@ -1970,7 +2106,7 @@ export default function App() {
                 <span className="sb-ws-name">在工作区中搜索</span>
               </div>
               <WorkspaceSearch
-                workspace={workspace}
+                workspaces={workspaces}
                 excludedPaths={excludedSet}
                 onOpenResult={(p, h) => void onOpenSearchResult(p, h)}
               />
@@ -2165,7 +2301,7 @@ export default function App() {
       <SettingsModal
         open={settingsOpen}
         settings={settingsApi.settings}
-        workspace={workspace}
+        workspace={workspaces[0] ?? null}
         onClose={() => setSettingsOpen(false)}
         onChange={settingsApi.update}
       />

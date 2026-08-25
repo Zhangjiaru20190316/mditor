@@ -14,6 +14,7 @@ import {
   exists,
 } from "@tauri-apps/plugin-fs";
 import { dirname, join } from "./path-shim";
+import { tracedIo } from "./ipcTrace";
 
 // Characters forbidden in file names on Windows (and poor practice elsewhere).
 // Backslash is intentionally matched via the literal in the class.
@@ -44,29 +45,31 @@ export function validateName(name: string): string | null {
 
 /** Remove a single file. */
 export async function deleteFile(path: string): Promise<void> {
-  await remove(path);
+  await tracedIo("file:mut", `删除文件 ${path}`, () => remove(path));
 }
 
 /** Remove a directory and everything inside it (like `rm -r`). */
 export async function deleteDirRecursive(path: string): Promise<void> {
-  await remove(path, { recursive: true });
+  await tracedIo("file:mut", `删除目录 ${path}`, () => remove(path, { recursive: true }));
 }
 
 /** Create a directory (and any missing parents). */
 export async function createFolder(path: string): Promise<void> {
-  await mkdir(path, { recursive: true });
+  await tracedIo("file:mut", `新建文件夹 ${path}`, () => mkdir(path, { recursive: true }));
 }
 
 /** Create an empty (or content-seeded) file. */
 export async function createFile(path: string, content = ""): Promise<void> {
-  await writeTextFile(path, content);
+  await tracedIo("file:mut", `新建文件 ${path}`, () => writeTextFile(path, content));
 }
 
 /** Rename / move a file or directory. Overwrites an existing file at the
  * destination (matching OS rename semantics); caller should check first. */
 export async function renamePath(oldPath: string, newPath: string): Promise<void> {
   if (oldPath === newPath) return;
-  await rename(oldPath, newPath);
+  await tracedIo("file:mut", `重命名 ${oldPath} → ${newPath}`, () =>
+    rename(oldPath, newPath)
+  );
 }
 
 /** Does a path currently exist on disk? */

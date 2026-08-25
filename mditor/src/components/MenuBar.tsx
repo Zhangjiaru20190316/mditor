@@ -65,6 +65,7 @@ function buildMenus(focusMode: boolean, theme: string, typewriter: boolean): Men
         item("file_new_template", "从模板新建…"),
         item("file_open", "打开文件…", "Ctrl+O"),
         item("file_open_folder", "打开文件夹…", "Ctrl+Shift+O"),
+        item("file_add_folder", "添加文件夹到工作区…"),
         sep(),
         item("file_save", "保存", "Ctrl+S"),
         item("file_save_as", "另存为…", "Ctrl+Shift+S"),

@@ -6,6 +6,8 @@
 // wires up the SSE-stream event listeners, and surfaces friendly errors.
 
 import { invoke } from "@tauri-apps/api/core";
+import { sysEmit } from "./sysDebug";
+import { tracedIo } from "./ipcTrace";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AiModelConfig, AiContextStrategy, Settings } from "../types";
 
@@ -390,17 +392,32 @@ export function buildAnnotationMessages(
 /** Single-shot chat: returns the assistant's text reply. Used for "测试连接". */
 export async function chat({ settings, messages }: ChatOptions): Promise<string> {
   const m = resolveActiveModel(settings);
-  const result = await invoke<{ content: string }>("ai_chat", {
-    baseUrl: m.baseUrl,
-    apiKey: m.apiKey,
-    model: m.model,
-    provider: m.provider,
-    thinkingStrength: settings.aiThinkingStrength,
-    messages,
-    temperature: settings.aiTemperature,
-    maxTokens: settings.aiMaxTokens || undefined,
-    topP: settings.aiTopP,
-  });
+  // v4.3 诊断：请求失败→MD-8001；不设慢阈值（大模型 legitimately 慢）。
+  const result = await tracedIo<{ content: string }>(
+    "ai:request",
+    `ai_chat ${m.model}`,
+    () =>
+      invoke<{ content: string }>("ai_chat", {
+        baseUrl: m.baseUrl,
+        apiKey: m.apiKey,
+        model: m.model,
+        provider: m.provider,
+        thinkingStrength: settings.aiThinkingStrength,
+        messages,
+        temperature: settings.aiTemperature,
+        maxTokens: settings.aiMaxTokens || undefined,
+        topP: settings.aiTopP,
+      }),
+    { slowMs: Infinity }
+  );
+  // v4.3 诊断：响应形态异常（content 缺失/非字符串）→MD-8004，不改行为。
+  if (typeof result?.content !== "string") {
+    sysEmit(
+      "ai:response-fail",
+      `AI 响应异常：content 非字符串（${String(result?.content).slice(0, 60)}）`,
+      { level: "warn", data: { model: m.model, got: typeof result?.content } }
+    );
+  }
   return result.content;
 }
 
@@ -507,6 +524,10 @@ export function chatStream(
   });
   listen<StreamErrorEvent>("ai_stream_error", (ev) => {
     if (ev.payload.id === requestId && !cancelled) {
+      sysEmit("ai:stream-fail", `AI 流式错误：${ev.payload.error.slice(0, 160)}`, {
+        level: "error",
+        data: { requestId, error: ev.payload.error.slice(0, 300), model: m.model },
+      });
       finish();
       handlers.onError(ev.payload.error);
     }
@@ -532,18 +553,29 @@ export function chatStream(
       // Clean completion resolves here; the done event is the canonical signal,
       // but guard against the (rare) case where the event was missed.
       if (!finished && !cancelled) {
+        sysEmit("ai:stream-abnormal-end", "AI 流式结束但未收到 done 事件（异常收尾）", {
+          level: "warn",
+          data: { requestId, model: m.model },
+        });
         finish();
         handlers.onDone();
       }
     })
     .catch((e) => {
       if (cancelled || finished) return;
+      sysEmit("ai:stream-fail", `AI 流式启动/请求失败：${String(e).slice(0, 160)}`, {
+        level: "error",
+        data: { requestId, error: String(e).slice(0, 300), model: m.model },
+      });
       finish();
       handlers.onError(String(e));
     });
 
   return {
     cancel: () => {
+      sysEmit("ai:stream-abort", `AI 流式被取消（用户中止/组件卸载）`, {
+        data: { requestId, model: m.model },
+      });
       cancelled = true;
       finish();
       handlers.onDone();

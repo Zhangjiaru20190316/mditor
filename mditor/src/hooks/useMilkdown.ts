@@ -56,6 +56,10 @@ import { highlightPlugins } from "../lib/highlightMark";
 import { textColorPlugins } from "../lib/textColorMark";
 import { cvIntrinsicPlugin, startCvPrewarm } from "../lib/cvMemory";
 import { noteScrollWrite } from "../lib/scrollDebug";
+import { sysEmit } from "../lib/sysDebug";
+
+/** 编辑器创建序号（lifecycle:editor-ready 携带；重建会递增）。 */
+let editorCreateSeq = 0;
 import { noteOpError } from "../lib/opDebug";
 import { createSvEditor } from "../lib/svCodeMirror";
 import type { SvEditorHandle, SvSurface } from "../lib/svCodeMirror";
@@ -536,10 +540,13 @@ export function useMilkdown(opts: Options): MilkdownHandle {
   const idleTrimTimerRef = useRef<number | null>(null);
   // 重建（内存守护软重建 / idle 历史回收）前捕获的滚动位置与光标上下文，
   // 新实例 ready 后尽力恢复 —— 重建从“无提示的位置重置”变成“几乎无感”。
+  // offset：捕获时光标所在块的顶边距滚动容器视口顶的偏移（v4.2.2），恢复
+  // 时按它对齐锚块 —— 免疫 big 模式重建后视口上方 3em 占位的高度误差。
   const pendingRestoreRef = useRef<{
     scrollTop: number;
     anchor: string;
     hint: number;
+    offset: number | null;
   } | null>(null);
 
   const settingsRef = useRef(opts.settings);
@@ -576,6 +583,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       const big = isBigDoc(seed);
       bigDocRef.current = big;
       setBigDoc(big);
+      // v4.3 生命周期计时：创建起点（crepe 构造 + create + 绑定全程）。
+      const createStartAt = performance.now();
 
       const crepe = new Crepe({
         root: host,
@@ -793,6 +802,14 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         }
       });
       annoEmit("editor.ready", "Milkdown 实例就绪（徽章 toDOM 补丁 + 探针 + PM 门已挂）");
+      sysEmit("lifecycle:editor-ready", "编辑器实例就绪", {
+        data: {
+          createMs: Math.round(performance.now() - createStartAt),
+          sinceBootMs: Math.round(performance.now()),
+          big,
+          seq: ++editorCreateSeq,
+        },
+      });
       // Seed content with flush=true so headings pick up the generator AND the
       // undo history starts clean for this document.
       if (seed) {
@@ -2229,10 +2246,23 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           const to = Math.min(view.state.doc.content.size, head + 48);
           const anchor = view.state.doc.textBetween(from, to, "\n").trim();
           if (anchor) {
+            // 光标所在块的视口偏移：恢复时把这块的顶边拉回同一偏移（精确
+            // 落位，与上方占位高度解耦）。取不到就退回纯 scrollTop 恢复。
+            let offset: number | null = null;
+            const $p = view.state.doc.resolve(head);
+            if (scroller && $p.depth >= 1) {
+              const blockEl = view.nodeDOM($p.before(1)) as HTMLElement | null;
+              if (blockEl && blockEl.nodeType === 1) {
+                offset =
+                  blockEl.getBoundingClientRect().top -
+                  scroller.getBoundingClientRect().top;
+              }
+            }
             pendingRestoreRef.current = {
               scrollTop: scroller?.scrollTop ?? 0,
               anchor,
               hint: head,
+              offset,
             };
           }
         });
@@ -2249,6 +2279,9 @@ export function useMilkdown(opts: Options): MilkdownHandle {
 
   // 重建完成后恢复光标与滚动位置（尽力而为：按文本锚点重定位，找不到就
   // 保持新实例的默认状态）。双 rAF 等新视图完成首次布局再写 scrollTop。
+  // v4.2.2：锚点找回后按捕获偏移对齐光标所在块（精确落位）——big 模式重建
+  // 后视口上方是 3em 占位，纯 scrollTop 恢复内容错位；此后上方块逐批变现
+  // 由 prewarm-comp / anchor-comp 兜底。
   useEffect(() => {
     if (!ready) return;
     const r = pendingRestoreRef.current;
@@ -2259,6 +2292,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       raf2 = requestAnimationFrame(() => {
         raf2 = null;
         if (modeRef.current === "sv") return;
+        const off = r.offset;
+        let restored = false;
         try {
           crepeRef.current?.editor.action((ctx) => {
             const view = ctx.get(editorViewCtx);
@@ -2270,6 +2305,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
                   TextSelection.near(view.state.doc.resolve(pos))
                 )
               );
+              restored = true;
             }
           });
         } catch {
@@ -2279,6 +2315,30 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         if (scroller && r.scrollTop > 0) {
           noteScrollWrite("rebuild-restore");
           scroller.scrollTop = r.scrollTop;
+        }
+        // 锚块精落地：把恢复后的光标所在块顶边拉回捕获偏移。target 基于
+        // 当下实际布局（含占位高度），一次落位；后续高度变化由补偿链兜底。
+        if (scroller && restored && off != null) {
+          try {
+            crepeRef.current?.editor.action((ctx) => {
+              const view = ctx.get(editorViewCtx);
+              const $p = view.state.doc.resolve(view.state.selection.head);
+              if ($p.depth < 1) return;
+              const el = view.nodeDOM($p.before(1)) as HTMLElement | null;
+              if (!el || el.nodeType !== 1) return;
+              const target =
+                scroller.scrollTop +
+                el.getBoundingClientRect().top -
+                scroller.getBoundingClientRect().top -
+                off;
+              if (target >= 0 && Math.abs(target - scroller.scrollTop) > 1) {
+                noteScrollWrite("rebuild-restore");
+                scroller.scrollTop = target;
+              }
+            });
+          } catch {
+            /* best-effort */
+          }
         }
       });
     });

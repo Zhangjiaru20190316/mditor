@@ -6,6 +6,7 @@ import { attachActivityTracking } from "./lib/activity";
 import { attachAnnoDebugGlobal } from "./lib/annoDebug";
 import { attachScrollDebugGlobal } from "./lib/scrollDebug";
 import { attachOpDebugGlobal } from "./lib/opDebug";
+import { attachSysDebugGlobal } from "./lib/sysDebug";
 import { attachDevModeGlobal } from "./lib/devMode";
 // KaTeX + highlight.js styles power the static Markdown renderer (AI messages,
 // annotation previews, source-mode export) — rehype-katex / rehype-highlight
@@ -53,6 +54,10 @@ attachScrollDebugGlobal();
 // 编辑命令遥测出口（window.__opDebug）：被 facade 吞掉的编辑命令异常
 // （v3.9.5 blockCommands 自递归正是这样隐形了数周）——stats/report 直读。
 attachOpDebugGlobal();
+
+// 系统链路诊断出口（window.__sysDebug）：文件 IO / IPC / AI / 生命周期 /
+// 资源加载的事件与计数器（v4.3），DevTools 直读。
+attachSysDebugGlobal();
 
 // 开发者模式出口（window.__devMode）：记录器状态 / 异常累计 / 手动冲刷 /
 // report 汇总。记录器本体由 App 的 devMode 设置项驱动启停，这里只挂出口。

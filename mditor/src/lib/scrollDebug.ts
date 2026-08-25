@@ -5,16 +5,20 @@
 // 位置。本模块把滚动相关的关键事实收进环形缓冲 + 计数器：
 //
 //  1. 滚动会话归因（session:*，v3.9.5 状态机化）：每次「滚动从静止开始
-//     动」判定发起者——用户输入（wheel/触摸/滚动键/滚动条拖拽）200ms 内
-//     → user；已知程序写入（noteScrollWrite 打点）250ms 内 → write:<tag>，
-//     平滑跳转类 tag（outline-jump / anno-jump / sv-jump）的归因窗与 App
-//     侧 smoothJump 抑制窗口对齐（scrollend / 用户 wheel / 1200ms 超时，
-//     标志在位或 1250ms 内均归属写入方）；|delta|<2px 且同帧有高度变化的
-//     微位移 → layout:clamp（浏览器 clamping 型调整，不计 ghost）；都不是
-//     → ghost。会话以「连续 5 帧静止」确认关闭——longtask 阻断 rAF 后的
-//     平滑滚动尾段恢复不再被拦腰判成 ghost（2026-08-22 复现：outline-jump
-//     尾段 1px 被误标 ghost，lastWrite@1494ms 前超窗）。惯性滚动天然归属
-//     其发起会话。
+//     动」判定发起者——用户输入（wheel/触摸/滚动键/滚动条拖拽/host 外任意
+//     点击/Ctrl·Alt·Meta 快捷键，v4.2.1 扩展：按钮改布局引发的钳制/重排
+//     属用户主动行为）200ms 内 → user；已知程序写入（noteScrollWrite 打点）
+//     250ms 内 → write:<tag>（写入年龄扣除其后被 longtask 阻塞的时长，P2-5），
+//     平滑跳转类 tag（outline-jump / anno-jump /
+//     sv-jump）的归因窗与 App 侧 smoothJump 抑制窗口对齐（scrollend /
+//     用户 wheel / 1200ms 超时，标志在位或 1250ms 内均归属写入方）；浏览器
+//     钳制 → layout:clamp（不计 ghost）——两类签名：|delta|<2px 且同帧有
+//     高度变化的微位移；任意幅度的「贴底钳制」（内容收缩使旧位置越过新上
+//     限、scrollTop 恰被压回 scrollHeight-clientHeight，点击按钮改排版/开
+//     合面板所致，v4.2.1 前曾误判 ghost）；都不是 → ghost。会话以「连续
+//     5 帧静止」确认关闭——longtask 阻断 rAF 后的平滑滚动尾段恢复不再被
+//     拦腰判成 ghost（2026-08-22 复现：outline-jump 尾段 1px 被误标
+//     ghost，lastWrite@1494ms 前超窗）。惯性滚动天然归属其发起会话。
 //  2. 视口内容位移（layout:shift）：scrollTop 没变、但视口顶部哨兵块的
 //     文档坐标变了 → 内容在自己动（content-visibility 高度重估 / 图片加载
 //     / 盖章行内化 / PM 重排），这是 scrollTop 写入检测抓不到的另一半
@@ -44,6 +48,17 @@
 //     ResizeObserver）/ font:loaded（webfont 上屏）/ host:attr（祖先
 //     style/class 翻转带旧值）——针对「32 块同身份 ±1 行、数秒后回退」
 //     的全文换行波，三个候选源一次定罪。
+//  8. 视口尺寸变化（v4.3 一等信号）：host 上的 ResizeObserver 记录
+//     viewport:resize（含 窗口级/容器级 来源判定）。滚动归因新增
+//     「尺寸变化引发」类别（优先级：用户输入 > 已知程序写入 > resize >
+//     钳制 > ghost）——侧栏开合/最大化还原/排版设置改版式引发的滚动是
+//     布局变化的合理结果（session:resize，info，不计 ghost 不弹告警）；
+//     尺寸未变、无输入、无写入的不明滚动仍判 ghost（灵敏度不降）。
+//     resize 因果窗内的 layout:shift / layout:height 同样降为 info 并带
+//     cause=resize 标记（分析器双重防御）。
+//  9. 帧统计（v4.3）：tick 顺带累计帧数 / >50ms 卡顿帧 / 最坏帧间隔 /
+//     按键→下一帧延迟（输入响应），scrollFrameStats() 快照供开发者模式
+//     心跳采样（相邻快照差分→MD-9xxx 性能异常）。常驻成本每帧几次加减。
 //
 // 接入：Editor.tsx 挂载 attachScrollWatch(滚动容器)——富文本/IR 模式是根
 // div .mditor-editor-host（真正 overflow:auto 的那层）；sv 模式它不滚
@@ -131,6 +146,15 @@ export function scrollCounters(): Record<string, number> {
 export function scrollDebugClear(): void {
   events.length = 0;
   counters.clear();
+  longtaskLog.length = 0;
+  frameStats.frames = 0;
+  frameStats.jankFrames = 0;
+  frameStats.worstGapMs = 0;
+  frameStats.inputLagEvents = 0;
+  frameStats.worstInputLagMs = 0;
+  lastTickAt = 0;
+  lastKeyAt = 0;
+  keyLagPending = false;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -191,8 +215,65 @@ export function classifyPmBatch(removed: number, added: number): "edit" | "shape
 export const STILL_CONFIRM_FRAMES = 5;
 /** 用户输入归因窗。 */
 export const USER_WINDOW_MS = 200;
+/** 用户改布局动作（点击/快捷键/拖拽）后的告警降级窗：窗口内的
+ *  layout:shift / layout:height 视为用户主动引发的重排——照常记录（info
+ *  级 + userInitiated 标记），但不再升为告警。 */
+export const LAYOUT_INTENT_WINDOW_MS = 500;
 /** 常规程序写入归因窗。 */
 export const WRITE_WINDOW_MS = 250;
+/**
+ * 视口尺寸变化的滚动归因窗（v4.3）：侧栏开合/最大化还原等布局变化引发的
+ * 滚动/位移通常在尺寸变化后 1~2 帧内发生；CSS 过渡期间 ResizeObserver
+ * 每帧刷新 lastResize，窗口自然顺延。与 LAYOUT_INTENT_WINDOW_MS 同为
+ * 500ms 量级——窗外的不明滚动仍判 ghost（灵敏度红线）。
+ */
+export const RESIZE_CAUSAL_WINDOW_MS = 500;
+
+/* --------------------------------------------------------------------------
+ * longtask 跨写入窗补偿（P2-5，2026-08-23 大文档定罪）：程序写入（如
+ * anchor-comp）之后主线程常被预热期 500~1200ms longtask 阻塞，rAF 恢复时
+ * 墙钟年龄已超 WRITE_WINDOW_MS，同一次写入的尾段被误归 ghost（MD-1001
+ * ↓3132px 实锤：lastWrite="anchor-comp@13464ms前"、heightDelta=0、非贴底）。
+ * 记录 longtask 时间区间，归因时从写入年龄中扣除被阻塞的时长——只有「真
+ * 实流逝的空闲时间」参与窗口判定（阻塞期与空闲期天然互补，无需上限）。
+ * ------------------------------------------------------------------------ */
+
+interface LongtaskSpan {
+  start: number;
+  end: number;
+}
+
+const longtaskLog: LongtaskSpan[] = [];
+/** longtask 区间保留时长（ms）。 */
+const LONGTASK_LOG_MS = 5000;
+
+/** PerformanceObserver longtask 回调里逐条登记（startTime 与
+ *  performance.now() 同源）。诊断纪律：永不抛错。 */
+export function noteLongtaskSpan(start: number, durationMs: number): void {
+  try {
+    if (!(durationMs > 0)) return;
+    longtaskLog.push({ start, end: start + durationMs });
+    const cutoff = performance.now() - LONGTASK_LOG_MS;
+    while (longtaskLog.length > 0 && longtaskLog[0].end < cutoff) {
+      longtaskLog.shift();
+    }
+  } catch {
+    /* never throw */
+  }
+}
+
+/** [since, now] 区间内被 longtask 阻塞的总时长（ms，区间重叠累计）。 */
+export function longtaskBlockedSince(
+  since: number,
+  now: number = performance.now()
+): number {
+  let sum = 0;
+  for (const sp of longtaskLog) {
+    sum += Math.max(0, Math.min(sp.end, now) - Math.max(sp.start, since));
+  }
+  return sum;
+}
+
 /** 平滑跳转类写入的归因窗：覆盖 App/svCodeMirror 侧 smoothJump 抑制窗口
  *  （scrollend / 用户 wheel / 1200ms 超时）全程 + 尾段余量。 */
 export const SMOOTH_JUMP_WINDOW_MS = 1250;
@@ -217,26 +298,42 @@ export interface SessionInput {
   delta: number;
   /** 本帧 scrollHeight 变化（相对上帧）。 */
   heightDelta: number;
+  /** 当前帧绝对 scrollTop（贴底钳制判定：收缩后是否恰停在新滚动上限）。 */
+  scrollTop: number;
+  /** 当前帧 scrollHeight / clientHeight（新滚动上限 = scrollHeight - clientHeight）。 */
+  scrollHeight: number;
+  clientHeight: number;
   userIntentAt: number;
   lastWrite: { tag: string; at: number } | null;
+  /** 写入以来被 longtask 阻塞的时长（ms，调用方按 longtaskBlockedSince 计
+   *  算）：写入年龄扣除它之后才是真实的空闲流逝时间（P2-5）。 */
+  longtaskDebt?: number;
+  /** 最近一次视口尺寸变化的时刻（performance.now 同源；null/缺省 = 无）。 */
+  resizeAt?: number | null;
+  /** 该次尺寸变化量（px，contentRect 口径）。 */
+  resizeDelta?: { dw: number; dh: number } | null;
   /** App 侧 smoothJump 抑制标志当前是否在位（host.dataset.smoothJump）。 */
   smoothJumpActive: boolean;
 }
 
 /** 会话判定结果。continue = 会话跨短暂静止（未达确认阈值）延续，不重判、
- *  不计数——longtask 阻断后恢复 / 平滑动画帧间停顿的尾段归属靠它。 */
+ *  不计数——longtask 阻断后恢复 / 平滑动画帧间停顿的尾段归属靠它。
+ *  resize = 视口尺寸变化引发的滚动（v4.3）：布局变化的合理结果，不计
+ *  ghost、不弹告警（info 事件保留研究价值）。 */
 export type SessionVerdict =
   | { type: "none" }
   | { type: "continue" }
   | { type: "user" }
   | { type: "write"; tag: string }
-  | { type: "clamp"; delta: number; heightDelta: number }
+  | { type: "resize"; dw: number; dh: number; delta: number }
+  | { type: "clamp"; delta: number; heightDelta: number; forced: boolean }
   | { type: "ghost" };
 
 /**
  * 推进一帧会话状态机：静止帧累计静止确认；运动帧在会话存活时延续，否则
- * 分类新会话（user > write > clamp > ghost）。clamp 会话立即关闭（微位移
- * 是单帧事件，紧随其后的更大位移需要独立分类，避免吞掉真 ghost）。
+ * 分类新会话（user > write > resize > clamp > ghost）。clamp 分微位移与贴底
+ * 钳制两类（见下方分支注释），会话均立即关闭（钳制是单帧事件，紧随其后
+ * 的其余位移需要独立分类，避免吞掉真 ghost）。
  */
 export function stepSession(
   state: SessionState,
@@ -263,16 +360,58 @@ export function stepSession(
     w != null &&
     isSmoothJumpTag(w.tag) &&
     (input.smoothJumpActive || input.now - w.at < SMOOTH_JUMP_WINDOW_MS);
-  if (w && (input.now - w.at < WRITE_WINDOW_MS || smoothAlive)) {
+  // 写入年龄扣除 longtask 阻塞时长（P2-5）：写入后主线程被阻塞期间不算
+  // 「流逝」——rAF 恢复时补偿尾段仍归属写入方，不再误判 ghost。
+  const writeAge =
+    input.now - (w?.at ?? input.now) - (input.longtaskDebt ?? 0);
+  if (w && (writeAge < WRITE_WINDOW_MS || smoothAlive)) {
     return {
       state: { tag: `write:${w.tag}`, stillFrames: 0 },
       verdict: { type: "write", tag: w.tag },
     };
   }
-  if (Math.abs(input.delta) < 2 && Math.abs(input.heightDelta) >= 1) {
+  // 视口尺寸变化引发的滚动（v4.3）：优先级在用户输入与已知写入之后、
+  // 钳制与 ghost 之前。侧栏开合/最大化还原/排版变更 → 重排 → 浏览器调
+  // 整 scrollTop，是布局变化的合理结果，不是「页面自己动」。窗口内的
+  // 滚动记 resize 会话（info 事件），窗外或无尺寸变化的仍走钳制/ghost
+  // 分支——本分支只消费「确有尺寸变化」这一硬信号，不会吞掉真 ghost。
+  if (
+    input.resizeAt != null &&
+    input.now - input.resizeAt < RESIZE_CAUSAL_WINDOW_MS
+  ) {
+    return {
+      state: { tag: "resize", stillFrames: 0 },
+      verdict: {
+        type: "resize",
+        dw: input.resizeDelta?.dw ?? 0,
+        dh: input.resizeDelta?.dh ?? 0,
+        delta: input.delta,
+      },
+    };
+  }
+  // 浏览器钳制（不计 ghost）两类签名：
+  //  * 微位移——|delta|<2px 且同帧高度变化 ≥1px（亚像素/收缩回弹噪音）；
+  //  * 贴底钳制（forced，任意幅度）——内容收缩（heightDelta≤-1）使旧位置
+  //    越过新滚动上限，scrollTop 被浏览器压回并恰好停在新上限。这个组合
+  //    只可能由 clamping 产生：点击按钮改排版/开合侧栏 → 全文重排收缩 →
+  //    页面「不得不滚动」，属合理行为（2026-08-23 用户反馈曾误判 ghost）。
+  //    停在其余位置的位移仍判 ghost（真有不明来源）。
+  const maxScroll = Math.max(0, input.scrollHeight - input.clientHeight);
+  const prevSt = input.scrollTop - input.delta;
+  const micro = Math.abs(input.delta) < 2 && Math.abs(input.heightDelta) >= 1;
+  const forced =
+    input.heightDelta <= -1 &&
+    prevSt > maxScroll + 0.5 &&
+    Math.abs(input.scrollTop - maxScroll) <= 1;
+  if (micro || forced) {
     return {
       state: { tag: "clamp", stillFrames: STILL_CONFIRM_FRAMES },
-      verdict: { type: "clamp", delta: input.delta, heightDelta: input.heightDelta },
+      verdict: {
+        type: "clamp",
+        delta: input.delta,
+        heightDelta: input.heightDelta,
+        forced,
+      },
     };
   }
   return { state: { tag: "ghost", stillFrames: 0 }, verdict: { type: "ghost" } };
@@ -302,7 +441,10 @@ export function lastScrollWrite(): { tag: string; at: number } | null {
 /* -------------------------------------------------------------------------- */
 
 /** 用户输入意图信号（真用户滚动必然先于滚动发生）：wheel / 触摸 / 滚动键 /
- *  pointerdown（滚动条拖拽起点无法区分目标，全部计入）。 */
+ *  pointerdown。v4.2.1 起 pointerdown 提到 window 级——点 host 外的按钮
+ *  （侧栏开合/排版设置/焦点模式……）改布局引发的钳制/重排同样属用户主动
+ *  行为；Ctrl·Alt·Meta 快捷键（Ctrl+\ 开侧栏等）同理。普通打字键不算：
+ *  打字引发的重排由钳制分类兜底，保持 ghost 对不明滚动的灵敏度。 */
 const USER_INPUT_KEYS = new Set([
   "PageUp",
   "PageDown",
@@ -339,6 +481,45 @@ export interface ScrollWatchStats {
 }
 
 const stats: ScrollWatchStats = { lastGhost: null, watching: false };
+
+/* --------------------------------------------------------------------------
+ * 帧统计（v4.3）：tick 顺带累计（常驻成本每帧几次加减），快照只读不清零
+ * ——消费者（开发者模式心跳）用相邻快照差分得到窗口内指标。
+ * ------------------------------------------------------------------------ */
+
+export interface ScrollFrameStats {
+  /** tick 帧数（rAF 空转也计——后台/失焦时自然趋零）。 */
+  frames: number;
+  /** 帧间隔 >50ms 的次数（掉帧卡顿证据）。 */
+  jankFrames: number;
+  /** 最坏帧间隔（ms）。 */
+  worstGapMs: number;
+  /** 按键→下一帧延迟 >100ms 的次数（输入响应卡顿证据）。 */
+  inputLagEvents: number;
+  /** 最坏按键→帧延迟（ms）。 */
+  worstInputLagMs: number;
+}
+
+const frameStats: ScrollFrameStats = {
+  frames: 0,
+  jankFrames: 0,
+  worstGapMs: 0,
+  inputLagEvents: 0,
+  worstInputLagMs: 0,
+};
+/** 输入延迟判定线：按键后下一帧超过此值才算「输入响应卡顿」。 */
+const INPUT_LAG_MS = 100;
+/** 卡顿帧判定线（与 longtask 的 50ms 门槛一致）。 */
+const JANK_GAP_MS = 50;
+
+let lastTickAt = 0;
+let lastKeyAt = 0;
+let keyLagPending = false;
+
+/** 帧统计快照（累计值；心跳侧自行差分）。 */
+export function scrollFrameStats(): ScrollFrameStats {
+  return { ...frameStats };
+}
 
 export function scrollWatchStats(): ScrollWatchStats {
   return stats;
@@ -628,16 +809,116 @@ export function attachScrollWatch(host: HTMLElement): () => void {
     /* never throw */
   }
 
+  let pointerHeld = false;
   const onUserIntent = () => {
     userIntentAt = performance.now();
   };
-  const onKey = (e: KeyboardEvent) => {
-    if (USER_INPUT_KEYS.has(e.key)) userIntentAt = performance.now();
+  const onPointerDown = () => {
+    pointerHeld = true;
+    userIntentAt = performance.now();
   };
+  const onPointerUp = () => {
+    pointerHeld = false;
+  };
+  // 按住拖拽（resizer 调宽等）期间持续刷新意图：长拖拽远超 200ms 归因窗，
+  // 每帧重排都该归属用户。e.buttons===0 说明按键已在窗外松开（无 pointerup
+  // 兜底），复位防「卡按住」长期压制告警。
+  const onPointerMove = (e: PointerEvent) => {
+    if (!pointerHeld) return;
+    if (e.buttons === 0) {
+      pointerHeld = false;
+      return;
+    }
+    userIntentAt = performance.now();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (USER_INPUT_KEYS.has(e.key) || e.ctrlKey || e.metaKey || e.altKey) {
+      userIntentAt = performance.now();
+    }
+    // 帧统计的输入延迟采样：普通打字键/滚动键记时刻，下一帧 tick 结算
+    // 「按键→上屏帧」延迟（输入响应卡顿证据，v4.3）。
+    if (e.key.length === 1 || USER_INPUT_KEYS.has(e.key)) {
+      lastKeyAt = performance.now();
+      keyLagPending = true;
+    }
+  };
+
+  // --- 视口尺寸变化（v4.3 一等信号）：host 上的 ResizeObserver。
+  // lastResize 每次回调都刷新（归因窗跟着过渡逐帧顺延）；事件发射按
+  // 300ms 节流（拖拽侧栏时 RO 每帧触发，不节流会冲掉事件环），原始次数
+  // 由 viewport:resize 计数器承载。来源判定：同帧 window 内宽高也变了
+  // → 窗口级（最大化/还原/DPI），否则容器级（侧栏/面板开合）。
+  let lastResize: {
+    at: number;
+    dw: number;
+    dh: number;
+    source: "window" | "container";
+  } | null = null;
+  let sizeObs: ResizeObserver | null = null;
+  let sizeW = -1;
+  let sizeH = -1;
+  let lastWinW = -1;
+  let lastWinH = -1;
+  let lastResizeEmitAt = 0;
+  try {
+    sizeObs = new ResizeObserver((entries) => {
+      try {
+        for (const en of entries) {
+          const w = en.contentRect.width;
+          const h = en.contentRect.height;
+          if (sizeW >= 0 && (Math.abs(w - sizeW) > 0.5 || Math.abs(h - sizeH) > 0.5)) {
+            const winChanged =
+              lastWinW >= 0 &&
+              (Math.abs(window.innerWidth - lastWinW) > 0.5 ||
+                Math.abs(window.innerHeight - lastWinH) > 0.5);
+            const source = winChanged ? "window" : "container";
+            lastResize = {
+              at: performance.now(),
+              dw: Math.round((w - sizeW) * 10) / 10,
+              dh: Math.round((h - sizeH) * 10) / 10,
+              source,
+            };
+            scrollCount("viewport:resize");
+            const now = performance.now();
+            if (now - lastResizeEmitAt >= 300) {
+              lastResizeEmitAt = now;
+              scrollEmit(
+                "viewport:resize",
+                `滚动视口尺寸 ${Math.round(sizeW)}×${Math.round(sizeH)} → ${Math.round(w)}×${Math.round(h)}（${lastResize.dw >= 0 ? "+" : ""}${lastResize.dw}×${lastResize.dh >= 0 ? "+" : ""}${lastResize.dh}，${source === "window" ? "窗口级" : "容器级"}）`,
+                {
+                  data: {
+                    from: { w: Math.round(sizeW), h: Math.round(sizeH) },
+                    to: { w: Math.round(w), h: Math.round(h) },
+                    dw: lastResize.dw,
+                    dh: lastResize.dh,
+                    source,
+                  },
+                }
+              );
+              openBlockWindow();
+            }
+          }
+          sizeW = w;
+          sizeH = h;
+          lastWinW = window.innerWidth;
+          lastWinH = window.innerHeight;
+        }
+      } catch {
+        /* never throw */
+      }
+    });
+    sizeObs.observe(host);
+  } catch {
+    /* 环境不支持 ResizeObserver 则跳过（resize 归因降级为无信号） */
+  }
+
 
   host.addEventListener("wheel", onUserIntent, { passive: true, capture: true });
   host.addEventListener("touchstart", onUserIntent, { passive: true, capture: true });
-  host.addEventListener("pointerdown", onUserIntent, { passive: true, capture: true });
+  window.addEventListener("pointerdown", onPointerDown, { passive: true, capture: true });
+  window.addEventListener("pointermove", onPointerMove, { passive: true, capture: true });
+  window.addEventListener("pointerup", onPointerUp, { passive: true, capture: true });
+  window.addEventListener("pointercancel", onPointerUp, { passive: true, capture: true });
   window.addEventListener("keydown", onKey, true);
 
   /** 二分找第一个底边越过视口顶的顶层块（ProseMirror 子块按文档序排列，
@@ -676,20 +957,50 @@ export function attachScrollWatch(host: HTMLElement): () => void {
       const h = host.scrollHeight;
       const moving = Math.abs(st - prevSt) > 0.5;
 
+      // --- 帧统计（v4.3）：帧间隔 / 卡顿帧 / 输入→帧延迟（纯计数，常驻）。
+      if (lastTickAt > 0) {
+        const gap = now - lastTickAt;
+        frameStats.frames += 1;
+        if (gap > JANK_GAP_MS) frameStats.jankFrames += 1;
+        if (gap > frameStats.worstGapMs) frameStats.worstGapMs = gap;
+      }
+      lastTickAt = now;
+      if (keyLagPending && lastKeyAt > 0) {
+        const lag = now - lastKeyAt;
+        if (lag >= 0 && lag < 5000) {
+          if (lag > INPUT_LAG_MS) frameStats.inputLagEvents += 1;
+          if (lag > frameStats.worstInputLagMs) frameStats.worstInputLagMs = lag;
+        }
+        keyLagPending = false;
+      }
+
       ensurePmObserver(now);
 
-      // --- 滚动会话归因（v3.9.5 状态机）：静止→运动的第一帧判定发起者；
-      // 会话以连续 STILL_CONFIRM_FRAMES 帧静止确认关闭（longtask 阻断后的
-      // 尾段恢复、平滑动画帧间停顿不再重判），微位移与平滑跳转尾段有专属
-      // 分类（clamp / 扩展归因窗），ghost 只留给真正不明的滚动。
+      // --- 滚动会话归因（v3.9.5 状态机 + v4.3 resize 类）：静止→运动的
+      // 第一帧判定发起者；会话以连续 STILL_CONFIRM_FRAMES 帧静止确认关闭
+      // （longtask 阻断后的尾段恢复、平滑动画帧间停顿不再重判），微位移与
+      // 平滑跳转尾段有专属分类（clamp / 扩展归因窗），视口尺寸变化引发
+      // 的滚动记 resize 会话，ghost 只留给真正不明的滚动。
+      const resizeActive =
+        lastResize != null && now - lastResize.at < RESIZE_CAUSAL_WINDOW_MS;
       const step = stepSession(
         { tag: sessionTag, stillFrames: sessionStill },
         {
           now,
           delta: st - prevSt,
           heightDelta: h - prevH,
+          scrollTop: st,
+          scrollHeight: h,
+          clientHeight: host.clientHeight,
           userIntentAt,
           lastWrite: recentWrite,
+          longtaskDebt: recentWrite
+            ? longtaskBlockedSince(recentWrite.at, now)
+            : 0,
+          resizeAt: resizeActive ? lastResize!.at : null,
+          resizeDelta: resizeActive
+            ? { dw: lastResize!.dw, dh: lastResize!.dh }
+            : null,
           smoothJumpActive: host.dataset.smoothJump !== undefined,
         }
       );
@@ -705,14 +1016,37 @@ export function attachScrollWatch(host: HTMLElement): () => void {
         scrollCount("session.user");
       } else if (step.verdict.type === "write") {
         scrollCount(`session.write.${step.verdict.tag}`);
+      } else if (step.verdict.type === "resize") {
+        // 视口尺寸变化引发的滚动（v4.3）：布局变化的合理结果——照常记录
+        // （info，保留研究价值），不计 ghost、不弹告警。
+        scrollCount("session.resize");
+        scrollEmit(
+          "session:resize",
+          `视口尺寸变化引发滚动 ${step.verdict.delta >= 0 ? "↓" : "↑"} ${Math.abs(step.verdict.delta).toFixed(0)}px（视口 ${step.verdict.dw >= 0 ? "+" : ""}${step.verdict.dw}×${step.verdict.dh >= 0 ? "+" : ""}${step.verdict.dh}，不计 ghost）`,
+          {
+            data: {
+              delta: Math.round(step.verdict.delta),
+              dw: step.verdict.dw,
+              dh: step.verdict.dh,
+              scrollTop: Math.round(st),
+              lastWrite: recentWrite
+                ? `${recentWrite.tag}@${Math.round(now - recentWrite.at)}ms前`
+                : null,
+            },
+          }
+        );
+        openBlockWindow();
       } else if (step.verdict.type === "clamp") {
         scrollEmit(
           "layout:clamp",
-          `微位移 ${step.verdict.delta >= 0 ? "↓" : "↑"}${Math.abs(step.verdict.delta).toFixed(1)}px（同帧高度 ${step.verdict.heightDelta >= 0 ? "+" : ""}${Math.round(step.verdict.heightDelta)}px，clamping 型，不计 ghost）`,
+          step.verdict.forced
+            ? `贴底钳制 ${step.verdict.delta >= 0 ? "↓" : "↑"}${Math.abs(step.verdict.delta).toFixed(0)}px（内容收缩 ${Math.round(step.verdict.heightDelta)}px，scrollTop 被压回新上限，不计 ghost）`
+            : `微位移 ${step.verdict.delta >= 0 ? "↓" : "↑"}${Math.abs(step.verdict.delta).toFixed(1)}px（同帧高度 ${step.verdict.heightDelta >= 0 ? "+" : ""}${Math.round(step.verdict.heightDelta)}px，clamping 型，不计 ghost）`,
           {
             data: {
               delta: Math.round(step.verdict.delta),
               heightDelta: Math.round(step.verdict.heightDelta),
+              forced: step.verdict.forced,
               scrollTop: Math.round(st),
               lastWrite: recentWrite
                 ? `${recentWrite.tag}@${Math.round(now - recentWrite.at)}ms前`
@@ -737,6 +1071,11 @@ export function attachScrollWatch(host: HTMLElement): () => void {
             atBottom: st + host.clientHeight >= h - 2,
             lastWrite: recentWrite
               ? `${recentWrite.tag}@${Math.round(now - recentWrite.at)}ms前`
+              : null,
+            // v4.3：定罪上下文补充——最近一次视口尺寸变化（窗口外远处则
+            // 不带，证明「非 resize 因果窗内」）。
+            resize: resizeActive
+              ? `viewport:resize@${Math.round(now - lastResize!.at)}ms前`
               : null,
           },
         };
@@ -821,6 +1160,14 @@ export function attachScrollWatch(host: HTMLElement): () => void {
       }
 
       // --- 文档高度突变（c-v 高度重估 / 图片加载 / 大改写）；与同帧位移合并。
+      // 用户刚改过布局（点击/快捷键/拖拽中，500ms 内）或视口刚发生尺寸变化
+      // （v4.3：侧栏开合/最大化还原等，窗口外无点击也能命中）：随后的重排
+      // 位移/高度变化是预期结果——照常记录（日志/面板可见），但降为 info
+      // 不弹告警卡（userInitiated / cause=resize 标记供分析器兜底，防 emit
+      // 侧规则漂移）。
+      const userInitiated =
+        pointerHeld || now - userIntentAt < LAYOUT_INTENT_WINDOW_MS;
+      const resizeCaused = resizeActive;
       const hDelta = h - prevH;
       const heightHit = Math.abs(hDelta) > 8;
       if (shift != null && heightHit) {
@@ -829,7 +1176,10 @@ export function attachScrollWatch(host: HTMLElement): () => void {
           "layout:shift",
           `视口内容位移 ${shift >= 0 ? "↓" : "↑"} ${Math.abs(shift).toFixed(0)}px（scrollTop 未变）· 同帧文档高度 ${prevH} → ${h}（${hDelta >= 0 ? "+" : ""}${Math.round(hDelta)}px）${shiftCompensated ? ` · 已补偿 ${Math.round(shiftCompensated)}px` : ""}`,
           {
-            level: Math.abs(shift) > 24 ? "warn" : "info",
+            level:
+              Math.abs(shift) > 24 && !userInitiated && !resizeCaused
+                ? "warn"
+                : "info",
             data: {
               delta: Math.round(shift),
               heightDelta: Math.round(hDelta),
@@ -838,6 +1188,8 @@ export function attachScrollWatch(host: HTMLElement): () => void {
               tag: shiftTag,
               session: sessionTag,
               compensated: shiftCompensated || undefined,
+              userInitiated: userInitiated || undefined,
+              cause: resizeCaused ? "resize" : undefined,
             },
           }
         );
@@ -854,6 +1206,8 @@ export function attachScrollWatch(host: HTMLElement): () => void {
                 delta: Math.round(hDelta),
                 scrollTop: Math.round(st),
                 session: sessionTag,
+                userInitiated: userInitiated || undefined,
+                cause: resizeCaused ? "resize" : undefined,
               },
             }
           );
@@ -864,13 +1218,18 @@ export function attachScrollWatch(host: HTMLElement): () => void {
             "layout:shift",
             `视口内容位移 ${shift >= 0 ? "↓" : "↑"} ${Math.abs(shift).toFixed(0)}px（scrollTop 未变）${shiftCompensated ? ` · 已补偿 ${Math.round(shiftCompensated)}px` : ""}`,
             {
-              level: Math.abs(shift) > 24 ? "warn" : "info",
+              level:
+                Math.abs(shift) > 24 && !userInitiated && !resizeCaused
+                  ? "warn"
+                  : "info",
               data: {
                 delta: Math.round(shift),
                 scrollTop: Math.round(st),
                 height: Math.round(h),
                 tag: shiftTag,
                 compensated: shiftCompensated || undefined,
+                userInitiated: userInitiated || undefined,
+                cause: resizeCaused ? "resize" : undefined,
               },
             }
           );
@@ -888,11 +1247,13 @@ export function attachScrollWatch(host: HTMLElement): () => void {
   };
   raf = requestAnimationFrame(tick);
 
-  // 长任务（主线程阻塞 >50ms）：滚动卡顿的直接证据。
+  // 长任务（主线程阻塞 >50ms）：滚动卡顿的直接证据；区间同步登记进
+  // longtaskLog，供写入归因窗扣除被阻塞时长（P2-5）。
   let po: PerformanceObserver | null = null;
   try {
     po = new PerformanceObserver((list) => {
       for (const entry of list.getEntries()) {
+        noteLongtaskSpan(entry.startTime, entry.duration);
         scrollEmit("perf:longtask", `主线程阻塞 ${Math.round(entry.duration)}ms`, {
           level: entry.duration > 150 ? "warn" : "info",
           data: { duration: Math.round(entry.duration), name: entry.name },
@@ -923,6 +1284,8 @@ export function attachScrollWatch(host: HTMLElement): () => void {
     widthObs?.disconnect();
     widthObs = null;
     widthObsRoot = null;
+    sizeObs?.disconnect();
+    sizeObs = null;
     attrObs?.disconnect();
     attrObs = null;
     try {
@@ -932,7 +1295,10 @@ export function attachScrollWatch(host: HTMLElement): () => void {
     }
     host.removeEventListener("wheel", onUserIntent, { capture: true });
     host.removeEventListener("touchstart", onUserIntent, { capture: true });
-    host.removeEventListener("pointerdown", onUserIntent, { capture: true });
+    window.removeEventListener("pointerdown", onPointerDown, { capture: true });
+    window.removeEventListener("pointermove", onPointerMove, { capture: true });
+    window.removeEventListener("pointerup", onPointerUp, { capture: true });
+    window.removeEventListener("pointercancel", onPointerUp, { capture: true });
     window.removeEventListener("keydown", onKey, true);
     po?.disconnect();
   };
@@ -947,6 +1313,7 @@ export function attachScrollDebugGlobal(): void {
       clear: scrollDebugClear,
       recent: lastScrollWrite,
       stats: scrollWatchStats,
+      frameStats: scrollFrameStats,
     };
   } catch {
     /* never throw */

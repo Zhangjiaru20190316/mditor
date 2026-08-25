@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { watch, readTextFile } from "@tauri-apps/plugin-fs";
+import { sysEmit } from "../lib/sysDebug";
 import { dirname, basename, toPosix } from "../lib/path-shim";
 import { confirmDialog } from "../lib/dialogs";
 
@@ -101,8 +102,14 @@ export function useFileWatcher(opts: Options) {
         lastSavedSigRef.current = signature(disk);
         o.onReload(disk);
         o.onStatus?.("已从外部同步", "sync");
-      } catch {
-        // file may have been removed mid-read; ignore quietly
+      } catch (err) {
+        // file may have been removed mid-read; ignore quietly — but leave a
+        // diagnostic trace (v4.3): this catch previously swallowed everything.
+        sysEmit(
+          "file:read-fail",
+          `外部修改回读失败 ${o.path ?? "?"}`,
+          { level: "warn", data: { label: "watch-reload", err: String(err).slice(0, 200) } }
+        );
       }
     };
 
@@ -132,9 +139,14 @@ export function useFileWatcher(opts: Options) {
         return;
       }
       unwatch = un;
-    }).catch(() => {
+    }).catch((err) => {
       // watching can fail on some network/privileged dirs — fail soft,
       // the editor still works, just without live reload.
+      sysEmit(
+        "file:watch-fail",
+        `文件监听启动失败 ${dir}`,
+        { level: "warn", data: { dir, err: String(err).slice(0, 200) } }
+      );
     });
 
     return () => {

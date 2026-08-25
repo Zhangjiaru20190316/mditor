@@ -11,6 +11,7 @@ import {
   mkdir,
 } from "@tauri-apps/plugin-fs";
 import { dirname, basename, join, extname } from "./path-shim";
+import { tracedIo } from "./ipcTrace";
 
 export interface TreeNode {
   name: string;
@@ -36,22 +37,36 @@ export function isMarkdown(name: string): boolean {
 
 /** Show an open-file dialog and return {path, content} or null if cancelled. */
 export async function openMd(): Promise<{ path: string; content: string } | null> {
-  const path = await open({ multiple: false, filters: MD_FILTERS });
+  const path = await tracedIo(
+    "ipc:dialog",
+    "openMd:打开文件对话框",
+    () => open({ multiple: false, filters: MD_FILTERS }),
+    { slowMs: Infinity }
+  );
   if (!path || typeof path !== "string") return null;
-  const content = await readTextFile(path);
+  const content = await tracedIo("file:read", `读取 ${basename(path)}`, () =>
+    readTextFile(path)
+  );
   return { path, content };
 }
 
 /** Pick a workspace folder. Returns absolute path or null. */
 export async function pickFolder(): Promise<string | null> {
-  const p = await open({ directory: true, multiple: false });
+  const p = await tracedIo(
+    "ipc:dialog",
+    "pickFolder:选择文件夹对话框",
+    () => open({ directory: true, multiple: false }),
+    { slowMs: Infinity }
+  );
   if (!p || typeof p !== "string") return null;
   return p;
 }
 
 /** Save text to an existing path. */
 export async function saveMd(path: string, content: string): Promise<void> {
-  await writeTextFile(path, content);
+  await tracedIo("file:write", `保存 ${basename(path)}`, () =>
+    writeTextFile(path, content)
+  );
 }
 
 /**
@@ -62,12 +77,16 @@ export async function saveMdAs(
   content: string,
   suggestedName = "untitled.md"
 ): Promise<string | null> {
-  const path = await save({
-    defaultPath: suggestedName,
-    filters: MD_FILTERS,
-  });
+  const path = await tracedIo(
+    "ipc:dialog",
+    "saveMdAs:另存为对话框",
+    () => save({ defaultPath: suggestedName, filters: MD_FILTERS }),
+    { slowMs: Infinity }
+  );
   if (!path) return null;
-  await writeTextFile(path, content);
+  await tracedIo("file:write", `另存 ${basename(path)}`, () =>
+    writeTextFile(path, content)
+  );
   return path;
 }
 
@@ -89,7 +108,9 @@ export async function readDirLevel(
   const out: TreeNode[] = [];
   let entries: Awaited<ReturnType<typeof readDir>>;
   try {
-    entries = await readDir(dir);
+    entries = await tracedIo("file:read", `列目录 ${basename(dir)}`, () =>
+      readDir(dir)
+    );
   } catch {
     return out; // not a directory, or unreadable
   }
@@ -189,5 +210,5 @@ export function baseName(path: string): string {
 
 /** Ensure a directory exists, creating it (and parents) if needed. */
 export async function ensureDir(path: string): Promise<void> {
-  if (!(await exists(path))) await mkdir(path, { recursive: true });
+  if (!(await exists(path))) await tracedIo("file:mut", `建目录 ${path}`, () => mkdir(path, { recursive: true }));
 }

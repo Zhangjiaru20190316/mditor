@@ -53,6 +53,7 @@ pub mod menu_ids {
     pub const NEW_TEMPLATE: &str = "file_new_template";
     pub const OPEN: &str = "file_open";
     pub const OPEN_FOLDER: &str = "file_open_folder";
+    pub const ADD_FOLDER: &str = "file_add_folder";
     pub const SAVE: &str = "file_save";
     pub const SAVE_AS: &str = "file_save_as";
     pub const EXPORT_PDF: &str = "file_export_pdf";
@@ -137,6 +138,7 @@ pub fn run() {
                     .text(NEW_TEMPLATE, "从模板新建…")
                     .text(OPEN, "打开文件…")
                     .text(OPEN_FOLDER, "打开文件夹…")
+                    .text(ADD_FOLDER, "添加文件夹到工作区…")
                     .separator()
                     .text(SAVE, "保存")
                     .text(SAVE_AS, "另存为…")

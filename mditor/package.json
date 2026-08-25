@@ -1,7 +1,7 @@
 {
   "name": "mditor",
   "private": true,
-  "version": "4.2.1",
+  "version": "4.4.0",
   "type": "module",
   "description": "Mditor — a local-first Markdown editor inspired by Typora (Tauri 2 + React + Milkdown).",
   "scripts": {

@@ -18,6 +18,7 @@
 // 不可感知，不占预算。
 
 import { contentFingerprint } from "./parseShared";
+import { sysCount } from "./sysDebug";
 
 /** 单条目以源文本字符数计的预算近似（UTF-16 下 ~2×该值的堆占用）。 */
 const MAX_TOTAL_CHARS = 8_000_000;
@@ -70,13 +71,17 @@ export function putDoc(content: string, json: unknown, schemaSig: string): void 
   cache.set(fp, { fp, json, chars: content.length, schemaSig });
   totalChars += content.length;
   evictToBudget();
+  sysCount("cache.put");
 }
 
 /** 命中则返回文档 JSON（并刷新 LRU），否则 null。schema 签名不匹配视为未命中。 */
 export function takeDoc(content: string, schemaSig: string): unknown | null {
   const fp = contentFingerprint(content);
   const entry = cache.get(fp);
-  if (!entry) return null;
+  if (!entry) {
+    sysCount("cache.miss");
+    return null;
+  }
   if (entry.schemaSig !== schemaSig) {
     cache.delete(fp);
     totalChars -= entry.chars;
@@ -85,6 +90,7 @@ export function takeDoc(content: string, schemaSig: string): unknown | null {
   // LRU 刷新：删除后重新插入，使其成为最新访问项。
   cache.delete(fp);
   cache.set(fp, entry);
+  sysCount("cache.hit");
   return entry.json;
 }
 

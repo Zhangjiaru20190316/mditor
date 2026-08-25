@@ -13,6 +13,7 @@ import {
   type RecentFile,
   type Settings,
 } from "../types";
+import { normalizeStoredWorkspaces } from "./workspaces";
 
 const STORE_FILE = "mditor.json";
 
@@ -118,12 +119,48 @@ export async function clearRecentPath(path: string): Promise<void> {
   await store.save();
 }
 
-export async function getWorkspace(): Promise<string | null> {
-  return (await store.get<string>("workspace")) ?? null;
+// ---- 工作区（v4.4 起多根：`workspaces: string[]`） --------------------------
+//
+// 旧版只存单值 `workspace: string`。读取时优先用新键；新键缺失则做一次性
+// 迁移（旧值 → [旧值]，写回新键并删除旧键），幂等 —— 迁移后旧键不存在，
+// 再次启动直接命中新键。
+
+export async function getWorkspaces(): Promise<string[]> {
+  const raw = await store.get<unknown>("workspaces");
+  const list = normalizeStoredWorkspaces(raw);
+  if (list !== null) return list;
+  // 旧版单值迁移（新键未写入或写坏时回落）。
+  const legacy = await store.get<string>("workspace");
+  if (typeof legacy === "string" && legacy.trim() !== "") {
+    await store.set("workspaces", [legacy]);
+    await store.delete("workspace");
+    await store.save();
+    return [legacy];
+  }
+  return [];
 }
 
-export async function setWorkspace(path: string | null): Promise<void> {
-  if (path === null) await store.delete("workspace");
-  else await store.set("workspace", path);
+export async function setWorkspaces(paths: string[]): Promise<void> {
+  await store.set("workspaces", paths);
+  await store.save();
+}
+
+// 最近工作区（快速重开）：与 `recent` 相同的内存镜像 + 去重置顶模式，
+// 只是列表短得多（8 条足够常用库轮换）。
+let recentWsCache: string[] | null = null;
+
+export async function loadRecentWorkspaces(): Promise<string[]> {
+  if (recentWsCache) return recentWsCache;
+  const stored = await store.get<string[]>("recentWorkspaces");
+  recentWsCache = Array.isArray(stored) ? stored : [];
+  return recentWsCache;
+}
+
+export async function pushRecentWorkspace(path: string): Promise<void> {
+  const list = await loadRecentWorkspaces();
+  if (list[0] === path) return;
+  const trimmed = [path, ...list.filter((p) => p !== path)].slice(0, 8);
+  recentWsCache = trimmed;
+  await store.set("recentWorkspaces", trimmed);
   await store.save();
 }

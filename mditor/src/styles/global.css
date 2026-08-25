@@ -594,6 +594,35 @@ body.is-resizing .sidebar {
   border-radius: var(--radius-m);
   cursor: pointer;
 }
+/* 空态「最近工作区」快速重开（V4.4）。限定 .sb-empty 前缀抬高特异性，
+   否则上面的 .sb-empty button 主按钮样式会盖住这些次要按钮。 */
+.sb-empty .sb-recent-ws {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sb-empty .sb-recent-ws-title {
+  margin: 0;
+  font-size: var(--font-size-s);
+  color: var(--fg-muted);
+}
+.sb-empty .sb-recent-ws-item {
+  align-self: stretch;
+  text-align: left;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+  border-radius: var(--radius-m);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-empty .sb-recent-ws-item:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 
 /* file tree */
 .ft-root,
@@ -791,6 +820,63 @@ body.is-resizing .sidebar {
      文件树，文件树自身的滚动重排也不会反向影响主区。配合 .ft-row 的 memo
      化，滚动时只重绘可见行，长工作区下保持顺滑。 */
   contain: layout paint style;
+}
+/* ---- V4.4 multi-root sections：每个工作区根一个可折叠分区（VS Code 式） ---- */
+.ft-section {
+  border-top: 1px solid var(--border);
+}
+.ft-section:first-child {
+  border-top: none;
+}
+.ft-section-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 4px 0;
+  padding: 4px 6px;
+  border-radius: var(--radius-m);
+  cursor: pointer;
+  font-size: var(--font-size-m);
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  user-select: none;
+}
+.ft-section-head:hover {
+  background: var(--hover);
+}
+.ft-section-ico {
+  flex-shrink: 0;
+  color: var(--fg-muted);
+}
+.ft-section-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 「从工作区移除该根」：hover 区头才显现（危险色高亮，磁盘不受影响） */
+.ft-section-x {
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  border-radius: var(--radius-m);
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.ft-section-head:hover .ft-section-x {
+  opacity: 1;
+}
+.ft-section-x:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 /* checkbox in batch mode */
 .ft-check {

@@ -1,5 +1,6 @@
-// 侧边栏「搜索」面板（V3.6 跨文件搜索）：在当前工作区递归扫描 .md 文件，
-// 按行匹配 query，按文件分组展示；点击命中行打开文件并跳到对应位置。
+// 侧边栏「搜索」面板（V3.6 跨文件搜索）：在工作区（V4.4 起可多根）递归
+// 扫描 .md 文件，按行匹配 query，按文件分组展示；点击命中行打开文件并跳
+// 到对应位置。
 //
 // 输入 300ms 防抖后自动搜索（复用上一次结果不重扫）；显示扫描/命中统计与
 // 截断提示（见 lib/workspaceSearch 的上限说明）。React.memo：App 打字期间
@@ -7,15 +8,15 @@
 
 import { memo, useEffect, useRef, useState } from "react";
 import {
-  searchWorkspace,
+  searchWorkspaces,
   type FileHits,
   type WorkspaceSearchResult,
 } from "../lib/workspaceSearch";
 import type { SearchHit } from "../lib/workspaceSearch";
 
 interface Props {
-  /** 工作区根目录；null 时显示空态。 */
-  workspace: string | null;
+  /** 工作区根目录列表（多根）；空数组时显示空态。 */
+  workspaces: string[];
   /** 「从工作区移除」的路径集合。 */
   excludedPaths: Set<string>;
   /** 打开文件并跳到命中行（App 负责打开标签页与定位）。 */
@@ -33,7 +34,7 @@ const EMPTY: WorkspaceSearchResult = {
 };
 
 export const WorkspaceSearch = memo(function WorkspaceSearch({
-  workspace,
+  workspaces,
   excludedPaths,
   onOpenResult,
 }: Props) {
@@ -42,23 +43,28 @@ export const WorkspaceSearch = memo(function WorkspaceSearch({
   const [result, setResult] = useState<WorkspaceSearchResult>(EMPTY);
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
-  // 上一次实际执行搜索的 (query, caseSensitive)，避免无关重渲染触发重扫。
+  // 上一次实际执行搜索的 (query, caseSensitive, 搜索范围)，避免无关重渲染
+  // 触发重扫；范围进 key 让「搜索后新增/移除根」也能触发重扫。
   const lastSearchRef = useRef("");
+  const hasWs = workspaces.length > 0;
+  // 范围签名：根列表 + 排除项全量内容（size 只反映数量，换路径不增减时
+  // 也要触发重扫）。两者都只有几条，join 成本可忽略。
+  const scopeKey = `${workspaces.join("\n")}|${Array.from(excludedPaths).join("\n")}`;
 
   useEffect(() => {
     const q = query.trim();
-    if (!workspace || !q) {
+    if (!hasWs || !q) {
       setResult(EMPTY);
       setSearched(false);
       lastSearchRef.current = "";
       return;
     }
-    const key = `${caseSensitive ? "A" : "a"}:${q}`;
+    const key = `${caseSensitive ? "A" : "a"}:${q}:${scopeKey}`;
     if (lastSearchRef.current === key) return;
     const timer = window.setTimeout(() => {
       lastSearchRef.current = key;
       setSearching(true);
-      searchWorkspace(workspace, q, { caseSensitive, excluded: excludedPaths })
+      searchWorkspaces(workspaces, q, { caseSensitive, excluded: excludedPaths })
         .then((r) => {
           setResult(r);
           setSearched(true);
@@ -70,7 +76,7 @@ export const WorkspaceSearch = memo(function WorkspaceSearch({
         .finally(() => setSearching(false));
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [query, caseSensitive, workspace, excludedPaths]);
+  }, [query, caseSensitive, workspaces, excludedPaths, hasWs, scopeKey]);
 
   // 展示上限：截到 MAX_RENDERED_HITS 行。
   let rendered = 0;
@@ -90,9 +96,9 @@ export const WorkspaceSearch = memo(function WorkspaceSearch({
       <div className="ws-input-row">
         <input
           className="ws-input"
-          placeholder={workspace ? "在工作区文件中搜索…" : "先打开一个文件夹"}
+          placeholder={hasWs ? "在工作区文件中搜索…" : "先打开一个文件夹"}
           value={query}
-          disabled={!workspace}
+          disabled={!hasWs}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Escape") setQuery("");
@@ -142,7 +148,7 @@ export const WorkspaceSearch = memo(function WorkspaceSearch({
         )}
         {!searched && (
           <div className="ws-empty">
-            {workspace
+            {hasWs
               ? "输入关键词，在工作区所有 Markdown 文件中搜索"
               : "打开文件夹后即可跨文件搜索"}
           </div>

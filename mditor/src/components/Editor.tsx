@@ -28,6 +28,11 @@ import { useMemoryGuard } from "../hooks/useMemoryGuard";
 import { BlockContextMenu } from "./BlockContextMenu";
 import { persistImage } from "../lib/imageManager";
 import { attachScrollWatch, noteScrollWrite } from "../lib/scrollDebug";
+import {
+  captureViewportAnchor,
+  scrollToViewportAnchor,
+  type ViewportAnchor,
+} from "../lib/viewportAnchor";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { basename } from "../lib/path-shim";
@@ -289,9 +294,13 @@ export const Editor = memo(
   // 旧文档的 scrollTop 原样残留 —— 「打开新文件不从开头载入」的根因。
   // 会话级 Map 按 App 层 tab key（file-*/untitled-*）记忆两套容器各自的
   // scrollTop：离开的标签（onLoaded 开头，内容尚未替换）捕获，新文档归零，
-  // 切回的标签恢复。条目是双数字对象，会话量级可忽略，关闭标签不清理
-  // （同 key 重开自然复用）。
-  const scrollMemoRef = useRef(new Map<string, { rich: number; sv: number }>());
+  // 切回的标签恢复。rich 侧同时捕获「视口顶锚块」（v4.2.2）：big 文档重建
+  // 后视口上方全是 3em 占位，纯 scrollTop 恢复内容错位数千 px，锚块指纹把
+  // 落位与占位高度解耦（见 lib/viewportAnchor.ts）。条目是双数字 + 锚点对
+  // 象，会话量级可忽略，关闭标签不清理（同 key 重开自然复用）。
+  const scrollMemoRef = useRef(
+    new Map<string, { rich: number; sv: number; anchor: ViewportAnchor | null }>()
+  );
   const lastTabKeyRef = useRef<string | null>(null);
   // 恢复重试梯子的活动句柄（大文档高度未稳时恢复被钳制，等高度长齐补写）。
   const viewportRetryRef = useRef<number | null>(null);
@@ -312,14 +321,19 @@ export const Editor = memo(
     scrollMemoRef.current.set(key, {
       rich: scrollerRef.current?.scrollTop ?? 0,
       sv: svScrollerEl()?.scrollTop ?? 0,
+      anchor: captureViewportAnchor(scrollerRef.current),
     });
   }, [svScrollerEl]);
 
   /** 写视口顶部。恢复（>0）时挂 smoothJump 标志 —— 在位期间 anchor-comp
    *  绝不补偿（scrollDebug 惯例），重试窗口内的文档高度震荡不会被误补偿
-   *  成反向位移；收尾（达标/放弃/被人滚动）删除。 */
+   *  成反向位移；收尾（锚块精落地/达标/放弃/被人滚动）删除。
+   *
+   *  v4.2.2：带锚点时优先按「块身份」精落地——先写近似 scrollTop 落到大
+   *  致区域，重试里按指纹找回锚块并拉回捕获偏移（与视口上方 3em 占位高
+   *  度解耦）；找不到锚块退回旧的 scrollTop 重试梯子。 */
   const writeViewportTop = useCallback(
-    (richTop: number, svTop: number) => {
+    (richTop: number, svTop: number, anchor?: ViewportAnchor | null) => {
       // 换目标前先撤旧梯子：定时器与 smoothJump 残留会让 anchor-comp
       // 永久静默（快速连续切标签场景）。
       if (viewportRetryRef.current != null) {
@@ -340,8 +354,8 @@ export const Editor = memo(
         sv.scrollTop = svTop;
       }
       // 大文档恢复可能被当前高度钳制（代码块懒挂载/cvMemory 预热完成前
-      // 高度不足）：250ms×4 重试梯子，仅当视口没人动过（仍停在上次落点）
-      // 且未达目标才补写；目标 0 永远可达，无需梯子。
+      // 高度不足）：先试锚块精落地，不行再走 300ms×8 重试梯子补写；目标 0
+      // 永远可达，无需梯子。
       if (richTop > 0 && host) {
         let tries = 0;
         let lastLanded = host.scrollTop; // 初次写入后的实际落点（可能被钳）
@@ -349,10 +363,17 @@ export const Editor = memo(
           viewportRetryRef.current = null;
           const el = scrollerRef.current;
           if (!el) return;
+          // 锚块找回：big 文档重建期间内容可能还没落地（root-swap 异步），
+          // 找回成功即精确落位收尾；此后上方块变现由 prewarm-comp /
+          // anchor-comp 兜底。
+          if (anchor && scrollToViewportAnchor(el, anchor, "tab-restore")) {
+            delete el.dataset.smoothJump;
+            return;
+          }
           // 有人滚动过 → 尊重现状放弃；达标或次数用尽 → 收尾。
           const untouched = Math.abs(el.scrollTop - lastLanded) <= 2;
           const settled = Math.abs(el.scrollTop - richTop) <= 2;
-          if (!untouched || settled || tries >= 4) {
+          if (!untouched || settled || tries >= 8) {
             delete el.dataset.smoothJump;
             return;
           }
@@ -360,10 +381,12 @@ export const Editor = memo(
           noteScrollWrite("tab-restore");
           el.scrollTop = richTop;
           lastLanded = el.scrollTop;
-          viewportRetryRef.current = window.setTimeout(retry, 250);
+          viewportRetryRef.current = window.setTimeout(retry, 300);
         };
         host.dataset.smoothJump = "1";
-        viewportRetryRef.current = window.setTimeout(retry, 250);
+        // 首次重试收紧到 80ms：内容已就位的常规切换（big→big 换标签）一跳
+        // 即精确落位，不给用户看到近似位置的机会。
+        viewportRetryRef.current = window.setTimeout(retry, 80);
       }
     },
     [svScrollerEl]
@@ -375,7 +398,7 @@ export const Editor = memo(
     (tabKey: string | null) => {
       const memo = tabKey != null ? scrollMemoRef.current.get(tabKey) : undefined;
       lastTabKeyRef.current = tabKey;
-      writeViewportTop(memo ? memo.rich : 0, memo ? memo.sv : 0);
+      writeViewportTop(memo ? memo.rich : 0, memo ? memo.sv : 0, memo?.anchor ?? null);
     },
     [writeViewportTop]
   );

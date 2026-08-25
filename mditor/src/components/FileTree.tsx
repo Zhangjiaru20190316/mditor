@@ -2,11 +2,17 @@
 // folders, right-click context menu, inline rename, and batch multi-select
 // delete.
 //
+// V4.4 — MULTI-ROOT: the tree renders one collapsible section per workspace
+// root (VS Code style). All lazy state (childrenMap / expanded / loadingDirs)
+// is keyed by absolute path, which is unique across roots — so per-section
+// expansion survives adding/removing other roots, and the prune effect only
+// drops entries no longer under ANY root.
+//
 // T4 — LAZY directory expansion: instead of recursively reading the whole
 // workspace up front (slow + memory-heavy on large workspaces), only the root
 // level is read initially; each directory's children are read on demand the
 // first time it is expanded. Centralized state holds:
-//   * childrenMap : dir path → its loaded children (root included)
+//   * childrenMap : dir path → its loaded children (roots included)
 //   * expanded    : set of expanded dir paths
 //   * loadingDirs : dirs whose children are currently being read
 // FileNode reads its own `expanded`/`childNodes`/`loading` via
@@ -40,7 +46,12 @@ import {
   collectMdPathsFromDisk,
   type TreeNode,
 } from "../lib/tauriFs";
-import { join } from "../lib/path-shim";
+import { join, basename } from "../lib/path-shim";
+import {
+  isUnderRoot as isUnderPath,
+  samePathFold as samePath,
+  rootOf,
+} from "../lib/workspaces";
 import { prefetchFile } from "../lib/filePrefetch";
 import { confirmDialog } from "../lib/dialogs";
 import {
@@ -63,28 +74,13 @@ import {
   FolderOpenIcon,
   MarkdownFileIcon,
   ChevronRightIcon,
+  CloseIcon,
 } from "./icons";
 
 /** Notification fired up to App after a tree mutation. */
 export type TreeChange =
   | { type: "deleted"; paths: string[] }
   | { type: "renamed"; from: string; to: string };
-
-/** Case-insensitive path equality — Windows subsystems (dialog, fs watcher,
- *  tree reads) hand back the same path with drifting case, so exact ===
- *  comparisons intermittently miss. */
-function samePath(a: string, b: string): boolean {
-  return a === b || a.toLowerCase() === b.toLowerCase();
-}
-
-/** Whether `p` equals `root` or lives underneath it — case-insensitive, with
- *  a separator boundary so `C:\a` never matches `C:\ab`. Both sides are
- *  normalized to posix before comparing. */
-function isUnderPath(p: string, root: string): boolean {
-  const pl = p.toLowerCase().replace(/\\/g, "/").replace(/\/+$/, "");
-  const rl = root.toLowerCase().replace(/\\/g, "/").replace(/\/+$/, "");
-  return pl === rl || pl.startsWith(rl + "/");
-}
 
 /** Shallow entry-list equality (identity, length, path/name/isDir per row) —
  *  lets reload paths that found NO change keep the previous Map entry (and
@@ -110,7 +106,8 @@ function sameEntries(a: TreeNode[], b: TreeNode[]): boolean {
 const CHILD_CHUNK = 300;
 
 interface Props {
-  root: string;
+  /** 工作区根目录列表（多根，V4.4）。空列表时组件不该被渲染（App 显示空态）。 */
+  roots: string[];
   activePath: string | null;
   onOpen: (path: string) => void;
   onChanged?: (change: TreeChange) => void;
@@ -118,6 +115,8 @@ interface Props {
   excludedPaths: Set<string>;
   /** Remove a file/folder from the workspace tree without deleting it. */
   onExclude?: (path: string) => void;
+  /** 把一个根从工作区移除（多根区头的 ×；磁盘不受影响，App 负责持久化）。 */
+  onRemoveRoot?: (root: string) => void;
 }
 
 interface MenuState {
@@ -126,7 +125,7 @@ interface MenuState {
   node: TreeNode;
 }
 
-export const FileTree = memo(function FileTree({ root, activePath, onOpen, onChanged, excludedPaths, onExclude }: Props) {
+export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onChanged, excludedPaths, onExclude, onRemoveRoot }: Props) {
   // T4: lazy tree state — dir path → loaded children, the expanded set, and the
   // set of dirs whose children are currently being read (for a "…" placeholder).
   const [childrenMap, setChildrenMap] = useState<Map<string, TreeNode[]>>(new Map());
@@ -137,6 +136,9 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // 多根分区折叠状态（根路径集合）：折叠只是不渲染该区行，childrenMap/
+  // expanded 全部保留 —— 再展开零 IO、状态原样恢复。
+  const [sectionCollapsed, setSectionCollapsed] = useState<Set<string>>(new Set());
   // 闪现消息的自动清除定时器：每次 flash 先清前一个，避免批量文件操作 /
   // 监视器刷新突发时堆叠一堆 4s 定时器（各自持有 msg 闭包）。对齐 App.flashStatus。
   const noticeTimerRef = useRef<number | undefined>(undefined);
@@ -149,6 +151,8 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
   onOpenRef.current = onOpen;
   const onExcludeRef = useRef(onExclude);
   onExcludeRef.current = onExclude;
+  const onRemoveRootRef = useRef(onRemoveRoot);
+  onRemoveRootRef.current = onRemoveRoot;
   const excludedPathsRef = useRef(excludedPaths);
   excludedPathsRef.current = excludedPaths;
   // Ref mirrors of the lazy-map state, read inside stable callbacks/effects.
@@ -158,6 +162,12 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
   expandedRef.current = expanded;
   const loadingDirsRef = useRef(loadingDirs);
   loadingDirsRef.current = loadingDirs;
+  const rootsRef = useRef(roots);
+  rootsRef.current = roots;
+  // Effects depend on this JOINED key, not the array identity: App re-renders
+  // would otherwise re-run the load effect on every render for an identical
+  // root list (the array is rebuilt by state updates even when unchanged).
+  const rootsKey = roots.join("\n");
 
   // ---- row-level state subscription (v4.0.0) -------------------------------
   // Nested rows' expanded / childNodes / loading derive from the centralized
@@ -217,7 +227,7 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
     const dirs =
       childrenMapRef.current.size > 0
         ? Array.from(childrenMapRef.current.keys())
-        : [root];
+        : [...rootsRef.current];
     const token = ++refreshTokenRef.current;
     void (async () => {
       const results = await Promise.allSettled(
@@ -240,28 +250,33 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
         return changed ? n : prev;
       });
     })();
-  }, [root]);
+  }, []);
 
-  // ---- initial load + reload all loaded levels when root/excludedPaths change
-  // Always (re)load the root level and refresh any previously-loaded levels that
-  // still live under the current root; entries from an OLD workspace are
-  // dropped. `childrenMap` is never cleared elsewhere, so without this filter a
-  // workspace switch would keep re-reading the *old* root's directories and
-  // never load the new one — leaving the tree empty/stale until a manual ↻.
+  // ---- initial load + reload all loaded levels when roots/excludedPaths change
+  // Always (re)load EVERY root's top level and refresh any previously-loaded
+  // levels that still live under one of the current roots; entries from roots
+  // that were REMOVED are dropped. `childrenMap` is never cleared elsewhere, so
+  // without this filter removing a root would keep re-reading its directories —
+  // while other roots' expansion state must survive untouched (underAnyRoot).
   useEffect(() => {
     let cancelled = false;
-    const underRoot = (d: string): boolean => isUnderPath(d, root);
+    const roots = rootsRef.current;
+    const underAnyRoot = (d: string): boolean => roots.some((r) => isUnderPath(d, r));
     (async () => {
       const updates: Array<[string, TreeNode[]]> = [];
-      // Always load root first (covers both first mount and workspace switch).
-      try {
-        updates.push([root, await readDirLevel(root, excludedPaths)]);
-      } catch {
-        /* ignore unreadable */
+      // Always load every root's top level (covers first mount AND root-list
+      // changes: additions get their level, removals are pruned below).
+      for (const r of roots) {
+        try {
+          updates.push([r, await readDirLevel(r, excludedPaths)]);
+        } catch {
+          /* ignore unreadable */
+        }
+        if (cancelled) return;
       }
-      // Reload any other loaded levels still under the new root.
+      // Reload any other loaded levels still under one of the current roots.
       const loaded = Array.from(childrenMapRef.current.keys()).filter(
-        (d) => d !== root && underRoot(d)
+        (d) => !roots.some((r) => samePath(d, r)) && underAnyRoot(d)
       );
       for (const d of loaded) {
         try {
@@ -274,35 +289,43 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
       if (cancelled) return;
       setChildrenMap((prev) => {
         const n = new Map<string, TreeNode[]>();
-        // keep only entries still under root, then apply the fresh reads
-        for (const [k, v] of prev) if (underRoot(k)) n.set(k, v);
+        // keep only entries still under one of the roots, then apply fresh reads
+        for (const [k, v] of prev) if (underAnyRoot(k)) n.set(k, v);
         for (const [d, e] of updates) n.set(d, e);
         return n;
       });
-      // Drop stale expanded/loading entries that no longer live under root.
+      // Drop stale expanded/loading entries that no longer live under any root.
       const prune = (prev: Set<string>): Set<string> => {
         let changed = false;
         const n = new Set<string>();
         for (const p of prev) {
-          if (underRoot(p)) n.add(p);
+          if (underAnyRoot(p)) n.add(p);
           else changed = true;
         }
         return changed ? n : prev;
       };
       setExpanded(prune);
       setLoadingDirs(prune);
+      // A removed root's section-collapse flag is stale by definition.
+      setSectionCollapsed((prev) => {
+        const n = new Set<string>();
+        for (const p of prev) if (underAnyRoot(p)) n.add(p);
+        return n.size === prev.size ? prev : n;
+      });
     })();
     return () => {
       cancelled = true;
     };
-  }, [root, excludedPaths]);
+  }, [rootsKey, excludedPaths]);
 
   // ---- auto-load + expand the active file's ancestor chain ----------------
   // So the open file is always reachable in a lazily-loaded tree, walk up from
-  // its parent to root: ensure each ancestor's parent level is loaded, then add
-  // each ancestor to the expanded set.
+  // its parent to the root that CONTAINS it (multi-root: any of them), ensure
+  // each ancestor's parent level is loaded, then add each ancestor to the
+  // expanded set.
   useEffect(() => {
-    if (!activePath || !isUnderPath(activePath, root)) return;
+    const root = activePath ? rootOf(activePath, rootsRef.current) : null;
+    if (!activePath || !root) return;
     let cancelled = false;
     (async () => {
       const chain: string[] = [];
@@ -357,7 +380,8 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
     return () => {
       cancelled = true;
     };
-  }, [activePath, root]);
+    // rootsKey：根列表变化（如新根包含活动文件）时需要重走祖先链。
+  }, [activePath, rootsKey]);
 
   // path -> node lookup over the LOADED tree, rebuilt only when the map changes.
   const nodeIndex = useMemo(() => {
@@ -369,9 +393,9 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
         if (n.isDir) walk(childrenMap.get(n.path));
       }
     };
-    walk(childrenMap.get(root));
+    for (const r of roots) walk(childrenMap.get(r));
     return map;
-  }, [childrenMap, root]);
+  }, [childrenMap, roots]);
 
   // ---- expand / collapse (loads children on first expand) -----------------
   const toggleDir = useCallback(
@@ -458,9 +482,9 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
         if (n.isDir) walk(childrenMapRef.current.get(n.path));
       }
     };
-    walk(childrenMapRef.current.get(root));
+    for (const r of rootsRef.current) walk(childrenMapRef.current.get(r));
     setSelected(new Set(all));
-  }, [root]);
+  }, []);
 
   // ---- context menu ----
   const openMenu = useCallback((e: React.MouseEvent, node: TreeNode) => {
@@ -665,7 +689,21 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
     []
   );
 
-  const tree = childrenMap.get(root) ?? [];
+  // ---- multi-root sections ---------------------------------------------------
+  const toggleSection = useCallback((root: string) => {
+    setSectionCollapsed((prev) => {
+      const n = new Set(prev);
+      if (n.has(root)) n.delete(root);
+      else n.add(root);
+      return n;
+    });
+  }, []);
+
+  /** 工具栏「在工作区根目录新建」的目标根：活动文件所属根，否则第一个根。 */
+  const targetRoot =
+    (activePath ? rootOf(activePath, roots) : null) ?? roots[0] ?? "";
+  const targetName = targetRoot ? basename(targetRoot) || targetRoot : "";
+
   const selectedCount = selected.size;
 
   return (
@@ -674,15 +712,17 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
       <div className="ft-toolbar">
         <button
           className="ft-tool-btn"
-          title="新建文件（在工作区根目录）"
-          onClick={() => void createItem("file", root)}
+          title={`新建文件（在 ${targetName} 中）`}
+          disabled={!targetRoot}
+          onClick={() => void createItem("file", targetRoot)}
         >
           <NewFileIcon size={15} />
         </button>
         <button
           className="ft-tool-btn"
-          title="新建文件夹（在工作区根目录）"
-          onClick={() => void createItem("folder", root)}
+          title={`新建文件夹（在 ${targetName} 中）`}
+          disabled={!targetRoot}
+          onClick={() => void createItem("folder", targetRoot)}
         >
           <NewFolderIcon size={15} />
         </button>
@@ -718,37 +758,70 @@ export const FileTree = memo(function FileTree({ root, activePath, onOpen, onCha
         </div>
       )}
 
-      {/* ---- scrollable tree ---- */}
+      {/* ---- scrollable tree: one collapsible section per root ---- */}
       <div className="ft-scroll">
-        {tree.length === 0 ? (
-          <div className="ft-empty">没有 Markdown 文件</div>
-        ) : (
-          <ul className="ft-root" role="tree">
-            {tree.map((n) => (
-              <FileNode
-                key={n.path}
-                node={n}
-                depth={0}
-                activePath={activePath}
-                onOpen={openFile}
-                batchMode={batchMode}
-                selected={selected.has(n.path)}
-                isSelected={isSelected}
-                renamingPath={renamingPath}
-                isExpanded={isExpanded}
-                getChildNodes={getChildNodes}
-                isLoading={isLoading}
-                subscribeRow={subscribeRow}
-                onToggle={toggleDir}
-                onToggleSelect={toggleSelect}
-                onContext={openMenu}
-                onStartRename={startRename}
-                onCommitRename={commitRename}
-                onCancelRename={cancelRename}
-              />
-            ))}
-          </ul>
-        )}
+        {roots.map((r) => {
+          const collapsed = sectionCollapsed.has(r);
+          const rows = childrenMap.get(r) ?? [];
+          return (
+            <section key={r} className={`ft-section${collapsed ? " collapsed" : ""}`}>
+              <div
+                className="ft-section-head"
+                title={r}
+                onClick={() => toggleSection(r)}
+              >
+                <ChevronRightIcon
+                  size={12}
+                  className={`chevron${collapsed ? "" : " open"}`}
+                />
+                <FolderIcon size={14} className="ft-section-ico" />
+                <span className="ft-section-name">{basename(r) || r}</span>
+                {onRemoveRoot && (
+                  <button
+                    className="ft-section-x"
+                    title="从工作区移除此文件夹（磁盘文件不受影响）"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRemoveRootRef.current?.(r);
+                    }}
+                  >
+                    <CloseIcon size={11} />
+                  </button>
+                )}
+              </div>
+              {!collapsed &&
+                (rows.length === 0 ? (
+                  <div className="ft-empty">没有 Markdown 文件</div>
+                ) : (
+                  <ul className="ft-root" role="tree">
+                    {rows.map((n) => (
+                      <FileNode
+                        key={n.path}
+                        node={n}
+                        depth={0}
+                        activePath={activePath}
+                        onOpen={openFile}
+                        batchMode={batchMode}
+                        selected={selected.has(n.path)}
+                        isSelected={isSelected}
+                        renamingPath={renamingPath}
+                        isExpanded={isExpanded}
+                        getChildNodes={getChildNodes}
+                        isLoading={isLoading}
+                        subscribeRow={subscribeRow}
+                        onToggle={toggleDir}
+                        onToggleSelect={toggleSelect}
+                        onContext={openMenu}
+                        onStartRename={startRename}
+                        onCommitRename={commitRename}
+                        onCancelRename={cancelRename}
+                      />
+                    ))}
+                  </ul>
+                ))}
+            </section>
+          );
+        })}
       </div>
 
       {/* ---- right-click context menu ---- */}

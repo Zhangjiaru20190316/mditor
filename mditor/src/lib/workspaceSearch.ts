@@ -1,8 +1,10 @@
 // 跨文件搜索（V3.6）：在当前工作区递归扫描 .md 文件并按行匹配。
+// V4.4 起支持多根工作区：逐根收集文件，maxFiles 预算全局共享（根间公平，
+// 不会第一个根吃光预算）。
 //
 // 边界（防大目录失控）：
 //   * 跳过 `.`-隐藏目录、node_modules、dist、target、out、build（与文件树同规则 + 构建产物）
-//   * 最多扫描 MAX_FILES 个文件、每个文件 > MAX_FILE_BYTES 跳过
+//   * 最多扫描 MAX_FILES 个文件（多根共享）、每个文件 > MAX_FILE_BYTES 跳过
 //   * 每文件最多 MAX_HITS_PER_FILE 条命中，全局最多 MAX_TOTAL_HITS 条，超出置 truncated
 //
 // 纯函数部分（matchLine / collectHits）独立导出以便单测。
@@ -140,9 +142,9 @@ async function collectMdFiles(
   return out;
 }
 
-/** 在工作区内搜索 `query`。始终 resolves；单个文件读取失败跳过。 */
-export async function searchWorkspace(
-  root: string | null,
+/** 在工作区内搜索 `query`（可多根）。始终 resolves；单个文件读取失败跳过。 */
+export async function searchWorkspaces(
+  roots: string[],
   query: string,
   opts: WorkspaceSearchOptions = {}
 ): Promise<WorkspaceSearchResult> {
@@ -152,18 +154,30 @@ export async function searchWorkspace(
     totalHits: 0,
     truncated: false,
   };
-  if (!root || !query.trim()) return empty;
+  const validRoots = roots.filter((r) => typeof r === "string" && r.trim() !== "");
+  if (validRoots.length === 0 || !query.trim()) return empty;
   const caseSensitive = opts.caseSensitive ?? false;
   const maxFiles = opts.maxFiles ?? SEARCH_DEFAULTS.maxFiles;
   const maxHitsPerFile = opts.maxHitsPerFile ?? SEARCH_DEFAULTS.maxHitsPerFile;
   const maxTotalHits = opts.maxTotalHits ?? SEARCH_DEFAULTS.maxTotalHits;
 
-  const files = await collectMdFiles(root, opts.excluded, maxFiles);
-  const truncatedByFiles = files.length >= maxFiles;
+  // 逐根收集，maxFiles 预算全局共享：一根吃满剩余预算即截断后续根。
+  const files: string[] = [];
+  let truncated = false;
+  let remaining = maxFiles;
+  for (const root of validRoots) {
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+    const got = await collectMdFiles(root, opts.excluded, remaining);
+    files.push(...got);
+    remaining -= got.length;
+    if (remaining <= 0) truncated = true;
+  }
 
   const out: FileHits[] = [];
   let totalHits = 0;
-  let truncated = truncatedByFiles;
   for (const path of files) {
     if (totalHits >= maxTotalHits) {
       truncated = true;

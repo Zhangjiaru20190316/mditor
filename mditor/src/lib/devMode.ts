@@ -1,19 +1,26 @@
-// 开发者模式记录器（v4.2，设置项 devMode）——排查 bug 的运行时黑匣子。
+// 开发者模式记录器（v4.2 建立 / v4.3 全面升级）——排查 bug 的运行时黑匣子。
 //
 // 开启（App.tsx effect 调 enableDevRecorder）后：
-//   * 全量订阅三条诊断总线：scrollDebug / annoDebug（订阅推送）+ opDebug
-//     （opSubscribe），事件流逐条写入 dev-events.log（JSONL，经 LogBatcher
-//     批量合并，满 50 行或每秒一次 append_log，2MB 轮转）；
+//   * 全量订阅四条诊断总线：scrollDebug / annoDebug（订阅推送）+ opDebug
+//     （opSubscribe）+ sysDebug（系统链路：文件/IPC/AI/生命周期/资源），
+//     事件流逐条写入 dev-events.log（JSONL，经 LogBatcher 批量合并，满 50
+//     行或每秒一次 append_log，2MB 轮转）；
 //   * 捕获 window「error」与「unhandledrejection」；ErrorBoundary 捕获的
 //     渲染异常经 noteRenderError 接入（React 会拦下 window error 事件）；
-//   * 30s 心跳：sampleMemory（联动 setDiagForced 开启重 DOM 采样）+ 三总线
-//     计数器快照，维护 15 分钟环形窗口供堆趋势分析；
+//     资源加载失败（图片/字体/脚本）由 capture 版 error 监听单列（5012）；
+//   * 环境与操作上下文（v4.3）：window 级捕获监听记录最近点击/快捷键，
+//     App 注册文档概况 provider——每条异常落盘时附 ctx（环境快照 + 最近
+//     操作 + 文档概况），不看代码也能定位场景；
+//   * 30s 心跳：sampleMemory（联动 setDiagForced 开启重 DOM 采样）+ 四总
+//     线计数器 + 环境/文档/帧统计快照 + 记录器自监控（写入/丢弃/合并数）
+//     ，维护 15 分钟环形窗口供堆/DOM 趋势分析，帧统计差分与位移抖动风暴
+//     在此判定（MD-9xxx）；
 //   * 每条输入同时过 lib/devAnomaly 规则，命中即写 dev-anomalies.log 并按
 //     60s 冷却放行一次弹窗（DevAlerts 订阅）。
 //
 // 关闭（disableDevRecorder）= 全退订 + 移除钩子 + 冲尾批，零残留开销。
-// 纪律与 annoDebug/scrollDebug 相同：诊断代码绝不影响编辑器——所有公开
-// 入口 try/catch；append_log 失败只计数并报一次 MD-5003，绝不重试阻塞。
+// 纪律与各总线相同：诊断代码绝不影响编辑器——所有公开入口 try/catch；
+// append_log 失败只计数并报一次 MD-5003，绝不重试阻塞。
 
 import { invoke } from "@tauri-apps/api/core";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
@@ -23,20 +30,32 @@ import { sampleMemory, setDiagForced } from "./diagnostics";
 import { annoCounters, annoSubscribe, type AnnoDebugEvent } from "./annoDebug";
 import {
   scrollCounters,
+  scrollFrameStats,
   scrollSubscribe,
   type ScrollDebugEvent,
+  type ScrollFrameStats,
 } from "./scrollDebug";
 import { opErrorStats, opSubscribe, type OpErrorRecord } from "./opDebug";
+import { sysCounters, sysEmit, sysSubscribe, type SysDebugEvent } from "./sysDebug";
+import {
+  buildDevContext,
+  devEnvSnapshot,
+  noteUserAction,
+} from "./devContext";
 import { LogBatcher } from "./logBatcher";
 import {
   ALERT_COOLDOWN_MS,
   AnomalyTracker,
   analyzeAnnoEvent,
+  analyzeFrameStatsDelta,
   analyzeHeartbeats,
   analyzeLogWriteFailure,
   analyzeOpError,
+  analyzeRenderError,
   analyzeRuntimeError,
   analyzeScrollEvent,
+  analyzeShiftBurst,
+  analyzeSysEvent,
   type DevAnomaly,
   type HeartbeatPoint,
   type TrackedAnomaly,
@@ -119,25 +138,33 @@ function line(src: string, payload: Record<string, unknown>): string {
 }
 
 /**
- * 记一条异常：每次出现都落盘 + 记账；过了冷却窗才推送弹窗（异常风暴时
- * 60s 至多一张同代码卡，计数照常累计）。
+ * 记一条异常：每次出现都落盘 + 记账（附环境/操作/文档上下文，v4.3——异常
+ * 记录拿到手即可定位场景）；过了冷却窗才推送弹窗（异常风暴时 60s 至多一
+ * 张同代码卡，计数照常累计）。
  */
 function noteAnomaly(a: DevAnomaly | null): void {
   if (!a) return;
   try {
+    let enriched = a;
+    try {
+      const ctx = buildDevContext();
+      enriched = { ...a, data: { ...(a.data ?? {}), ctx } };
+    } catch {
+      /* 上下文失败不阻断记录本体 */
+    }
     anomaliesBatcher?.append(
       line("anomaly", {
-        code: a.code,
-        level: a.level,
-        title: a.title,
-        detail: a.detail,
-        data: a.data,
+        code: enriched.code,
+        level: enriched.level,
+        title: enriched.title,
+        detail: enriched.detail,
+        data: enriched.data,
       })
     );
-    if (tracker.record(a)) {
+    if (tracker.record(enriched)) {
       for (const fn of alertSubs) {
         try {
-          fn(a);
+          fn(enriched);
         } catch {
           alertSubs.delete(fn);
         }
@@ -156,6 +183,11 @@ function onScroll(e: ScrollDebugEvent): void {
     eventsBatcher?.append(
       line("scroll", { level: e.level, kind: e.kind, msg: e.msg, data: e.data })
     );
+    // 位移抖动风暴（MD-9002）的素材：warn 级 layout:shift 时间戳环。
+    if (e.kind === "layout:shift" && e.level === "warn") {
+      warnShiftTs.push(Date.now());
+      if (warnShiftTs.length > 8) warnShiftTs.shift();
+    }
     noteAnomaly(analyzeScrollEvent(e));
   } catch {
     /* never throw */
@@ -181,6 +213,19 @@ function onOp(r: OpErrorRecord): void {
       line("op", { kind: r.op, msg: r.err, data: { op: r.op } })
     );
     noteAnomaly(analyzeOpError(r));
+  } catch {
+    /* never throw */
+  }
+}
+
+/** 系统链路总线（v4.3）：文件/IPC/AI/生命周期/资源事件 → 事件日志 + 归类。 */
+function onSys(e: SysDebugEvent): void {
+  if (!enabled) return;
+  try {
+    eventsBatcher?.append(
+      line("sys", { level: e.level, kind: e.kind, msg: e.msg, data: e.data })
+    );
+    noteAnomaly(analyzeSysEvent(e));
   } catch {
     /* never throw */
   }
@@ -234,7 +279,8 @@ function onRejection(ev: PromiseRejectionEvent): void {
 
 /**
  * ErrorBoundary 捕获的渲染异常接入（componentDidCatch 调用）。React 拦下了
- * 这类异常，window「error」监听收不到——必须显式送进记录器。
+ * 这类异常，window「error」监听收不到——必须显式送进记录器（v4.3 起单列
+ * MD-5011 渲染层异常，与 window onerror 的 5001 区分来源）。
  */
 export function noteRenderError(label: string, err: unknown): void {
   if (!enabled) return;
@@ -244,17 +290,106 @@ export function noteRenderError(label: string, err: unknown): void {
     eventsBatcher?.append(
       line("runtime", { kind: "error-boundary", msg: message, data: { stack: f.stack } })
     );
-    noteAnomaly(analyzeRuntimeError("uncaught", message, f.stack));
+    noteAnomaly(analyzeRenderError(label, message, f.stack));
   } catch {
     /* never throw */
   }
 }
+
+/* --------------------------------------------------------------------------
+ * 环境与操作上下文捕获（v4.3）：最近点击 / 快捷键 / 打字，随异常附盘。
+ * ------------------------------------------------------------------------ */
+
+/** 生成点击目标的简短描述符（叶子/浅层元素才读 textContent，避免大子树遍历）。 */
+function describeClickTarget(t: EventTarget | null): string {
+  try {
+    const el = t as Element | null;
+    if (!el || typeof (el as Element).tagName !== "string") return "pointerdown";
+    const tag = el.tagName.toLowerCase();
+    const id = el.id ? `#${el.id}` : "";
+    const cls =
+      typeof el.className === "string" && el.className
+        ? `.${el.className.trim().split(/\s+/)[0]}`
+        : "";
+    let text = "";
+    if (el.childElementCount <= 2) {
+      text = (el.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 16);
+    }
+    return `${tag}${id}${cls}${text ? `「${text}」` : ""}`;
+  } catch {
+    return "pointerdown";
+  }
+}
+
+/** 上一次「typing」动作时刻：连续打字合并成一条，避免冲掉操作环。 */
+let lastTypingAt = 0;
+
+const onActionPointerDown = (e: PointerEvent): void => {
+  try {
+    noteUserAction("click", describeClickTarget(e.target));
+  } catch {
+    /* never throw */
+  }
+};
+
+const onActionKey = (e: KeyboardEvent): void => {
+  try {
+    if (e.ctrlKey || e.metaKey || e.altKey) {
+      const mods = `${e.ctrlKey ? "Ctrl+" : ""}${e.metaKey ? "Meta+" : ""}${e.altKey ? "Alt+" : ""}`;
+      noteUserAction("key", `${mods}${e.key}`);
+      return;
+    }
+    // 普通打字不记键名（噪声），2s 合并成一条「typing」。
+    const now = Date.now();
+    if (now - lastTypingAt > 2000) noteUserAction("key", "typing");
+    lastTypingAt = now;
+  } catch {
+    /* never throw */
+  }
+};
+
+/** 资源加载失败（图片/webfont/脚本，capture 版 error，target 是元素而非
+ *  window）——懒加载图片失败、字体拉取失败在此留痕（MD-5012）。常驻监听
+ * （与总线同口径：环形缓冲永远可回看），持久化由 onSys 按 enable 决定。 */
+const onResourceError = (ev: Event): void => {
+  try {
+    const t = ev.target as Element | null;
+    if (!t || !t.tagName || t === (window as unknown as Element)) return;
+    const tag = t.tagName.toLowerCase();
+    const src = String(
+      (t as HTMLImageElement).currentSrc ||
+        (t as HTMLImageElement).src ||
+        (t as HTMLLinkElement).href ||
+        ""
+    );
+    sysEmit("res:load-fail", `资源加载失败：${tag} ${src.slice(0, 120)}`, {
+      level: "warn",
+      data: { tag, src: src.slice(0, 300) },
+    });
+  } catch {
+    /* never throw */
+  }
+};
+
+/* --------------------------------------------------------------------------
+ * 心跳（30s）：内存 / 环境快照 / 文档概况 / 帧统计差分 / 四总线计数器 /
+ * 记录器自监控——一条心跳即一份「当时的世界」快照。
+ * ------------------------------------------------------------------------ */
+
+/** warn 级视口位移时间戳环（MD-9002 抖动风暴判定素材）。 */
+const warnShiftTs: number[] = [];
+/** 上一次帧统计快照（差分用；null = 本会话首拍）。 */
+let prevFrameStats: ScrollFrameStats | null = null;
 
 function onHeartbeat(): void {
   if (!enabled) return;
   try {
     const s = sampleMemory();
     const op = opErrorStats();
+    const fs = scrollFrameStats();
+    const frameAnoms = analyzeFrameStatsDelta(prevFrameStats, fs);
+    prevFrameStats = fs;
+    const burst = analyzeShiftBurst(warnShiftTs, Date.now());
     eventsBatcher?.append(
       line("heartbeat", {
         mem: {
@@ -266,13 +401,40 @@ function onHeartbeat(): void {
           cmEditors: s.cmEditors ?? null,
           katexNodes: s.katexNodes ?? null,
         },
+        env: devEnvSnapshot(),
+        doc: buildDevContext().doc,
+        frame: {
+          frames: fs.frames,
+          jankFrames: fs.jankFrames,
+          worstGapMs: Math.round(fs.worstGapMs),
+          inputLagEvents: fs.inputLagEvents,
+          worstInputLagMs: Math.round(fs.worstInputLagMs),
+        },
         opTotal: op.total,
-        counters: { ...scrollCounters(), ...annoCounters() },
+        counters: {
+          ...scrollCounters(),
+          ...annoCounters(),
+          ...sysCounters(),
+        },
+        self: {
+          events: eventsBatcher?.snapshot() ?? null,
+          anomalies: anomaliesBatcher?.snapshot() ?? null,
+          writeFailures,
+          mergedAlerts,
+          uptimeMs: startedAt != null ? Date.now() - startedAt : null,
+        },
       })
     );
-    heartbeats.push({ ts: s.ts, used: s.used, prosemirrorViews: s.prosemirrorViews });
+    heartbeats.push({
+      ts: s.ts,
+      used: s.used,
+      prosemirrorViews: s.prosemirrorViews,
+      domNodes: s.domNodes ?? null,
+    });
     if (heartbeats.length > HEARTBEAT_WINDOW) heartbeats.shift();
     for (const a of analyzeHeartbeats(heartbeats)) noteAnomaly(a);
+    for (const a of frameAnoms) noteAnomaly(a);
+    if (burst) noteAnomaly(burst);
   } catch {
     /* never throw */
   }
@@ -288,6 +450,8 @@ export function enableDevRecorder(): void {
     mergedAlerts = 0;
     tracker.reset();
     heartbeats.length = 0;
+    warnShiftTs.length = 0;
+    prevFrameStats = null;
     // 开发者模式顺带拿到重 DOM 指标（domNodes/cmEditors/katex）。
     setDiagForced(true);
 
@@ -326,7 +490,10 @@ export function enableDevRecorder(): void {
       line("session", {
         kind: "dev-mode",
         msg: "enabled",
-        data: { ua: typeof navigator !== "undefined" ? navigator.userAgent : null },
+        data: {
+          ua: typeof navigator !== "undefined" ? navigator.userAgent : null,
+          env: devEnvSnapshot(),
+        },
       })
     );
 
@@ -334,9 +501,16 @@ export function enableDevRecorder(): void {
       scrollSubscribe(onScroll),
       annoSubscribe(onAnno),
       opSubscribe(onOp),
+      sysSubscribe(onSys),
     ];
     window.addEventListener("error", onWindowError);
     window.addEventListener("unhandledrejection", onRejection);
+    window.addEventListener("error", onResourceError, true);
+    window.addEventListener("pointerdown", onActionPointerDown, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener("keydown", onActionKey, true);
     heartbeatTimer = setInterval(onHeartbeat, HEARTBEAT_MS);
     onHeartbeat(); // 立即采第一帧，趋势窗口尽早起算。
   } catch {
@@ -359,6 +533,9 @@ export function disableDevRecorder(): void {
     unsubs = [];
     window.removeEventListener("error", onWindowError);
     window.removeEventListener("unhandledrejection", onRejection);
+    window.removeEventListener("error", onResourceError, true);
+    window.removeEventListener("pointerdown", onActionPointerDown, true);
+    window.removeEventListener("keydown", onActionKey, true);
     if (heartbeatTimer != null) {
       clearInterval(heartbeatTimer);
       heartbeatTimer = null;
@@ -434,10 +611,12 @@ export function attachDevModeGlobal(): void {
       flush: flushDevLogs,
       report: () => {
         const s = devModeStats();
+        const env = devEnvSnapshot();
         const lines: string[] = [
           `开发者模式：${s.enabled ? "开" : "关"}${
             s.startedAt ? `，自 ${new Date(s.startedAt).toISOString()}` : ""
           }`,
+          `环境：v${env.ver} ${env.platform} ${env.win ? `${env.win.w}×${env.win.h}@${env.dpr}x` : ""} 主题=${env.theme ?? "?"} 模式=${env.mode ?? "?"} big=${env.big} 最大化=${env.maximized}`,
           `事件日志：写入 ${s.events?.written ?? 0} 行 / 丢弃 ${
             s.events?.dropped ?? 0
           } / 失败 ${s.writeFailures}`,
@@ -449,6 +628,11 @@ export function attachDevModeGlobal(): void {
               t.lastTs
             ).toISOString()}：${t.lastDetail}`
           );
+        }
+        const sys = sysCounters();
+        const sysKeys = Object.keys(sys).filter((k) => k.startsWith("io."));
+        if (sysKeys.length) {
+          lines.push(`IO/IPC 计数：${sysKeys.map((k) => `${k}=${sys[k]}`).join(" ")}`);
         }
         const text = lines.join("\n");
         console.log(text);

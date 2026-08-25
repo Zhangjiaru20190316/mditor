@@ -6,6 +6,7 @@
 // buffers to app-data for crash recovery.
 
 import { useEffect, useRef } from "react";
+import { sysEmit } from "../lib/sysDebug";
 
 export interface AutosaveOptions {
   intervalMs: number;
@@ -38,8 +39,14 @@ export function useAutosave(opts: AutosaveOptions) {
       try {
         const ok = await o.doSave(o.getContent);
         if (ok) o.onSaved?.();
-      } catch {
-        // swallow; next tick will retry
+      } catch (err) {
+        // swallow; next tick will retry — but leave a diagnostic trace (v4.3):
+        // autosave failures silently retrying forever is invisible without it.
+        sysEmit(
+          "file:write-fail",
+          "自动保存失败（下一周期重试）",
+          { level: "warn", data: { label: "autosave", err: String(err).slice(0, 200) } }
+        );
       } finally {
         busyRef.current = false;
       }

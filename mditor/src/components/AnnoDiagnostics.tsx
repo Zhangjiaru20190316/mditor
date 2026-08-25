@@ -33,6 +33,13 @@ import {
   scrollWatchStats,
 } from "../lib/scrollDebug";
 import {
+  sysCounters,
+  sysDebugClear,
+  sysEvents,
+  sysSubscribe,
+} from "../lib/sysDebug";
+import { devEnvSnapshot } from "../lib/devContext";
+import {
   devModeEnabled,
   openLogsDir,
   recentAnomalies,
@@ -74,10 +81,12 @@ export const AnnoDiagnostics = memo(function AnnoDiagnostics({
     const un1 = annoSubscribe(bump);
     const un2 = scrollSubscribe(bump);
     const un3 = subscribeDevAlerts(bump);
+    const un4 = sysSubscribe(bump);
     return () => {
       un1();
       un2();
       un3();
+      un4();
     };
   }, []);
 
@@ -92,6 +101,7 @@ export const AnnoDiagnostics = memo(function AnnoDiagnostics({
   const clearAll = useCallback(() => {
     annoDebugClear();
     scrollDebugClear();
+    sysDebugClear();
   }, []);
 
   /** 打开 logs 目录（memory.log / dev-events.log / dev-anomalies.log 所在）。 */
@@ -108,11 +118,18 @@ export const AnnoDiagnostics = memo(function AnnoDiagnostics({
 
   const copyReport = useCallback(() => {
     const lines: string[] = [];
-    lines.push(`# mditor 诊断（批注+滚动）@ ${new Date().toISOString()}`);
+    lines.push(`# mditor 诊断（批注+滚动+系统）@ ${new Date().toISOString()}`);
+    const env = devEnvSnapshot();
+    lines.push(
+      `## 环境
+v${env.ver} ${env.platform} ${env.win ? `${env.win.w}x${env.win.h}@${env.dpr}x ` : ""}主题=${env.theme ?? "?"} 模式=${env.mode ?? "?"} big=${env.big} 最大化=${env.maximized} 侧栏关=${env.sidebarClosed ?? "?"}`
+    );
     lines.push("## 批注计数器");
     for (const [k, v] of Object.entries(annoCounters())) lines.push(`- ${k}: ${v}`);
     lines.push("## 滚动计数器");
     for (const [k, v] of Object.entries(scrollCounters())) lines.push(`- ${k}: ${v}`);
+    lines.push("## 系统链路计数器（文件/IPC/AI）");
+    for (const [k, v] of Object.entries(sysCounters())) lines.push(`- ${k}: ${v}`);
     const ghost = scrollWatchStats().lastGhost;
     if (ghost) {
       lines.push(`## 最近 ghost 滚动`);
@@ -141,6 +158,7 @@ export const AnnoDiagnostics = memo(function AnnoDiagnostics({
     const merged = [
       ...annoEvents().map((e) => ({ ...e, src: "anno" })),
       ...scrollEvents().map((e) => ({ ...e, src: "scroll" })),
+      ...sysEvents().map((e) => ({ ...e, src: "sys" })),
     ]
       .sort((a, b) => b.ts - a.ts)
       .slice(0, 100);
@@ -152,15 +170,18 @@ export const AnnoDiagnostics = memo(function AnnoDiagnostics({
 
   const counters = annoCounters();
   const scrollCnts = scrollCounters();
+  const sysCnts = sysCounters();
   const anomalies = recentAnomalies();
   const counterEntries = [
     ...Object.entries(counters),
     ...Object.entries(scrollCnts),
+    ...Object.entries(sysCnts),
   ];
   const ghost = scrollWatchStats().lastGhost;
   const events = [
     ...annoEvents().map((e) => ({ ...e, src: "批注" })),
     ...scrollEvents().map((e) => ({ ...e, src: "滚动" })),
+    ...sysEvents().map((e) => ({ ...e, src: "系统" })),
   ]
     .sort((a, b) => b.ts - a.ts)
     .slice(0, 60);
@@ -168,7 +189,7 @@ export const AnnoDiagnostics = memo(function AnnoDiagnostics({
   return (
     <div className="anno-diag" role="dialog" aria-label="批注与滚动诊断面板">
       <div className="anno-diag-head">
-        <span className="anno-diag-title">诊断（批注 + 滚动）</span>
+        <span className="anno-diag-title">诊断（批注 + 滚动 + 系统）</span>
         <div className="anno-diag-actions">
           <button className="anno-btn" onClick={openLogs} title="在资源管理器打开日志目录（memory.log / dev-events.log / dev-anomalies.log）">
             日志
@@ -276,7 +297,7 @@ export const AnnoDiagnostics = memo(function AnnoDiagnostics({
             )}
           </>
         )}
-        <div className="anno-diag-section">事件流（批注+滚动合并，最近 {events.length} 条，新在上）</div>
+        <div className="anno-diag-section">事件流（批注+滚动+系统合并，最近 {events.length} 条，新在上）</div>
         <div className="anno-diag-events">
           {events.length === 0 && <div className="anno-diag-empty">暂无事件</div>}
           {events.map((e, i) => (
