@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Mditor v4.5.0 宣传图</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1600px; height: 900px; overflow: hidden; }
+  body {
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    color: #e8edf7;
+    position: relative;
+    background:
+      radial-gradient(1100px 520px at 12% -12%, rgba(59, 130, 246, 0.30), transparent 62%),
+      radial-gradient(900px 460px at 88% -6%, rgba(139, 92, 246, 0.24), transparent 60%),
+      radial-gradient(1000px 600px at 50% 118%, rgba(37, 99, 235, 0.16), transparent 65%),
+      linear-gradient(152deg, #0b1220 0%, #0d1730 55%, #101c3f 100%);
+  }
+  /* 漂浮的 Markdown 符号 */
+  .glyph {
+    position: absolute;
+    font-family: Consolas, monospace;
+    color: rgba(148, 178, 255, 0.07);
+    user-select: none;
+    line-height: 1;
+  }
+
+  /* ===== 顶栏 ===== */
+  .topbar {
+    position: absolute; top: 34px; left: 64px; right: 64px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .brand img { width: 44px; height: 44px; border-radius: 11px; }
+  .brand .name { font-size: 26px; font-weight: 700; letter-spacing: 0.5px; }
+  .badge-new {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 18px; border-radius: 999px;
+    border: 1px solid rgba(96, 145, 250, 0.45);
+    background: linear-gradient(90deg, rgba(59,130,246,0.16), rgba(139,92,246,0.16));
+    font-size: 19px; font-weight: 600; color: #a9c4ff; letter-spacing: 1px;
+  }
+  .badge-new .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #4da3ff; box-shadow: 0 0 10px 2px rgba(77,163,255,0.75);
+  }
+
+  /* ===== 主区布局 ===== */
+  .main {
+    position: absolute; top: 118px; left: 64px; right: 64px; bottom: 118px;
+    display: flex; gap: 48px;
+  }
+  .left { width: 620px; display: flex; flex-direction: column; justify-content: center; }
+  .right { flex: 1; display: flex; align-items: center; }
+
+  /* 左侧文案 */
+  .kicker {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-size: 20px; font-weight: 700; letter-spacing: 3px;
+    background: linear-gradient(90deg, #6aa5ff, #b08cff);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    margin-bottom: 20px;
+  }
+  h1 {
+    font-size: 66px; line-height: 1.22; font-weight: 800; letter-spacing: 1px;
+    text-wrap: balance;
+  }
+  h1 .grad {
+    background: linear-gradient(92deg, #4da3ff 8%, #9b7bff 55%, #6aa5ff 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .sub {
+    margin-top: 22px; font-size: 23px; line-height: 1.65; color: #aebad2;
+  }
+  .sub b { color: #dbe6ff; font-weight: 650; }
+  .kbds { margin-top: 26px; display: flex; align-items: center; gap: 14px; }
+  .kbd {
+    min-width: 44px; height: 44px; padding: 0 14px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 10px; font-size: 19px; font-weight: 650; color: #cfe0ff;
+    background: linear-gradient(180deg, #1c2a4d, #16223f);
+    border: 1px solid rgba(120, 160, 240, 0.38);
+    box-shadow: 0 3px 0 rgba(8, 15, 35, 0.9), inset 0 1px 0 rgba(255,255,255,0.09);
+  }
+  .kbds .plus { color: #64789f; font-size: 21px; font-weight: 700; }
+  .kbds .hint { margin-left: 6px; font-size: 20px; color: #8fa1c4; }
+  .pills { margin-top: 30px; display: flex; flex-direction: column; gap: 13px; }
+  .pill { display: flex; align-items: center; gap: 12px; font-size: 20.5px; color: #cbd6ec; }
+  .pill svg { flex: none; }
+  .pill b { color: #ffffff; font-weight: 650; }
+
+  /* ===== 右侧：前后对比卡片 ===== */
+  .compare {
+    width: 100%; max-width: 720px; position: relative;
+    display: flex; flex-direction: column; gap: 0;
+  }
+  .card {
+    border-radius: 16px; padding: 0 0 14px 0; overflow: hidden;
+    background: rgba(13, 21, 43, 0.82);
+    backdrop-filter: blur(4px);
+  }
+  .card.before {
+    border: 1px solid rgba(248, 113, 113, 0.42);
+    box-shadow: 0 14px 40px rgba(190, 40, 40, 0.14), 0 2px 14px rgba(0,0,0,0.32);
+  }
+  .card.after {
+    border: 1px solid rgba(52, 211, 153, 0.45);
+    box-shadow: 0 14px 40px rgba(16, 185, 129, 0.14), 0 2px 14px rgba(0,0,0,0.32);
+  }
+  .card-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 16px; margin-bottom: 8px;
+  }
+  .before .card-head { background: rgba(239, 68, 68, 0.10); border-bottom: 1px solid rgba(248,113,113,0.22); }
+  .after  .card-head { background: rgba(16, 185, 129, 0.10); border-bottom: 1px solid rgba(52,211,153,0.22); }
+  .win-dot { width: 11px; height: 11px; border-radius: 50%; opacity: 0.85; }
+  .card-title { font-size: 16.5px; font-weight: 700; letter-spacing: 2px; }
+  .before .card-title { color: #fca5a5; }
+  .after  .card-title { color: #6ee7b7; }
+  .code { padding: 4px 20px 2px; font-family: "Cascadia Code", Consolas, monospace; font-size: 17.5px; line-height: 1.78; white-space: pre; color: #ccd7ee; }
+  .tk-h { color: #7cb1ff; font-weight: 600; }
+  .tk-fence { color: #b39bff; }
+  .tk-str { color: #ffb86c; }
+  .tk-punct { color: #8093b5; }
+
+  /* 红色问题标注 */
+  .bad {
+    text-decoration: underline wavy rgba(248, 113, 113, 0.85) 1.5px;
+    text-underline-offset: 5px;
+  }
+  .tag {
+    position: absolute;
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13.5px; font-weight: 650; padding: 4px 10px; border-radius: 999px;
+    letter-spacing: 0.5px; white-space: nowrap;
+  }
+  .tag.bad-tag {
+    color: #ffd4d4; background: rgba(220, 38, 38, 0.30);
+    border: 1px solid rgba(248, 113, 113, 0.55);
+  }
+  .tag.good-tag {
+    color: #c9fbdf; background: rgba(5, 150, 105, 0.30);
+    border: 1px solid rgba(52, 211, 153, 0.55);
+  }
+  .mark-x { color: #f87171; font-weight: 700; }
+  .mark-ok { color: #34d399; font-weight: 700; }
+
+  /* 中间 AI 修复箭头 */
+  .fix-arrow {
+    position: relative; height: 74px; margin: 6px 0;
+    display: flex; align-items: center; justify-content: flex-start;
+    padding-left: 250px;
+  }
+  .fix-line {
+    position: absolute; left: 250px; right: 300px; top: 50%;
+    height: 2.5px; transform: translateY(-50%);
+    background: linear-gradient(90deg, rgba(109,131,255,0.15), rgba(96,165,250,0.9), rgba(139,92,246,0.95));
+  }
+  .fix-head {
+    position: absolute; right: 288px; top: 50%; transform: translateY(-50%);
+    width: 0; height: 0;
+    border-top: 9px solid transparent; border-bottom: 9px solid transparent;
+    border-left: 14px solid rgba(139, 92, 246, 0.98);
+  }
+  .fix-chip {
+    position: absolute; left: 300px; top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 10px 22px; border-radius: 999px;
+    background: linear-gradient(92deg, rgba(59,130,246,0.95), rgba(139,92,246,0.95));
+    box-shadow: 0 6px 26px rgba(88, 101, 242, 0.55), 0 0 0 5px rgba(59,130,246,0.14);
+    font-size: 20px; font-weight: 750; color: #fff; letter-spacing: 2px;
+  }
+
+  /* ===== 底栏 ===== */
+  .footer {
+    position: absolute; left: 64px; right: 64px; bottom: 36px;
+    border-top: 1px solid rgba(120, 150, 220, 0.20);
+    padding-top: 20px;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 17.5px; color: #8fa1c4;
+  }
+  .footer .gh { letter-spacing: 0.4px; }
+  .footer .gh b { color: #c6d6f5; font-weight: 650; }
+</style>
+</head>
+<body>
+
+  <!-- 漂浮符号装饰 -->
+  <span class="glyph" style="left:600px; top:130px;  font-size:120px;">#</span>
+  <span class="glyph" style="left:1470px;top:210px;  font-size:74px;">*</span>
+  <span class="glyph" style="left:1540px;top:560px;  font-size:64px;">`</span>
+  <span class="glyph" style="left:1545px;top:760px; font-size:58px;">-</span>
+  <span class="glyph" style="left:770px; top:63px;   font-size:46px;">[]()</span>
+  <span class="glyph" style="left:70px;  top:105px;  font-size:40px;">**</span>
+
+  <div class="topbar">
+    <div class="brand">
+      <img src="icon.png" alt="Mditor">
+      <span class="name">Mditor</span>
+    </div>
+    <div class="badge-new"><span class="dot"></span>v4.5.0 · What's New</div>
+  </div>
+
+  <div class="main">
+    <!-- 左侧文案 -->
+    <div class="left">
+      <div class="kicker">NEW RELEASE</div>
+      <h1><span class="grad">AI 一键修复</span><br>Markdown 格式</h1>
+      <p class="sub">围栏未闭合、表格缺分隔行、标题缺空格、全角符号混入……<br>让 AI <b>只修语法、内容逐字保留</b>，写完直接交付。</p>
+      <div class="kbds">
+        <span class="kbd">Ctrl</span><span class="plus">+</span>
+        <span class="kbd">Alt</span><span class="plus">+</span>
+        <span class="kbd">F</span>
+        <span class="hint">在编辑器中随时触发</span>
+      </div>
+      <div class="pills">
+        <div class="pill">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M13 2 4.5 13.5H11L10 22l8.5-11.5H12L13 2Z" fill="#60a5fa"/></svg>
+          <span><b>改动逐块预览</b>，接受 / 拒绝由你决定</span>
+        </div>
+        <div class="pill">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3 4 7v6c0 4.4 3.4 7.4 8 8 4.6-.6 8-3.6 8-8V7l-8-4Z" stroke="#8b5cf6" stroke-width="2" fill="rgba(139,92,246,.18)"/><path d="m8.7 12.2 2.3 2.3 4.4-4.6" stroke="#b79dff" stroke-width="2" fill="none"/></svg>
+          <span><b>一步撤销</b>（Ctrl+Z），全程本地处理</span>
+        </div>
+        <div class="pill">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="14" rx="3" stroke="#60a5fa" stroke-width="2" fill="rgba(59,130,246,.15)"/><path d="m7.5 12.5 2.5 2.5 4.5-5" stroke="#93c5fd" stroke-width="2" fill="none"/></svg>
+          <span>深浅五套主题，<b>改完即所见</b></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右侧前后对比 -->
+    <div class="right">
+      <div class="compare">
+
+        <div class="card before">
+          <div class="card-head">
+            <span class="win-dot" style="background:#f87171"></span>
+            <span class="win-dot" style="background:#fbbf24"></span>
+            <span class="win-dot" style="background:#34d399"></span>
+            <span class="card-title">修复前</span>
+          </div>
+          <div class="code"><span class="mark-x">✕</span> ##<span class="bad">安装指南</span>
+<span class="mark-x">✕</span> | 功能 | 快捷键 |
+<span class="mark-x">✕</span> | <span class="bad">保存文档</span> | Ctrl+S |
+<span class="mark-x">✕</span> <span class="tk-fence">```</span><span class="tk-punct">python</span>
+  print(<span class="tk-str">"hello"</span>)
+<span class="mark-x">✕</span> <span class="bad tk-fence">＊缺少闭合围栏＊</span></div>
+          <span class="tag bad-tag" style="right:22px; top:66px;"># 后缺空格</span>
+          <span class="tag bad-tag" style="right:22px; top:118px;">表格缺分隔行</span>
+          <span class="tag bad-tag" style="right:22px; top:212px;">代码围栏未闭合</span>
+        </div>
+
+        <div class="fix-arrow">
+          <div class="fix-line"></div><div class="fix-head"></div>
+          <div class="fix-chip">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 2.5 9.6 9.6 2.5 12l7.1 2.4L12 21.5l2.4-7.1 7.1-2.4-7.1-2.4L12 2.5Z" fill="#fff"/></svg>
+            AI 智能修复
+          </div>
+        </div>
+
+        <div class="card after">
+          <div class="card-head">
+            <span class="win-dot" style="background:#f87171"></span>
+            <span class="win-dot" style="background:#fbbf24"></span>
+            <span class="win-dot" style="background:#34d399"></span>
+            <span class="card-title">修复后</span>
+          </div>
+          <div class="code"><span class="mark-ok">✓</span> <span class="tk-h">## 安装指南</span>
+<span class="mark-ok">✓</span> | 功能 | 快捷键 |
+<span class="mark-ok">✓</span> | ---- | ------ |
+<span class="mark-ok">✓</span> | 保存文档 | Ctrl+S |
+<span class="mark-ok">✓</span> <span class="tk-fence">```</span><span class="tk-punct">python</span>
+  print(<span class="tk-str">"hello"</span>)
+<span class="mark-ok">✓</span> <span class="tk-fence">```</span> <span class="tk-punct">← 已补齐闭合</span></div>
+          <span class="tag good-tag" style="right:22px; top:76px;">已修复 4 处 · 内容零改动</span>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>Mditor — 本地优先的 Markdown 编辑器 · 免费开源 · 无云端无遥测</span>
+    <span class="gh"><b>github.com/Zhangjiaru20190316/mditor</b></span>
+  </div>
+
+</body>
+</html>

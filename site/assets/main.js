@@ -1,6 +1,7 @@
 /* Mditor 官网交互 — 纯 vanilla JS，无依赖。
  * 模块：迷你 Markdown 渲染器（在线试用）、主题/模式切换演示、
- *       滚动进场动画、截图 Lightbox、FAQ 折叠、返回顶部、导航高亮。
+ *       滚动进场动画（含错峰编排）、截图 Lightbox、FAQ 折叠、
+ *       返回顶部、滚动进度条、导航高亮、卡片聚光 / 截图轻倾斜。
  */
 (function () {
   "use strict";
@@ -337,6 +338,14 @@
 
   document.documentElement.classList.add("has-js");
   const revealEls = document.querySelectorAll(".reveal");
+  /* 同一父容器内的兄弟元素依次错峰入场（每 70ms，封顶 320ms） */
+  const staggerSeen = new Map();
+  revealEls.forEach(function (el) {
+    const parent = el.parentElement;
+    const n = staggerSeen.get(parent) || 0;
+    staggerSeen.set(parent, n + 1);
+    el.style.transitionDelay = Math.min(n * 70, 320) + "ms";
+  });
   if ("IntersectionObserver" in window) {
     const io = new IntersectionObserver(
       function (entries) {
@@ -397,17 +406,29 @@
     });
   }
 
-  /* ============ 7. 返回顶部 ============ */
+  /* ============ 7. 返回顶部 + 滚动进度条 ============ */
 
   const toTop = document.getElementById("to-top");
+  const progressBar = document.getElementById("scroll-progress");
+  let scrollRaf = 0;
+
+  function onScroll() {
+    scrollRaf = 0;
+    const h = document.documentElement.scrollHeight - window.innerHeight;
+    if (progressBar) {
+      progressBar.style.transform = "scaleX(" + (h > 0 ? Math.min(window.scrollY / h, 1) : 0) + ")";
+    }
+    if (toTop) toTop.classList.toggle("show", window.scrollY > 600);
+  }
+  window.addEventListener(
+    "scroll",
+    function () {
+      if (!scrollRaf) scrollRaf = requestAnimationFrame(onScroll);
+    },
+    { passive: true }
+  );
+  onScroll();
   if (toTop) {
-    window.addEventListener(
-      "scroll",
-      function () {
-        toTop.classList.toggle("show", window.scrollY > 600);
-      },
-      { passive: true }
-    );
     toTop.addEventListener("click", function () {
       window.scrollTo({ top: 0, behavior: "smooth" });
     });
@@ -435,4 +456,39 @@
     );
     sections.forEach(function (s) { navIo.observe(s); });
   }
+
+  /* ============ 9. 卡片鼠标聚光 / 截图轻倾斜 ============ */
+  /* 用户偏好减少动效时整体跳过，避免无意义的高频事件 */
+
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduceMotion) return;
+
+  document.querySelectorAll(".card, .wn-item").forEach(function (el) {
+    el.addEventListener("pointermove", function (e) {
+      const r = el.getBoundingClientRect();
+      el.style.setProperty("--mx", e.clientX - r.left + "px");
+      el.style.setProperty("--my", e.clientY - r.top + "px");
+    });
+  });
+
+  document.querySelectorAll(".shot-row img").forEach(function (img) {
+    let tiltRaf = 0;
+    img.addEventListener("pointermove", function (e) {
+      if (tiltRaf) return;
+      tiltRaf = requestAnimationFrame(function () {
+        tiltRaf = 0;
+        const r = img.getBoundingClientRect();
+        /* 光标相对图片中心的偏移 → ±2.2deg 倾斜 + 轻微放大 */
+        const dx = (e.clientX - r.left) / r.width - 0.5;
+        const dy = (e.clientY - r.top) / r.height - 0.5;
+        img.style.transform =
+          "perspective(900px) rotateY(" + (dx * 4.4).toFixed(2) +
+          "deg) rotateX(" + (-dy * 3.2).toFixed(2) + "deg) scale(1.02)";
+      });
+    });
+    img.addEventListener("pointerleave", function () {
+      if (tiltRaf) { cancelAnimationFrame(tiltRaf); tiltRaf = 0; }
+      img.style.transform = "";
+    });
+  });
 })();

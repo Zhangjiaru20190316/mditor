@@ -10,6 +10,8 @@
 </head>
 <body>
 
+  <div class="scroll-progress" id="scroll-progress" aria-hidden="true"></div>
+
   <nav class="nav">
     <div class="nav-inner">
       <a class="nav-brand" href="#top">
@@ -28,18 +30,28 @@
   </nav>
 
   <header class="hero" id="top">
+    <div class="hero-glow hero-glow-1" aria-hidden="true"></div>
+    <div class="hero-glow hero-glow-2" aria-hidden="true"></div>
+    <div class="hero-glow hero-glow-3" aria-hidden="true"></div>
+    <span class="hero-glyph" style="left:6%;  top:16%; font-size:110px;" aria-hidden="true">#</span>
+    <span class="hero-glyph" style="left:88%; top:12%; font-size:76px;  animation-delay:1.6s;" aria-hidden="true">*</span>
+    <span class="hero-glyph" style="left:93%; top:62%; font-size:64px;  animation-delay:3.1s;" aria-hidden="true">`</span>
+    <span class="hero-glyph" style="left:8%;  top:74%; font-size:58px;  animation-delay:2.2s;" aria-hidden="true">&gt;</span>
+    <span class="hero-glyph" style="left:72%; top:82%; font-size:44px;  animation-delay:0.9s;" aria-hidden="true">**</span>
+    <span class="hero-glyph" style="left:18%; top:38%; font-size:38px;  animation-delay:4.0s;" aria-hidden="true">[]()</span>
+    <span class="hero-glyph" style="left:55%; top:6%;  font-size:40px;  animation-delay:2.7s;" aria-hidden="true">-</span>
     <div class="hero-inner">
       <img src="assets/icon.png" alt="Mditor logo" class="logo">
       <h1>Mditor</h1>
       <p class="tagline">本地优先的 Markdown 编辑器，体验对标 Typora</p>
       <p class="sub">免费 · 开源 · 无云端 · 无遥测 · 无广告 —— 你的文件始终保存在自己的电脑上</p>
       <div class="cta">
-        <a class="btn btn-primary" href="https://github.com/Zhangjiaru20190316/mditor/releases/latest/download/Mditor_4.4.0_x64-setup.exe">下载 Windows 版</a>
+        <a class="btn btn-primary" href="https://github.com/Zhangjiaru20190316/mditor/releases/latest/download/Mditor_4.5.0_x64-setup.exe">下载 Windows 版</a>
         <a class="btn btn-ghost" href="#try">在线试用</a>
         <a class="btn btn-ghost" href="https://github.com/Zhangjiaru20190316/mditor">查看源码</a>
       </div>
       <div class="hero-badges">
-        <span>v4.4.0</span><span>Windows 10/11</span><span>5 MB 安装包</span><span>MIT 开源</span>
+        <span class="hb-new"><i></i>v4.5.0</span><span>Windows 10/11</span><span>5 MB 安装包</span><span>MIT 开源</span>
       </div>
     </div>
   </header>
@@ -54,6 +66,22 @@
         <p class="subtitle">持续打磨每一次写作体验</p>
       </div>
       <div class="wn-list">
+        <article class="wn-item wn-star reveal">
+          <div class="wn-head">
+            <span class="wn-ver">v4.5.0</span>
+            <span class="wn-date">2026-08-27</span>
+            <span class="wn-tag">AI</span>
+            <span class="wn-latest"><i></i>本次亮点</span>
+          </div>
+          <h3>AI 一键修复 Markdown 格式</h3>
+          <p>围栏未闭合、表格缺分隔行、标题缺空格、全角标点混入……写完一键唤起 AI，<b>只修语法、内容逐字保留</b>；每处改动先出预览，接受与否由你决定。</p>
+          <div class="wn-star-foot">
+            <span class="kbd-chip"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F</kbd></span>
+            <span class="wn-pill">✦ 改动逐块预览</span>
+            <span class="wn-pill">内容零改动</span>
+            <span class="wn-pill">一步撤销</span>
+          </div>
+        </article>
         <article class="wn-item reveal">
           <div class="wn-head">
             <span class="wn-ver">v4.4.0</span>
@@ -195,7 +223,7 @@
           <div class="de-content">
             <div class="de-mode" data-mode-view="wysiwyg">
               <h2>会议纪要</h2>
-              <p><strong>本周重点</strong>：Mditor <code>v4.4.0</code> 正式发布，<mark>多根工作区</mark>。</p>
+              <p><strong>本周重点</strong>：Mditor <code>v4.5.0</code> 正式发布，<mark>AI 一键修格式</mark>。</p>
               <ul>
                 <li>五套主题 · 三种编辑模式</li>
                 <li>安装包仅 5 MB，秒开</li>
@@ -204,7 +232,7 @@
             </div>
             <div class="de-mode" data-mode-view="ir" hidden>
               <h2><span class="de-mark">##</span> 会议纪要</h2>
-              <p><span class="de-mark">**</span><strong>本周重点</strong><span class="de-mark">**</span>：Mditor <span class="de-mark">`</span><code>v4.4.0</code><span class="de-mark">`</span> 正式发布，<span class="de-mark">==</span><mark>多根工作区</mark><span class="de-mark">==</span>。</p>
+              <p><span class="de-mark">**</span><strong>本周重点</strong><span class="de-mark">**</span>：Mditor <span class="de-mark">`</span><code>v4.5.0</code><span class="de-mark">`</span> 正式发布，<span class="de-mark">==</span><mark>AI 一键修格式</mark><span class="de-mark">==</span>。</p>
               <ul>
                 <li><span class="de-mark">-</span> 五套主题 · 三种编辑模式</li>
                 <li><span class="de-mark">-</span> 安装包仅 5 MB，秒开</li>
@@ -213,8 +241,8 @@
             </div>
             <div class="de-mode" data-mode-view="sv" hidden>
               <pre>## 会议纪要
-**本周重点**：Mditor `v4.4.0` 正式发布，
-==大文档滚动零漂移==。
+**本周重点**：Mditor `v4.5.0` 正式发布，
+==AI 一键修复格式==。
 
 - 五套主题 · 三种编辑模式
 - 安装包仅 5 MB，秒开
