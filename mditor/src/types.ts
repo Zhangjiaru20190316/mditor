@@ -212,6 +212,15 @@ export interface Settings {
    */
   devMode: boolean;
   /**
+   * 大文档性能模式（默认关）：文档超过 3000 行或 500KB（lib/memory.ts
+   * BIG_DOC_* 阈值）时自动降级——关闭 CodeMirror 代码高亮与 KaTeX 公式渲染
+   * （Crepe create-time 特性位）、启用视口化渲染与载入遮罩，换取内存/CPU
+   * 余量。开启后大文档会降级渲染以省内存。lib/memory.ts 的
+   * 模块级开关由 useSettings 同步维护，isBigDoc 恒为 false；正在编辑的
+   * 大文档若档位因此翻转，useMilkdown 会自动重建编辑器以恢复/移除特性。
+   */
+  bigDocPerformance: boolean;
+  /**
    * 内存守护：定期检查 JS 堆，超过 memoryGuardThresholdMb 时自愈——先尝试
    * 销毁重建编辑器（软），无效则升级为整页 reload（硬，唯一可靠回收手段）。
    * 编辑器是 Milkdown/ProseMirror（纯 JS，无 GopherJS），其状态全在 V8 堆上，
@@ -302,6 +311,7 @@ export const DEFAULT_SETTINGS: Settings = {
   spellcheck: true,
   annoDiagPanel: false,
   devMode: false,
+  bigDocPerformance: false,
   memoryGuard: true,
   memoryGuardThresholdMb: 2500,
   customCssPath: "",

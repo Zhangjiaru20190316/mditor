@@ -407,6 +407,18 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
 
             {section === 3 && (
               <>
+                <Field label="大文档性能模式">
+                  <input
+                    type="checkbox"
+                    checked={draft.bigDocPerformance}
+                    onChange={(e) => set("bigDocPerformance", e.target.checked)}
+                  />
+                  <span className="hint">
+                    文档超过 3000 行或 500KB 时自动关闭代码高亮与公式渲染以降低
+                    内存占用。关闭后大文档保持完整渲染，但内存占用会明显升高；
+                    切换后当前文档会自动重建编辑器（撤销历史清空）。
+                  </span>
+                </Field>
                 <Field label="内存自动优化">
                   <input
                     type="checkbox"

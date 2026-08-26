@@ -2277,6 +2277,19 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     setRecreateToken((t) => t + 1);
   }, [svSurface]);
 
+  // 设置里切换「大文档性能模式」时重估当前文档档位：开关由 useSettings 同步
+  // 写入 memory.ts 模块开关，isBigDoc 结果可能随之翻转，而 CodeMirror/KaTeX
+  // 是 create-time 特性位——翻转则走 recreate()（含内容快照与光标/滚动恢复，
+  // 新实例按新档位决定特性）。文档不大 / 无文档时不翻转，零开销。
+  useEffect(() => {
+    const md =
+      modeRef.current === "sv"
+        ? svSurface()?.value ?? sourceTextRef.current ?? contentRef.current
+        : (crepeRef.current?.getMarkdown() ?? contentRef.current);
+    if (isBigDoc(md) !== bigDocRef.current) recreate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opts.settings.bigDocPerformance]);
+
   // 重建完成后恢复光标与滚动位置（尽力而为：按文本锚点重定位，找不到就
   // 保持新实例的默认状态）。双 rAF 等新视图完成首次布局再写 scrollTop。
   // v4.2.2：锚点找回后按捕获偏移对齐光标所在块（精确落位）——big 模式重建

@@ -17,6 +17,7 @@ import {
   saveSettings,
 } from "../lib/store";
 import { DEFAULT_SETTINGS, type Settings, type Theme } from "../types";
+import { setBigDocModeEnabled } from "../lib/memory";
 
 const CUSTOM_STYLE_ID = "mditor-custom-css";
 
@@ -89,6 +90,10 @@ export function useSettings(): SettingsApi {
     (async () => {
       try {
         const s = await loadSettings();
+        // 大文档性能模式总开关必须在 setSettings 之前同步写入：子组件
+        // （Editor/useMilkdown）的 effect 先于本组件（App）的 effect 执行，
+        // 晚于此处更新会让 useMilkdown 的档位翻转检测读到旧值。
+        setBigDocModeEnabled(s.bigDocPerformance);
         setSettings(s);
       } catch (e) {
         // mditor.json 损坏/不可读：保持默认设置可用（否则是未处理 rejection
@@ -117,6 +122,8 @@ export function useSettings(): SettingsApi {
         return next;
       };
       const next = apply(settingsRef.current);
+      // 与初始加载同理：同步写入模块开关，赶在子组件 effect 之前生效。
+      setBigDocModeEnabled(next.bigDocPerformance);
       setSettings((prev) => apply(prev));
       await saveSettings(next);
     },

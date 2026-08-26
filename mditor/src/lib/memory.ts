@@ -75,8 +75,21 @@ export const IS_DEV = Boolean(import.meta.env && import.meta.env.DEV);
 export const BIG_DOC_LINES = 3000;
 export const BIG_DOC_BYTES = 500_000;
 
+// 设置「大文档性能模式」的总开关（useSettings 在设置加载/每次更新时同步
+// 维护，不在 effect 里更新——子组件 effect 先于父组件执行，同步设置才能
+// 保证 useMilkdown 的档位翻转检测读到新值）。初始值与 DEFAULT_SETTINGS
+// .bigDocPerformance 一致（默认关），避免启动窗口期档位判定与设置默认值
+// 分叉。false = 无论文档多大都不降级。
+let bigDocModeEnabled = false;
+
+/** 设置「大文档性能模式」总开关；false 时 isBigDoc 恒为 false（恒不降级）。 */
+export function setBigDocModeEnabled(v: boolean): void {
+  bigDocModeEnabled = v;
+}
+
 /** Is the document large enough to warrant preview degradation? */
 export function isBigDoc(content: string | null | undefined): boolean {
+  if (!bigDocModeEnabled) return false;
   if (!content) return false;
   if (content.length > BIG_DOC_BYTES) return true;
   // Count lines without allocating a full array; bail as soon as we exceed.
