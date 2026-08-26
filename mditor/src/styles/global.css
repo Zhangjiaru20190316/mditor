@@ -2262,6 +2262,13 @@ body.is-resizing .ai-panel {
   opacity: 0.5;
   cursor: default;
 }
+/* v4.5 内置「修复格式」按钮：常驻快捷区首位，accent 描边与用户自定义
+   快捷操作区分（它不随 aiQuickActions 设置增删）。 */
+.ai-fix-btn {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
 .ai-msgs {
   flex: 1;
   overflow-y: auto;

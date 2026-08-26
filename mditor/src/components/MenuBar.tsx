@@ -118,6 +118,8 @@ function buildMenus(focusMode: boolean, theme: string, typewriter: boolean): Men
         item("format_code", "行内代码"),
         item("format_highlight", "高光", "Ctrl+Shift+H"),
         sep(),
+        item("format_fix_md", "一键修复 Markdown 格式 (AI)", "Ctrl+Alt+F"),
+        sep(),
         item("insert_link", "插入链接…"),
         item("insert_image", "插入图片…"),
         item("insert_footnote", "插入脚注"),

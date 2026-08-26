@@ -1015,7 +1015,10 @@ export default function App() {
           break;
         case "f":
           e.preventDefault();
-          if (e.shiftKey) {
+          if (e.altKey) {
+            // Ctrl+Alt+F：AI 一键修复 Markdown 格式（v4.5）。
+            dispatchMenuRef.current("format_fix_md");
+          } else if (e.shiftKey) {
             // Ctrl+Shift+F：跨文件搜索（V3.6）。
             setSidebarOpen(true);
             setSidebarTab("search");
@@ -1381,6 +1384,20 @@ export default function App() {
         editorRef.current?.toggleInlineCode();
         editorRef.current?.find();
         break;
+      case "format_fix_md": {
+        // 一键修复 Markdown 格式（v4.5）：打开 AI 面板并触发内置修复动作。
+        // 面板条件挂载（aiOpen && !focusMode），首次打开要等一帧才拿得到
+        // ref —— rAF 轮询与 onAskSelection 同模式。
+        setAiOpen(true);
+        let fixTries = 0;
+        const fireFix = () => {
+          const handle = aiPanelRef.current;
+          if (handle) handle.fixFormat();
+          else if (fixTries++ < 30) requestAnimationFrame(fireFix);
+        };
+        requestAnimationFrame(fireFix);
+        break;
+      }
       case "insert_link":
         setLinkDialogText(editorRef.current?.getSelection() ?? "");
         setLinkDialogOpen(true);

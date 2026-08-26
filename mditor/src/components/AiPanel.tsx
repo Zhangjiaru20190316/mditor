@@ -41,6 +41,7 @@ import {
   useState,
 } from "react";
 import {
+  buildFormatFixMessages,
   buildHistoryWithBudget,
   buildSelectionMessages,
   buildSystemPrompt,
@@ -62,6 +63,8 @@ import type { Settings, Theme, ThinkingStrength } from "../types";
 export interface AiPanelHandle {
   /** Ask about the current editor selection (called from the selection toolbar). */
   askSelection: (selection: string, instruction: string, range?: { from: number; to: number } | null) => void;
+  /** Trigger the built-in 一键修复格式 action (menu / Ctrl+Alt+F entry). */
+  fixFormat: () => void;
 }
 
 /** A pending 改动预览（AI 修改类回复的应用前审查）。 */
@@ -214,6 +217,9 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
   // list without rebuilding its identity every turn — keeps MsgRow memo valid).
   const messagesRef = useRef<Msg[]>([]);
   messagesRef.current = messages;
+  // 一键修复格式：流式成功完成后待自动打开改动预览的回复 id。只在 onDone
+  // 里写入 —— 出错 / 手动停止的半截回复不触发（其 diff 会显示大片误删）。
+  const autoReviewIdRef = useRef<number | null>(null);
 
   const flushDelta = useCallback(() => {
     rafIdRef.current = null;
@@ -378,7 +384,9 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
   // ---- `parent` (追问) targets a specific answer: the new turn hangs under
   // ---- it and its request history is that thread's chain, not the whole chat;
   // ---- `quote` (v3.9 划选追问) carries the explicitly-selected fragment of
-  // ---- the targeted answer as a <quote> block.
+  // ---- the targeted answer as a <quote> block; `preset` (v4.5 一键修复格式)
+  // ---- supplies pre-built request messages and skips history assembly /
+  // ---- truncation entirely (full-document contract).
   const send = async (
     raw: string,
     opts: {
@@ -389,6 +397,9 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
       parent?: Msg;
       /** 划选追问引用的回答片段。 */
       quote?: string;
+      /** 内置动作（一键修复格式）：预组装请求消息；autoReview 时成功完成后
+       *  自动打开该条回复的改动预览。 */
+      preset?: { messages: ChatMessage[]; autoReview?: boolean };
     } = { mode: "full" }
   ) => {
     const text = raw.trim();
@@ -428,7 +439,13 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
       : text;
 
     let history: ChatMessage[];
-    if (parent) {
+    if (opts.preset) {
+      // 内置动作（一键修复格式）：请求消息已预组装 —— 全文原文 + 专用提示
+      // 词。不掺历史、不经截断 / 预算裁剪：任务契约是「输出完整全文」，任
+      // 何裁剪都会让模型只修复文档的一部分。
+      history = opts.preset.messages;
+      if (opts.mode === "full") activeSelectionRef.current = "";
+    } else if (parent) {
       // 追问：沿 parentId×repliedUser 链回溯目标线程，聚焦该线程的上下文；
       // 链同样过 token 预算（长线程丢早期、保最近）。
       const chain = buildHistoryWithBudget(
@@ -582,6 +599,10 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
           tallyOutput();
           setLoading(false);
           streamRef.current = null;
+          // 一键修复格式：成功完成后排队自动打开这条回复的改动预览（由
+          // autoReviewIdRef 上的 effect 消费）。只在 onDone 设置 —— 出错 /
+          // 手动停止的半截回复不触发。
+          if (opts.preset?.autoReview) autoReviewIdRef.current = aiMsgId;
         },
         onError: (err) => {
           // Flush buffered deltas so partial content is preserved in the
@@ -771,12 +792,46 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     setReview(null);
   }, [review, onApplyChanges]);
 
+  // 一键修复格式的自动审查：目标回复结束 streaming 且有内容 → 打开改动
+  // 预览。消息被 MAX_MESSAGES 裁剪（找不到 id）时放弃并清 ref。
+  useEffect(() => {
+    const id = autoReviewIdRef.current;
+    if (id == null) return;
+    const m = messagesRef.current.find((x) => x.id === id);
+    if (!m) {
+      autoReviewIdRef.current = null;
+      return;
+    }
+    if (!m.streaming && m.content) {
+      autoReviewIdRef.current = null;
+      openReview(m);
+    }
+  }, [messages, openReview]);
+
   // Keep a ref to the latest `send` so the imperative handle below can stay
   // stable (empty deps) instead of rebuilding every turn. Without this, every
   // chat message makes `askSelection` a new function — harmless, but the
   // selection toolbar's poll loop (App.tsx) re-resolves it needlessly.
   const sendRef = useRef(send);
   sendRef.current = send;
+
+  // 内置「一键修复格式」（v4.5）：全文原文走专用提示词（不截断、不带历
+  // 史），成功完成后自动打开改动预览。入口：面板常驻按钮、格式菜单、
+  // Ctrl+Alt+F（后两者经 AiPanelHandle.fixFormat 转发到这里）。
+  const fixFormat = useCallback(() => {
+    const note = getNote();
+    if (!note.trim()) {
+      setError("当前笔记为空，没有需要修复的格式。");
+      return;
+    }
+    void sendRef.current("一键修复 Markdown 格式", {
+      mode: "full",
+      preset: { messages: buildFormatFixMessages(note), autoReview: true },
+    });
+  }, [getNote]);
+
+  const fixFormatRef = useRef(fixFormat);
+  fixFormatRef.current = fixFormat;
 
   // Imperative entry from the selection toolbar.
   useImperativeHandle(
@@ -785,8 +840,9 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
       askSelection: (selection, instruction, range) => {
         sendRef.current(instruction, { mode: "selection", selection, range });
       },
+      fixFormat: () => fixFormatRef.current(),
     }),
-    // sendRef is stable; the handle never needs to be recreated.
+    // sendRef/fixFormatRef are stable; the handle never needs to be recreated.
     []
   );
 
@@ -883,21 +939,27 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
         />
       ) : (
         <>
-          {fullActions.length > 0 && (
-            <div className="ai-quick">
-              {fullActions.map((q) => (
-                <button
-                  key={q.label}
-                  className="ai-quick-btn"
-                  disabled={loading}
-                  onClick={() => void send(q.prompt)}
-                  title={q.prompt}
-                >
-                  {q.label}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="ai-quick">
+            <button
+              className="ai-quick-btn ai-fix-btn"
+              disabled={loading}
+              onClick={fixFormat}
+              title="AI 修复全文 Markdown 语法错误，完成后自动打开改动预览（Ctrl+Alt+F）"
+            >
+              修复格式
+            </button>
+            {fullActions.map((q) => (
+              <button
+                key={q.label}
+                className="ai-quick-btn"
+                disabled={loading}
+                onClick={() => void send(q.prompt)}
+                title={q.prompt}
+              >
+                {q.label}
+              </button>
+            ))}
+          </div>
 
           <div className="ai-msgs" ref={scrollRef}>
             {messages.length === 0 && !loading && (

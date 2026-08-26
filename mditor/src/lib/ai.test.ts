@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAnnotationMessages,
+  buildFormatFixMessages,
   buildHistoryWithBudget,
   buildSelectionMessages,
   buildSystemPrompt,
@@ -180,5 +181,34 @@ describe("buildSystemPrompt / buildSelectionMessages 接线", () => {
     });
     // 默认系统提示词的说明文字里提到 <note> 标签名，断言实际的注入形态。
     expect(msgs[0].content).not.toContain("\n<note>\n");
+  });
+});
+
+describe("buildFormatFixMessages", () => {
+  it("返回 system + user 两条消息", () => {
+    const msgs = buildFormatFixMessages("# 标题\n\n正文");
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].role).toBe("system");
+    expect(msgs[1].role).toBe("user");
+  });
+
+  it("user 原样携带全文，超长也不截断", () => {
+    // 超过 large 策略的 12000 上限：修复任务是"输出完整全文"，截断即破坏任务。
+    const note = "z".repeat(20000);
+    const msgs = buildFormatFixMessages(note);
+    expect(msgs[1].content).toBe(note);
+    expect(msgs[1].content).not.toContain("已截断");
+  });
+
+  it("空文档给占位提示", () => {
+    const msgs = buildFormatFixMessages("   ");
+    expect(msgs[1].content).toBe("（当前笔记为空）");
+  });
+
+  it("system 含关键约束：只输出全文、逐字保留内容", () => {
+    const sys = buildFormatFixMessages("内容")[0].content;
+    expect(sys).toContain("只输出修复后的完整全文");
+    expect(sys).toContain("逐字保留全部文字内容");
+    expect(sys).toContain("Markdown 格式修复器");
   });
 });

@@ -389,6 +389,42 @@ export function buildAnnotationMessages(
   ];
 }
 
+/**
+ * Build the "一键修复 Markdown 格式" request: the whole note goes to the model
+ * verbatim (NO truncateNoteForContext — trimming would produce a half-fixed
+ * document) and the model must hand back the full document with only syntax
+ * errors repaired, so the reply can be diffed against the original in the
+ * 改动预览 (DiffReview) panel.
+ *
+ * 不携带聊天历史、不受 token 预算裁剪：全文修复是单轮任务，历史与裁剪都会
+ * 破坏"输出完整全文"的契约。
+ */
+export function buildFormatFixMessages(note: string): ChatMessage[] {
+  const system = [
+    "你是 Mditor 编辑器中的 Markdown 格式修复器。下面给出笔记的完整原文，",
+    "请修复其中所有 Markdown 语法错误，输出修复后的完整全文。",
+    "",
+    "修复范围（只动语法结构）：",
+    "- 未闭合 / 未正确开闭的代码围栏（```），补齐围栏并保持原有语言标注；",
+    "- 表格：缺失分隔行（| --- |）、列数与表头不齐、单元格竖线错位；",
+    "- 标题：# 后缺空格、连续层级跳跃（如 # 一级直接跟 ### 三级）；",
+    "- 列表：缩进错误、有序/无序标记混用导致的嵌套错乱；",
+    "- 链接 / 图片语法：缺 ]、( ) 或括号不配对；",
+    "- 全角标点混入语法位（如 ＃、＊、１．、（） 应作列表/标题/链接符号时）；",
+    "- 数学公式定界符错误（行内 $...$、独立块 $$...$$ 不配对）；",
+    "- 连续多余空行压缩为一个、行尾多余空格（强调语法前的两个空格除外）。",
+    "",
+    "硬性约束：",
+    "- 逐字保留全部文字内容：不改写、不润色、不增删任何句子或段落、不调换顺序；",
+    "- 语法本身正确的部分原样保留，能不动就不动；",
+    "- 只输出修复后的完整全文：不要解释、不要前后缀、不要用整体代码围栏包裹。",
+  ].join("\n");
+  return [
+    { role: "system", content: system },
+    { role: "user", content: note.trim() ? note : "（当前笔记为空）" },
+  ];
+}
+
 /** Single-shot chat: returns the assistant's text reply. Used for "测试连接". */
 export async function chat({ settings, messages }: ChatOptions): Promise<string> {
   const m = resolveActiveModel(settings);
