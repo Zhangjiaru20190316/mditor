@@ -104,6 +104,90 @@
   `perf/fixtures/` 文档副本，**绝不碰真实笔记**）。
 - 基准数据：`perf/results/`（baseline-1 修复前 / after-fix1-fix2 / final-bigmode）。
 
+## 第二轮：选中与编辑路径（V4.6.1，2026-08-27 实测驱动）
+
+第一轮修掉聚焦重算与虚拟光标读之后，同一份习题集（已涨到 154KB/3609 行，
+`big:false`）仍报 MD-1003（最长 3822ms，触发序列＝点行内公式→点正文→点
+选区工具栏）与 MD-4011「DOM 持续增长 14.5 分钟 +213,857 节点」。本轮先归
+因、后动手。
+
+### 归因（先证伪再实锤）
+
+- **MD-4011 是检测器假阳性，不是泄漏**：心跳计数复核（`perf/a0-verify.mjs`
+  读 dev-events.log）显示期间 domNodes 恒定 ~214,120±200、cmEditors 0-1、
+  katexNodes 3611——**无增长**。真因＝用户 15:15:32 切到空文档（267 节点）
+  → 15:16:02 切回习题集（214,278 节点），15 分钟趋势窗口把跨文档基线差当
+  成了持续增长。已修：`HeartbeatPoint.docKey` + `sameDocTail` 尾段切割
+  （devAnomaly），同文档真实累积仍报、旧格式点行为不变。
+- **选中链路的真凶是「全量渲染 DOM 的原生强制布局」，不是 JS**：CPU 剖面
+  （`perf/profile-select.mjs`，224KB 副本）——三击 self-time 前 two =
+  `getBoundingClientRect` 724ms + `(program)` 744ms；点公式 ×3 =
+  1470ms + 3832ms；拖选 = 749ms + `caretPositionFromPoint` 890ms（浏览器
+  命中测试）。rect 抓现行（`rect-spy2.mjs`）显示读取大头是 scrollDebug
+  哨兵（每帧 2 次，**预付布局款**，同帧绘制反正要付，第一轮 observeMove
+  教训适用）与 floating-ui 测量——**杀读者无用，要让布局本身变便宜**。
+- **公式点击的第三付款人**：crepe `LatexInlineTooltip`（debounce:0）每次
+  shouldShow 都 `new Schema + new EditorView` 且不销毁旧视图（泄漏 detached
+  view）。已 patch（Schema 单例 + destroy 旧 + 同公式复用）。
+
+### 修复清单（各自独立提交）
+
+| # | 改动 | 量化 |
+| --- | --- | --- |
+| 1 | 停用 crepe Toolbar（链接/行内公式先并入选区工具栏再禁） | 消每事务 shouldShow 序列化 + Vue 重渲染 + floating-ui 定位 |
+| 2 | SelectionToolbar 拆 frame/commit + StatusBar 尾随防抖 | 拖选期间 O(选区 DOM)/帧 的序列化归零；提交时走 PM textBetween |
+| 3 | crepe 行内公式提示 patch | Schema 单例 + 旧视图销毁 + 同公式复用（泄漏根修） |
+| 4 | code-block teardown 重排 patch | 聚焦/选中时离视口的块不再永久挂载（卫生修复，非主因） |
+| 5 | 停键序列化挪 idle 窗口 patch | 225KB 实测单次 80ms 的 eq+serialize 不再占用停键后的交互帧 |
+| 6 | **bigDocViewport 子开关（本轮主杠杆）** | 见下表 |
+
+### 量化（`perf/select-bench.mjs`，224KB/3609 行 KaTeX 副本）
+
+| 场景（事件延迟 max，ms） | 默认路径（修复后） | + bigDocViewport | + bigDocPerformance |
+| --- | --- | --- | --- |
+| 拖选（按住拖半行） | 432 / 656 | **40 / 456** | 16 / 168 |
+| 三击选段 | 616 / 352 | **96 / 64** | 0 / 16 |
+| 点公式→点正文 ×3 | 584 / 576 | **24 / 32** | （公式渲染已关，场景跳过） |
+
+> 基准口径：同一台开发机不同时段的整机负载漂移实测可达 2-3 倍
+> （sel-*.json 保留了 b1/head/stack 各窗口原始轮次），**跨时段单轮对比
+> 不可信**——同窗口 ABAB 交错对比 + CPU 剖面归因才是本轮的出数方式。
+
+### bigDocViewport：content-visibility 与减配解耦
+
+big 总开关实测能把选中交互压到 ≤16ms，但同时关闭 KaTeX/CodeMirror 渲染
+——对公式密集文档等于砍掉内容价值。新设置 `bigDocViewport`（默认关）只
+启用视口化（data-big CSS + cvIntrinsicPlugin 高度记忆 + 预热），保留全部
+渲染特性；实现上把「体量够大」「减配档」「视口档」拆成
+`sizeIsBigDoc / isBigDoc / isBigDocCv` 三层（`lib/memory.ts`），档位翻转
+重建判定覆盖两档（顺带修复了 `maybeRecreateForBigDoc` 单档翻转时不重建
+也不落地内容的缺陷）。正确性：Ctrl+A 跨视口全选实测 PASS；查找/批注/
+大纲跳转与 big 模式共用同一套已验证的 c-v 机制。
+
+### 评估后不做的项（数据不支持，勿再走）
+
+- **C2（syncListOrder/syncHeadingId 每键全文档遍历）**：打字剖面里 PM
+  模型遍历帧合计 <10% 活动时间，每键估计 2-4ms——非付款人，收益撑不起
+  patch 维护成本。
+- **C3（公式块预览无防抖重渲）**：仅影响公式块内编辑时体验，用户日志
+  无此形态卡顿记录。
+- **B4（虚拟光标 restartAnimation 写后读回流）**：打字剖面 74ms/11 键
+  （c-v 档下更便宜）；重排写读顺序会破坏动画重启语义，WAAPI 改写侵入
+  已验证补丁——低收益高风险，挂起。
+- **拖选剩余的 ~400ms 离群**：`caretPositionFromPoint` 命中测试是浏览器
+  内部成本，应用层无杠杆；c-v 档下已缩到视口规模。
+
+### 第二轮基建增补（`perf/`）
+
+- `select-bench.mjs`：三场景精简基准（~2 分钟/轮，多次运行累积轮次，
+  供同窗口 ABAB）。
+- `profile-select.mjs`：三场景 CPU 剖面。
+- `rect-spy2.mjs` + `spy-selftest.mjs`：rect/offsetWidth 抓现行（坑：
+  `getBoundingClientRect` 是**数据属性**要包方法而非 getter；
+  `offsetWidth` 在 `HTMLElement.prototype` 不在 `Element.prototype`）。
+- `cv-correctness.mjs` / `boot-errors.mjs` / `open-errors.mjs` /
+  `a0-verify.mjs`：c-v 正确性快检、静默失败抓取、心跳归因。
+
 ## 阶段 1：标签级解析缓存 + 空闲预解析（`src/lib/docCache.ts`）
 
 - **内容寻址**：键 = `长度:FNV-1a32` 指纹（`lib/parseShared.ts`），不经
