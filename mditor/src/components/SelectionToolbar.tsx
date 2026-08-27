@@ -18,7 +18,7 @@
 
 import { memo, useEffect, useRef, useState } from "react";
 import type { QuickAction } from "../types";
-import { HighlightIcon, TextColorIcon, ChevronRightIcon, CloseIcon } from "./icons";
+import { HighlightIcon, TextColorIcon, ChevronRightIcon, CloseIcon, LinkIcon } from "./icons";
 
 interface Props {
   /** Read the current editor selection text on demand. */
@@ -50,6 +50,12 @@ interface Props {
   onStrike: () => void;
   /** Toggle `inline code` on the current selection（V3.6）. */
   onCode: () => void;
+  /** Apply a link to the current selection; null removes it（V4.6.1，接替
+   *  crepe Toolbar 停用后的链接按钮）. */
+  onLink: (href: string | null) => void;
+  /** Toggle $inline math$ on the current selection（V4.6.1，接替 crepe Toolbar
+   *  停用后的行内公式按钮）. */
+  onMath: () => void;
   /** Apply a text color to the current selection (rich + source modes). */
   onSetColor: (color: string) => void;
   /** Remove any text color from the current selection. */
@@ -131,6 +137,8 @@ export const SelectionToolbar = memo(function SelectionToolbar({
   onItalic,
   onStrike,
   onCode,
+  onLink,
+  onMath,
   onSetColor,
   onClearColor,
   getActiveMarks,
@@ -155,6 +163,8 @@ export const SelectionToolbar = memo(function SelectionToolbar({
   const [freeText, setFreeText] = useState("");
   const [annoOpen, setAnnoOpen] = useState(false);
   const [annoText, setAnnoText] = useState("");
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   // Last selection range captured while it was still live. The 批注 popout's
   // <textarea autoFocus> collapses the editor selection once it opens, so we
@@ -178,28 +188,53 @@ export const SelectionToolbar = memo(function SelectionToolbar({
     let cleanup: (() => void) | null = null;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const update = () => {
+    // V4.6.1 性能重构：拆成两条路径。
+    // · frame（selectionchange 每帧）：只做 collapsed/编辑器包含性判断与隐藏
+    //   —— 绝不序列化选区文本。大文档（KaTeX 双份深嵌套 DOM）上
+    //   sel.toString() 是 O(选区 DOM)/帧，拖选即准 O(n²)，三击/Ctrl+A 单次
+    //   上百 ms，这是拖选 728ms 事件的主付款人。
+    // · commit（mouseup/keyup/resize）：选区稳定后才取一次文本 + rect + marks。
+    //   取文本走 getSelection()（App→PM textBetween / sv textarea 切片），
+    //   绕开 DOM toString 对 KaTeX 公式双份 DOM 的重复序列化。
+    const updateFrame = () => {
       // Don't reposition while the user is interacting with the toolbar itself.
       const active = document.activeElement;
       if (rootRef.current && active && rootRef.current.contains(active)) return;
-
       const sel = window.getSelection();
-      const text = sel && !sel.isCollapsed ? sel.toString().trim() : "";
-      const selInEditor = !!sel && !!text && editorAreaContains(sel.anchorNode);
+      const selInEditor =
+        !!sel && !sel.isCollapsed && editorAreaContains(sel.anchorNode);
+      if (!selInEditor) {
+        rangeRef.current = null;
+        setVisible(false);
+        closeMenus();
+      }
+      // 非折叠的有效选区：等 commit 再显示/定位（拖选期间工具栏不再跟手移动，
+      // 与 Notion 等编辑器一致——松开即出现）。
+    };
+
+    const updateCommit = () => {
+      // Don't reposition while the user is interacting with the toolbar itself.
+      const active = document.activeElement;
+      if (rootRef.current && active && rootRef.current.contains(active)) return;
+      const sel = window.getSelection();
+      const selInEditor =
+        !!sel && !sel.isCollapsed && editorAreaContains(sel.anchorNode);
       if (!selInEditor) {
         rangeRef.current = null;
         setVisible(false);
         closeMenus();
         return;
       }
-      const rect = sel!.getRangeAt(0).getBoundingClientRect();
-      // Hide if the selection is too short to be meaningful (a stray click).
+      // 选区已稳定：此刻才付一次序列化的钱（且走 PM 的 textBetween）。
+      const text = getSelection().trim();
       if (text.length < 1) {
+        // 无文字选区（如纯图片拖选）——同旧行为：不弹工具栏。
         rangeRef.current = null;
         setVisible(false);
         closeMenus();
         return;
       }
+      const rect = sel!.getRangeAt(0).getBoundingClientRect();
       // Place above the selection; flip below if there isn't room.
       const margin = 8;
       const toolbarH = 40;
@@ -218,15 +253,21 @@ export const SelectionToolbar = memo(function SelectionToolbar({
       setVisible(true);
     };
 
-    // selectionchange 在输入 / 移动光标 / 拖选时高频触发，直接每次同步跑
-    // getBoundingClientRect + 多个 setState 会让选区交互产生可感的滞后。
-    // 用 rAF 合并：触发只标记并请求一帧，真正的测量与 setState 一帧最多一次。
+    // selectionchange 在输入 / 移动光标 / 拖选时高频触发，用 rAF 合并帧内
+    // 多次触发；frame 路径本身只读 isCollapsed/包含性（无布局、无序列化）。
     let rafId: number | null = null;
-    const scheduleUpdate = () => {
+    const scheduleFrame = () => {
       if (rafId != null) return; // 已有一帧挂起，合并本帧内的后续触发
       rafId = requestAnimationFrame(() => {
         rafId = null;
-        update();
+        updateFrame();
+      });
+    };
+    const scheduleCommit = () => {
+      if (rafId != null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        updateCommit();
       });
     };
 
@@ -237,6 +278,7 @@ export const SelectionToolbar = memo(function SelectionToolbar({
         setRewriteOpen(false);
         setFreeOpen(false);
         setAnnoOpen(false);
+        setLinkUrl("");
       }
     };
 
@@ -253,25 +295,25 @@ export const SelectionToolbar = memo(function SelectionToolbar({
       return el?.closest(".mditor-editor-host") ?? null;
     };
     const onEditorMouseUp = (e: MouseEvent) => {
-      if (editorHostFromNode(e.target as Node | null)) scheduleUpdate();
+      if (editorHostFromNode(e.target as Node | null)) scheduleCommit();
     };
     const onEditorKeyUp = (e: KeyboardEvent) => {
-      if (editorHostFromNode(e.target as Node | null)) scheduleUpdate();
+      if (editorHostFromNode(e.target as Node | null)) scheduleCommit();
     };
 
     const attach = () => {
-      document.addEventListener("selectionchange", scheduleUpdate);
+      document.addEventListener("selectionchange", scheduleFrame);
       document.addEventListener("mouseup", onEditorMouseUp);
       document.addEventListener("keyup", onEditorKeyUp);
-      window.addEventListener("resize", scheduleUpdate);
+      window.addEventListener("resize", scheduleCommit);
       window.addEventListener("keydown", onKey);
       cleanup = () => {
         if (rafId != null) cancelAnimationFrame(rafId);
         rafId = null;
-        document.removeEventListener("selectionchange", scheduleUpdate);
+        document.removeEventListener("selectionchange", scheduleFrame);
         document.removeEventListener("mouseup", onEditorMouseUp);
         document.removeEventListener("keyup", onEditorKeyUp);
-        window.removeEventListener("resize", scheduleUpdate);
+        window.removeEventListener("resize", scheduleCommit);
         window.removeEventListener("keydown", onKey);
       };
     };
@@ -293,9 +335,10 @@ export const SelectionToolbar = memo(function SelectionToolbar({
       if (pollTimer) clearTimeout(pollTimer);
       cleanup?.();
     };
-    // `getSelectionRange` is a stable useCallback from App, so listing it is
-    // safe and never triggers re-runs; it satisfies exhaustive-deps.
-  }, [isReady, getSelectionRange]);
+    // `getSelectionRange`/`getSelection` are stable useCallbacks from App, so
+    // listing them is safe and never triggers re-runs; it satisfies
+    // exhaustive-deps.
+  }, [isReady, getSelectionRange, getSelection]);
 
   // Close when a click lands outside both the toolbar and the editor surface.
   useEffect(() => {
@@ -318,7 +361,16 @@ export const SelectionToolbar = memo(function SelectionToolbar({
   function closeMenus() {
     setColorOpen(false);
     setAiOpen(false);
+    setLinkOpen(false);
   }
+
+  /** Apply the typed URL (empty input = remove the link) and close the popout. */
+  const applyLink = () => {
+    const url = linkUrl.trim();
+    onLink(url ? url : null);
+    setLinkOpen(false);
+    setLinkUrl("");
+  };
 
   if (!visible) return null;
 
@@ -348,6 +400,7 @@ export const SelectionToolbar = memo(function SelectionToolbar({
     setRewriteReq("");
     setFreeText("");
     setAnnoText("");
+    setLinkUrl("");
   };
 
   // Create a local (non-AI) annotation on the current selection.
@@ -373,6 +426,7 @@ export const SelectionToolbar = memo(function SelectionToolbar({
   const toggleColorMenu = () => {
     setColorOpen((o) => !o);
     setAiOpen(false);
+    setLinkOpen(false);
     setRewriteOpen(false);
     setFreeOpen(false);
     setAnnoOpen(false);
@@ -380,6 +434,7 @@ export const SelectionToolbar = memo(function SelectionToolbar({
   const toggleAiMenu = () => {
     setAiOpen((o) => !o);
     setColorOpen(false);
+    setLinkOpen(false);
     setRewriteOpen(false);
     setFreeOpen(false);
     setAnnoOpen(false);
@@ -443,6 +498,28 @@ export const SelectionToolbar = memo(function SelectionToolbar({
         onClick={() => runFormat(onHighlight)}
       >
         <HighlightIcon size={14} />
+      </button>
+      <button
+        className={`sel-btn${linkOpen ? " active" : ""}`}
+        title="插入链接（留空并应用 = 去除链接）"
+        aria-expanded={linkOpen}
+        onClick={() => {
+          setLinkOpen((o) => !o);
+          setColorOpen(false);
+          setAiOpen(false);
+          setRewriteOpen(false);
+          setFreeOpen(false);
+          setAnnoOpen(false);
+        }}
+      >
+        <LinkIcon size={14} />
+      </button>
+      <button
+        className="sel-btn"
+        title="行内公式（选区包裹为 $…$；选中公式时还原为文字）"
+        onClick={() => runFormat(onMath)}
+      >
+        <em>fx</em>
       </button>
 
       <span className="sel-sep" />
@@ -570,7 +647,28 @@ export const SelectionToolbar = memo(function SelectionToolbar({
         )}
       </div>
 
-      {/* ============ 输入弹出层（改写 / 问AI / 批注），挂在工具栏下方 ============ */}
+      {/* ============ 输入弹出层（链接 / 改写 / 问AI / 批注），挂在工具栏下方 ============ */}
+      {linkOpen && (
+        <div className="sel-popout">
+          <input
+            className="sel-input"
+            autoFocus
+            placeholder="链接地址，如 https://example.com"
+            value={linkUrl}
+            onChange={(e) => setLinkUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                applyLink();
+              }
+            }}
+          />
+          <button className="sel-btn primary" onClick={applyLink}>
+            应用
+          </button>
+        </div>
+      )}
+
       {annoOpen && (
         <div className="sel-popout sel-popout-anno">
           <textarea

@@ -79,7 +79,11 @@ export const StatusBar = memo(function StatusBar({
     heapRatio > 0.85 ? "#e53935" : heapRatio > 0.7 ? "#f9a825" : undefined;
 
   // 选区字数统计（V3.6）：自包含监听 selectionchange —— 只在编辑器表面持有
-  // 非空选区时显示「已选 N 字」。150ms 防抖 + 不上抛父组件（打字零开销）。
+  // 非空选区时显示「已选 N 字」。不上抛父组件（打字零开销）。
+  // V4.6.1 性能：旧版 150ms 防抖是「到点即读」——拖选期间每 150ms 就
+  // sel.toString() + countWords 一次（KaTeX 大文档上每次都是全选区序列化）。
+  // 改为尾随防抖：选区每变化一次就把计时器往后推，只有选区静止 ≥400ms
+  // （mouseup/keyup 后 250ms）才读一次文本；拖选全程零序列化。
   const [selWords, setSelWords] = useState(0);
   useEffect(() => {
     let timer: number | null = null;
@@ -98,13 +102,30 @@ export const StatusBar = memo(function StatusBar({
       const n = text ? countWords(text) : 0;
       setSelWords((prev) => (prev === n ? prev : n));
     };
-    const schedule = () => {
-      if (timer != null) return;
-      timer = window.setTimeout(read, 150);
+    const schedule = (delay: number) => {
+      if (timer != null) window.clearTimeout(timer);
+      timer = window.setTimeout(read, delay);
     };
-    document.addEventListener("selectionchange", schedule);
+    const inEditorSurface = (t: EventTarget | null): boolean => {
+      const el =
+        t instanceof Element
+          ? t
+          : t instanceof Node
+            ? (t.parentElement ?? null)
+            : null;
+      return !!el?.closest(".mditor-editor-host, .mditor-source, .mditor-sv");
+    };
+    const onSelectionChange = () => schedule(400);
+    const onEnd = (e: Event) => {
+      if (inEditorSurface(e.target)) schedule(250);
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    document.addEventListener("mouseup", onEnd);
+    document.addEventListener("keyup", onEnd);
     return () => {
-      document.removeEventListener("selectionchange", schedule);
+      document.removeEventListener("selectionchange", onSelectionChange);
+      document.removeEventListener("mouseup", onEnd);
+      document.removeEventListener("keyup", onEnd);
       if (timer != null) window.clearTimeout(timer);
     };
   }, []);

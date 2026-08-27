@@ -48,10 +48,14 @@ import {
   deleteRow,
   deleteColumn,
 } from "@milkdown/prose/tables";
-import { TextSelection } from "@milkdown/prose/state";
+import { TextSelection, NodeSelection } from "@milkdown/prose/state";
 import { Slice, Node } from "@milkdown/prose/model";
 import type { Node as PMNode, DOMOutputSpec } from "@milkdown/prose/model";
-import { headingIdGenerator, toggleInlineCodeCommand } from "@milkdown/kit/preset/commonmark";
+import {
+  headingIdGenerator,
+  toggleInlineCodeCommand,
+  toggleLinkCommand,
+} from "@milkdown/kit/preset/commonmark";
 import { syntaxHighlighting } from "@codemirror/language";
 import { classHighlighter } from "@lezer/highlight";
 import { highlightPlugins } from "../lib/highlightMark";
@@ -323,6 +327,14 @@ export interface MilkdownFacade {
   /** Toggle `inline code` on the current selection（V3.6）. Rich mode runs
    *  milkdown's toggleInlineCodeCommand；sv 模式用 ` 包裹。 */
   toggleInlineCode: () => void;
+  /** Apply a link mark with `href` on the current selection; href=null removes
+   *  the link（V4.6.1：顶栏化 crepe Toolbar 停用后，链接能力并入选区工具栏）。
+   *  Rich mode runs toggleLinkCommand；sv 模式用 [..](href) 包裹。 */
+  setLinkOnSelection: (href: string | null) => void;
+  /** Toggle `$inline math$` on the current selection（V4.6.1：补齐 crepe Toolbar
+   *  的行内公式按钮）。选中态的公式节点还原成普通文字，反之把选区文字包成
+   *  math_inline 节点；sv 模式用 $ 包裹。 */
+  toggleInlineMath: () => void;
   /** 把当前选区变成（或以 text 为文字在光标处创建）指向 href 的链接（V3.6）。 */
   insertLink: (href: string, text?: string) => void;
   /** 在光标处插入脚注 `[^fn-N]`，并在文末追加其空定义（V3.6）。返回脚注 id。 */
@@ -624,6 +636,13 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           [Crepe.Feature.Latex]: !big,
           [Crepe.Feature.TopBar]: false,
           [Crepe.Feature.AI]: false,
+          // crepe Toolbar 与自研 SelectionToolbar 并存：它对每个事务做
+          // shouldShow（20ms 节流 + doc.textBetween 全选区序列化）+ Vue 重渲染
+          // + floating-ui 定位（2× coordsAtPos 强制布局）。大文档（224KB KaTeX）
+          // 上拖选事件 p95 160ms / 三击 416ms 的直接贡献者。其独有功能
+          // （链接 / 行内公式）已并入选区工具栏（setLinkOnSelection /
+          // toggleInlineMath），故整体停用。
+          [Crepe.Feature.Toolbar]: false,
         },
         featureConfigs: {
           [Crepe.Feature.Latex]: {
@@ -1819,6 +1838,76 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           crepeRef.current!.editor.action(callCommand(toggleInlineCodeCommand.key));
         } catch (e) {
           noteOpError("toggleInlineCode", e);
+        }
+      },
+      setLinkOnSelection: (href) => {
+        if (modeRef.current === "sv") {
+          const ta = sv();
+          if (!ta) return;
+          if (href == null) {
+            // 去链接：剥掉 [..](..) 语法，保留链接文字
+            const s = ta.selectionStart;
+            const e2 = ta.selectionEnd;
+            const sel = ta.value.slice(s, e2);
+            const m = /^\[([^\]]*)\]\([^)]*\)$/.exec(sel);
+            if (m) {
+              ta.value = ta.value.slice(0, s) + m[1] + ta.value.slice(e2);
+              ta.setSelectionRange(s, s + m[1].length);
+              sourceTextRef.current = ta.value;
+              contentRef.current = ta.value;
+              onInputRef.current(ta.value);
+            }
+            return;
+          }
+          const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+          replaceTextareaSelection(ta, `[${sel}](${href})`);
+          sourceTextRef.current = ta.value;
+          contentRef.current = ta.value;
+          onInputRef.current(ta.value);
+          return;
+        }
+        try {
+          // toggleLinkCommand 带空 href payload 是「移除」，非空是「套用」
+          crepeRef.current!.editor.action(
+            callCommand(toggleLinkCommand.key, href ? { href } : {})
+          );
+        } catch (e) {
+          noteOpError("setLinkOnSelection", e);
+        }
+      },
+      toggleInlineMath: () => {
+        if (modeRef.current === "sv") {
+          svWrap("$", "$");
+          return;
+        }
+        try {
+          crepeRef.current!.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const mathType = view.state.schema.nodes["math_inline"];
+            if (!mathType) return;
+            const { selection } = view.state;
+            // NodeSelection 停在公式节点上 → 还原成普通文字（同 crepe ToggleLatex）
+            const selNode = selection instanceof NodeSelection ? selection.node : null;
+            if (selNode && selNode.type === mathType) {
+              const pos = selection.from;
+              const value = selNode.attrs.value ?? "";
+              const tr = view.state.tr
+                .delete(pos, pos + selNode.nodeSize)
+                .insertText(value, pos);
+              tr.setSelection(TextSelection.create(tr.doc, pos, pos + value.length));
+              view.dispatch(tr);
+              return;
+            }
+            const { from, to } = selection;
+            const text = view.state.doc.textBetween(from, to);
+            const tr = view.state.tr.replaceSelectionWith(
+              mathType.create({ value: text })
+            );
+            tr.setSelection(NodeSelection.create(tr.doc, from));
+            view.dispatch(tr);
+          });
+        } catch (e) {
+          noteOpError("toggleInlineMath", e);
         }
       },
       insertLink: (href, text) => {

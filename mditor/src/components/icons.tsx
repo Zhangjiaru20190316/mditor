@@ -280,6 +280,16 @@ export function HighlightIcon({ size, className }: IconProps) {
   );
 }
 
+/** 链接（断链图形）。选区工具栏「链接」按钮用（v4.6.1，补齐 crepe Toolbar 停用后的功能）。 */
+export function LinkIcon({ size, className }: IconProps) {
+  return (
+    <Svg size={size} className={className}>
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </Svg>
+  );
+}
+
 /** 文字颜色（A 字母 + 彩色下划线）。下划线用渐变以传达"取色"含义。 */
 export function TextColorIcon({ size, className }: IconProps) {
   return (

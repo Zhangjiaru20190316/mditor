@@ -1768,6 +1768,11 @@ export default function App() {
     []
   );
   const toggleInlineCode = useCallback(() => editorRef.current?.toggleInlineCode(), []);
+  const setLinkOnSelection = useCallback(
+    (href: string | null) => editorRef.current?.setLinkOnSelection(href),
+    []
+  );
+  const toggleInlineMath = useCallback(() => editorRef.current?.toggleInlineMath(), []);
   const setTextColor = useCallback(
     (color: string) => editorRef.current?.setTextColor(color),
     []
@@ -2247,6 +2252,8 @@ export default function App() {
         onItalic={toggleItalic}
         onStrike={toggleStrikethrough}
         onCode={toggleInlineCode}
+        onLink={setLinkOnSelection}
+        onMath={toggleInlineMath}
         onSetColor={setTextColor}
         onClearColor={clearTextColor}
         getActiveMarks={getActiveMarks}

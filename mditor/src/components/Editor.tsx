@@ -111,6 +111,10 @@ export interface EditorHandle {
   toggleStrikethrough: () => void;
   /** Toggle `inline code` on the current selection（V3.6）. */
   toggleInlineCode: () => void;
+  /** Apply a link to the current selection (null removes)（V4.6.1）. */
+  setLinkOnSelection: (href: string | null) => void;
+  /** Toggle $inline math$ on the current selection（V4.6.1）. */
+  toggleInlineMath: () => void;
   /** 把选区变成链接（或以 text 为文字在光标处插入链接）（V3.6）。 */
   insertLink: (href: string, text?: string) => void;
   /** 在光标处插入脚注并追加定义（V3.6）；返回脚注 id 或 null。 */
@@ -917,6 +921,22 @@ export const Editor = memo(
         if (!ed) return;
         ed.focus();
         ed.insertLink(href, text);
+        fileApiRef.current.markDirty();
+        onInputRef.current?.(ed.getValue());
+      },
+      setLinkOnSelection: (href) => {
+        const ed = handle.editor;
+        if (!ed) return;
+        ed.focus();
+        ed.setLinkOnSelection(href);
+        fileApiRef.current.markDirty();
+        onInputRef.current?.(ed.getValue());
+      },
+      toggleInlineMath: () => {
+        const ed = handle.editor;
+        if (!ed) return;
+        ed.focus();
+        ed.toggleInlineMath();
         fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
