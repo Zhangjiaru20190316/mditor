@@ -1,0 +1,41 @@
+diff --git a/node_modules/prosemirror-virtual-cursor/dist/index.js b/node_modules/prosemirror-virtual-cursor/dist/index.js
+index ed6886d..4c94b00 100644
+--- a/node_modules/prosemirror-virtual-cursor/dist/index.js
++++ b/node_modules/prosemirror-virtual-cursor/dist/index.js
+@@ -15,8 +15,26 @@ function createVirtualCursor(options) {
+       const doc = view.dom.ownerDocument;
+       _cursor = _cursor || document.createElement("div");
+       const cursor = _cursor;
++      let rafId = 0;
++      let lastDoc = null;
++      let lastHead = -1;
++      let lastWidth = -1;
++      let placed = false;
+       const update = () => {
+-        updateCursor(view, cursor);
++        if (rafId) return;
++        rafId = requestAnimationFrame(() => {
++          rafId = 0;
++          if (view.isDestroyed) return;
++          const { doc: doc2, selection } = view.state;
++          const width = view.dom.clientWidth;
++          if (placed && doc2 === lastDoc && selection.head === lastHead && width === lastWidth)
++            return;
++          lastDoc = doc2;
++          lastHead = selection.head;
++          lastWidth = width;
++          placed = true;
++          updateCursor(view, cursor);
++        });
+       };
+       let observer;
+       if (window.ResizeObserver) {
+@@ -29,6 +47,8 @@ function createVirtualCursor(options) {
+           update();
+         },
+         destroy: () => {
++          if (rafId) cancelAnimationFrame(rafId);
++          rafId = 0;
+           doc.removeEventListener("selectionchange", update);
+           if (observer) {
+             observer.unobserve(view.dom);
