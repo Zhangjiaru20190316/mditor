@@ -1,0 +1,100 @@
+diff --git a/node_modules/@milkdown/crepe/lib/esm/index.js b/node_modules/@milkdown/crepe/lib/esm/index.js
+index 481d056..96c84ae 100644
+--- a/node_modules/@milkdown/crepe/lib/esm/index.js
++++ b/node_modules/@milkdown/crepe/lib/esm/index.js
+@@ -3205,6 +3205,34 @@ var __privateGet$3 = (obj, member, getter) => (__accessCheck$3(obj, member, "rea
+ var __privateAdd$3 = (obj, member, value) => member.has(obj) ? __typeError$3("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
+ var __privateSet$3 = (obj, member, value, setter) => (__accessCheck$3(obj, member, "write to private field"), member.set(obj, value), value);
+ var _content$1, _provider, _dom, _innerView, _updateValue, _app$2, _onHide, _shouldShow;
++// mditor perf (v4.6.1): the inline-latex tooltip used to construct a brand-new
++// Schema + EditorView on EVERY shouldShow (debounce:0 — one full inner editor
++// per click/update while a formula is selected), leaking the replaced views
++// (only the last one was destroyed on hide). Cache the schema at module level.
++let __latexInnerSchema = null;
++function getLatexInnerSchema() {
++  if (!__latexInnerSchema) {
++    __latexInnerSchema = new Schema({
++      nodes: {
++        doc: {
++          content: "block+"
++        },
++        paragraph: {
++          content: "inline*",
++          group: "block",
++          parseDOM: [{ tag: "p" }],
++          toDOM() {
++            return ["p", 0];
++          }
++        },
++        text: {
++          group: "inline"
++        }
++      }
++    });
++  }
++  return __latexInnerSchema;
++}
+ class LatexInlineTooltip {
+   constructor(ctx, view, config) {
+     this.ctx = ctx;
+@@ -3220,6 +3248,8 @@ class LatexInlineTooltip {
+         __privateGet$3(this, _innerView).value.destroy();
+         __privateGet$3(this, _innerView).value = null;
+       }
++      this.__latexFrom = -1;
++      this.__latexValue = null;
+     });
+     __privateAdd$3(this, _shouldShow, (view) => {
+       const shouldShow = () => {
+@@ -3230,6 +3260,16 @@ class LatexInlineTooltip {
+         const node = selection.node;
+         if (node.type.name !== mathInlineId) return false;
+         const textFrom = selection.from;
++        // mditor perf (v4.6.1): same formula (same pos + value) re-asking →
++        // keep the already-mounted inner view instead of rebuilding it.
++        const prevView = __privateGet$3(this, _innerView).value;
++        if (prevView && this.__latexFrom === textFrom && this.__latexValue === node.attrs.value) {
++          return true;
++        }
++        // mditor perf (v4.6.1): different formula / changed value → destroy the
++        // previous inner view BEFORE mounting the replacement; the old code
++        // overwrote the reference and leaked every replaced view.
++        if (prevView) prevView.destroy();
+         const paragraph = schema.nodes.paragraph.create(
+           null,
+           schema.text(node.attrs.value)
+@@ -3237,24 +3277,7 @@ class LatexInlineTooltip {
+         const innerView = new EditorView(__privateGet$3(this, _dom), {
+           state: EditorState.create({
+             doc: paragraph,
+-            schema: new Schema({
+-              nodes: {
+-                doc: {
+-                  content: "block+"
+-                },
+-                paragraph: {
+-                  content: "inline*",
+-                  group: "block",
+-                  parseDOM: [{ tag: "p" }],
+-                  toDOM() {
+-                    return ["p", 0];
+-                  }
+-                },
+-                text: {
+-                  group: "inline"
+-                }
+-              }
+-            }),
++            schema: getLatexInnerSchema(),
+             plugins: [
+               keymap$1({
+                 "Mod-z": undo,
+@@ -3268,6 +3291,8 @@ class LatexInlineTooltip {
+             ]
+           })
+         });
++        this.__latexFrom = textFrom;
++        this.__latexValue = node.attrs.value;
+         __privateGet$3(this, _innerView).value = innerView;
+         __privateGet$3(this, _updateValue).value = () => {
+           const { tr } = view.state;
