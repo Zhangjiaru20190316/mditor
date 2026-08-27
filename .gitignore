@@ -27,3 +27,6 @@ promo/
 # OS junk
 Thumbs.db
 desktop.ini
+mditor/perf/fixtures/
+mditor/perf/results/trace-oneclick.json
+mditor/perf/results/*.cpuprofile

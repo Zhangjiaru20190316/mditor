@@ -25,6 +25,85 @@
   └─ finishSwitch → idle 窗口预解析"下一个最可能目标"（阶段 1）
 ```
 
+## 交互路径卡顿治理（V4.6.0，2026-08-27 实测驱动）
+
+三阶段架构解决的是「打开/切换」；本轮治理的是**交互路径**（点击/选区/失焦
+回焦），证据全部来自 dev-anomalies.log 的真实用户数据（152KB/3447 行 KaTeX
+习题集，`big:false`，MD-1003 1.2~1.5s × 24 次 + MD-9001 单窗 77~103 掉帧）
+与 CDP 驱动的复现测量（`perf/` 目录，221KB/3447 行同型文档副本）。
+
+### 根因（两项，均已修复）
+
+1. **聚焦切换的全文档样式重算（主犯）**：crepe 的 cursor.css 仅在
+   `.ProseMirror-focused` 上定义 `--prosemirror-virtual-cursor-color`。聚焦/
+   失焦使该自定义属性在「无→有」间翻转，Blink 必须作废 .ProseMirror **全部
+   后代**的样式（十万级节点级联重算）。实测 blur→focus() 单次 **762ms**；
+   用户侧「点选区工具栏/侧栏按钮 → 编辑器失焦 → 点回正文 → 重付」正是日志
+   里反复出现的 1.2~1.5s MD-1003。修复：global.css 让该变量在非聚焦态以同
+   值恒定存在（`.ProseMirror.editor`，特异性压过 crepe），聚焦切换成为值不
+   变的 no-op → 实测 **0ms**。视觉零变化（该变量仅虚拟光标使用）。
+2. **虚拟光标插件的每事务强制布局读（从犯）**：prosemirror-virtual-cursor
+   在每个 PM 事务 / selectionchange / ResizeObserver 回调同步跑
+   `getCursorRect`（读 DOM 选区 rect）；布局脏时每次读取都是一次全文档同步
+   布局（点击场景实测 773ms self time，10 次点击中 3 次中档长任务
+   152/132/120ms）。修复（patch-package，`patches/prosemirror-virtual-cursor
+   +0.4.2.patch`）：三触发源合并到单一 rAF + `(doc, head, clientWidth)` 缓存
+   同位跳过 → 中档长任务 152→86ms。
+
+### 量化（perf/baseline.mjs，同法复测，221KB/3447 行 KaTeX 文档）
+
+| 场景（默认设置，big 关） | 修复前 | 修复后 |
+| --- | --- | --- |
+| 点击段落 ×10：最长任务 | 945ms | **167ms** |
+| 点击段落 ×10：>200ms 长任务数 | 1 | **0** |
+| 点击事件延迟 p95 | 976ms | **192ms**（p50 24ms 不变） |
+| 双击选词 + 选区工具栏加粗 | （日志侧 1.2~1.5s MD-1003） | **0 长任务** |
+| blur→focus 单次 | 762ms | **0 长任务** |
+
+### 已定位但未动的项（数据不支持或超出默认行为约束）
+
+- **打开/切换的 ~2.0~2.2s 长任务**：实测**与解析无关**（worker 管线解析同型
+  221KB 文档 <5ms，主线程 profile 中 remark 函数合计 <10ms）——成本 100% 是
+  1658 个顶层块 × KaTeX 子树的**首次全量布局**，由 PM updateStateInner 的
+  选区同步读（Chrome kludge 读 focusNode）同步触发。遮罩期内发生，属必要
+  成本；content-visibility 是唯一杠杆（见下）。
+- **floating-ui TooltipProvider 的 observeMove 轮询**（表格/列表拖拽句柄，
+  profile 中 getBoundingClientRect 归因 ~750ms）：实验证明它只是**替同帧
+  绘制预付布局款**（打「位置未变不写样式」补丁后长任务总量 1268→1262ms，
+  噪声内）——已按纪律回退，勿再追。
+- **打字事件延迟 ~140ms**：dev 构建 + CDP 合成输入的固定开销（分布平坦
+  120~144ms，无长任务）；用户生产日志 worstInputLagMs=6ms，非真问题。
+
+### 阈值体系评估（「夹缝区间」结论）
+
+真实用户文档（152KB/3447 行）落在 200KB docCache 阈值之下、又被默认关闭的
+总控压住 big 档位——「夹缝区间」文档默认既无解析缓存也无 content-visibility。
+实测数据说明：
+
+- 对 ≤221KB 的文档，**解析成本可忽略**（<5ms），一切卡顿都是布局/样式成
+  本——所以「把 docCache 阈值降到 100KB / 解耦 worker 预解析与总控」对这
+  一档文档**没有可测收益**（打开长任务由布局决定），本轮不做；
+- big 档位（c-v + 特性降级）在同型文档上的实测收益：打开 3411→**1291ms**、
+  打字延迟 p95 144→**32ms**、滚动 p95 65→**6ms**、点击长任务 17→**0**。
+  修复后即便不开 big 档，交互停顿也已消除（上表）；**big 档的剩余价值主要
+  在打开/切换/滚动与内存**，对 3000 行以上且频繁切换大文档的用户值得推荐
+  开启（保持默认关不动，见铁律）。
+
+### 复现与测量基建（`perf/`，随仓库交付）
+
+- `perf/cdp.mjs`：零依赖 CDP 客户端（Node 原生 WebSocket）。
+- `perf/baseline.mjs`：七场景基准（打开/点击/选区/打字/滚动/全选/撤销），
+  `node perf/baseline.mjs <标签>` → `perf/results/<标签>.json`。
+- `perf/profile.mjs` / `profile-typing.mjs` / `oneclick.mjs`：CPU Profile 采
+  样与 self-time 聚合；`profile-callers.mjs`：热点函数调用方链分析。
+- `perf/first-interaction.mjs`：首交互阶梯实验（定位 focus 问题的那把刀）。
+- `perf/rect-spy.mjs`：页内 rect 读取打桩（谁在强制布局）。
+- 运行方式：`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9223`
+  启动 dev 实例（`npx tauri dev --config src-tauri/tauri.dev.conf.json`，独立
+  identifier `com.mditor.app.dev` 不与生产实例冲突；workspace 预置
+  `perf/fixtures/` 文档副本，**绝不碰真实笔记**）。
+- 基准数据：`perf/results/`（baseline-1 修复前 / after-fix1-fix2 / final-bigmode）。
+
 ## 阶段 1：标签级解析缓存 + 空闲预解析（`src/lib/docCache.ts`）
 
 - **内容寻址**：键 = `长度:FNV-1a32` 指纹（`lib/parseShared.ts`），不经

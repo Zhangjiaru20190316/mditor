@@ -1,0 +1,722 @@
+{
+ "label": "patch1-vc",
+ "ts": "2026-08-27T05:07:30.489Z",
+ "scenarios": {
+  "open": {
+   "openMs": 3511,
+   "blocks": 1658,
+   "longtasks": {
+    "n": 3,
+    "total": 2829,
+    "max": 2113,
+    "over200": 2,
+    "top": [
+     {
+      "t": 111,
+      "d": 2113
+     },
+     {
+      "t": 2228,
+      "d": 634
+     },
+     {
+      "t": 2864,
+      "d": 82
+     }
+    ]
+   },
+   "frames": {
+    "frames": 89,
+    "p50": 6,
+    "p95": 24,
+    "max": 2078,
+    "over50": 3,
+    "over100": 3
+   }
+  },
+  "clicks": {
+   "clicked": 10,
+   "longtasks": {
+    "n": 16,
+    "total": 1939,
+    "max": 889,
+    "over200": 1,
+    "top": [
+     {
+      "t": 95,
+      "d": 889
+     },
+     {
+      "t": 1154,
+      "d": 86
+     },
+     {
+      "t": 1263,
+      "d": 83
+     },
+     {
+      "t": 2654,
+      "d": 79
+     },
+     {
+      "t": 4649,
+      "d": 77
+     }
+    ]
+   },
+   "events": {
+    "n": 69,
+    "p50": 72,
+    "p95": 920,
+    "max": 920,
+    "over100": 25,
+    "events": [
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerout"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerleave"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerleave"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerleave"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerleave"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerleave"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerleave"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerleave"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerleave"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerleave"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerover"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerenter"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerenter"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerenter"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerenter"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerenter"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerenter"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "mouseout"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "mouseover"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "pointerdown"
+     },
+     {
+      "t": 7628,
+      "d": 920,
+      "type": "mousedown"
+     },
+     {
+      "t": 8605,
+      "d": 56,
+      "type": "pointerup"
+     },
+     {
+      "t": 8605,
+      "d": 56,
+      "type": "mouseup"
+     },
+     {
+      "t": 8605,
+      "d": 56,
+      "type": "click"
+     },
+     {
+      "t": 8980,
+      "d": 64,
+      "type": "pointerdown"
+     },
+     {
+      "t": 8980,
+      "d": 64,
+      "type": "mousedown"
+     },
+     {
+      "t": 9134,
+      "d": 24,
+      "type": "pointerup"
+     },
+     {
+      "t": 9134,
+      "d": 24,
+      "type": "mouseup"
+     },
+     {
+      "t": 9134,
+      "d": 24,
+      "type": "click"
+     },
+     {
+      "t": 9479,
+      "d": 112,
+      "type": "pointerdown"
+     },
+     {
+      "t": 9479,
+      "d": 112,
+      "type": "mousedown"
+     },
+     {
+      "t": 9633,
+      "d": 24,
+      "type": "pointerup"
+     },
+     {
+      "t": 9633,
+      "d": 24,
+      "type": "mouseup"
+     },
+     {
+      "t": 9633,
+      "d": 24,
+      "type": "click"
+     },
+     {
+      "t": 9976,
+      "d": 72,
+      "type": "pointerdown"
+     },
+     {
+      "t": 9976,
+      "d": 72,
+      "type": "mousedown"
+     },
+     {
+      "t": 10131,
+      "d": 24,
+      "type": "pointerup"
+     },
+     {
+      "t": 10131,
+      "d": 24,
+      "type": "mouseup"
+     },
+     {
+      "t": 10131,
+      "d": 24,
+      "type": "click"
+     },
+     {
+      "t": 10478,
+      "d": 120,
+      "type": "pointerdown"
+     }
+    ]
+   },
+   "frames": {
+    "frames": 603,
+    "p50": 6,
+    "p95": 18,
+    "max": 901,
+    "over50": 16,
+    "over100": 4
+   }
+  },
+  "select": {
+   "toolbar": "no-toolbar",
+   "foundBtn": false,
+   "longtasks": {
+    "n": 6,
+    "total": 407,
+    "max": 87,
+    "over200": 0,
+    "top": [
+     {
+      "t": 398,
+      "d": 87
+     },
+     {
+      "t": 278,
+      "d": 72
+     },
+     {
+      "t": 675,
+      "d": 67
+     },
+     {
+      "t": 66,
+      "d": 66
+     },
+     {
+      "t": 1,
+      "d": 65
+     }
+    ]
+   },
+   "events": {
+    "n": 21,
+    "p50": 96,
+    "p95": 104,
+    "max": 104,
+    "over100": 2,
+    "events": [
+     {
+      "t": 13508,
+      "d": 96,
+      "type": "pointerout"
+     },
+     {
+      "t": 13508,
+      "d": 96,
+      "type": "pointerleave"
+     },
+     {
+      "t": 13508,
+      "d": 96,
+      "type": "pointerleave"
+     },
+     {
+      "t": 13508,
+      "d": 96,
+      "type": "pointerleave"
+     },
+     {
+      "t": 13508,
+      "d": 96,
+      "type": "pointerleave"
+     },
+     {
+      "t": 13508,
+      "d": 96,
+      "type": "pointerleave"
+     },
+     {
+      "t": 13508,
+      "d": 96,
+      "type": "pointerleave"
+     },
+     {
+      "t": 13508,
+      "d": 96,
+      "type": "pointerover"
+     },
+     {
+      "t": 13508,
+      "d": 96,
+      "type": "pointerenter"
+     },
+     {
+      "t": 13508,
+      "d": 96,
+      "type": "mouseout"
+     },
+     {
+      "t": 13508,
+      "d": 96,
+      "type": "mouseover"
+     },
+     {
+      "t": 13508,
+      "d": 96,
+      "type": "pointerdown"
+     },
+     {
+      "t": 13508,
+      "d": 96,
+      "type": "mousedown"
+     },
+     {
+      "t": 13661,
+      "d": 72,
+      "type": "pointerup"
+     },
+     {
+      "t": 13661,
+      "d": 72,
+      "type": "mouseup"
+     },
+     {
+      "t": 13661,
+      "d": 72,
+      "type": "click"
+     },
+     {
+      "t": 13785,
+      "d": 104,
+      "type": "pointerdown"
+     },
+     {
+      "t": 13785,
+      "d": 104,
+      "type": "mousedown"
+     },
+     {
+      "t": 13941,
+      "d": 80,
+      "type": "pointerup"
+     },
+     {
+      "t": 13941,
+      "d": 80,
+      "type": "mouseup"
+     },
+     {
+      "t": 13941,
+      "d": 80,
+      "type": "click"
+     }
+    ]
+   }
+  },
+  "typing": {
+   "chars": 9,
+   "longtasks": {
+    "n": 25,
+    "total": 1974,
+    "max": 125,
+    "over200": 0,
+    "top": [
+     {
+      "t": 1554,
+      "d": 125
+     },
+     {
+      "t": 555,
+      "d": 122
+     },
+     {
+      "t": 245,
+      "d": 86
+     },
+     {
+      "t": 2,
+      "d": 84
+     },
+     {
+      "t": 1386,
+      "d": 84
+     }
+    ]
+   },
+   "events": {
+    "n": 22,
+    "p50": 136,
+    "p95": 152,
+    "max": 160,
+    "over100": 22,
+    "events": [
+     {
+      "t": 14988,
+      "d": 144,
+      "type": "beforeinput"
+     },
+     {
+      "t": 15000,
+      "d": 136,
+      "type": "input"
+     },
+     {
+      "t": 15155,
+      "d": 144,
+      "type": "beforeinput"
+     },
+     {
+      "t": 15167,
+      "d": 136,
+      "type": "input"
+     },
+     {
+      "t": 15318,
+      "d": 136,
+      "type": "beforeinput"
+     },
+     {
+      "t": 15330,
+      "d": 128,
+      "type": "input"
+     },
+     {
+      "t": 15472,
+      "d": 136,
+      "type": "beforeinput"
+     },
+     {
+      "t": 15482,
+      "d": 120,
+      "type": "input"
+     },
+     {
+      "t": 15664,
+      "d": 160,
+      "type": "beforeinput"
+     },
+     {
+      "t": 15675,
+      "d": 144,
+      "type": "input"
+     },
+     {
+      "t": 15835,
+      "d": 136,
+      "type": "beforeinput"
+     },
+     {
+      "t": 15846,
+      "d": 120,
+      "type": "input"
+     },
+     {
+      "t": 15986,
+      "d": 136,
+      "type": "beforeinput"
+     },
+     {
+      "t": 15998,
+      "d": 128,
+      "type": "input"
+     },
+     {
+      "t": 16143,
+      "d": 136,
+      "type": "beforeinput"
+     },
+     {
+      "t": 16157,
+      "d": 128,
+      "type": "input"
+     },
+     {
+      "t": 16299,
+      "d": 136,
+      "type": "beforeinput"
+     },
+     {
+      "t": 16310,
+      "d": 128,
+      "type": "input"
+     },
+     {
+      "t": 16456,
+      "d": 152,
+      "type": "beforeinput"
+     },
+     {
+      "t": 16467,
+      "d": 136,
+      "type": "input"
+     },
+     {
+      "t": 16666,
+      "d": 136,
+      "type": "beforeinput"
+     },
+     {
+      "t": 16676,
+      "d": 128,
+      "type": "input"
+     }
+    ]
+   }
+  },
+  "scroll": {
+   "longtasks": {
+    "n": 17,
+    "total": 1259,
+    "max": 123,
+    "over200": 0,
+    "top": [
+     {
+      "t": 337,
+      "d": 123
+     },
+     {
+      "t": 1393,
+      "d": 114
+     },
+     {
+      "t": 1170,
+      "d": 103
+     },
+     {
+      "t": 1054,
+      "d": 77
+     },
+     {
+      "t": 614,
+      "d": 75
+     }
+    ]
+   },
+   "frames": {
+    "frames": 245,
+    "p50": 6,
+    "p95": 64,
+    "max": 111,
+    "over50": 19,
+    "over100": 1
+   }
+  },
+  "selectAll": {
+   "longtasks": {
+    "n": 14,
+    "total": 2781,
+    "max": 809,
+    "over200": 3,
+    "top": [
+     {
+      "t": 1,
+      "d": 809
+     },
+     {
+      "t": 811,
+      "d": 373
+     },
+     {
+      "t": 1221,
+      "d": 288
+     },
+     {
+      "t": 2496,
+      "d": 195
+     },
+     {
+      "t": 2704,
+      "d": 189
+     }
+    ]
+   },
+   "events": {
+    "n": 4,
+    "p50": 352,
+    "p95": 1160,
+    "max": 1160,
+    "over100": 3,
+    "events": [
+     {
+      "t": 20759,
+      "d": 1160,
+      "type": "keydown"
+     },
+     {
+      "t": 21570,
+      "d": 352,
+      "type": "keyup"
+     },
+     {
+      "t": 23150,
+      "d": 64,
+      "type": "keydown"
+     },
+     {
+      "t": 23167,
+      "d": 280,
+      "type": "keyup"
+     }
+    ]
+   },
+   "frames": {
+    "frames": 15,
+    "p50": 130,
+    "p95": 1146,
+    "max": 1146,
+    "over50": 14,
+    "over100": 11
+   }
+  },
+  "undo": {
+   "longtasks": {
+    "n": 8,
+    "total": 810,
+    "max": 388,
+    "over200": 1,
+    "top": [
+     {
+      "t": 0,
+      "d": 388
+     },
+     {
+      "t": 412,
+      "d": 77
+     },
+     {
+      "t": 566,
+      "d": 76
+     },
+     {
+      "t": 2409,
+      "d": 55
+     },
+     {
+      "t": 510,
+      "d": 54
+     }
+    ]
+   }
+  }
+ },
+ "viewport": {
+  "w": 1280,
+  "h": 821,
+  "dpr": 1.75
+ }
+}

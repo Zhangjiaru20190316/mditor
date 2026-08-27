@@ -4,6 +4,13 @@
 
 数学公式格式支持全面增强：导出修复、定界符扩展、公式编号与交叉引用、KaTeX 能力（mhchem 化学式 / 自定义宏 / 公式复制还原）。四个方向一次落地，公式从「编辑器里能看」升级为「全链路可用」。
 
+### 性能（大文档交互卡顿根修，测量驱动）
+
+- **聚焦切换全文档样式重算（MD-1003 主犯根修）**：crepe 仅在 `.ProseMirror-focused` 上定义 `--prosemirror-virtual-cursor-color`，编辑器每次失焦/回焦都触发十万级节点级联样式重算——3447 行 KaTeX 文档实测单次 **762ms**（用户侧表现为点选区工具栏/侧栏后点回正文卡 1.2~1.5s，日志 MD-1003 × 24）。修复：变量恒定存在，聚焦切换成为 no-op → **0ms**；点击场景最长任务 945→**167ms**、事件延迟 p95 976→**192ms**、双击+选区工具栏 **0 长任务**
+- **虚拟光标插件每事务强制布局读（patch-package）**：rAF 合并三触发源 + 同位跳过，点击中档长任务 152→**86ms**
+- **诊断结论（不再追）**：打开 ~2s 长任务与解析无关（221KB 解析 <5ms，100% 为首次布局，content-visibility 是唯一杠杆）；floating-ui 句柄轮询为等价换付（实验回退）；打字 ~140ms 为 dev+合成输入固定开销（生产 worstInputLagMs=6ms）
+- **测量基建入库（`perf/`）**：零依赖 CDP 客户端 + 七场景基准 + CPU Profile/调用链/首交互阶梯/rect 打桩工具，dev 实例独立 identifier（`tauri.dev.conf.json`）与生产实例及真实笔记完全隔离；量化数据与阈值体系评估详见 `docs/performance.md`「交互路径卡顿治理」
+
 ### 修复（导出）
 
 - **块级公式导出退化为 LaTeX 源码（长期存在）**：`$$…$$` 在 ProseMirror 里是 `code_block(language=LaTeX)`，`getHTML()` 序列化为 `<pre data-language="LaTeX">`——导出的 HTML/PDF/DOCX 里块级公式一直是一段代码而非渲染结果（行内公式正常）。修复：导出前经 `lib/exportMath.ts` 的 `renderBlockMath` 把这类 `<pre>` 再渲染为 KaTeX HTML（编号/宏配置与静态管线共享），HTML/PDF/DOCX/复制富文本四个出口全部生效（PNG 截实时 DOM，无需处理）
