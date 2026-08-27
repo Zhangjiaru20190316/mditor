@@ -221,6 +221,22 @@ export interface Settings {
    */
   bigDocPerformance: boolean;
   /**
+   * 公式自动编号（v4.6，默认关）：开启后展示公式（$$...$$ / ```math）在静
+   * 态渲染（AI 面板/批注预览）与导出（HTML/PDF/DOCX/复制富文本）中按序自
+   * 动编号（注入 \tag），\label{key} 收集建表、正文与公式里的 \ref/\eqref
+   * 解析为编号文本；带显式 \tag/\notag 的公式不参与自动编号。编辑器内不做
+   * 实时自动编号（remark 不随键入重跑，编号会过期）——\tag{} 手动编号原生
+   * 可用。由 lib/mathConfig 模块开关同步给静态管线与导出路径。
+   */
+  mathAutoNumber: boolean;
+  /**
+   * 用户自定义 KaTeX 宏（v4.6）：JSON 对象字符串，如 {"\\RR":"\\mathbb{R}"}
+   * （键可省略反斜杠）。解析失败静默忽略（设置界面提示格式）。静态管线与
+   * 导出全量生效；编辑器内经 Crepe Latex 特性的 katexOptions 对公式块生效
+   * （行内公式不合并该配置，为已知限制）。修改后自动重建编辑器。
+   */
+  mathMacros: string;
+  /**
    * 内存守护：定期检查 JS 堆，超过 memoryGuardThresholdMb 时自愈——先尝试
    * 销毁重建编辑器（软），无效则升级为整页 reload（硬，唯一可靠回收手段）。
    * 编辑器是 Milkdown/ProseMirror（纯 JS，无 GopherJS），其状态全在 V8 堆上，
@@ -312,6 +328,8 @@ export const DEFAULT_SETTINGS: Settings = {
   annoDiagPanel: false,
   devMode: false,
   bigDocPerformance: false,
+  mathAutoNumber: false,
+  mathMacros: "",
   memoryGuard: true,
   memoryGuardThresholdMb: 2500,
   customCssPath: "",

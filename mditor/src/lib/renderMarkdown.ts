@@ -30,39 +30,18 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeStringify from "rehype-stringify";
 import { remarkMark } from "./remarkMark";
+import { remarkMathFence } from "./remarkMathFence";
+import { remarkMathNumbering } from "./remarkMathNumbering";
+import { normalizeMathDelimiters } from "./mathNormalize";
+import { getMathRenderConfig, mathConfigSignature } from "./mathConfig";
 
 // Many LLMs emit LaTeX-style math delimiters \( ... \) (inline) and \[ ... \]
 // (display) instead of the $ ... $ / $$ ... $$ that remark-math understands.
 // remark-math only parses dollar delimiters, so the LaTeX form renders as
-// literal text — the classic "AI formula doesn't render" symptom. Convert them
-// to dollar delimiters BEFORE the pipeline runs. Fenced and inline code are
-// skipped so samples that *demonstrate* LaTeX syntax stay literal.
-//
-// The same symptom hits AI annotations for a different reason: their content
-// round-trips through Milkdown (setValue → getMarkdown), and Milkdown's `text`
-// handler escapes every `$` to `\$` (remark-math lists `$` as unsafe in phrasing
-// context). When that escaped text reaches us, remark-math sees `\$x^2\$` — a
-// sequence of escaped dollars, not math delimiters — and renders it literally.
-// We unescape `\$` → `$` here (code is still skipped) so the round-tripped
-// annotation body is re-recognised as math. Plain-text `\$` (a literal dollar
-// intended by the author) is rare in AI replies / annotations and should be
-// wrapped in inline code if it must display verbatim.
-function normalizeMathDelimiters(md: string): string {
-  // One left-to-right pass: match fenced code, inline code, a math pair, or an
-  // escaped dollar. Only the math pairs / escaped dollars are rewritten; code
-  // is returned untouched. The body is trimmed so "$ x $" (a space right after
-  // the opening $, which remark-math rejects) is never produced from something
-  // like "\( x \)".
-  return md.replace(
-    /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\\\$/g,
-    (match, blockBody: string | undefined, inlineBody: string | undefined) => {
-      if (blockBody !== undefined) return `$$${blockBody.trim()}$$`;
-      if (inlineBody !== undefined) return `$${inlineBody.trim()}$`;
-      if (match === "\\$") return "$";
-      return match; // fenced/inline code — keep as-is
-    },
-  );
-}
+// literal text — the classic "AI formula doesn't render" symptom. The shared
+// pre-pass in lib/mathNormalize.ts converts them (plus unescapes `\$` for the
+// annotation round-trip) BEFORE the pipeline runs; it is also part of the
+// render cache key below, so keep the exact same options in both call sites.
 
 // Sanitize schema: the GitHub-style defaultSchema already covers tables, task
 // lists, code fences (incl. the `language-math math-inline/math-display` classes
@@ -120,14 +99,18 @@ function rehypePruneStyle() {
   };
 }
 
-// Build the configured pipeline once; the variable's type is inferred from the
+// Build the configured pipeline; the variable's type is inferred from the
 // builder so the per-plugin type narrowing (Root/Root/string) is preserved.
-function makeProcessor() {
+// v4.6：macros 来自数学渲染设置（mathConfig），配置变化由 getProcessor 按
+// 签名重建 processor；编号行为在 remarkMathNumbering 运行时读配置。
+function makeProcessor(macros: Record<string, string>) {
   return unified()
     .use(remarkParse)
     .use(remarkGfm) // tables, strikethrough, task lists, autolinks
     .use(remarkMark as unknown as Plugin) // ==highlight== -> mdast `mark` (rendered as <mark> below)
     .use(remarkMath) // $...$ / $$...$$ -> mdast math nodes
+    .use(remarkMathFence as unknown as Plugin) // ```math 围栏 -> mdast math 节点（GitHub 风格）
+    .use(remarkMathNumbering as unknown as Plugin) // \label 剥除 + 自动编号 \tag 注入 + \ref/\eqref 解析
     .use(remarkRehype, {
       allowDangerousHtml: true, // keep raw html nodes
       // Map the `mark` mdast node (produced by remarkMark) to a <mark> element
@@ -144,7 +127,7 @@ function makeProcessor() {
     .use(rehypeRaw) // turn raw html into real hast before transforms below
     .use(rehypeSanitize, sanitizeSchema) // strip scripts/event handlers/style vectors from raw html
     .use(rehypePruneStyle) // span/mark 内联 style 仅保留 color/background-color
-    .use(rehypeKatex) // math -> katex html (needs katex.css + fonts at runtime)
+    .use(rehypeKatex, { macros }) // math -> katex html (needs katex.css + fonts at runtime)
     .use(rehypeHighlight, {
       detect: true, // highlight even without an explicit language class
       ignoreMissing: true, // unknown language -> leave untouched, don't throw
@@ -180,9 +163,14 @@ function stampLazyImages(node: HastNode | undefined): void {
 }
 
 let processor: ReturnType<typeof makeProcessor> | null = null;
+let processorSig = "";
 
 function getProcessor(): ReturnType<typeof makeProcessor> {
-  if (!processor) processor = makeProcessor();
+  const sig = mathConfigSignature();
+  if (!processor || processorSig !== sig) {
+    processor = makeProcessor(getMathRenderConfig().macros);
+    processorSig = sig;
+  }
   return processor;
 }
 
@@ -260,15 +248,17 @@ export function __getHtmlCacheStatsForTests(): {
  *  Raw HTML in the input is sanitized (see sanitizeSchema) — the result is safe
  *  to write into innerHTML. Results are memoized in a small LRU so repeated
  *  renders of the same content (e.g. AI rows recycled by virtual scrolling)
- *  skip the unified pipeline. */
+ *  skip the unified pipeline. v4.6：缓存键含归一化 + 数学配置签名（macros /
+ *  autoNumber 变化不会吃到旧渲染结果）。 */
 export async function renderMarkdown(md: string): Promise<string> {
   if (!md) return "";
-  md = normalizeMathDelimiters(md);
-  const cached = cacheGet(md);
+  const normalized = normalizeMathDelimiters(md, { unescapeDollar: true });
+  const key = `${mathConfigSignature()}${SIG_SEP}${normalized}`;
+  const cached = cacheGet(key);
   if (cached !== undefined) return cached;
-  const file = await getProcessor().process(md);
+  const file = await getProcessor().process(normalized);
   const html = String(file);
-  cacheSet(md, html);
+  cacheSet(key, html);
   return html;
 }
 
@@ -281,5 +271,10 @@ export async function renderMarkdown(md: string): Promise<string> {
  */
 export function peekRenderedHtml(md: string): string | undefined {
   if (!md) return "";
-  return cacheGet(normalizeMathDelimiters(md));
+  const normalized = normalizeMathDelimiters(md, { unescapeDollar: true });
+  return cacheGet(`${mathConfigSignature()}${SIG_SEP}${normalized}`);
 }
+
+// 配置签名前缀（v4.6）：LRU 键 = sig + \u0000 + 归一化后的 md。签名字符串
+// 里不可能出现 \u0000（由 0/1、宏名与宏体拼接），分隔符无歧义。
+const SIG_SEP = "\u0000";

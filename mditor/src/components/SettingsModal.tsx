@@ -393,6 +393,39 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                   <span className="hint">光标行始终保持在窗口中部（两种编辑模式均生效）</span>
                 </Field>
 
+                <Field label="公式自动编号">
+                  <input
+                    type="checkbox"
+                    checked={draft.mathAutoNumber}
+                    onChange={(e) => set("mathAutoNumber", e.target.checked)}
+                  />
+                  <span className="hint">
+                    {
+                      "展示公式（$$…$$）在 AI 面板、批注预览与导出（HTML/PDF/Word/复制富文本）中按出现顺序自动编号，\\label 收集、\\ref/\\eqref 解析为编号；带 \\tag 或 \\notag 的公式保持作者定义。编辑器内不做实时编号（\\tag{} 手动可用）。"
+                    }
+                  </span>
+                </Field>
+
+                <Field label="KaTeX 宏定义 (JSON)">
+                  <textarea
+                    rows={3}
+                    spellCheck={false}
+                    placeholder={'{"\\\\RR": "\\\\mathbb{R}"}'}
+                    value={draft.mathMacros}
+                    onChange={(e) => set("mathMacros", e.target.value)}
+                    style={{
+                      width: "100%",
+                      fontFamily: "var(--font-mono, monospace)",
+                      resize: "vertical",
+                    }}
+                  />
+                  <span className="hint">
+                    {
+                      '自定义宏展开，如 {"\\RR": "\\mathbb{R}"}（键可省略反斜杠）。写入公式源码时用 \\RR 即可；格式非法时忽略并沿用空宏。修改后自动重建编辑器（撤销历史清空）；行内公式在编辑器内暂不应用宏。'
+                    }
+                  </span>
+                </Field>
+
                 <Field label="自动保存间隔 (毫秒, 0=关闭)">
                   <input
                     type="number"

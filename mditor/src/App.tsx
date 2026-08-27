@@ -1176,7 +1176,21 @@ export default function App() {
     async (kind: "html" | "pdf" | "png" | "docx") => {
       const ed = editorRef.current;
       if (!ed) return;
-      const html = ed.getHTML();
+      let html = ed.getHTML();
+      // v4.6：块级公式修复——编辑器把公式块序列化为 <pre data-language=
+      // "LaTeX"> 原始源码，导出前再渲染为 KaTeX HTML（PNG 截实时 DOM，无
+      // 需处理）。DOCX/复制富文本场景 Word 渲染不了 KaTeX 布局，公式栅格化
+      // 为图片；HTML/PDF 保留矢量标记（CSS 由 collectThemeCss 一并带走）。
+      if (kind !== "png") {
+        const { renderBlockMath, rasterizeFormulas } = await import("./lib/exportMath");
+        const r = renderBlockMath(html);
+        html = r.html;
+        if (kind === "docx" && r.hasMath) {
+          html = await rasterizeFormulas(html, (done, total) =>
+            flashStatus(`正在渲染公式 ${done}/${total}…`, 60_000)
+          );
+        }
+      }
       const css = collectThemeCss();
       const ctx = { html, css, docPath: fileApi.doc.path };
       const name =
@@ -1231,8 +1245,13 @@ export default function App() {
     const ed = editorRef.current;
     if (!ed) return;
     try {
-      const html = ed.getHTML();
+      let html = ed.getHTML();
       const plain = ed.getValue();
+      // v4.6：复制富文本同样修复块级公式——再渲染 + 栅格化（粘贴进 Word 等
+      // 富文本目标得到公式图片，而不是一段 LaTeX 源码）。
+      const { renderBlockMath, rasterizeFormulas } = await import("./lib/exportMath");
+      const r = renderBlockMath(html);
+      html = r.hasMath ? await rasterizeFormulas(r.html) : r.html;
       await copyRich(html, plain, collectThemeCss());
       flashStatus("已复制富文本");
     } catch (e) {

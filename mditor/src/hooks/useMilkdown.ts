@@ -33,7 +33,9 @@ import {
   insertPos,
   markdownToSlice,
   callCommand,
+  $remark,
 } from "@milkdown/utils";
+import type { MilkdownPlugin } from "@milkdown/ctx";
 import { editorViewCtx, parserCtx, schemaCtx, serializerCtx } from "@milkdown/core";
 import type { Ctx } from "@milkdown/ctx";
 import { closeHistory } from "@milkdown/prose/history";
@@ -54,6 +56,9 @@ import { syntaxHighlighting } from "@codemirror/language";
 import { classHighlighter } from "@lezer/highlight";
 import { highlightPlugins } from "../lib/highlightMark";
 import { textColorPlugins } from "../lib/textColorMark";
+import { remarkMathFenceAlias } from "../lib/remarkMathFenceAlias";
+import { normalizeMathDelimiters } from "../lib/mathNormalize";
+import { mathConfigSignature, parseMathMacros } from "../lib/mathConfig";
 import { cvIntrinsicPlugin, startCvPrewarm } from "../lib/cvMemory";
 import { noteScrollWrite } from "../lib/scrollDebug";
 import { sysEmit } from "../lib/sysDebug";
@@ -449,11 +454,26 @@ const IDLE_HISTORY_TRIM_HEAP_RATIO = 0.8; // heap ≥ 80% of the guard threshold
 const REMOTE_IMG_URL_RE =
   /^https?:\/\/\S+\.(png|jpe?g|gif|webp|svg|bmp)(?:[?#]\S*)?$/i;
 
+// ```math 围栏别名（v4.6）：code(lang=math) → lang=LaTeX，让 GitHub 风格围栏
+// 公式在编辑器里渲染为公式块（保存时序列化回 $$，既定策略）。仅小文档
+// （Latex 特性开启时）注册，与 lib/remarkPipeline 的 expectedPluginCount 哨
+// 兵联动（withMath 时 +1）。纯变换见 lib/remarkMathFenceAlias.ts（worker 复
+// 刻管线共用，故不 import @milkdown/*）。
+const mathFencePlugins = [
+  $remark("remarkMathFenceAlias", () => remarkMathFenceAlias as never),
+].flat() as unknown as MilkdownPlugin[];
+
 /** 整篇文档载入（flush 语义 = replaceAll(md, true)），带解析缓存快路径：
  *  命中 → Node.fromJSON + EditorState 重建，零 remark 解析（阶段 1）；
  *  未命中 → 原地解析（与 replaceAll 同构）并把结果回填缓存（仅大文档），
  *  下次切回同一份内容即命中。任何失败静默返回，调用方语义与旧路径一致。 */
-function loadMarkdownFull(crepe: Crepe, md: string): void {
+function loadMarkdownFull(crepe: Crepe, mdRaw: string): void {
+  // v4.6：LaTeX 风格定界符 \( ... \) / \[ ... \] 归一化为 $ 风格（默认不还
+  // 原 \$——磁盘文件里作者写的字面美元必须保持字面）。归一化必须在解析缓
+  // 存取存之前：docCache 的键与 worker 预解析（parsePipeline.prepareDoc 同
+  // 样先归一化）共用同一键空间。保存时 ProseMirror 序列化自然回写 $ 风格
+  // （v4.6 既定策略：打开含 \( 的文档并保存，定界符统一为美元风格）。
+  const md = normalizeMathDelimiters(mdRaw);
   const cachedJson = takeCachedDoc(md);
   if (cachedJson != null) {
     try {
@@ -508,6 +528,9 @@ export function useMilkdown(opts: Options): MilkdownHandle {
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const bigDocRef = useRef(false);
+  // v4.6：当前 Crepe 实例构建时解析出的 KaTeX 宏（mathMacros 变更重建的比对
+  // 基准——katexOptions 是 create-time 配置，见创建 effect 与下方重建 effect）。
+  const builtMathMacrosRef = useRef<Record<string, string>>({});
   // Content used to SEED a freshly (re)built Crepe. Updated from getValue()
   // right before every destroy/recreate.
   const contentRef = useRef<string>("");
@@ -586,6 +609,13 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       // v4.3 生命周期计时：创建起点（crepe 构造 + create + 绑定全程）。
       const createStartAt = performance.now();
 
+      // v4.6：用户自定义 KaTeX 宏（设置 mathMacros，JSON 字符串）。经 Crepe
+      // Latex 特性的 katexOptions 透传给公式块的 KaTeX 渲染；行内公式的
+      // toDOM 不合并该配置（Crepe 已知限制）。宏变更由下方 effect 重建编辑
+      // 器（katexOptions 是 create-time 配置），此处记录建实例时的解析结果。
+      const latexMacros = parseMathMacros(settingsRef.current.mathMacros);
+      builtMathMacrosRef.current = latexMacros;
+
       const crepe = new Crepe({
         root: host,
         defaultValue: "",
@@ -596,6 +626,9 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           [Crepe.Feature.AI]: false,
         },
         featureConfigs: {
+          [Crepe.Feature.Latex]: {
+            katexOptions: { macros: latexMacros },
+          },
           // 公式块（$$...$$）默认只显示 KaTeX 渲染结果，隐藏 LaTeX 源码；
           // 点击代码块上的切换按钮可回到源码编辑。仅影响 latex 代码块——
           // 普通代码块没有 preview，code-block 不会对其加 hidden 类，照常显示。
@@ -734,6 +767,14 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       // Register the text-color mark (`<span style="color:…">`) the same way:
       // schema + remark parse/serialize wiring, before create() builds the schema.
       crepe.editor.use(textColorPlugins);
+
+      // ```math 围栏别名（v4.6）：与 Latex 特性同开同关——big 模式下公式整
+      // 体降级为纯文本，别名若单独生效会改变 remarkPluginsCtx 插件数，导致
+      // lib/parsePipeline 的 worker 哨兵校验失配（自动回退主线程，不至于错
+      // 误，但白白丢掉 worker 路径）。
+      if (!big) {
+        crepe.editor.use(mathFencePlugins);
+      }
 
       // 大文档 c-v 高度记忆（v4.0.1 根修）：decoration 承载
       // contain-intrinsic-size，让跳过渲染的块用「按内容寻址的真实高度」做
@@ -1066,7 +1107,9 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         }
         suppressRef.current = true;
         try {
-          crepe.editor.action(replaceAll(md, false));
+          // v4.6：程序化整篇重写同样先归一化定界符（AI 全文替换等来源可能
+          // 带 \( 风格；与 loadMarkdownFull 保持一致行为）。
+          crepe.editor.action(replaceAll(normalizeMathDelimiters(md), false));
         } catch (e) {
           noteOpError("setValue", e);
         }
@@ -2289,6 +2332,21 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     if (isBigDoc(md) !== bigDocRef.current) recreate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opts.settings.bigDocPerformance]);
+
+  // v4.6：KaTeX 宏设置变化 → 重建编辑器（公式块的 katexOptions 在 Crepe 创
+  // 建时固化，无法原地更新）。比对「解析结果」而非原始字符串：格式错误被
+  // parseMathMacros 忽略后与空宏等价，不应触发重建。静态管线/导出读模块开
+  // 关（lib/mathConfig），无需重建。
+  useEffect(() => {
+    const next = parseMathMacros(opts.settings.mathMacros);
+    if (
+      mathConfigSignature({ autoNumber: false, macros: next }) !==
+      mathConfigSignature({ autoNumber: false, macros: builtMathMacrosRef.current })
+    ) {
+      recreate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opts.settings.mathMacros]);
 
   // 重建完成后恢复光标与滚动位置（尽力而为：按文本锚点重定位，找不到就
   // 保持新实例的默认状态）。双 rAF 等新视图完成首次布局再写 scrollTop。

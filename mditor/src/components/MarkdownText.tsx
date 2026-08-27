@@ -20,8 +20,9 @@
 // async pipeline resolves — the streaming plain-text → rendered-markdown
 // transition no longer jumps through an empty state.
 
-import { memo, useLayoutEffect, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useRef } from "react";
 import { peekRenderedHtml, renderMarkdown } from "../lib/renderMarkdown";
+import { attachScopedCopyTex } from "../lib/copyTex";
 import type { Theme } from "../types";
 
 interface Props {
@@ -65,6 +66,14 @@ export const MarkdownText = memo(function MarkdownText({
   className,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+
+  // v4.6：静态表面的 copy-tex（容器级，见 lib/copyTex.ts）——选区含公式时
+  // 复制出的纯文本带 LaTeX 源码。挂载期一次，内容渲染无关。
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    return attachScopedCopyTex(el);
+  }, []);
 
   useLayoutEffect(() => {
     const el = ref.current;

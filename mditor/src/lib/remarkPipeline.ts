@@ -29,6 +29,7 @@ import remarkMath from "remark-math";
 import remarkInlineLinks from "remark-inline-links";
 import { remarkMark } from "./remarkMark";
 import { remarkTextColor } from "./remarkTextColor";
+import { remarkMathFenceAlias } from "./remarkMathFenceAlias";
 
 interface MdastNode {
   type?: string;
@@ -76,6 +77,12 @@ function mathBlocksToCode(node: MdastNode): void {
   }
 }
 
+// v4.6：```math 围栏别名与编辑器侧的 mathFencePlugins（useMilkdown 注册的
+// $remark 包装）是同一个纯变换（lib/remarkMathFenceAlias.ts），此处复刻其
+// 注册；它只改写 code 节点的 lang，与 mathBlocksToCode（只改写 math 节点）
+// 互不干扰，顺序不敏感——按编辑器注册序（latex 特性之后）排在 mathToCode
+// 之后。
+
 /** 构建 与编辑器等价的解析处理器。withMath 对应 Crepe 的 Latex 特性位
  *  （大文档模式关闭 latex → 无 remark-math，$$ 解析为普通文本，与编辑器
  *  行为一致）。同一处理器可重复 parse/runSync（unified 冻结只禁止继续
@@ -94,14 +101,16 @@ export function buildEditorParseProcessor(withMath: boolean) {
     .use(remarkInlineLinks)
     .use(stripBr)
     .use(remarkGfm);
-  if (withMath) proc.use(remarkMath).use(mathToCode);
+  if (withMath)
+    proc.use(remarkMath).use(mathToCode).use(remarkMathFenceAlias as unknown as Plugin);
   return proc.use(remarkMark as unknown as Plugin).use(remarkTextColor as unknown as Plugin);
 }
 
 /** 哨兵校验用：Milkdown 实例应注册的 remark 插件总数（不含 parse/stringify
- *  基座）。commonmark(2) + gfm(1) + latex(2, 仅小文档) + 本应用(2)。 */
+ *  基座）。commonmark(2) + gfm(1) + latex(2) + ```math 围栏别名(1)（后两者
+ *  仅小文档）+ 本应用(2)。 */
 export function expectedPluginCount(withMath: boolean): number {
-  return 2 + 1 + (withMath ? 2 : 0) + 2;
+  return 2 + 1 + (withMath ? 2 + 1 : 0) + 2;
 }
 
 /** 解析入口（worker 调用；测试直接调用）。返回结构化 mdast 树。 */

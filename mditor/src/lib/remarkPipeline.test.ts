@@ -101,11 +101,25 @@ describe("remarkPipeline（worker 侧解析一致性）", () => {
     expect(code?.value).toBe("E=mc^2");
   });
 
+  it("withMath：```math 围栏 → lang=LaTeX 的 code 节点（v4.6 别名复刻）", () => {
+    const tree = parseMarkdownTree(proc, "```math\nE=mc^2\n```");
+    expect(findType(tree, "math")).toBeNull();
+    const code = findType(tree, "code");
+    expect(code?.lang).toBe("LaTeX");
+    expect(code?.value).toBe("E=mc^2");
+  });
+
   it("withMath=false（大文档档位）：$$ 是普通文本，不产生 math 节点", () => {
     const tree = parseMarkdownTree(procNoMath, "$$\nE=mc^2\n$$");
     const t = types(tree);
     expect(t).not.toContain("math");
     expect(t).not.toContain("inlineMath");
+  });
+
+  it("withMath=false：```math 保持普通代码块（lang=math 不被别名改写）", () => {
+    const tree = parseMarkdownTree(procNoMath, "```math\nE=mc^2\n```");
+    const code = findType(tree, "code");
+    expect(code?.lang).toBe("math");
   });
 
   it("处理器可复用（多次解析互不串扰——worker 常驻的前提）", () => {
@@ -115,8 +129,9 @@ describe("remarkPipeline（worker 侧解析一致性）", () => {
     expect((b.children?.[0] as N)?.children?.[0]?.value).toBe("B");
   });
 
-  it("哨兵常量：小文档 7 个 / 大文档（latex 关）5 个 remark 插件", () => {
-    expect(expectedPluginCount(true)).toBe(7);
+  it("哨兵常量：小文档 8 个 / 大文档（latex 关）5 个 remark 插件", () => {
+    // v4.6：withMath 分支新增 ```math 围栏别名（remarkMathFenceAlias）+1。
+    expect(expectedPluginCount(true)).toBe(8);
     expect(expectedPluginCount(false)).toBe(5);
   });
 });

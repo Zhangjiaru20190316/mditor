@@ -167,7 +167,19 @@ export async function exportHtml(
       /* 内联失败退回原引用 —— 导出仍然完成 */
     }
   }
-  const standalone = wrapHtml(html, ctx.css, title);
+  // v4.6：文档含公式时把 KaTeX woff2 字体内嵌为 base64——导出文件在磁盘上
+  // 打开后，CSS 里的字体相对/绝对路径都会失效，公式会退化到回退字体。PDF
+  // 走应用内 iframe（字体按应用源解析）无需此步。
+  let css = ctx.css;
+  if (html.includes("katex")) {
+    try {
+      const { inlineKatexFonts } = await import("./exportMath");
+      css = await inlineKatexFonts(css);
+    } catch {
+      /* 字体读取失败：保留引用（公式退化到回退字体，导出仍完成） */
+    }
+  }
+  const standalone = wrapHtml(html, css, title);
   await writeTextFile(path, standalone);
   return path;
 }

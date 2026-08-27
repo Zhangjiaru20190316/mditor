@@ -9,6 +9,10 @@ import {
   __setHtmlCacheByteCapForTests,
   renderMarkdown,
 } from "./renderMarkdown";
+import {
+  DEFAULT_MATH_CONFIG,
+  setMathRenderConfig,
+} from "./mathConfig";
 
 describe("renderMarkdown sanitize", () => {
   it("strips <script> blocks", async () => {
@@ -67,6 +71,72 @@ describe("renderMarkdown sanitize", () => {
   });
 });
 
+describe("renderMarkdown math（v4.6）", () => {
+  // 每个用例改配置后恢复默认（renderMarkdown 的 processor/LRU 缓存键含配
+  // 置签名，恢复默认即回到主配置的键空间，用例间不串扰）。
+  function withMathConfig(patch: Partial<typeof DEFAULT_MATH_CONFIG>, fn: () => Promise<void>) {
+    return (async () => {
+      setMathRenderConfig({ ...DEFAULT_MATH_CONFIG, ...patch });
+      try {
+        await fn();
+      } finally {
+        setMathRenderConfig(DEFAULT_MATH_CONFIG);
+      }
+    })();
+  }
+
+  it("LaTeX 风格定界符 \\( ... \\) 归一化后渲染（AI 回复经典症状）", async () => {
+    const html = await renderMarkdown("公式 \\(x^2\\) 完成");
+    expect(html).toContain("katex");
+  });
+
+  it("```math 围栏 → 展示公式（GitHub 风格）", async () => {
+    const html = await renderMarkdown("```math\nE=mc^2\n```");
+    expect(html).toContain("katex");
+  });
+
+  it("```latex 围栏保持代码块（代码示例语义）", async () => {
+    const html = await renderMarkdown("```latex\n\\frac{a}{b}\n```");
+    expect(html).toContain("<code");
+    expect(html).not.toContain("katex");
+  });
+
+  it("\\label 剥除（KaTeX 不认），\\eqref 默认保持字面（autoNumber 关）", async () => {
+    const html = await renderMarkdown(
+      "$$\nE=mc^2 \\label{eq:e}\n$$\n\n见 \\eqref{eq:e}。"
+    );
+    expect(html).toContain("katex");
+    expect(html).not.toContain("label");
+    expect(html).toContain("\\eqref{eq:e}");
+  });
+
+  it("autoNumber：注入编号 + \\eqref 解析为 (n)", async () => {
+    await withMathConfig({ autoNumber: true }, async () => {
+      const html = await renderMarkdown(
+        "$$\na=b \\label{eq:a}\n$$\n\n$$\nc=d \\notag\n$$\n\n见 \\eqref{eq:a}。"
+      );
+      // rehype-katex 输出里编号元素的类名是 "tag"（直接调 katex.
+      // renderToString 才是 "katex-tag"）；MathML 里同步有 (1)。
+      expect(html).toContain('class="tag"');
+      expect(html).toContain("<mtext>(1)</mtext>");
+      expect(html).toContain("见 (1)。");
+    });
+  });
+
+  it("自定义宏生效（mathMacros → rehype-katex macros）", async () => {
+    await withMathConfig(
+      { macros: { "\\RR": "\\mathbb{R}" } },
+      async () => {
+        const html = await renderMarkdown("$\\RR$");
+        // KaTeX 用 KaTeX_AMS 字体渲染 mathbb（不输出 Unicode ℝ），锚定
+        // mathbb 类名 + MathML mathvariant。
+        expect(html).toContain("mathbb");
+        expect(html).toContain("double-struck");
+      }
+    );
+  });
+});
+
 describe("renderMarkdown LRU byte cap", () => {
   it("defaults to an 8 MiB byte cap alongside the 64-entry count cap", () => {
     // 导出的生产默认值：8 MiB（条数上限 64 之外的第二道限制）。
@@ -86,10 +156,12 @@ describe("renderMarkdown LRU byte cap", () => {
       await renderMarkdown(mdB);
       await renderMarkdown(mdC);
       const stats = __getHtmlCacheStatsForTests();
+      // v4.6：缓存键 = 配置签名 + \u0000 + 归一化 md（同一份内容在不同
+      // 数学配置下不吃旧渲染），断言用后缀匹配。
       expect(stats.bytes).toBeLessThanOrEqual(2000);
-      expect(stats.keys).not.toContain(mdA); // 最旧者被逐条淘汰
-      expect(stats.keys).toContain(mdB);
-      expect(stats.keys).toContain(mdC); // 最新者保留
+      expect(stats.keys.some((k) => k.endsWith(mdA))).toBe(false); // 最旧者被逐条淘汰
+      expect(stats.keys.some((k) => k.endsWith(mdB))).toBe(true);
+      expect(stats.keys.some((k) => k.endsWith(mdC))).toBe(true); // 最新者保留
       // 淘汰只影响缓存，不影响渲染正确性：同内容再渲染结果不变。
       expect(await renderMarkdown(mdA)).toContain("word");
     } finally {

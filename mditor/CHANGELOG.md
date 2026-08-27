@@ -1,5 +1,44 @@
 # Changelog
 
+## 4.6.0 (2026-08-27)
+
+数学公式格式支持全面增强：导出修复、定界符扩展、公式编号与交叉引用、KaTeX 能力（mhchem 化学式 / 自定义宏 / 公式复制还原）。四个方向一次落地，公式从「编辑器里能看」升级为「全链路可用」。
+
+### 修复（导出）
+
+- **块级公式导出退化为 LaTeX 源码（长期存在）**：`$$…$$` 在 ProseMirror 里是 `code_block(language=LaTeX)`，`getHTML()` 序列化为 `<pre data-language="LaTeX">`——导出的 HTML/PDF/DOCX 里块级公式一直是一段代码而非渲染结果（行内公式正常）。修复：导出前经 `lib/exportMath.ts` 的 `renderBlockMath` 把这类 `<pre>` 再渲染为 KaTeX HTML（编号/宏配置与静态管线共享），HTML/PDF/DOCX/复制富文本四个出口全部生效（PNG 截实时 DOM，无需处理）
+- **Word 导出公式栅格化**：Word 渲染不了 KaTeX 的 CSS 布局，DOCX 与复制富文本路径把公式（块级 + 行内）逐个离屏栅格化为 3 倍采样 PNG（暗色主题下强制深色文字，白底文档不空白；进度见状态栏），单式失败保留 KaTeX HTML 降级
+- **独立 HTML 导出的 KaTeX 字体失效**：导出文件在磁盘上打开时 `@font-face` 相对/绝对路径都失效、公式退化到回退字体。含公式文档导出 HTML 时自动把 KaTeX woff2 内嵌为 base64（仅同源资源；woff/ttf 候选不动，现代浏览器均取 woff2）
+
+### 新增
+
+- **定界符扩展**：
+  - `\(…\)` / `\[…\]` 在编辑器内生效（此前仅 AI 面板/批注识别，编辑器里是字面文字）。打开文档时归一化为 `$` 定界符（`loadMarkdownFull` / `setValue` 非载入分支 / worker 预解析 `prepareDoc` 三处同键空间）；**保存回写为 `$` 风格**（既定策略，LaTeX 粘贴内容最常踩的坑从此消失）。文件里的 `\$` 字面美元不被动（编辑器路径不还原转义）
+  - ` ```math ` 围栏代码块（GitHub 风格）：静态管线经 `remarkMathFence` 转展示公式；编辑器/worker 经 `remarkMathFenceAlias` 转公式块（`code(lang=math) → lang=LaTeX`，与 Crepe latex 特性产物同形态），保存回写 `$$`。` ```latex ` 围栏保持代码块（代码示例语义）
+- **公式编号与交叉引用**（设置「公式自动编号」，默认关）：开启后展示公式在 AI 面板/批注预览与全部导出中按序自动编号（注入 `\tag`），`\label{key}` 收集建表，正文与公式里的 `\ref`/`\eqref` 解析为编号文本（跳过代码区段）；显式 `\tag{}`/`\notag` 的公式保持作者定义（amsmath 语义：显式 tag 不占自动序号）。`\label` 始终剥除（KaTeX 不认，留着报红）。**编辑器内不做实时自动编号**（remark 不随键入重跑，编号会过期且注入的 `\tag` 会污染保存内容）——手动 `\tag{}` 原生可用
+- **KaTeX 能力增强**：
+  - mhchem 化学式：`\ce{}` / `\pu{}` 全路径生效（`main.tsx` 一次性注册 `katex/contrib/mhchem`，三条渲染路径共享同一 KaTeX 实例）
+  - 自定义宏（设置「KaTeX 宏定义」，JSON 如 `{"\\RR": "\\mathbb{R}"}`，键可省略反斜杠）：静态管线与导出全量生效；编辑器经 Crepe `katexOptions` 对公式块生效（行内公式不合并该配置，已知限制）；修改后自动重建编辑器
+  - AI 面板/批注预览的公式复制还原：选中含公式的内容复制，纯文本里的公式自动还原为 LaTeX 源码（容器级 copy-tex，`lib/copyTex.ts`）。**刻意不做全局 copy-tex**——document 级监听会与 ProseMirror 剪贴板序列化打架（选区同时含正文与公式时 text/plain 被覆盖丢正文）；编辑器内复制本就由 PM 输出 markdown 纯文本 + KaTeX HTML
+- 设置新增 `mathAutoNumber` / `mathMacros`（设置弹窗「编辑」区），静态渲染 processor 与 LRU 缓存按配置签名重建（配置变化不吃旧渲染）
+
+### 变更（行为变化，请注意）
+
+- **保存会改写文件定界符**：打开含 `\(…\)` / `\[…\]` / ` ```math ` 的文档并保存，全文统一回写为 `$…$` / `$$…$$`（语义等价；git diff 会在这些行出现变化）。介意者请继续使用 `$` 定界符书写
+- 静态管线（`renderMarkdown`）的 LRU 缓存键加入数学配置签名（归一化 + `\u0000` + 签名前缀），行为不变，仅缓存键形态变化
+- worker 解析哨兵：`expectedPluginCount` 小文档 7 → 8（新增 ` ```math ` 别名插件），`remarkPipeline` 复刻同步——失配即自动回退主线程解析，不会静默分叉
+
+### 验证
+
+- `npm test` 362 例全绿（新增 `mathNormalize.test.ts` 7 例 / `mathNumbering.test.ts` 10 例 / `exportMath.test.ts` 8 例；`renderMarkdown` / `remarkPipeline` / `types` 锚点同步更新）；`tsc --noEmit` / `eslint`（改动文件）/ `vite build` 全绿（mhchem contrib 解析正常，`exportMath` 为 2.9KB 懒加载块）
+- 关键实现锚点：mdast `math` 节点的 hast 映射在解析期挂于 `node.data.hChildren`（改 `value` 必须同步，否则 rehype-katex 拿旧源码）；rehype-katex 输出里编号元素类名是 `tag`（直接调 `renderToString` 才是 `katex-tag`）
+- 待手验清单（GUI）：
+  1. 粘贴 LaTeX 论文片段（含 `\[…\]`、`\label`/`\eqref`、` ```math `）→ 编辑器/AI 面板均渲染为公式；保存后文件定界符变 `$`
+  2. 导出 HTML/PDF → 块级公式为渲染结果、字体正常；导出 DOCX → 公式为图片
+  3. 设置开「公式自动编号」→ AI 面板/导出出现 (1)(2)，`\eqref` 引用生效；编辑器内不编号
+  4. `$\ce{H2O}$`、自定义宏 `\RR` 在编辑器与 AI 面板渲染
+  5. AI 面板选中含公式内容复制 → 粘贴得 LaTeX 源码；编辑器内复制正文+公式 → 粘贴不丢正文
+
 ## 4.4.0 (2026-08-25)
 
 多根工作区（VS Code 式 Multi-root Workspace）：一个窗口同时挂多个文件夹，文件树分区显示，跨全部根搜索。废除旧「打开工作区外文件自动切换工作区」的劫持行为。

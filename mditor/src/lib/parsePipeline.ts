@@ -30,6 +30,7 @@ import { EditorState } from "@milkdown/prose/state";
 import { expectedPluginCount } from "./remarkPipeline";
 import { cacheWorthy, clearDocCache, hasDoc, putDoc, takeDoc } from "./docCache";
 import type { ParseReply, ParseRequest } from "./parseShared";
+import { normalizeMathDelimiters } from "./mathNormalize";
 
 interface EditorBinding {
   schema: Schema;
@@ -184,12 +185,16 @@ export function mapTreeToDoc(tree: unknown): PMNode | null {
  * 确保大文档的解析产物已在缓存中（打开 / 切回前的 await 点）。
  * 幂等：已缓存立即返回 true；worker 不可用 / 失败 / 过期（isCurrent 为假）
  * 返回 false——调用方照常走同步 setValue（原地解析 + 回填缓存），遮罩兜底。
+ * v4.6：入参先做数学定界符归一化（\( \) → $）——docCache 键与
+ * useMilkdown.loadMarkdownFull 的取键共用同一归一化键空间，预解析才可能
+ * 被命中（否则同一份内容存两套键，预解析白做）。
  */
 export async function prepareDoc(
-  content: string,
+  rawContent: string,
   isCurrent: () => boolean = () => true
 ): Promise<boolean> {
   const b = binding;
+  const content = normalizeMathDelimiters(rawContent);
   if (!b || !cacheWorthy(content)) return false;
   if (hasDoc(content, b.schemaSig)) return true;
   if (!workerAvailable()) return false;
@@ -226,7 +231,10 @@ export function scheduleIdlePreparse(getTarget: () => string | null): void {
     idleTimer = null;
     const content = (() => {
       try {
-        return getTarget();
+        const target = getTarget();
+        // 与 prepareDoc 同一归一化（v4.6）：hasDoc 前置检查与后续缓存写入都
+        // 必须落在归一化键空间里。
+        return target === null ? null : normalizeMathDelimiters(target);
       } catch {
         return null;
       }

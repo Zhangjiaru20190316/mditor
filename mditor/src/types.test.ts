@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "./types";
 
-/** 重构前（v3.9.7）的 Settings 字段全集 + v4.1 motionLevel + v4.2 devMode + v4.4.1 bigDocPerformance。 */
+/** 重构前（v3.9.7）的 Settings 字段全集 + v4.1 motionLevel + v4.2 devMode + v4.4.1 bigDocPerformance + v4.6 mathAutoNumber/mathMacros。 */
 const SETTING_KEYS = [
   "theme",
   "motionLevel",
@@ -29,6 +29,8 @@ const SETTING_KEYS = [
   "annoDiagPanel",
   "devMode",
   "bigDocPerformance",
+  "mathAutoNumber",
+  "mathMacros",
   "memoryGuard",
   "memoryGuardThresholdMb",
   "customCssPath",
@@ -72,6 +74,8 @@ const SCALAR_DEFAULTS: Record<string, unknown> = {
   annoDiagPanel: false,
   devMode: false,
   bigDocPerformance: false,
+  mathAutoNumber: false,
+  mathMacros: "",
   memoryGuard: true,
   memoryGuardThresholdMb: 2500,
   customCssPath: "",
