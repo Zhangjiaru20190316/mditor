@@ -1,0 +1,61 @@
+diff --git a/node_modules/@milkdown/plugin-listener/lib/index.js b/node_modules/@milkdown/plugin-listener/lib/index.js
+index 8573b1b..1515cfd 100644
+--- a/node_modules/@milkdown/plugin-listener/lib/index.js
++++ b/node_modules/@milkdown/plugin-listener/lib/index.js
+@@ -73,9 +73,19 @@ var listener = (ctx) => {
+ 		let prevMarkdown = null;
+ 		let prevSelection = null;
+ 		let latestTr = null;
+-		const debouncedHandler = debounce(() => {
+-			if (!latestTr) return;
++		let disposed = false;
++		let idleHandle = null;
++		const runHandler = () => {
++			idleHandle = null;
++			if (disposed || !latestTr) return;
+ 			const { doc } = latestTr;
++			// mditor perf instrumentation (v4.6.1): opt-in timing of the
++			// full-document eq+serialize pass this debounced handler runs
++			// (prevDoc.eq + serializer(doc) are both O(doc)). Off by default —
++			// set window.__MDITOR_PROFILE_SERIALIZE = true (perf harness does)
++			// and read performance.getEntriesByName("mditor:serialize").
++			const profiling = typeof window !== "undefined" && window.__MDITOR_PROFILE_SERIALIZE;
++			const t0 = profiling ? performance.now() : 0;
+ 			if (listeners.updated.length > 0 && prevDoc && !prevDoc.eq(doc)) listeners.updated.forEach((fn) => {
+ 				fn(ctx, doc, prevDoc);
+ 			});
+@@ -86,14 +96,34 @@ var listener = (ctx) => {
+ 				});
+ 				prevMarkdown = markdown;
+ 			}
++			if (profiling) performance.measure("mditor:serialize", { start: t0, end: performance.now() });
+ 			prevDoc = doc;
+ 			latestTr = null;
++		};
++		const cancelIdle = () => {
++			if (idleHandle == null) return;
++			if (typeof cancelIdleCallback === "function") cancelIdleCallback(idleHandle);
++			else clearTimeout(idleHandle);
++			idleHandle = null;
++		};
++		const debouncedHandler = debounce(() => {
++			// mditor perf (v4.6.1): the 200ms-after-last-keystroke eq+serialize
++			// measured 80ms on a 225KB document — running it in the idle window
++			// (with a hard timeout) keeps it off the interaction-critical frames
++			// right after a typing pause (scroll/click follow-ups). rIC absent →
++			// short timeout fallback. Back-to-back debounce fires coalesce: the
++			// second run sees latestTr == null and no-ops.
++			cancelIdle();
++			if (typeof requestIdleCallback === "function") idleHandle = requestIdleCallback(runHandler, { timeout: 600 });
++			else idleHandle = setTimeout(runHandler, 50);
+ 		}, 200);
+ 		const plugin = new Plugin({
+ 			key,
+ 			view: () => {
+ 				return { destroy: () => {
++					disposed = true;
+ 					debouncedHandler.cancel();
++					cancelIdle();
+ 					listeners.destroy.forEach((fn) => fn(ctx));
+ 				} };
+ 			},
