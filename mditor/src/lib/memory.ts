@@ -87,9 +87,21 @@ export function setBigDocModeEnabled(v: boolean): void {
   bigDocModeEnabled = v;
 }
 
-/** Is the document large enough to warrant preview degradation? */
-export function isBigDoc(content: string | null | undefined): boolean {
-  if (!bigDocModeEnabled) return false;
+// 「大文档视口渲染」子开关（v4.6.1，与总开关的减配解耦）：只启用
+// content-visibility（data-big CSS + cvIntrinsicPlugin 高度记忆），保留
+// CodeMirror / KaTeX 渲染。动机：154KB KaTeX 密集文档上选中链路（拖选/
+// 三击/点公式）的 0.7~1.7s 卡顿全部来自全量渲染 DOM（21 万节点）的布局款，
+// big 总开关实测能把同类交互压到 ≤16ms，但它同时砍掉公式渲染——对公式
+// 密集文档不可接受；此开关让用户只拿视口化收益。
+let bigDocViewportEnabled = false;
+
+/** 设置「大文档视口渲染」子开关；不影响 isBigDoc（减配档）。 */
+export function setBigDocViewportEnabled(v: boolean): void {
+  bigDocViewportEnabled = v;
+}
+
+/** Pure size test: big enough to warrant big-doc handling (no setting gate). */
+function sizeIsBigDoc(content: string | null | undefined): boolean {
   if (!content) return false;
   if (content.length > BIG_DOC_BYTES) return true;
   // Count lines without allocating a full array; bail as soon as we exceed.
@@ -101,6 +113,22 @@ export function isBigDoc(content: string | null | undefined): boolean {
     }
   }
   return lines > BIG_DOC_LINES;
+}
+
+/** Is the document large enough to warrant preview degradation?
+ *  Gated by the 大文档性能模式 master switch (feature-downgrade tier). */
+export function isBigDoc(content: string | null | undefined): boolean {
+  if (!bigDocModeEnabled) return false;
+  return sizeIsBigDoc(content);
+}
+
+/** Should the document get content-visibility (viewport rendering)?
+ *  True under EITHER the master switch (which implies c-v) or the standalone
+ *  viewport sub-switch — the CodeMirror/KaTeX features stay keyed on
+ *  isBigDoc alone. */
+export function isBigDocCv(content: string | null | undefined): boolean {
+  if (!bigDocModeEnabled && !bigDocViewportEnabled) return false;
+  return sizeIsBigDoc(content);
 }
 
 /** Human-readable byte size (B / MB / GB) for status display + logging. */

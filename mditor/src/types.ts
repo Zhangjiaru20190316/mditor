@@ -221,6 +221,16 @@ export interface Settings {
    */
   bigDocPerformance: boolean;
   /**
+   * 大文档视口渲染（v4.6.1，默认关）：与「大文档性能模式」的减配解耦——
+   * 文档超过 3000 行或 500KB 时只启用 content-visibility 视口化（data-big
+   * CSS + cvMemory 高度记忆），保留 CodeMirror 代码高亮与 KaTeX 公式渲染。
+   * 动机：选中链路（拖选/三击/点公式）在 154KB KaTeX 密集文档上的 0.7~1.7s
+   * 卡顿全部来自全量渲染 DOM（21 万节点）的布局款，视口化实测压到 ≤16ms；
+   * 而总开关同时砍掉公式渲染，对公式密集文档不可接受。两者同开时行为与
+   * 总开关单开一致（总开关蕴含视口化）。
+   */
+  bigDocViewport: boolean;
+  /**
    * 公式自动编号（v4.6，默认关）：开启后展示公式（$$...$$ / ```math）在静
    * 态渲染（AI 面板/批注预览）与导出（HTML/PDF/DOCX/复制富文本）中按序自
    * 动编号（注入 \tag），\label{key} 收集建表、正文与公式里的 \ref/\eqref
@@ -328,6 +338,7 @@ export const DEFAULT_SETTINGS: Settings = {
   annoDiagPanel: false,
   devMode: false,
   bigDocPerformance: false,
+  bigDocViewport: false,
   mathAutoNumber: false,
   mathMacros: "",
   memoryGuard: true,

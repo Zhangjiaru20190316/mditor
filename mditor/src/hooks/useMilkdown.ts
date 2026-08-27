@@ -76,7 +76,7 @@ import "@milkdown/crepe/theme/common/style.css";
 import "@milkdown/crepe/theme/nord.css";
 import type { EditMode, Settings, BlockInfo, BlockTargetKind, FlatHeading } from "../types";
 import { persistImage, persistRemoteImage, resolveImgSrc } from "../lib/imageManager";
-import { isBigDoc, getHeapUsage } from "../lib/memory";
+import { isBigDoc, isBigDocCv, getHeapUsage } from "../lib/memory";
 import { logMemory } from "../lib/diagnostics";
 import { headingSlugBase } from "../lib/outline";
 import {
@@ -418,6 +418,10 @@ export interface MilkdownHandle {
   mode: EditMode;
   /** Current doc exceeds the big-doc cutoff (CodeMirror/KaTeX disabled). */
   bigDoc: boolean;
+  /** Current doc gets content-visibility (viewport rendering) — the master
+   *  switch OR the standalone viewport sub-switch hit the big-doc cutoff.
+   *  Drives data-big; CodeMirror/KaTeX stay keyed on `bigDoc` alone. */
+  bigDocViewport: boolean;
   /** sv surface is backed by the CodeMirror instance (fallback = textarea). */
   svCm: boolean;
   /** Switch edit mode. Content is preserved; undo history is cleared on the
@@ -529,6 +533,9 @@ export function useMilkdown(opts: Options): MilkdownHandle {
   const [ready, setReady] = useState(false);
   const [mode, setModeState] = useState<EditMode>("wysiwyg");
   const [bigDoc, setBigDoc] = useState(false);
+  /** cv 档（content-visibility）：总开关或视口子开关命中且文档够大。
+   *  与 bigDoc（减配档）解耦——见 types.ts bigDocViewport 注释。 */
+  const [bigDocViewport, setBigDocViewport] = useState(false);
   const [recreateToken, setRecreateToken] = useState(0);
   // ---- sv 模式的 CodeMirror 表面（V3.6）--------------------------------
   // 首次进入 sv 时惰性创建并常驻（隐藏），每次进入 sv 用 setValueReset 重置
@@ -540,6 +547,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const bigDocRef = useRef(false);
+  /** cv 档镜像（bigDocViewport state 的 ref 版，供非 React 上下文读取）。 */
+  const cvDocRef = useRef(false);
   // v4.6：当前 Crepe 实例构建时解析出的 KaTeX 宏（mathMacros 变更重建的比对
   // 基准——katexOptions 是 create-time 配置，见创建 effect 与下方重建 effect）。
   const builtMathMacrosRef = useRef<Record<string, string>>({});
@@ -618,6 +627,9 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       const big = isBigDoc(seed);
       bigDocRef.current = big;
       setBigDoc(big);
+      const cv = isBigDocCv(seed);
+      cvDocRef.current = cv;
+      setBigDocViewport(cv);
       // v4.3 生命周期计时：创建起点（crepe 构造 + create + 绑定全程）。
       const createStartAt = performance.now();
 
@@ -797,9 +809,10 @@ export function useMilkdown(opts: Options): MilkdownHandle {
 
       // 大文档 c-v 高度记忆（v4.0.1 根修）：decoration 承载
       // contain-intrinsic-size，让跳过渲染的块用「按内容寻址的真实高度」做
-      // 占位，消除 3em 占位 ↔ 真实高度的 ±N 往返与跳转落点漂移。仅 big
-      // 模式注册（小文档无 c-v，零开销）。见 lib/cvMemory.ts 头注。
-      if (bigDocRef.current) {
+      // 占位，消除 3em 占位 ↔ 真实高度的 ±N 往返与跳转落点漂移。仅 cv 档
+      // 注册（无 c-v 的文档零开销）。见 lib/cvMemory.ts 头注。v4.6.1：随
+      // 视口子开关与减配档解耦（cvDocRef = 总开关 ∥ 视口子开关）。
+      if (cvDocRef.current) {
         crepe.editor.use(cvIntrinsicPlugin);
       }
 
@@ -882,10 +895,10 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       crepeRef.current = crepe;
       applyProseVars(settingsRef.current);
       setReady(true);
-      // big 实例就绪且内容已种子落地：空闲窗口分块预热高度表（冷启动首跳
+      // big/cv 实例就绪且内容已种子落地：空闲窗口分块预热高度表（冷启动首跳
       // 即按真实高度计算目的地）。空实例（无 seed）由后续 setValue→重建/
       // 载入路径触发，这里不空跑。
-      if (bigDocRef.current && seed) {
+      if (cvDocRef.current && seed) {
         scheduleCvPrewarm(crepe);
       }
     });
@@ -1108,7 +1121,11 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         // seeds the new instance with the same content. Skip the doomed load —
         // the recreate path seeds from contentRef — so a big file that crosses
         // the cutoff is parsed exactly once.
-        if (clearStack === true && isBigDoc(md) !== bigDocRef.current) {
+        if (
+          clearStack === true &&
+          (isBigDoc(md) !== bigDocRef.current ||
+            isBigDocCv(md) !== cvDocRef.current)
+        ) {
           maybeRecreateForBigDoc(md);
           return;
         }
@@ -1121,7 +1138,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           contentRef.current = md;
           // big→big 换文档（无重建）：新内容的高度表未填，重新预热——冷表
           // 会让大纲跳转按 3em 占位计算目的地（落点漂移）。
-          if (bigDocRef.current) scheduleCvPrewarm(crepe);
+          if (cvDocRef.current) scheduleCvPrewarm(crepe);
           return;
         }
         suppressRef.current = true;
@@ -2319,10 +2336,17 @@ export function useMilkdown(opts: Options): MilkdownHandle {
   // (CodeMirror/KaTeX are create-time feature flags and can't be toggled live).
   const maybeRecreateForBigDoc = (md: string) => {
     const big = isBigDoc(md);
-    if (big !== bigDocRef.current) {
+    const cv = isBigDocCv(md);
+    // 任一档（减配 / 视口化）翻转都要重建：两者都是 create-time 特性
+    // （CodeMirror/Latex 特性位、cvIntrinsicPlugin 注册、data-big CSS 挂载）。
+    // 只同步一个档位时同样必须重建并落地 contentRef——调用方（setValue 的
+    // clearStack 分支）在翻转时已提前 return，这里不重建就等于丢弃整篇载入。
+    if (big !== bigDocRef.current || cv !== cvDocRef.current) {
       contentRef.current = md;
       bigDocRef.current = big;
+      cvDocRef.current = cv;
       setBigDoc(big);
+      setBigDocViewport(cv);
       setRecreateToken((t) => t + 1);
     }
   };
@@ -2409,18 +2433,24 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     setRecreateToken((t) => t + 1);
   }, [svSurface]);
 
-  // 设置里切换「大文档性能模式」时重估当前文档档位：开关由 useSettings 同步
-  // 写入 memory.ts 模块开关，isBigDoc 结果可能随之翻转，而 CodeMirror/KaTeX
-  // 是 create-time 特性位——翻转则走 recreate()（含内容快照与光标/滚动恢复，
-  // 新实例按新档位决定特性）。文档不大 / 无文档时不翻转，零开销。
+  // 设置里切换「大文档性能模式」/「大文档视口渲染」时重估当前文档档位：开关
+  // 由 useSettings 同步写入 memory.ts 模块开关，isBigDoc / isBigDocCv 结果可
+  // 能随之翻转，而 CodeMirror/KaTeX 是 create-time 特性位、c-v 是 data-big
+  // CSS + cvIntrinsicPlugin（也是 create-time 注册）——任一档翻转则走
+  // recreate()（含内容快照与光标/滚动恢复，新实例按新档位决定特性）。文档
+  // 不大 / 无文档时不翻转，零开销。
   useEffect(() => {
     const md =
       modeRef.current === "sv"
         ? svSurface()?.value ?? sourceTextRef.current ?? contentRef.current
         : (crepeRef.current?.getMarkdown() ?? contentRef.current);
-    if (isBigDoc(md) !== bigDocRef.current) recreate();
+    if (
+      isBigDoc(md) !== bigDocRef.current ||
+      isBigDocCv(md) !== cvDocRef.current
+    )
+      recreate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opts.settings.bigDocPerformance]);
+  }, [opts.settings.bigDocPerformance, opts.settings.bigDocViewport]);
 
   // v4.6：KaTeX 宏设置变化 → 重建编辑器（公式块的 katexOptions 在 Crepe 创
   // 建时固化，无法原地更新）。比对「解析结果」而非原始字符串：格式错误被
@@ -2518,12 +2548,13 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       ready,
       mode,
       bigDoc,
+      bigDocViewport,
       svCm,
       switchMode,
       recreate,
       applyTheme,
     }),
-    [ready, mode, bigDoc, svCm, facade, switchMode, recreate, applyTheme]
+    [ready, mode, bigDoc, bigDocViewport, svCm, facade, switchMode, recreate, applyTheme]
   );
 }
 

@@ -17,7 +17,7 @@ import {
   saveSettings,
 } from "../lib/store";
 import { DEFAULT_SETTINGS, type Settings, type Theme } from "../types";
-import { setBigDocModeEnabled } from "../lib/memory";
+import { setBigDocModeEnabled, setBigDocViewportEnabled } from "../lib/memory";
 import {
   parseMathMacros,
   setMathRenderConfig,
@@ -98,6 +98,7 @@ export function useSettings(): SettingsApi {
         // （Editor/useMilkdown）的 effect 先于本组件（App）的 effect 执行，
         // 晚于此处更新会让 useMilkdown 的档位翻转检测读到旧值。
         setBigDocModeEnabled(s.bigDocPerformance);
+        setBigDocViewportEnabled(s.bigDocViewport);
         // 数学渲染配置同理（v4.6）：静态管线/导出在渲染时读模块开关。
         setMathRenderConfig({
           autoNumber: s.mathAutoNumber,
@@ -133,6 +134,7 @@ export function useSettings(): SettingsApi {
       const next = apply(settingsRef.current);
       // 与初始加载同理：同步写入模块开关，赶在子组件 effect 之前生效。
       setBigDocModeEnabled(next.bigDocPerformance);
+      setBigDocViewportEnabled(next.bigDocViewport);
       setMathRenderConfig({
         autoNumber: next.mathAutoNumber,
         macros: parseMathMacros(next.mathMacros),

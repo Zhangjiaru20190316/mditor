@@ -1247,7 +1247,7 @@ export const Editor = memo(
       ref={scrollerRef}
       id={EDITOR_ID}
       className="mditor-editor-host"
-      data-big={handle.bigDoc ? "" : undefined}
+      data-big={handle.bigDocViewport ? "" : undefined}
     >
       <div
         ref={hostRef}
