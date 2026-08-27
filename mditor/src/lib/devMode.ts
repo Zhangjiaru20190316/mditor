@@ -430,6 +430,8 @@ function onHeartbeat(): void {
       used: s.used,
       prosemirrorViews: s.prosemirrorViews,
       domNodes: s.domNodes ?? null,
+      // 文档切换感知（MD-4011 假阳性修复）：见 devAnomaly.HeartbeatPoint。
+      docKey: buildDevContext().doc?.path ?? null,
     });
     if (heartbeats.length > HEARTBEAT_WINDOW) heartbeats.shift();
     for (const a of analyzeHeartbeats(heartbeats)) noteAnomaly(a);

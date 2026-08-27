@@ -273,6 +273,42 @@ describe("v4.3：心跳 DOM 趋势（MD-4011）", () => {
     }));
     expect(analyzeHeartbeats(pts)).toEqual([]);
   });
+
+  it("v4.6.1：文档切换的基线跳变不算增长（跨文档尾段切割）", () => {
+    // 2026-08-27 生产日志实测：小文档(267 节点) → 切回 21 万节点大文档，
+    // 15 分钟窗口把切换当 +213857 持续增长连报 20+ 条 MD-4011。
+    const base = Date.now() - 14 * 60_000;
+    const small: HeartbeatPoint[] = Array.from({ length: 3 }, (_, i) => ({
+      ts: base + i * 60_000,
+      used: 30 * 1024 * 1024,
+      prosemirrorViews: 1,
+      domNodes: 267,
+      docKey: "E:/notes/untitled.md",
+    }));
+    const big: HeartbeatPoint[] = Array.from({ length: 12 }, (_, i) => ({
+      ts: base + (3 + i) * 60_000,
+      used: 30 * 1024 * 1024,
+      prosemirrorViews: 1,
+      domNodes: 214_000 + (i % 3),
+      docKey: "E:/notes/习题集.md",
+    }));
+    const out = analyzeHeartbeats([...small, ...big]);
+    expect(out.map((a) => a.code)).not.toContain("MD-4011");
+
+    // 同一文档内真实持续增长仍要报：切到大文档后继续无界累积。
+    const leak: HeartbeatPoint[] = Array.from({ length: 10 }, (_, i) => ({
+      ts: base + i * 60_000,
+      used: 30 * 1024 * 1024,
+      prosemirrorViews: 1,
+      domNodes: 200_000 + i * 30_000,
+      docKey: "E:/notes/习题集.md",
+    }));
+    expect(analyzeHeartbeats(leak).map((a) => a.code)).toContain("MD-4011");
+
+    // 旧格式（无 docKey）不受影响：跨"切换"依旧按旧口径判定。
+    const legacy: HeartbeatPoint[] = leak.map(({ docKey: _drop, ...p }) => p);
+    expect(analyzeHeartbeats(legacy).map((a) => a.code)).toContain("MD-4011");
+  });
 });
 
 describe("v4.3：帧统计差分与位移抖动风暴（MD-9001/9002/9003）", () => {

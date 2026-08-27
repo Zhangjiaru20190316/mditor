@@ -370,6 +370,11 @@ export interface HeartbeatPoint {
   prosemirrorViews: number | null;
   /** 重 DOM 采样（开发者模式强制开启）下的文档节点数，缺省=未采。 */
   domNodes?: number | null;
+  /** 当前活跃文档标识（path；空文档/无文档为 null）。用于趋势判定的文档
+   *  切换感知：切换文档必然改变 domNodes 基线（小文档→大文档 = +20 万），
+   *  不切割的话 MD-4011 会把「切回来的一份大文档」报成持续增长——
+   *  2026-08-27 生产日志 14.5min/+213857 的实测假阳性来源。 */
+  docKey?: string | null;
 }
 
 /** 趋势判定至少需要的窗口跨度（3 分钟）：太短的斜率全是噪声。 */
@@ -382,6 +387,19 @@ export const HEAP_TREND_MIN_GAIN_MB = 50;
 export const DOM_TREND_MIN_GAIN = 30_000;
 /** DOM 节点增长斜率阈值（节点/分钟）。 */
 export const DOM_TREND_PER_MIN = 1_500;
+
+/**
+ * 截取与最末点同一文档的心跳尾段：从最后一次 docKey 变化之后起算。
+ * 旧点缺 docKey（升级前会话）视作同文档，行为与旧版一致。
+ */
+export function sameDocTail<T extends { docKey?: string | null }>(pts: T[]): T[] {
+  for (let i = pts.length - 1; i > 0; i--) {
+    const a = pts[i - 1].docKey;
+    const b = pts[i].docKey;
+    if (a != null && b != null && a !== b) return pts.slice(i);
+  }
+  return pts;
+}
 
 /**
  * 心跳窗口检查：末点 ProseMirror 视图残留 + 堆增长趋势 + DOM 节点增长
@@ -423,10 +441,12 @@ export function analyzeHeartbeats(points: HeartbeatPoint[]): DevAnomaly[] {
         }
       }
     }
-    const withDom = points.filter(
+    const withDomAll = points.filter(
       (p): p is HeartbeatPoint & { domNodes: number } =>
         p.domNodes != null && p.domNodes > 0
     );
+    // 只比同一文档内的趋势：跨文档切换的基线跳变不是增长（见 docKey 注释）。
+    const withDom = sameDocTail(withDomAll);
     if (withDom.length >= 6) {
       const first = withDom[0];
       const end = withDom[withDom.length - 1];
