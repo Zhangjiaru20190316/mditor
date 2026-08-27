@@ -1,5 +1,5 @@
 diff --git a/node_modules/@milkdown/components/lib/code-block/index.js b/node_modules/@milkdown/components/lib/code-block/index.js
-index 7e1baef..abb12c2 100644
+index 7e1baef..fadd46b 100644
 --- a/node_modules/@milkdown/components/lib/code-block/index.js
 +++ b/node_modules/@milkdown/components/lib/code-block/index.js
 @@ -746,6 +746,9 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
@@ -12,10 +12,21 @@ index 7e1baef..abb12c2 100644
      this.cm = new EditorView({
        doc: this.node.textContent,
        root: this.view.root,
-@@ -774,6 +777,11 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+@@ -773,7 +776,21 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+   }
    teardownCodeMirror() {
      if (!this.initialized) return;
-     if (this.cm.hasFocus || this.selected.value) return;
+-    if (this.cm.hasFocus || this.selected.value) return;
++    // mditor fix (v4.6.1): upstream returned early when the block still holds
++    // focus/selection — but the teardown timer was already consumed, so a block
++    // that was focused/selected at the teardown moment stayed mounted FOREVER
++    // (no timer was ever re-armed; only a leave→enter→leave viewport cycle
++    // would schedule another teardown). Re-arm instead so the editor is torn
++    // down shortly after focus/selection actually leaves the block.
++    if (this.cm.hasFocus || this.selected.value) {
++      this.scheduleTeardown();
++      return;
++    }
 +    let frozenHeight = 0;
 +    try {
 +      frozenHeight = this.dom.offsetHeight;
@@ -24,7 +35,7 @@ index 7e1baef..abb12c2 100644
      this.app.unmount();
      this.cm.destroy();
      this.initialized = false;
-@@ -782,6 +790,13 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+@@ -782,6 +799,13 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
        this.dom.removeChild(this.dom.firstChild);
      }
      this.renderPlaceholder();
@@ -38,7 +49,7 @@ index 7e1baef..abb12c2 100644
    }
    scheduleTeardown() {
      this.cancelTeardown();
-@@ -853,9 +868,10 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+@@ -853,9 +877,10 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
        try {
          this.cm.dispatch({
            changes: { from: change.from, to: change.to, insert: change.text },
@@ -52,7 +63,7 @@ index 7e1baef..abb12c2 100644
          });
        } finally {
          this.updating = false;
-@@ -888,7 +904,7 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+@@ -888,7 +913,7 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
    }
  };
  /** Delay before tearing down an off-screen CodeMirror instance. */
