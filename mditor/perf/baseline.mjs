@@ -219,6 +219,94 @@ console.log("editor ready");
   console.log("select:", toolbarAction, JSON.stringify(summary(longtasks.events ?? [])));
 }
 
+// ---- 场景 3b：拖选（按住拖过一行文字——拖选期间每帧选区序列化的成本） --------
+{
+  // 找一个宽文本段落，从左 1/4 拖到右 3/4（跨 ~半行文字）
+  const r = await cdp.eval(`(() => {
+    const pm = document.querySelector('.ProseMirror');
+    const host = document.querySelector('.mditor-editor-host');
+    const kids = [...pm.children];
+    const k = kids.slice(300).find(el => el.tagName === 'P' && (el.textContent ?? '').trim().length >= 60);
+    if (!k) return null;
+    host.scrollTop = Math.max(0, k.offsetTop - 150);
+    return new Promise(res => requestAnimationFrame(() => requestAnimationFrame(() => {
+      const rc = k.getBoundingClientRect();
+      res({ x1: Math.round(rc.x + rc.width * 0.25), x2: Math.round(rc.x + rc.width * 0.75), y: Math.round(rc.y + rc.height / 2) });
+    })));
+  })()`);
+  if (!r) throw new Error("找不到可拖选的文本段落");
+  await lt.start(); await ev.start();
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: r.x1, y: r.y, button: "left", buttons: 1, clickCount: 1 });
+  for (let i = 1; i <= 10; i++) {
+    const x = Math.round(r.x1 + ((r.x2 - r.x1) * i) / 10);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y: r.y, button: "left", buttons: 1 });
+    await sleep(40);
+  }
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: r.x2, y: r.y, button: "left", clickCount: 1 });
+  await sleep(600);
+  const longtasks = await lt.stop();
+  const events = await ev.stop();
+  results.scenarios.dragSelect = { longtasks, events };
+  console.log("dragSelect:", JSON.stringify({ lt: summary(longtasks.events ?? []), ev: { n: events.n, p95: events.p95, max: events.max } }));
+  await sleep(300);
+}
+
+// ---- 场景 3c：三击选段（整段序列化单次成本） ---------------------------------
+{
+  const r = await cdp.eval(`(() => {
+    const pm = document.querySelector('.ProseMirror');
+    const kids = [...pm.children];
+    const k = kids.slice(300).find(el => el.tagName === 'P' && (el.textContent ?? '').trim().length >= 60);
+    if (!k) return null;
+    const rc = k.getBoundingClientRect();
+    return { x: Math.round(rc.x + Math.min(rc.width / 2, 200)), y: Math.round(rc.y + rc.height / 2) };
+  })()`);
+  if (!r) throw new Error("找不到可三击的文本段落");
+  await lt.start(); await ev.start();
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: r.x, y: r.y, button: "left", clickCount: 3 });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: r.x, y: r.y, button: "left", clickCount: 3 });
+  await sleep(800);
+  const longtasks = await lt.stop();
+  const events = await ev.stop();
+  results.scenarios.tripleClick = { longtasks, events };
+  console.log("tripleClick:", JSON.stringify({ lt: summary(longtasks.events ?? []), ev: { n: events.n, p95: events.p95, max: events.max } }));
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+  await sleep(300);
+}
+
+// ---- 场景 3d：点击行内公式 → 点正文（MD-1003 的用户触发序列） -----------------
+{
+  // 找一个带行内公式的段落（span[data-type=math_inline]），滚过去点公式，再点正文
+  const r = await cdp.eval(`(() => {
+    const pm = document.querySelector('.ProseMirror');
+    const host = document.querySelector('.mditor-editor-host');
+    const spans = [...pm.querySelectorAll('span[data-type="math_inline"]')];
+    if (!spans.length) return null;
+    const span = spans[Math.floor(spans.length / 2)];
+    const p = span.closest('p');
+    host.scrollTop = Math.max(0, span.offsetTop - 200);
+    return new Promise(res => requestAnimationFrame(() => requestAnimationFrame(() => {
+      const rc = span.getBoundingClientRect();
+      const prc = p.getBoundingClientRect();
+      res({ fx: Math.round(rc.x + rc.width / 2), fy: Math.round(rc.y + rc.height / 2), px: Math.round(prc.x + Math.min(prc.width / 2, 200)), py: Math.round(prc.y + Math.min(prc.height, 80)) });
+    })));
+  })()`);
+  if (!r) throw new Error("找不到行内公式");
+  await sleep(1500); // 滚动后的余波（懒挂载/盖章）落定，只测点击事务
+  await lt.start(); await ev.start();
+  for (let i = 0; i < 3; i++) {
+    await m.click(r.fx, r.fy); await sleep(350);
+    await m.click(r.px, r.py); await sleep(350);
+  }
+  const longtasks = await lt.stop();
+  const events = await ev.stop();
+  const domStats = await cdp.eval(`({ views: document.querySelectorAll('.ProseMirror').length, detachedProbe: window.__latexLeakProbe?.() ?? null })`);
+  results.scenarios.clickFormula = { rounds: 3, longtasks, events, domStats };
+  console.log("clickFormula:", JSON.stringify({ lt: summary(longtasks.events ?? []), ev: { n: events.n, p95: events.p95, max: events.max } }));
+  await sleep(400);
+}
+
 // ---- 场景 4：输入（逐键延迟 + 长任务） ---------------------------------------
 {
   await cdp.eval(scrollBlockIntoView(700));

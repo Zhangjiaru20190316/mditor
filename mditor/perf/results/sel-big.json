@@ -1,0 +1,374 @@
+{
+ "label": "big",
+ "ts": "2026-08-27T12:45:19.674Z",
+ "rounds": [
+  {
+   "round": 1,
+   "dragSelect": {
+    "longtasks": [],
+    "events": {
+     "n": 21,
+     "p50": 16,
+     "p95": 16,
+     "max": 16,
+     "events": [
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerout"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerover"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerenter"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerenter"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerenter"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerenter"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerenter"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerenter"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "mouseout"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "mouseover"
+      },
+      {
+       "t": 7551,
+       "d": 16,
+       "type": "pointerdown"
+      }
+     ]
+    }
+   },
+   "tripleClick": {
+    "longtasks": [],
+    "events": {
+     "n": 16,
+     "p50": 16,
+     "p95": 16,
+     "max": 16,
+     "events": [
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "pointerout"
+      },
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "pointerover"
+      },
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "pointerenter"
+      },
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "pointerenter"
+      },
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "pointerenter"
+      },
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "pointerenter"
+      },
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "pointerenter"
+      },
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "pointerenter"
+      },
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "mouseout"
+      },
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "mouseover"
+      },
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "pointerdown"
+      },
+      {
+       "t": 8957,
+       "d": 16,
+       "type": "mousedown"
+      }
+     ]
+    }
+   },
+   "clickFormula": {
+    "skipped": "no math_inline (big mode disables Latex)",
+    "longtasks": [],
+    "events": {
+     "n": 0,
+     "p50": 0,
+     "p95": 0,
+     "max": 0
+    }
+   }
+  },
+  {
+   "round": 2,
+   "dragSelect": {
+    "longtasks": [
+     {
+      "t": 26,
+      "d": 154,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 848,
+      "d": 55,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 912,
+      "d": 55,
+      "name": "self",
+      "attribution": "unknown:window"
+     }
+    ],
+    "events": {
+     "n": 32,
+     "p50": 16,
+     "p95": 40,
+     "max": 168,
+     "events": [
+      {
+       "t": 12799,
+       "d": 16,
+       "type": "pointerdown"
+      },
+      {
+       "t": 12799,
+       "d": 16,
+       "type": "mousedown"
+      },
+      {
+       "t": 12799,
+       "d": 16,
+       "type": "dragstart"
+      },
+      {
+       "t": 12801,
+       "d": 16,
+       "type": "pointercancel"
+      },
+      {
+       "t": 12801,
+       "d": 16,
+       "type": "pointerout"
+      },
+      {
+       "t": 12801,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 12801,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 12801,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 12801,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 12801,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 12801,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 12801,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 12801,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 12801,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 12801,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 12801,
+       "d": 16,
+       "type": "pointerleave"
+      },
+      {
+       "t": 12810,
+       "d": 24,
+       "type": "dragenter"
+      },
+      {
+       "t": 12823,
+       "d": 168,
+       "type": "dragover"
+      },
+      {
+       "t": 13426,
+       "d": 40,
+       "type": "drop"
+      },
+      {
+       "t": 13454,
+       "d": 16,
+       "type": "dragend"
+      }
+     ]
+    }
+   },
+   "tripleClick": {
+    "longtasks": [],
+    "events": {
+     "n": 0,
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "events": []
+    }
+   },
+   "clickFormula": {
+    "skipped": "no math_inline (big mode disables Latex)",
+    "longtasks": [],
+    "events": {
+     "n": 0,
+     "p50": 0,
+     "p95": 0,
+     "max": 0
+    }
+   }
+  }
+ ]
+}
