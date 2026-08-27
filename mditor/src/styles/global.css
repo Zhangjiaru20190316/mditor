@@ -1322,6 +1322,18 @@ body.is-resizing .sidebar {
 .mditor-milkdown .ProseMirror:focus {
   outline: none;
 }
+/* 首交互样式重算熔断（大文档卡顿根修）：crepe 的 cursor.css 只在
+   .ProseMirror-focused 上定义 --prosemirror-virtual-cursor-color ——
+   聚焦/失焦切换使这个自定义属性在「无 → 有」间翻转，Blink 必须作废
+   .ProseMirror 全部后代的样式（十万级节点级联重算）。3447 行 KaTeX
+   文档实测 focus() 单次 762ms（用户侧 1.2~1.5s MD-1003 的元凶：点选
+   区工具栏/侧栏按钮 → 编辑器失焦，点回正文 → 重付一次）。让变量在
+   非聚焦态也以同值恒定存在，聚焦切换成为值不变的 no-op，引擎跳过后
+   代重算（实测 → 0ms）。特异性 (0,3,0) 压过 crepe 的 (0,2,0)，
+   两态取值一致。 */
+.mditor-milkdown .ProseMirror.editor {
+  --prosemirror-virtual-cursor-color: var(--crepe-color-outline);
+}
 /* Outline/anchor jumps scroll headings to the host's top edge, where the
    sticky .milkdown-toolbar (~41px) sits — reserve it so the landed heading
    stays fully visible. */
