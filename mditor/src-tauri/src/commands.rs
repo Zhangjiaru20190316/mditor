@@ -23,7 +23,17 @@ const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 /// subdirectory. Component-wise check (both sides derive from the same
 /// app_data_dir string the `app_data_dir` command returned, so no
 /// canonicalization is needed to make them comparable).
+///
+/// SECURITY（v4.6.2 阶段2审计）：先拒绝任何 `..` 组件——`Path::starts_with`
+/// 是词法比较、不解析 `..`，`<logs>/../../evil.bat` 词法上以 logs 开头、
+/// 实际却写出日志目录之外。
 fn is_log_path_confined(p: &Path, logs_dir: &Path) -> bool {
+    if p
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return false;
+    }
     p.parent()
         .is_some_and(|parent| parent.starts_with(logs_dir))
 }
@@ -187,5 +197,29 @@ mod tests {
         ));
         // The directory itself is not a confinable file target.
         assert!(!is_log_path_confined(Path::new("C:/app-data/logs"), logs));
+    }
+
+    /// SECURITY 回归（v4.6.2）：`..` 词法穿越。`Path::starts_with` 不解析
+    /// `..`，不带本检查时 `<logs>/../../evil.bat` 能通过并写出日志目录。
+    #[test]
+    fn rejects_parent_dir_traversal() {
+        let logs = Path::new("C:/app-data/logs");
+        assert!(!is_log_path_confined(
+            Path::new("C:/app-data/logs/../../evil.bat"),
+            logs
+        ));
+        assert!(!is_log_path_confined(
+            Path::new("C:/app-data/logs/sub/../../../x"),
+            logs
+        ));
+        assert!(!is_log_path_confined(
+            Path::new("C:/app-data/../app-data/logs/x.log"),
+            logs
+        ));
+        // 无 `..` 的正常路径不受影响。
+        assert!(is_log_path_confined(
+            Path::new("C:/app-data/logs/sub/x.log"),
+            logs
+        ));
     }
 }
