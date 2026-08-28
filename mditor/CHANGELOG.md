@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased（全面治理：性能阶段产出）
+## Unreleased（全面治理：性能 + 安全阶段产出）
+
+### 安全（阶段 2 审计，详见 docs/overhaul/2-security.md）
+
+- **导出图片内联加魔数门（P2）**：html-to-docx 内部的 image-size 对 ICNS/JXL/HEIF 有解析死循环（GHSA-w3rx-r6r6-pgpr / GHSA-5p2g-fcmc-qvqq）——文档引用本地恶意图片 + 导出 DOCX 即可挂起应用。内联入口现按魔数只放行 PNG/JPEG/GIF/WebP/BMP/ICO/SVG，未知格式保留原引用（转换器取不到 file:// 引用会静默丢弃）；嗅探出的真实 MIME 取代扩展名猜测。npm audit fix 的依赖换包方案（image-size→probe-image-size）因供应链风险已回退不用
+- **append_log 拒绝 `..` 组件（P3）**：路径收敛检查的 `Path::starts_with` 不解析 `..`，`<logs>/../../evil.bat` 词法上在日志目录内、实际写出之外——现含任何 ParentDir 组件即拒绝（纵深防御；fs 插件本就有全盘写，实际增量有限）
+- 审计结论：无 P0/P1；npm audit 其余项（esbuild dev-only）与 cargo-audit（0 漏洞，18 条上游 unmaintained 警告）记录在案
 
 ### 性能
 
