@@ -22,6 +22,7 @@
 
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, writeFile, readFile } from "@tauri-apps/plugin-fs";
+import { sniffImageMime } from "./imageSniff";
 // NOTE: modern-screenshot + juice + @turbodocx/html-to-docx are all imported
 // lazily inside their respective export functions so the heavyweight "export"
 // bundle only loads when the user actually exports. Importing them at the top
@@ -38,30 +39,6 @@ const INLINE_IMG_MAX_BYTES = 10 * 1024 * 1024;
 const INLINE_IMG_TOTAL_BUDGET = 64 * 1024 * 1024;
 
 const IMG_SRC_RE = /<img\b[^>]*\bsrc="([^"]*)"/gi;
-
-/** 按扩展名猜测 data URL 的 MIME。 */
-function mimeOf(src: string): string {
-  const m = /\.([a-z0-9]+)(?:[?#]|$)/i.exec(src);
-  switch ((m?.[1] ?? "").toLowerCase()) {
-    case "png":
-      return "image/png";
-    case "jpg":
-    case "jpeg":
-      return "image/jpeg";
-    case "gif":
-      return "image/gif";
-    case "webp":
-      return "image/webp";
-    case "svg":
-      return "image/svg+xml";
-    case "bmp":
-      return "image/bmp";
-    case "ico":
-      return "image/x-icon";
-    default:
-      return "application/octet-stream";
-  }
-}
 
 /**
  * 把 HTML 里引用的 LOCAL 图片（相对路径 / 绝对路径，非 http(s) / data:）
@@ -88,11 +65,16 @@ export async function inlineLocalImages(
 
   let used = 0;
   const cache = new Map<string, string>();
-  for (const { src, abs } of jobs) {
+  for (const { abs } of jobs) {
     if (cache.has(abs)) continue;
     try {
       const bytes = await readFile(abs);
       if (bytes.byteLength > INLINE_IMG_MAX_BYTES) continue;
+      // 魔数门（v4.6.2）：未知格式不内联——html-to-docx 的 image-size 对
+      // ICNS/JXL/HEIF 有解析死循环（详见 lib/imageSniff.ts），且 octet-stream
+      // 内联本就渲染不出。嗅探出的真实 MIME 优先于扩展名猜测。
+      const sniffed = sniffImageMime(bytes);
+      if (!sniffed) continue;
       if (used + bytes.byteLength > INLINE_IMG_TOTAL_BUDGET) continue;
       used += bytes.byteLength;
       let bin = "";
@@ -100,7 +82,7 @@ export async function inlineLocalImages(
       for (let i = 0; i < bytes.length; i += CHUNK) {
         bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
       }
-      cache.set(abs, `data:${mimeOf(src)};base64,${btoa(bin)}`);
+      cache.set(abs, `data:${sniffed};base64,${btoa(bin)}`);
     } catch {
       /* 读取失败：保留原引用 */
     }
