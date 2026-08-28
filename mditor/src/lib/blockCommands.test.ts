@@ -143,12 +143,16 @@ describe("blockCommands 派发回归（v3.9.5：dispatchScrolled 自递归曾让
   });
 
   it("applyBlockTarget 列表互转（bullet→ordered）派发事务且类型翻转", () => {
-    // bullet_list(0..13) 内两项 "one"(1..5)/"two"(7..11)；光标在 one 文本位 2。
+    // bullet_list(0) 内两项 "one"/"two"；list_item(1..)、paragraph(2..)、
+    // 文本从 3 开始。光标须落在文本位（≥3）——pos 2 是 paragraph 开标签处，
+    // TextSelection 端点会落在 list_item（无 inline 内容）上，PM 会打
+    // "endpoint not pointing into a node with inline content" 告警。本用例
+    // 历史 caretPos=2，阶段0 基线里那条 stderr 即其来源（测试伪象，非产品行为）。
     const doc = docOf({
       type: "bullet_list",
       content: [li(para(t("one"))), li(para(t("two")))],
     });
-    const { view, dispatch } = mockView(doc, 2);
+    const { view, dispatch } = mockView(doc, 3);
     expect(() => applyBlockTarget(view, "ordered_list")).not.toThrow();
     expect(dispatch).toHaveBeenCalledTimes(1);
     const tr = dispatch.mock.calls[0][0];
