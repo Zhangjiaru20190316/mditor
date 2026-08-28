@@ -212,3 +212,45 @@ describe("buildFormatFixMessages", () => {
     expect(sys).toContain("Markdown 格式修复器");
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* chatStream cancel 接线（v4.6.2 阶段3回归网）                                */
+/* 「停止」必须通知 Rust 停拉上游流——此前只摘前端监听，上游继续跑到自然结束   */
+/* （计费 token 照常消耗，CHANGELOG 已知问题清单实锤项）。                     */
+/* -------------------------------------------------------------------------- */
+
+import { vi } from "vitest";
+import type { Settings } from "../types";
+
+const invokeMock = vi.fn().mockResolvedValue(undefined);
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (...args: unknown[]) => invokeMock(...args),
+}));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn().mockResolvedValue(() => {}),
+}));
+
+describe("chatStream cancel（停止必须通知后端）", () => {
+  it("cancel() 调用 ai_chat_cancel 且携带 requestId，并本地 onDone", async () => {
+    // 动态 import：vi.mock 需在模块加载前生效
+    const { chatStream } = await import("./ai");
+    const settings = {
+      aiModels: [
+        { id: "m1", name: "t", provider: "custom", baseUrl: "http://x", apiKey: "", model: "gpt" },
+      ],
+      aiActiveModelId: "m1",
+    } as unknown as Settings;
+    const onDone = vi.fn();
+    const handle = chatStream({
+      settings,
+      messages: [{ role: "user", content: "hi" }],
+      requestId: "req-test-1",
+      handlers: { onChunk: () => {}, onDone, onError: () => {} },
+    });
+    handle.cancel();
+    expect(onDone).toHaveBeenCalledTimes(1);
+    // fire-and-forget：微任务排入后再断言
+    await Promise.resolve();
+    expect(invokeMock).toHaveBeenCalledWith("ai_chat_cancel", { requestId: "req-test-1" });
+  });
+});

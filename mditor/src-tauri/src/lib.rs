@@ -126,6 +126,7 @@ pub fn run() {
             commands::fetch_image,
             ai::ai_chat,
             ai::ai_chat_stream,
+            ai::ai_chat_cancel,
         ])
         .setup(|app| {
             // Windows 使用自绘无边框标题栏内的前端菜单栏（MenuBar.tsx），原生

@@ -615,6 +615,10 @@ export function chatStream(
       cancelled = true;
       finish();
       handlers.onDone();
+      // v4.6.2 阶段3：通知 Rust 停拉上游流——此前只摘前端监听，上游继续
+      // 跑到自然结束（计费 token 照常消耗）。fire-and-forget：旧后端无此
+      // 命令时静默降级为旧行为。
+      void invoke("ai_chat_cancel", { requestId }).catch(() => {});
     },
   };
 }

@@ -15,12 +15,84 @@
 //! Compatible endpoints include OpenAI, DeepSeek, 智谱 GLM, Moonshot, OpenRouter,
 //! and local servers like Ollama (`http://localhost:11434/v1`) or LM Studio.
 
-use std::sync::OnceLock;
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tauri::{command, AppHandle, Emitter};
+
+// ---- 流式取消（v4.6.2 阶段3：已知问题「流式停止不停止计费」根修） ----------
+//
+// 前端「停止」原先只摘除自己的事件监听（本地 onDone 即生效），Rust 侧对
+// 上游的拉流会一直跑到自然结束——被中止的请求同样消耗计费 token。现在
+// 前端停止时调用 `ai_chat_cancel` 登记 request_id，流循环在每个 chunk 到达
+// 时检查并提前退出。
+
+/// 取消注册表（纯逻辑，可单测）。
+///
+/// `finish` 由流自身的 Drop 守卫在一切退出路径调用（含 `?` 早退）；「迟到
+/// 的取消」（流已结束才到达）没有对应流来消费条目，靠容量上限整表清空兜
+/// 底——上限取一个远超并发流数的值，正常使用永不触达。
+#[derive(Debug)]
+struct CancelRegistry {
+    inner: HashSet<String>,
+    cap: usize,
+}
+
+impl CancelRegistry {
+    fn new(cap: usize) -> Self {
+        Self { inner: HashSet::new(), cap }
+    }
+
+    fn cancel(&mut self, id: &str) {
+        if self.inner.len() >= self.cap {
+            self.inner.clear();
+        }
+        self.inner.insert(id.to_string());
+    }
+
+    fn is_cancelled(&self, id: &str) -> bool {
+        self.inner.contains(id)
+    }
+
+    fn finish(&mut self, id: &str) {
+        self.inner.remove(id);
+    }
+}
+
+static CANCELS: OnceLock<Mutex<CancelRegistry>> = OnceLock::new();
+
+fn cancels() -> &'static Mutex<CancelRegistry> {
+    CANCELS.get_or_init(|| Mutex::new(CancelRegistry::new(1024)))
+}
+
+/// 登记一个流式请求为已取消（前端「停止」时调用；fire-and-forget）。
+#[command]
+pub fn ai_chat_cancel(request_id: String) {
+    let mut g = cancels().lock().unwrap_or_else(|e| e.into_inner());
+    g.cancel(&request_id);
+}
+
+fn stream_cancelled(request_id: &str) -> bool {
+    cancels()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_cancelled(request_id)
+}
+
+/// 流退出时清掉自己的取消条目（Drop 兜住所有 return/`?`/panic-unwind 路径）。
+struct CancelGuard(String);
+
+impl Drop for CancelGuard {
+    fn drop(&mut self) {
+        cancels()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .finish(&self.0);
+    }
+}
 
 /// Total-request timeout for the single-shot `ai_chat` call. Applied per
 /// request — the shared client itself carries no total timeout (see `http()`).
@@ -147,7 +219,12 @@ pub async fn ai_chat(
     }
 
     let parsed: CompletionResponse = serde_json::from_str(&text).map_err(|e| {
-        format!("无法解析 AI 响应（可能 Base URL 不是 OpenAI 兼容接口）：{e}\n原始响应：{text}")
+        // 响应体截断后回显（与 friendly_error 同款纪律：网关错误页可能是
+        // 巨大 HTML，且不该整段透传）。
+        format!(
+            "无法解析 AI 响应（可能 Base URL 不是 OpenAI 兼容接口）：{e}\n原始响应：{}",
+            truncate_error_body(&text)
+        )
     })?;
 
     let content = parsed
@@ -225,6 +302,9 @@ pub async fn ai_chat_stream(
         return Err(msg);
     }
 
+    // 取消守卫：任何退出路径（含 `?` 早退）都会清掉自己的取消条目。
+    let _cancel_guard = CancelGuard(request_id.clone());
+
     // Walk the SSE byte stream line by line. Each `data:` line is either
     // `[DONE]` (terminator) or a JSON chunk whose choices[0].delta.content
     // holds the incremental text.
@@ -237,6 +317,11 @@ pub async fn ai_chat_stream(
     let mut pos: usize = 0;
 
     while let Some(chunk_result) = stream.next().await {
+        // 前端已取消：停拉上游流（不再消耗计费 token），按正常收尾通知。
+        if stream_cancelled(&request_id) {
+            let _ = app.emit("ai_stream_done", StreamDone { id: request_id });
+            return Ok(());
+        }
         let chunk = match chunk_result {
             Ok(c) => c,
             Err(e) => {
@@ -529,4 +614,35 @@ struct StreamDone {
 struct StreamErr {
     id: String,
     error: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 取消注册表语义（v4.6.2 阶段3 回归网）：登记即取消、流退出清理、
+    /// 容量上限整表清空兜「迟到的取消」。
+    #[test]
+    fn cancel_registry_lifecycle() {
+        let mut r = CancelRegistry::new(4);
+        assert!(!r.is_cancelled("req-1"));
+        r.cancel("req-1");
+        assert!(r.is_cancelled("req-1"));
+        assert!(!r.is_cancelled("req-2"));
+        // 流正常退出 → 条目清理，同 id 的迟到取消不再命中新流
+        r.finish("req-1");
+        assert!(!r.is_cancelled("req-1"));
+    }
+
+    #[test]
+    fn cancel_registry_cap_clears_table() {
+        let mut r = CancelRegistry::new(3);
+        r.cancel("a");
+        r.cancel("b");
+        r.cancel("c");
+        assert!(r.is_cancelled("a"));
+        r.cancel("d"); // 触及上限 → 整表清空后插入 d
+        assert!(!r.is_cancelled("a"));
+        assert!(r.is_cancelled("d"));
+    }
 }
