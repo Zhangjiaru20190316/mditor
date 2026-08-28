@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased（全面治理：性能阶段产出）
+
+### 性能
+
+- **cv 档打字：装饰对账归零（1MB 档每键 ~500ms）**：bigDocViewport/性能模式下，块高度记忆插件（cvIntrinsic）原先在每个编辑事务上整树重建 1.16 万节点装饰——prosemirror-view 对全新 DecorationSet 做全树对账，占 1MB 档打字剖面 50%。改为增量映射（O(变更)）+ 编辑停顿后 1.2s 尾随防抖补一次整树重建（撤销/粘贴丢失的装饰由此复活）。1MB/2.5 万行实测：打字 p95 672→480~528ms，剖面 takeSpansForNode 2109→160ms。剩余 ~300ms/键为 prosemirror-view 对 1.16 万块文档的 O(顶层块数) 内生更新成本（零装饰证伪实验确认），不动 PM 本体
+- **工作区搜索并发化（200 文件 4750→625ms，7.2x）**：跨文件搜索原先串行 `for await` 逐个读文件——plugin-fs 单次读取 ~21ms 纯 IPC 往返延迟是主要成本（50 文件串行 1046ms / 全并发 66ms）。改为 16 路滑动窗口并发池，结果保持文件顺序、截断与失败跳过语义不变
+- **测量基建（`perf/`）**：冷启动（dev/生产 bundle 双口径）、1MB 档七场景基准（`MDITOR_DOC` 参数化）、击键 DOM churn 探针、导出/搜索/保存阶段计时、sysDebug 直读工具；本轮数据入库 `perf/results/{overhaul-base,big1mb}-*`
+
+### 已知观察项（未处置）
+
+- 1MB 档 DOCX 导出主线程阻塞 ~4s（juice 916ms + html-to-docx ~3s）——worker 化待决策
+- 1MB 档默认设置下打开 35s / 打字 p95 2.7s——c-v 是唯一杠杆，是否对超大文档自动启用 bigDocViewport 属产品决策（当前默认关）
+- html-to-docx 对非常规 HTML 输入（live DOM innerHTML）会抛 `startsWith of undefined`——真实导出路径是否受影响待验证
+
 ## 4.6.1 (2026-08-27)
 
 大文档「选中与编辑路径」第二轮卡顿治理（测量驱动，详见 `docs/performance.md`「第二轮」）：归因推翻了「DOM 泄漏」假设（MD-4011 为跨文档切换的检测器假阳性），实锤真凶是全量渲染 DOM（21 万节点）的原生强制布局——并给出保留公式渲染的主杠杆。
