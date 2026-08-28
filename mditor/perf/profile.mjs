@@ -8,6 +8,10 @@ import { dirname, join } from "node:path";
 import { findPageTarget, Cdp, mouse, sleep, LONGTASK_RECORDER } from "./cdp.mjs";
 
 const scenario = process.argv[2] ?? "click";
+// MDITOR_DOC：目标文档名（文件树行包含匹配，与 baseline.mjs 同款）。
+const DOC_NAME = process.env.MDITOR_DOC ?? "一元微分";
+// SETTLE_MS：open 场景点击后等内容稳定的时长（1MB 档默认加长到 40s）。
+const SETTLE_MS = Number(process.env.SETTLE_MS ?? 6000);
 const here = dirname(fileURLToPath(import.meta.url));
 const target = await findPageTarget(9223);
 const cdp = await Cdp.connect(target.webSocketDebuggerUrl);
@@ -43,7 +47,7 @@ if (scenario === "click") {
   await sleep(3000);
   for (let i = 0; i < 30; i++) {
     const row = await cdp.eval(`(() => {
-      const hit = [...document.querySelectorAll('.ft-row.ft-file')].find(r => (r.querySelector('.ft-name')?.textContent ?? '').includes('一元微分'));
+      const hit = [...document.querySelectorAll('.ft-row.ft-file')].find(r => (r.querySelector('.ft-name')?.textContent ?? '').includes('${DOC_NAME}'));
       if (!hit) return null;
       const r = hit.getBoundingClientRect();
       return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
@@ -51,7 +55,7 @@ if (scenario === "click") {
     if (row) { await m.click(row.x, row.y); break; }
     await sleep(500);
   }
-  await sleep(6000);
+  await sleep(SETTLE_MS);
   label = "open-full";
 }
 

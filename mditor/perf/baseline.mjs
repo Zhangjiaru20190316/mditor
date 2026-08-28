@@ -21,7 +21,9 @@ import { findPageTarget, Cdp, mouse, typeText, sleep, LONGTASK_RECORDER, FRAME_R
 
 const label = process.argv[2] ?? "run";
 const here = dirname(fileURLToPath(import.meta.url));
-const DOC_NAME = "一元微分学习题集";
+// MDITOR_DOC 环境变量可覆盖目标文档（按文件名包含匹配文件树行），
+// 供 1MB 压测副本等不同体量样本复用同一套七场景脚本。
+const DOC_NAME = process.env.MDITOR_DOC ?? "一元微分学习题集";
 
 // ---------- 页内辅助（Runtime.evaluate 里的字符串） ---------------------------
 
