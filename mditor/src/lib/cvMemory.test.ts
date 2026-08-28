@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { Schema, Node as PMNode } from "@milkdown/prose/model";
+import { EditorState } from "@milkdown/prose/state";
 import {
   CV_STORE_CAP,
   PREWARM_MAX_CHUNK,
@@ -8,6 +10,8 @@ import {
   cvHash,
   cvStoreSize,
   cvSizeFor,
+  createCvIntrinsicPlugin,
+  cvIntrinsicKey,
   intrinsicStyleOf,
   nextChunkSize,
   noteCvSize,
@@ -109,5 +113,92 @@ describe("nextChunkSize（P0-2 批大小自适应：预算内提效、超预算�
   it("middle band (half budget..budget) → keep current size", () => {
     expect(nextChunkSize(24, 5, 8)).toBe(24);
     expect(nextChunkSize(PREWARM_START_CHUNK, 6, 8)).toBe(PREWARM_START_CHUNK);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* 插件 apply 语义（增量映射）：大文档打字性能回归网                            */
+/*                                                                            */
+/* 1MB/1.16 万块实测（2026-08-28）：docChanged 上整树 buildDecos 会让            */
+/* prosemirror-view 对每个键事务做全树装饰对账（~500ms/键，打字剖面 50%）。      */
+/* apply 必须走 DecorationSet.map（O(变更)）；整树重建只允许发生在 meta 事务      */
+/* （learned/prewarm）。下面的用例锚定这两个语义。                              */
+/* -------------------------------------------------------------------------- */
+
+const pluginSchema = new Schema({
+  nodes: {
+    doc: { content: "block+" },
+    paragraph: { content: "inline*", group: "block", toDOM: () => ["p", 0] },
+    text: { group: "inline" },
+  },
+  marks: {},
+});
+
+function stateWithDocs(paragraphTexts: string[]) {
+  const doc = PMNode.fromJSON(pluginSchema, {
+    type: "doc",
+    content: paragraphTexts.map((t) => ({ type: "paragraph", content: t ? [{ type: "text", text: t }] : [] })),
+  });
+  // 每块预置已知高度 → init 的 buildDecos 会给全部块发装饰
+  doc.forEach((node, _offset, i) => {
+    noteCvSize(cvHash(node.type.name, node.textContent), 800, 100 + i);
+  });
+  return EditorState.create({ doc, plugins: [createCvIntrinsicPlugin()] });
+}
+
+/** 插件当前装饰覆盖的顶层块索引集合（from 位置 = 块起点）。 */
+function decoratedBlockStarts(state: EditorState): number[] {
+  const set = cvIntrinsicKey.getState(state);
+  if (set == null) throw new Error("插件状态缺失（decoration set 未初始化）");
+  const starts: number[] = [];
+  let pos = 0;
+  state.doc.forEach((node) => {
+    const found = set.find(pos, pos + node.nodeSize).filter((d) => d.from === pos);
+    if (found.length > 0) starts.push(pos);
+    pos += node.nodeSize;
+  });
+  return starts;
+}
+
+describe("cvIntrinsic 插件 apply：docChanged 走增量映射（性能回归网）", () => {
+  it("init：已知高度的块全部拿到装饰", () => {
+    const st = stateWithDocs(["甲", "乙", "丙"]);
+    expect(decoratedBlockStarts(st)).toEqual([0, 3, 6]);
+  });
+
+  it("编辑他块：装饰集增量映射而非整树重建——全部装饰保留且位置随映射移动", () => {
+    const st = stateWithDocs(["甲", "乙", "丙"]);
+    // 在第 1 块末尾插入两个字（块 1 内容变化，其新 hash 不在高度表）
+    const tr = st.tr.insertText("新增", st.doc.content.child(0).content.size + 1);
+    const next = st.apply(tr);
+    // map 语义：三块装饰全在（重建语义会丢掉内容已变的第 1 块）
+    // 第 1 块 nodeSize 2→4，第 2/3 块起点 3→5、6→8 随映射移动
+    expect(decoratedBlockStarts(next)).toEqual([0, 5, 8]);
+  });
+
+  it("learned meta：整树重建（拾起新 hash / 丢弃失效装饰的既有语义不变）", () => {
+    const st = stateWithDocs(["甲", "乙", "丙"]);
+    const tr = st.tr.insertText("新增", st.doc.content.child(0).content.size + 1);
+    const edited = st.apply(tr);
+    // 视口学习量到了新高度（模拟 noteCvSize 学到块 1 新内容的高度）
+    const n1 = edited.doc.content.child(0);
+    noteCvSize(cvHash(n1.type.name, n1.textContent), 800, 200);
+    const rebuilt = edited.apply(edited.tr.setMeta(cvIntrinsicKey, { type: "learned" }));
+    expect(decoratedBlockStarts(rebuilt)).toEqual([0, 5, 8]);
+  });
+
+  it("learned meta 在未学到新高度时丢掉内容已变块的旧装饰（重建语义）", () => {
+    const st = stateWithDocs(["甲", "乙", "丙"]);
+    const tr = st.tr.insertText("新增", st.doc.content.child(0).content.size + 1);
+    const edited = st.apply(tr);
+    // 不学习新高度，直接整树重建：块 1 的新 hash 查无尺寸 → 无装饰
+    const rebuilt = edited.apply(edited.tr.setMeta(cvIntrinsicKey, { type: "learned" }));
+    expect(decoratedBlockStarts(rebuilt)).toEqual([5, 8]);
+  });
+
+  it("非文档事务（纯选区）不动装饰集（同一引用）", () => {
+    const st = stateWithDocs(["甲", "乙", "丙"]);
+    const next = st.apply(st.tr.setSelection(st.selection));
+    expect(cvIntrinsicKey.getState(next)).toBe(cvIntrinsicKey.getState(st));
   });
 });

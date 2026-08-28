@@ -124,9 +124,6 @@ interface PrewarmRange {
   toPos: number;
 }
 
-/** 预热期间被强制渲染的块区间（预热驱动器维护；apply 重建时读取）。 */
-let prewarmRange: PrewarmRange | null = null;
-
 function buildDecos(doc: PMNode, range: PrewarmRange | null): DecorationSet {
   const decos: Decoration[] = [];
   doc.forEach((node, offset) => {
@@ -158,11 +155,18 @@ export const cvIntrinsicKey = new PluginKey<DecorationSet>("mditor-cv-intrinsic"
 const LEARN_MIN_INTERVAL = 300;
 /** 学习到新高度后，装饰重建 dispatch 的防抖（ms）。 */
 const REBUILD_DEBOUNCE = 350;
+/** docChanged 后「延迟整体重建」的防抖（ms）：apply 只做 O(变更) 的增量映射，
+ *  停顿超过此窗口才补一次整树重建——修复 map 语义丢不掉的装饰（撤销重做/
+ *  粘贴已知尺寸块经删除映射后不会复活）。打字连击期间永不触发；224KB 档
+ *  重建 ~2ms、1MB 档 ~300-500ms，落在停键后的空闲段。 */
+const REBUILD_AFTER_EDIT_DEBOUNCE = 1200;
 /** 视口带学习余量（px）：视口上下各扩这么多仍算「已渲染」。 */
 const LEARN_MARGIN = 600;
 
 let learnTimer: number | null = null;
 let rebuildTimer: number | null = null;
+/** 自上次整树重建后文档是否被编辑过（apply 置位；重建 dispatch 后清除）。 */
+let editSinceRebuild = false;
 let lastLearnAt = 0;
 
 function scheduleLearn(view: EditorView, delay = 0): void {
@@ -179,8 +183,13 @@ function scheduleLearn(view: EditorView, delay = 0): void {
   }, delay);
 }
 
-function scheduleRebuild(view: EditorView): void {
-  if (rebuildTimer != null) return;
+/** 整树重建 dispatch 的尾随防抖（learned meta）。两种来源共用一个定时器：
+ *  学习到新高度（REBUILD_DEBOUNCE）与编辑停顿（REBUILD_AFTER_EDIT_DEBOUNCE，
+ *  修复 map 语义丢不掉的装饰——撤销重做/粘贴已知尺寸块经删除映射后不会
+ *  复活）。尾随语义：新调度会重置挂起定时器——打字连击期间永不触发
+ *  （增量映射足够），真停顿后才补一次整树重建。 */
+function scheduleRebuild(view: EditorView, delay = REBUILD_DEBOUNCE): void {
+  if (rebuildTimer != null) window.clearTimeout(rebuildTimer);
   rebuildTimer = window.setTimeout(() => {
     rebuildTimer = null;
     try {
@@ -189,7 +198,7 @@ function scheduleRebuild(view: EditorView): void {
     } catch {
       /* never throw */
     }
-  }, REBUILD_DEBOUNCE);
+  }, delay);
 }
 
 /** 量取视口带内已渲染块的真实高度（二分定位 + 线性扫 O(log n + k)）。
@@ -245,10 +254,10 @@ function learnVisibleSizes(view: EditorView): boolean {
 }
 
 /** 大文档 c-v 高度记忆插件：decoration 承载 contain-intrinsic-size，随 PM
- *  渲染管线写入（绝不事后直写 PM DOM）。仅在 big 模式注册。 */
-export const cvIntrinsicPlugin = $prose(
-  () =>
-    new Plugin<DecorationSet>({
+ *  渲染管线写入（绝不事后直写 PM DOM）。仅在 big 模式注册。
+ *  工厂单独导出（createCvIntrinsicPlugin）供单测直接构造 EditorState。 */
+export function createCvIntrinsicPlugin(): Plugin<DecorationSet> {
+  return new Plugin<DecorationSet>({
   key: cvIntrinsicKey,
   state: {
     init: (_, state) => buildDecos(state.doc, null),
@@ -258,11 +267,18 @@ export const cvIntrinsicPlugin = $prose(
         if (meta.type === "prewarm") {
           return buildDecos(newState.doc, { fromPos: meta.from, toPos: meta.to });
         }
+        editSinceRebuild = false;
         return buildDecos(newState.doc, null);
       }
       if (tr.docChanged) {
-        // WeakMap 缓存下整体重建 ≈ O(n) 次查表，亚毫秒级。
-        return buildDecos(newState.doc, prewarmRange);
+        // 大文档（1MB/1.16 万块）实测：整树重建 DecorationSet 会让
+        // prosemirror-view 对每个键事务做全树装饰对账（takeSpansForNode/
+        // forChild/valid 合计 ~500ms/键，占打字剖面 50%）。改为增量映射
+        // （O(变更)）：被编辑块的旧尺寸装饰保留到停顿后的延迟整体重建
+        // （view.update → scheduleRebuild）修正——旧值比 3em 缺省占位更
+        // 接近真值，且撤销/粘贴丢失的装饰也由该重建复活。
+        editSinceRebuild = true;
+        return decos.map(tr.mapping, tr.doc);
       }
       return decos;
     },
@@ -278,6 +294,8 @@ export const cvIntrinsicPlugin = $prose(
       update(v: EditorView, prev) {
         if (v.state.doc !== prev.doc) {
           scheduleLearn(v, Math.max(0, LEARN_MIN_INTERVAL - (performance.now() - lastLearnAt)));
+          // 增量映射丢不掉的装饰（撤销/粘贴）在编辑停顿后补一次整树重建。
+          if (editSinceRebuild) scheduleRebuild(v, REBUILD_AFTER_EDIT_DEBOUNCE);
         }
       },
       destroy() {
@@ -285,11 +303,14 @@ export const cvIntrinsicPlugin = $prose(
         learnTimer = null;
         if (rebuildTimer != null) window.clearTimeout(rebuildTimer);
         rebuildTimer = null;
-        prewarmRange = null;
+        editSinceRebuild = false;
       },
     };
   },
-}));
+});
+}
+
+export const cvIntrinsicPlugin = $prose(() => createCvIntrinsicPlugin());
 
 
 /* -------------------------------------------------------------------------- */
@@ -548,7 +569,6 @@ async function runPrewarm(
 
   const abort = (reason: string): void => {
     try {
-      prewarmRange = null;
       if (view.dom.isConnected) {
         view.dispatch(
           view.state.tr.setMeta(cvIntrinsicKey, { type: "prewarm-end" })
@@ -556,7 +576,7 @@ async function runPrewarm(
       }
       scrollEmit("prewarm.abort", `预热中止：${reason}`);
     } catch {
-      prewarmRange = null;
+      /* 中止失败不追查：下一次预热自然覆盖 */
     }
   };
 
@@ -580,7 +600,6 @@ async function runPrewarm(
       }
       if (k >= order.length) {
         const ms = Math.round(performance.now() - t0);
-        prewarmRange = null;
         view.dispatch(
           view.state.tr.setMeta(cvIntrinsicKey, { type: "prewarm-end" })
         );
@@ -619,7 +638,6 @@ async function runPrewarm(
         }
       }
 
-      prewarmRange = { fromPos: from, toPos: to };
       view.dispatch(
         view.state.tr.setMeta(cvIntrinsicKey, { type: "prewarm", from, to })
       );
@@ -698,7 +716,7 @@ async function runPrewarm(
         }
       });
     } catch {
-      prewarmRange = null;
+      /* 单步失败：预热是尽力而为，视口学习兜底 */
     }
   };
   scheduleIdle(step);
