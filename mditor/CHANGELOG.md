@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased（全面治理：性能 + 安全 + Bug 修复阶段产出）
+## 4.6.2-beta.1 (2026-09-01)
+
+### 修复（MD-1011 专项，详见 docs/overhaul/4-md1011.md）
+
+- **MD-1011「PM 顶层块批量替换」根修（heading id 预盖章）**：整篇应用文档（打开文件 / 标签切回 / sv 切换 / 程序化整篇写回）时，解析产物的 heading id 与编辑器内已盖章的 id 不一致——prosemirror-view 按 `node.eq` 判死，每个标题块 DOM 整棵重建两次（线上计数 79~227 块/次 = 2×标题数+1，元素消亡还丢失 content-visibility 高度记忆，下游连坐 MD-1002 视口位移 65 次 / MD-1001 ghost 滚动 20 次）。新增 `lib/headingStamp.ts`：整篇应用前按 sync-heading-id 同一算法预盖 id，同内容重载零替换、内容真变仅动实际变化的标题。实机验证：3 轮「打开-切换-重载」（9 次整篇载入）pm:rebuild 零触发（旧版每次必触发）；打开时长 A/B 交替测量无回退
+- **MD-1011 日志采样空串修复**：被替换块常是「子节点已被移植走的空壳」或纯容器，旧采样只取 textContent 一律空串——现回落结构指纹 `<h4 ×0>` / `<ul>li ×3>`，异常条目自带「替换了什么」的线索
+- 测试正则容错 prerelease 版本号（beta 版本号下 devContext 用例预存失败）
+
+## 4.6.2-beta.0 (2026-08-29)（全面治理：性能 + 安全 + Bug 修复阶段产出）
 
 ### 修复（阶段 3，详见 docs/overhaul/3-bugs.md）
 
