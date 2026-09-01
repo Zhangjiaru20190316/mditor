@@ -206,6 +206,38 @@ export function classifyPmBatch(removed: number, added: number): "edit" | "shape
   return "edit";
 }
 
+/** pm:rebuild 采样标签的节点侧写（node 环境可测——不 import DOM 类型）。 */
+export interface PmSampleNodeLike {
+  tagName?: string | null;
+  textContent?: string | null;
+  childElementCount?: number;
+  firstElementChild?: { tagName?: string | null } | null;
+  className?: unknown;
+}
+
+/** pm:rebuild 采样标签：取块内文本（32 字）；**无文本块回落到结构指纹**
+ *  `<tag.cls>子tag ×N`（MD-1011 附带缺陷修复：被替换的常是「子节点已被
+ *  移植走的空壳」或纯容器（UL 包裹/widget div），旧行为一律空串，日志里
+ *  「替换了什么」的关键线索全丢）。指纹能直接读出块类型与空壳形态。 */
+export function pmSampleLabel(n: PmSampleNodeLike | Node): string {
+  try {
+    const el = n as PmSampleNodeLike & Node;
+    const text = (el.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 32);
+    if (text) return text;
+    const tag = String(el.tagName ?? "?").toLowerCase();
+    const cls =
+      typeof el.className === "string" && el.className
+        ? `.${el.className.trim().split(/\s+/)[0]}`
+        : "";
+    const first = el.firstElementChild?.tagName
+      ? `>${String(el.firstElementChild.tagName).toLowerCase()}`
+      : "";
+    return `<${tag}${cls}${first} ×${el.childElementCount ?? 0}>`;
+  } catch {
+    return "";
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /* 纯逻辑：滚动会话状态机（v3.9.5，可单测）                                    */
 /* -------------------------------------------------------------------------- */
@@ -639,14 +671,6 @@ export function attachScrollWatch(host: HTMLElement): () => void {
   let pmObsRoot: Element | null = null;
   let pmProbeAt = 0;
 
-  const sampleText = (n: Node): string => {
-    try {
-      return (n.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 32);
-    } catch {
-      return "";
-    }
-  };
-
   /** 惰性挂接 PM 根（挂载时 PM 可能尚不存在；编辑器重建换根时自动跟进，
    *  并报 pm:root-swap）。探测按 500ms 节流，常驻每帧只花一次 isConnected。 */
   const ensurePmObserver = (now: number) => {
@@ -672,11 +696,11 @@ export function attachScrollWatch(host: HTMLElement): () => void {
           if (r.type !== "childList") continue;
           for (const n of r.removedNodes) {
             removed++;
-            if (rmSamples.length < 3) rmSamples.push(sampleText(n));
+            if (rmSamples.length < 3) rmSamples.push(pmSampleLabel(n));
           }
           for (const n of r.addedNodes) {
             added++;
-            if (addSamples.length < 3) addSamples.push(sampleText(n));
+            if (addSamples.length < 3) addSamples.push(pmSampleLabel(n));
           }
         }
         if (removed === 0 && added === 0) return;

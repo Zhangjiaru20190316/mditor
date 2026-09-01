@@ -14,7 +14,8 @@ import {
 describe("devContext（node 无 DOM 环境降级）", () => {
   it("env snapshot degrades gracefully without DOM", () => {
     const env = devEnvSnapshot();
-    expect(env.ver).toMatch(/^\d+\.\d+\.\d+$/);
+    // 允许 prerelease 后缀（4.6.2-beta.0 一类发布版本号）。
+    expect(env.ver).toMatch(/^\d+\.\d+\.\d+(-[\w.]+)?$/);
     expect(typeof env.platform).toBe("string");
     // 无 window/document 时字段为 null/默认值，接口不抛错。
     expect(env.maximized).toBe(false);

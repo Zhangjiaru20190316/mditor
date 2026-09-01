@@ -4,6 +4,7 @@ import {
   diffBlocks,
   longtaskBlockedSince,
   noteLongtaskSpan,
+  pmSampleLabel,
   scrollCount,
   scrollCounters,
   scrollDebugClear,
@@ -112,6 +113,47 @@ describe("classifyPmBatch（pm:rebuild 检测）", () => {
   it("large pure append/remove → shape", () => {
     expect(classifyPmBatch(0, 9)).toBe("shape");
     expect(classifyPmBatch(9, 0)).toBe("shape");
+  });
+});
+
+describe("pmSampleLabel（pm:rebuild 采样，MD-1011 附带缺陷）", () => {
+  it("有文本 → 取规范化文本（32 字封顶）", () => {
+    expect(
+      pmSampleLabel({ tagName: "P", textContent: "  中心句①   句库 6.4\n否定连击  " })
+    ).toBe("中心句① 句库 6.4 否定连击");
+    expect(
+      pmSampleLabel({ tagName: "H4", textContent: "x".repeat(50) }).length
+    ).toBe(32);
+  });
+
+  it("无文本块（空壳/容器/widget）→ 结构指纹，不再返回空串", () => {
+    // 空壳标题（子节点被移植走——MD-1011 替换批的真实形态）。
+    expect(
+      pmSampleLabel({ tagName: "H4", textContent: "", childElementCount: 0 })
+    ).toBe("<h4 ×0>");
+    // UL 容器：首个子元素标签 + 子元素数。
+    expect(
+      pmSampleLabel({
+        tagName: "UL",
+        textContent: "",
+        childElementCount: 3,
+        firstElementChild: { tagName: "LI" },
+      })
+    ).toBe("<ul>li ×3>");
+    // Crepe 顶层 widget div：class 保留（可辨识来源）。
+    expect(
+      pmSampleLabel({
+        tagName: "DIV",
+        textContent: "",
+        childElementCount: 1,
+        firstElementChild: { tagName: "SPAN" },
+        className: "ProseMirror-widget",
+      })
+    ).toBe("<div.ProseMirror-widget>span ×1>");
+  });
+
+  it("异常输入不抛错", () => {
+    expect(pmSampleLabel({} as never)).toBe("<? ×0>");
   });
 });
 
