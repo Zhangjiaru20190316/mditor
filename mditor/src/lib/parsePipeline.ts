@@ -18,6 +18,7 @@
 import {
   editorStateOptionsCtx,
   editorViewCtx,
+  parserCtx,
   prosePluginsCtx,
   remarkPluginsCtx,
   schemaCtx,
@@ -26,11 +27,13 @@ import type { Ctx } from "@milkdown/ctx";
 import { ParserState } from "@milkdown/transformer";
 
 import type { Node as PMNode, Schema } from "@milkdown/prose/model";
+import { Slice } from "@milkdown/prose/model";
 import { EditorState } from "@milkdown/prose/state";
 import { expectedPluginCount } from "./remarkPipeline";
 import { cacheWorthy, clearDocCache, hasDoc, putDoc, takeDoc } from "./docCache";
 import type { ParseReply, ParseRequest } from "./parseShared";
 import { normalizeMathDelimiters } from "./mathNormalize";
+import { stampHeadingIdsFromCtx } from "./headingStamp";
 
 interface EditorBinding {
   schema: Schema;
@@ -270,8 +273,12 @@ export function setMemoryPressure(over: boolean): number {
  * 把（缓存来的或 worker 映射出的）ProseMirror 文档直接装进视图——与
  * @milkdown/utils replaceAll(md, true) 的 flush 分支完全同构：EditorState
  * 重建（历史清空）+ view.updateState。省掉的只有 parserCtx 的全文解析。
+ * 装入前先给 heading 预盖章 id（见 lib/headingStamp.ts 头注）：内容未变的
+ * 整篇重载从「全部标题替换两次」降为「零替换」，MD-1011/MD-1002/MD-1001
+ * 随之消失。
  */
-export function applyParsedDoc(ctx: Ctx, doc: PMNode): void {
+export function applyParsedDoc(ctx: Ctx, docRaw: PMNode): void {
+  const doc = stampHeadingIdsFromCtx(ctx, docRaw);
   const view = ctx.get(editorViewCtx);
   const schema = ctx.get(schemaCtx);
   const options = ctx.get(editorStateOptionsCtx)({
@@ -280,6 +287,26 @@ export function applyParsedDoc(ctx: Ctx, doc: PMNode): void {
     plugins: ctx.get(prosePluginsCtx),
   });
   view.updateState(EditorState.create(options));
+}
+
+/**
+ * 事务式整篇替换（@milkdown/utils replaceAll(md, false) 的盖章版）：
+ * 解析 → 预盖章 heading id → tr.replace 全文。用于程序化整篇写回
+ * （setValue 非载入 / 批注回退 / AI 全文改写）——同样消除标题批量替换。
+ */
+export function replaceAllStampedDoc(ctx: Ctx, md: string): boolean {
+  const view = ctx.get(editorViewCtx);
+  const parsed = ctx.get(parserCtx)(md);
+  if (!parsed) return false;
+  const doc = stampHeadingIdsFromCtx(ctx, parsed);
+  view.dispatch(
+    view.state.tr.replace(
+      0,
+      view.state.doc.content.size,
+      new Slice(doc.content, 0, 0)
+    )
+  );
+  return true;
 }
 
 /** 缓存快路径取件（useMilkdown.setValue 用）：未绑定 / 不值得缓存 /

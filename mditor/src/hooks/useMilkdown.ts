@@ -26,7 +26,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { Crepe } from "@milkdown/crepe";
 import {
-  replaceAll,
   insert,
   getHTML,
   replaceRange,
@@ -106,9 +105,11 @@ import {
   applyParsedDoc,
   bindEditor,
   cacheParsedDoc,
+  replaceAllStampedDoc,
   takeCachedDoc,
   unbindEditor,
 } from "../lib/parsePipeline";
+import { stampHeadingIdsFromCtx } from "../lib/headingStamp";
 import {
   insertIntoTextarea,
   replaceTextareaSelection,
@@ -1145,7 +1146,11 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         try {
           // v4.6：程序化整篇重写同样先归一化定界符（AI 全文替换等来源可能
           // 带 \( 风格；与 loadMarkdownFull 保持一致行为）。
-          crepe.editor.action(replaceAll(normalizeMathDelimiters(md), false));
+          // MD-1011 根修：走盖章版整篇替换（heading id 预盖，标题块零重建，
+          // 见 lib/headingStamp.ts）。
+          crepe.editor.action((ctx) => {
+            replaceAllStampedDoc(ctx, normalizeMathDelimiters(md));
+          });
         } catch (e) {
           noteOpError("setValue", e);
         }
@@ -1587,8 +1592,11 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         try {
           crepe.editor.action((ctx) => {
             const view = ctx.get(editorViewCtx);
-            const doc = ctx.get(parserCtx)(md);
-            if (!doc) return;
+            const parsed = ctx.get(parserCtx)(md);
+            if (!parsed) return;
+            // MD-1011 根修：预盖章 heading id（见 lib/headingStamp.ts）——
+            // 未变化标题零替换，避免整篇改写触发顶层块批量重建。
+            const doc = stampHeadingIdsFromCtx(ctx, parsed);
             view.dispatch(
               closeHistory(
                 view.state.tr.replace(
@@ -1999,7 +2007,10 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             const cur = crepeRef.current?.getMarkdown() ?? "";
             const next = cur.replace(/\s+$/, "") + def;
             try {
-              crepeRef.current?.editor.action(replaceAll(next, false));
+              // MD-1011 根修：盖章版整篇替换（见 lib/headingStamp.ts）。
+              crepeRef.current?.editor.action((ctx) => {
+                replaceAllStampedDoc(ctx, next);
+              });
             } catch (e) {
               noteOpError("insertFootnote", e);
             }
