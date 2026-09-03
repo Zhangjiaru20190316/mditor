@@ -51,6 +51,7 @@ import {
   SidebarIcon,
   SearchIcon,
   NewFolderIcon,
+  LinkIcon,
 } from "./components/icons";
 import { useSettings } from "./hooks/useSettings";
 import { useFile } from "./hooks/useFile";
@@ -69,6 +70,10 @@ import { toPosix } from "./lib/path-shim";
 import { exportHtml, exportPdf, exportPng, exportDocx } from "./lib/exporter";
 import { vaultIndex } from "./lib/vaultIndex";
 import { QuickSwitcher } from "./components/QuickSwitcher";
+import { LinksPanel } from "./components/LinksPanel";
+import { WikiLinkSuggest } from "./components/WikiLinkSuggest";
+import { wikiLinkOpenRef } from "./lib/wikiLinkNode";
+import { resolveWikiLinksInHtml } from "./lib/wikiLinkExport";
 import { copyRich } from "./lib/clipboard";
 import { collectThemeCss } from "./lib/themeCss";
 import { showAlert, confirmDialog, choiceDialog } from "./lib/dialogs";
@@ -87,7 +92,7 @@ import { isBigDoc } from "./lib/memory";
 import { motionEnabled } from "./lib/motion";
 import type { FlatHeading, OutlineNode, Settings, TabItem } from "./types";
 
-type SidebarTab = "tree" | "outline" | "recent" | "annotations" | "search";
+type SidebarTab = "tree" | "outline" | "recent" | "annotations" | "search" | "links";
 
 /** 路径 → 标签匹配键（Windows 大小写不敏感 + 分隔符归一）。 */
 function tabPathKey(p: string): string {
@@ -1216,6 +1221,12 @@ export default function App() {
             flashStatus(`正在渲染公式 ${done}/${total}…`, 60_000)
           );
         }
+        // v4.7 双链降级（铁律 5）：编辑器标记 → 标准相对链接 / 样式化纯文本。
+        try {
+          html = resolveWikiLinksInHtml(html, fileApi.doc.path);
+        } catch {
+          /* 降级失败保留原标记（仍可读） */
+        }
       }
       const css = collectThemeCss();
       const ctx = { html, css, docPath: fileApi.doc.path };
@@ -1278,6 +1289,12 @@ export default function App() {
       const { renderBlockMath, rasterizeFormulas } = await import("./lib/exportMath");
       const r = renderBlockMath(html);
       html = r.hasMath ? await rasterizeFormulas(r.html) : r.html;
+      // v4.7：双链降级（离开本工具可读）。经 ref 读路径（本回调空依赖）。
+      try {
+        html = resolveWikiLinksInHtml(html, fileApiRef.current.doc.path);
+      } catch {
+        /* 降级失败保留原标记 */
+      }
       await copyRich(html, plain, collectThemeCss());
       flashStatus("已复制富文本");
     } catch (e) {
@@ -1981,6 +1998,51 @@ export default function App() {
     [openPath]
   );
 
+  // ---- v4.7 双链：跳转 / 消歧 / 补全 ----------------------------------------
+  // 反链面板跳转（带行号定位）。
+  const openNoteAtLine = useCallback(
+    async (path: string, line?: number) => {
+      await openPath(path);
+      if (line != null) editorRef.current?.revealAfterLoad({ line, text: "" });
+    },
+    [openPath]
+  );
+
+  // 编辑器内点击 [[双链]]：索引解析目标；未命中提示；重名取第一个并在
+  // 状态栏列出其它候选路径（完整的多选消歧 UI 留给后续迭代）。
+  const openWikiLink = useCallback(
+    (target: string) => {
+      void (async () => {
+        const hits = vaultIndex.resolveWikiTarget(target);
+        if (hits.length === 0) {
+          flashStatus(`未找到笔记「${target}」——先创建同名 .md 文件再链接`, 4000);
+          return;
+        }
+        if (hits.length > 1) {
+          flashStatus(
+            `同名笔记 ${hits.length} 个，已打开第 1 个（其余：${hits
+              .slice(1, 3)
+              .map((h) => h.path)
+              .join("、")}）`,
+            6000
+          );
+        }
+        await openPath(hits[0].path);
+      })();
+    },
+    [openPath, flashStatus]
+  );
+
+  // 点击回调注入编辑器插件（模块级挂点；编辑器重建后 getter 仍读到这里）。
+  useEffect(() => {
+    wikiLinkOpenRef.current = (target) => {
+      if (settingsRef.current.settings.wikiLinksEnabled) openWikiLink(target);
+    };
+    return () => {
+      wikiLinkOpenRef.current = null;
+    };
+  }, [openWikiLink]);
+
   // 「插入链接」弹窗确认 → 编辑器写回（V3.6）。
   const onInsertLinkConfirm = useCallback((href: string, text: string) => {
     editorRef.current?.insertLink(href, text);
@@ -2119,6 +2181,13 @@ export default function App() {
           >
             <SearchIcon size={17} />
           </button>
+          <button
+            className={sidebarTab === "links" ? "active" : ""}
+            onClick={() => setSidebarTab("links")}
+            title="链接与标签"
+          >
+            <LinkIcon size={17} />
+          </button>
         </nav>
         <div className="sb-panel">
           {sidebarTab === "tree" &&
@@ -2201,6 +2270,18 @@ export default function App() {
                 workspaces={workspaces}
                 excludedPaths={excludedSet}
                 onOpenResult={(p, h) => void onOpenSearchResult(p, h)}
+              />
+            </>
+          )}
+          {sidebarTab === "links" && (
+            <>
+              <div className="sb-head">
+                <span className="sb-ws-name">链接与标签</span>
+              </div>
+              <LinksPanel
+                path={fileApi.doc.path}
+                enabled={settingsApi.settings.vaultIndexEnabled && settingsApi.settings.wikiLinksEnabled}
+                onOpen={(p, line) => void openNoteAtLine(p, line)}
               />
             </>
           )}
@@ -2420,6 +2501,16 @@ export default function App() {
         open={quickOpen}
         onClose={() => setQuickOpen(false)}
         onOpen={onQuickOpen}
+      />
+
+      {/* v4.7 双链：[[ 输入补全弹层（编辑器表面激活时跟随光标） */}
+      <WikiLinkSuggest
+        enabled={
+          settingsApi.settings.wikiLinksEnabled && settingsApi.settings.vaultIndexEnabled
+        }
+        isReady={() => editorRef.current?.ready() ?? false}
+        getWikiLinkContext={() => editorRef.current?.getWikiLinkContext() ?? null}
+        insertWikiLinkAt={(md, from) => editorRef.current?.insertWikiLinkAt(md, from)}
       />
     </div>
   );

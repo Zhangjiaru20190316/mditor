@@ -88,6 +88,10 @@ export interface EditorHandle {
   insertAfterSelection: (md: string) => void;
   /** Live selection's document positions {from,to}, or null if collapsed. */
   getSelectionRange: () => { from: number; to: number } | null;
+  /** v4.7 双链补全：光标前的未闭合 `[[query` 上下文（null = 无激活）。 */
+  getWikiLinkContext: () => { from: number; query: string } | null;
+  /** v4.7 双链补全落盘：用 `md` 替换 [from, 光标) 区间。 */
+  insertWikiLinkAt: (md: string, from: number) => void;
   /** Insert `md` at an explicit document position (independent of the live
    *  selection). Used to anchor annotations at a range captured earlier. */
   insertAtPos: (md: string, pos: number) => void;
@@ -859,6 +863,12 @@ export const Editor = memo(
         onInputRef.current?.(ed.getValue());
       },
       getSelectionRange: () => handle.editor?.getSelectionRange() ?? null,
+      getWikiLinkContext: () => handle.editor?.getWikiLinkContext() ?? null,
+      insertWikiLinkAt: (md, from) => {
+        handle.editor?.insertWikiLinkAt(md, from);
+        fileApiRef.current.markDirty();
+        onInputRef.current?.(handle.editor?.getValue() ?? "");
+      },
       insertAtPos: (md, pos) => {
         const ed = handle.editor;
         if (!ed) return;

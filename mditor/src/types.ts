@@ -322,6 +322,13 @@ export interface Settings {
    * （不落盘）；扫描分批 + idle 调度，保存与文件监听走单文件增量更新。
    */
   vaultIndexEnabled: boolean;
+  /**
+   * 双向链接（v4.7）：[[目标]] / [[目标|显示文本]] 语法解析恒开启（保持
+   * 解析管线与 worker 哨兵一致——见 remarkPipeline 的一致性契约）；本开关
+   * 控制交互功能面：[[ 输入补全弹层、编辑器内点击跳转、反链/标签侧栏面板。
+   * 默认启用（纯本地）。
+   */
+  wikiLinksEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -409,6 +416,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ],
   excludedPaths: [],
   vaultIndexEnabled: true,
+  wikiLinksEnabled: true,
 };
 
 /* -------------------------------------------------------------------------- */

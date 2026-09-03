@@ -52,6 +52,7 @@ const SETTING_KEYS = [
   "aiQuickActions",
   "excludedPaths",
   "vaultIndexEnabled",
+  "wikiLinksEnabled",
 ] as const;
 
 /** 重构前（v3.9.7）的标量默认值。 */
@@ -96,6 +97,7 @@ const SCALAR_DEFAULTS: Record<string, unknown> = {
   aiThinkingStrength: "off",
   aiActiveModelId: "default",
   vaultIndexEnabled: true,
+  wikiLinksEnabled: true,
 };
 
 describe("settings inventory（v4.0.0 分区重构防回归锚点）", () => {

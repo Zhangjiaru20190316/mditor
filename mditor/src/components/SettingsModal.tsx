@@ -827,6 +827,19 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                     保存时只增量更新当前文件。
                   </span>
                 </Field>
+                <Field label="双向链接">
+                  <input
+                    type="checkbox"
+                    checked={draft.wikiLinksEnabled}
+                    onChange={(e) => set("wikiLinksEnabled", e.target.checked)}
+                  />
+                  <span className="hint">
+                    [[笔记名]] / [[笔记名|显示文本]] 双链语法：输入 [[ 弹出补全、
+                    点击跳转、侧栏「链接」页查看反向链接与标签。语法解析本身恒
+                    开启（保证文件互通），此开关只控制交互功能；导出时双链自动
+                    降级为标准链接或纯文本。
+                  </span>
+                </Field>
               </>
             )}
           </div>

@@ -129,9 +129,32 @@ describe("remarkPipeline（worker 侧解析一致性）", () => {
     expect((b.children?.[0] as N)?.children?.[0]?.value).toBe("B");
   });
 
-  it("哨兵常量：小文档 8 个 / 大文档（latex 关）5 个 remark 插件", () => {
+  it("哨兵常量：小文档 9 / 大文档（latex 关）6 个 remark 插件", () => {
     // v4.6：withMath 分支新增 ```math 围栏别名（remarkMathFenceAlias）+1。
-    expect(expectedPluginCount(true)).toBe(8);
-    expect(expectedPluginCount(false)).toBe(5);
+    // v4.7：双链解析（remarkWikiLink）两档各 +1（无条件注册）。
+    expect(expectedPluginCount(true)).toBe(9);
+    expect(expectedPluginCount(false)).toBe(6);
+  });
+
+  it("[[双链]] → wikiLink 节点（v4.7 remarkWikiLink，native 模式）", () => {
+    const tree = parseMarkdownTree(proc, "见 [[目标|显示]] 与 [[目标]]。");
+    const links: N[] = [];
+    const walk = (n: N) => {
+      if (n.type === "wikiLink") links.push(n);
+      (n.children ?? []).forEach(walk);
+    };
+    walk(tree);
+    expect(links.length).toBe(2);
+    expect(links[0]).toMatchObject({ target: "目标", label: "显示" });
+    expect(links[1]).toMatchObject({ target: "目标", label: "目标" });
+    // big 档（无 math）同样产出 wikiLink——插件无条件注册。
+    const treeNoMath = parseMarkdownTree(procNoMath, "见 [[目标]]。");
+    const kinds: string[] = [];
+    const walk2 = (n: N) => {
+      kinds.push(n.type ?? "?");
+      (n.children ?? []).forEach(walk2);
+    };
+    walk2(treeNoMath);
+    expect(kinds).toContain("wikiLink");
   });
 });

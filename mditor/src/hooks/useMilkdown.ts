@@ -59,6 +59,7 @@ import { syntaxHighlighting } from "@codemirror/language";
 import { classHighlighter } from "@lezer/highlight";
 import { highlightPlugins } from "../lib/highlightMark";
 import { textColorPlugins } from "../lib/textColorMark";
+import { createWikiLinkPlugins } from "../lib/wikiLinkNode";
 import { remarkMathFenceAlias } from "../lib/remarkMathFenceAlias";
 import { normalizeMathDelimiters } from "../lib/mathNormalize";
 import { mathConfigSignature, parseMathMacros } from "../lib/mathConfig";
@@ -338,6 +339,12 @@ export interface MilkdownFacade {
   toggleInlineMath: () => void;
   /** 把当前选区变成（或以 text 为文字在光标处创建）指向 href 的链接（V3.6）。 */
   insertLink: (href: string, text?: string) => void;
+  /** v4.7 双链补全：光标前存在未闭合的 `[[query` 时返回 { 替换起点, query }；
+   *  null = 无激活。sv 模式返回字符 offset 语义的 from。 */
+  getWikiLinkContext: () => { from: number; query: string } | null;
+  /** v4.7 双链补全落盘：用 `md` 替换 [from, 光标) 区间（from 来自
+   *  getWikiLinkContext）。 */
+  insertWikiLinkAt: (md: string, from: number) => void;
   /** 在光标处插入脚注 `[^fn-N]`，并在文末追加其空定义（V3.6）。返回脚注 id。 */
   insertFootnote: () => string | null;
   /** sv 模式：滚动到 0-based `line` 行首并把光标放那里（大纲跳转）。
@@ -799,6 +806,11 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       // Register the text-color mark (`<span style="color:…">`) the same way:
       // schema + remark parse/serialize wiring, before create() builds the schema.
       crepe.editor.use(textColorPlugins);
+
+      // v4.7 [[双链]] 插件束（schema + remark + 输入规则 + 点击跳转）：
+      // 无条件注册（大小文档两档一致）——remark 哨兵计数两档各 +1，
+      // 见 lib/remarkPipeline 的 expectedPluginCount。
+      crepe.editor.use(createWikiLinkPlugins());
 
       // ```math 围栏别名（v4.6）：与 Latex 特性同开同关——big 模式下公式整
       // 体降级为纯文本，别名若单独生效会改变 remarkPluginsCtx 插件数，导致
@@ -1963,6 +1975,64 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           });
         } catch (e) {
           noteOpError("insertLink", e);
+        }
+        suppressRef.current = false;
+      },
+      getWikiLinkContext: () => {
+        // sv 模式：textarea 字符 offset 语义（from 为 `[[` 起始 offset）。
+        if (modeRef.current === "sv") {
+          const ta = sv();
+          if (!ta) return null;
+          const end = ta.selectionStart ?? 0;
+          const head = ta.value.slice(0, end);
+          const m = head.match(/\[\[([^[\]\n]*)$/);
+          if (!m) return null;
+          return { from: end - m[0].length, query: m[1] };
+        }
+        const crepe = crepeRef.current;
+        if (!crepe) return null;
+        try {
+          return crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const { $from } = view.state.selection;
+            if (!$from.parent.isTextblock) return null;
+            const textBefore = $from.parent.textBetween(
+              0,
+              $from.parentOffset,
+              null,
+              "\ufffc"
+            );
+            const m = textBefore.match(/\[\[([^[\]\n]*)$/);
+            if (!m) return null;
+            return { from: $from.pos - m[0].length, query: m[1] };
+          });
+        } catch {
+          return null;
+        }
+      },
+      insertWikiLinkAt: (md, from) => {
+        if (modeRef.current === "sv") {
+          const ta = sv();
+          if (!ta) return;
+          const end = ta.selectionStart ?? from;
+          taUndoableReplace(ta, from, end, md);
+          sourceTextRef.current = ta.value;
+          contentRef.current = ta.value;
+          onInputRef.current(ta.value);
+          return;
+        }
+        const crepe = crepeRef.current;
+        if (!crepe) return;
+        suppressRef.current = true;
+        try {
+          crepe.editor.action((ctx) => {
+            const view = ctx.get(editorViewCtx);
+            const to = view.state.selection.to;
+            if (to < from) return;
+            replaceRange(md, { from, to })(ctx);
+          });
+        } catch (e) {
+          noteOpError("insertWikiLinkAt", e);
         }
         suppressRef.current = false;
       },

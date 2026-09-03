@@ -32,6 +32,7 @@ import rehypeStringify from "rehype-stringify";
 import { remarkMark } from "./remarkMark";
 import { remarkMathFence } from "./remarkMathFence";
 import { remarkMathNumbering } from "./remarkMathNumbering";
+import { remarkWikiLink, type WikiLinkOptions } from "./remarkWikiLink";
 import { normalizeMathDelimiters } from "./mathNormalize";
 import { getMathRenderConfig, mathConfigSignature } from "./mathConfig";
 
@@ -57,6 +58,9 @@ const sanitizeSchema = {
     ...defaultSchema.attributes,
     span: [...(defaultSchema.attributes?.span ?? []), "className", "style"],
     mark: [...(defaultSchema.attributes?.mark ?? []), "className", "style"],
+    // v4.7 双链降级输出的 <a class="wikilink">（静态渲染无文档上下文，
+    // 不带 href；导出链路在 exporter 后处理里补 href）。
+    a: [...(defaultSchema.attributes?.a ?? []), "className"],
   },
 };
 
@@ -111,6 +115,10 @@ function makeProcessor(macros: Record<string, string>) {
     .use(remarkMath) // $...$ / $$...$$ -> mdast math nodes
     .use(remarkMathFence as unknown as Plugin) // ```math 围栏 -> mdast math 节点（GitHub 风格）
     .use(remarkMathNumbering as unknown as Plugin) // \label 剥除 + 自动编号 \tag 注入 + \ref/\eqref 解析
+    // v4.7：[[双链]] 降级（铁律 5）——静态管线无文档上下文，resolver 恒
+    // null：输出 <a class="wikilink">label</a>（可读文本）；导出链路的
+    // href 补全在 wikiLinkNode.resolveWikiLinksInHtml（有 docPath）。
+    .use(remarkWikiLink as unknown as Plugin<[WikiLinkOptions]>, { exportMode: true })
     .use(remarkRehype, {
       allowDangerousHtml: true, // keep raw html nodes
       // Map the `mark` mdast node (produced by remarkMark) to a <mark> element

@@ -4902,3 +4902,171 @@ body.is-dragging-md::after {
   font-size: 11.5px;
   color: var(--fg-muted);
 }
+
+/* ---------- 双链（v4.7 知识功能） ---------- */
+/* 编辑器内 wikilink chip（atom 节点 toDOM：<a class="wikilink">，无 href） */
+.ProseMirror a.wikilink {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 0.05em 0.3em;
+  cursor: pointer;
+  text-decoration: none;
+  border-bottom: 1px dotted var(--accent);
+}
+.ProseMirror a.wikilink:hover {
+  filter: brightness(1.05);
+}
+/* 静态渲染（AI 面板/批注预览）与导出产物里的降级形态 */
+a.wikilink {
+  color: var(--accent);
+}
+.wikilink-unresolved {
+  color: var(--fg-muted);
+  background: color-mix(in srgb, var(--fg-muted) 12%, transparent);
+  border-radius: 4px;
+  padding: 0.05em 0.3em;
+  border-bottom: 1px dashed var(--fg-muted);
+}
+
+/* [[ 输入补全弹层 */
+.wls-pop {
+  position: fixed;
+  z-index: 96; /* 高于右键菜单(90-91)，低于弹窗(100) */
+  width: min(380px, 80vw);
+  max-height: 280px;
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card-bg, var(--bg));
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  animation: modal-card-in 0.14s ease both;
+}
+.wls-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.wls-item.sel {
+  background: var(--accent-soft);
+}
+.wls-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wls-path {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+}
+
+/* 侧栏「链接与标签」面板 */
+.links-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 10px;
+}
+.lp-section {
+  margin-bottom: 16px;
+}
+.lp-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 4px 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.lp-count {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 8px;
+  font-size: 10.5px;
+  padding: 0 6px;
+}
+.lp-empty {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  padding: 6px 2px;
+}
+.lp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lp-item {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.lp-item:hover {
+  background: var(--hover);
+}
+.lp-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lp-ctx {
+  font-size: 12px;
+  color: var(--fg-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-left: 2px solid var(--border);
+  padding-left: 6px;
+}
+.lp-ctx-hit {
+  color: var(--fg);
+  background: var(--accent-soft);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+.lp-ctx-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lp-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.lp-tag {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  border-radius: 12px;
+  font-size: 12px;
+  padding: 2px 9px;
+  cursor: pointer;
+}
+.lp-tag:hover,
+.lp-tag.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.lp-tag-n {
+  color: var(--fg-muted);
+  margin-left: 4px;
+  font-size: 11px;
+}
