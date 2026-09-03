@@ -159,11 +159,12 @@ export const WikiLinkSuggest = memo(function WikiLinkSuggest({
   );
 });
 
-/** 插入文本：带路径消歧的场景（同目录直接文件名；由索引保证唯一名时也是文件名）。 */
+/** 插入文本：文件名去扩展名；剔除会破坏 [[…]] 语法的方括号字符
+ *  （文件名允许包含它们，但双链语法不允许——防语法注入/破坏）。 */
 function stemLabel(e: VaultEntry): string {
   const posix = toPosix(e.path);
   const base = posix.slice(posix.lastIndexOf("/") + 1).replace(/\.(md|markdown|mdx|mdown)$/i, "");
-  return base;
+  return base.replace(/[[\]]/g, "");
 }
 
 function shortPath(p: string): string {
