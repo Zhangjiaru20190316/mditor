@@ -329,6 +329,18 @@ export interface Settings {
    * 默认启用（纯本地）。
    */
   wikiLinksEnabled: boolean;
+  /**
+   * 文献库 .bib 文件绝对路径（v4.7 模块 3「学术引用」）。空串 = 未配置
+   * （[@key] 引用保留原文形态，可读降级）。文件只在用户显式选择时读取，
+   * 解析结果仅存内存；坏条目跳过并告警，不中断。
+   */
+  bibliographyPath: string;
+  /**
+   * 引用样式（v4.7 模块 3）：numeric = [1] 编号 + 引用序文献表；
+   * author-year = (Smith, 2020) + APA 字母序文献表。编辑器内 chip 统一
+   * 显示作者-年份形态（编号依赖全文序，由静态渲染/导出统一处理）。
+   */
+  citationStyle: "numeric" | "author-year";
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -417,6 +429,8 @@ export const DEFAULT_SETTINGS: Settings = {
   excludedPaths: [],
   vaultIndexEnabled: true,
   wikiLinksEnabled: true,
+  bibliographyPath: "",
+  citationStyle: "numeric",
 };
 
 /* -------------------------------------------------------------------------- */

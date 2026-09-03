@@ -56,6 +56,8 @@ interface Props {
   /** Toggle $inline math$ on the current selection（V4.6.1，接替 crepe Toolbar
    *  停用后的行内公式按钮）. */
   onMath: () => void;
+  /** 打开引用选择器（模块 3）：选中 .bib 条目后在光标处插入 [@citekey]。 */
+  onCite: () => void;
   /** Apply a text color to the current selection (rich + source modes). */
   onSetColor: (color: string) => void;
   /** Remove any text color from the current selection. */
@@ -139,6 +141,7 @@ export const SelectionToolbar = memo(function SelectionToolbar({
   onCode,
   onLink,
   onMath,
+  onCite,
   onSetColor,
   onClearColor,
   getActiveMarks,
@@ -520,6 +523,13 @@ export const SelectionToolbar = memo(function SelectionToolbar({
         onClick={() => runFormat(onMath)}
       >
         <em>fx</em>
+      </button>
+      <button
+        className="sel-btn"
+        title="插入学术引用 [@citekey]（在设置 → 知识功能配置 .bib 文献库）"
+        onClick={onCite}
+      >
+        <em>@</em>
       </button>
 
       <span className="sel-sep" />

@@ -31,6 +31,7 @@ import { remarkMark } from "./remarkMark";
 import { remarkTextColor } from "./remarkTextColor";
 import { remarkMathFenceAlias } from "./remarkMathFenceAlias";
 import { remarkWikiLink } from "./remarkWikiLink";
+import { remarkCitation } from "./remarkCitation";
 
 interface MdastNode {
   type?: string;
@@ -106,17 +107,19 @@ export function buildEditorParseProcessor(withMath: boolean) {
     proc.use(remarkMath).use(mathToCode).use(remarkMathFenceAlias as unknown as Plugin);
   // v4.7：[[双链]] 解析（native 模式）无条件注册（大小文档两档一致），
   // 哨兵计数两档各 +1。导出降级走 renderMarkdown 的 exportMode。
+  // v4.7 模块 3：[@引用] 解析（native 模式）同样无条件注册，两档各 +1。
   return proc
     .use(remarkWikiLink as unknown as Plugin)
+    .use(remarkCitation as unknown as Plugin)
     .use(remarkMark as unknown as Plugin)
     .use(remarkTextColor as unknown as Plugin);
 }
 
 /** 哨兵校验用：Milkdown 实例应注册的 remark 插件总数（不含 parse/stringify
  *  基座）。commonmark(2) + gfm(1) + latex(2) + ```math 围栏别名(1)（后两者
- *  仅小文档）+ 本应用(2) + 双链(1)。 */
+ *  仅小文档）+ 本应用(2) + 双链(1) + 引用(1)。 */
 export function expectedPluginCount(withMath: boolean): number {
-  return 2 + 1 + (withMath ? 2 + 1 : 0) + 2 + 1;
+  return 2 + 1 + (withMath ? 2 + 1 : 0) + 2 + 1 + 1;
 }
 
 /** 解析入口（worker 调用；测试直接调用）。返回结构化 mdast 树。 */

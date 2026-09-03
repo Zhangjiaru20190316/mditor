@@ -75,6 +75,7 @@ function buildMenus(focusMode: boolean, theme: string, typewriter: boolean): Men
         item("file_export_html", "导出 HTML"),
         item("file_export_png", "导出图片 (PNG)"),
         item("file_export_docx", "导出 Word (docx)"),
+        item("file_export_latex", "导出 LaTeX (.tex)"),
         sep(),
         item("app_exit", "退出"),
       ],
@@ -91,6 +92,7 @@ function buildMenus(focusMode: boolean, theme: string, typewriter: boolean): Men
         item("edit_select_all", "全选", "Ctrl+A"),
         sep(),
         item("edit_copy_rich", "复制为富文本（粘贴到微信/Word 保留格式）"),
+        item("edit_insert_citation", "插入引用 [@]…"),
       ],
     },
     {

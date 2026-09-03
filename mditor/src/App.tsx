@@ -67,13 +67,16 @@ import { baseName, pickFolder, MD_EXT_RE } from "./lib/tauriFs";
 import { readFresh, peekHoverContent } from "./lib/filePrefetch";
 import { prepareDoc } from "./lib/parsePipeline";
 import { toPosix } from "./lib/path-shim";
-import { exportHtml, exportPdf, exportPng, exportDocx } from "./lib/exporter";
+import { exportHtml, exportPdf, exportPng, exportDocx, exportLatexFile } from "./lib/exporter";
 import { vaultIndex } from "./lib/vaultIndex";
 import { QuickSwitcher } from "./components/QuickSwitcher";
 import { LinksPanel } from "./components/LinksPanel";
 import { WikiLinkSuggest } from "./components/WikiLinkSuggest";
+import { CitationPicker } from "./components/CitationPicker";
 import { wikiLinkOpenRef } from "./lib/wikiLinkNode";
 import { resolveWikiLinksInHtml } from "./lib/wikiLinkExport";
+import { resolveCitationsForExport } from "./lib/citationExport";
+import { bibliography } from "./lib/bibliography";
 import { copyRich } from "./lib/clipboard";
 import { collectThemeCss } from "./lib/themeCss";
 import { showAlert, confirmDialog, choiceDialog } from "./lib/dialogs";
@@ -128,6 +131,8 @@ export default function App() {
   const [aiOpen, setAiOpen] = useState(false);
   // Ctrl+P 快速切换器（v4.7 知识功能）。
   const [quickOpen, setQuickOpen] = useState(false);
+  // 引用选择器（v4.7 模块 3：SelectionToolbar「引用」/菜单唤起）。
+  const [citeOpen, setCiteOpen] = useState(false);
   const [recentKey, setRecentKey] = useState(0);
   const [autosaveMsg, setAutosaveMsg] = useState("");
   // 单一定时器跟踪状态栏消息的自动清除：连续触发（快速保存 / 文件频繁外部
@@ -913,6 +918,15 @@ export default function App() {
     vaultIndex.setRoots(workspaces, excludedSet);
   }, [workspaces, excludedSet, settingsApi.settings.vaultIndexEnabled]);
 
+  // ---- 文献库（v4.7 模块 3「学术引用」）-------------------------------------
+  // 设置变化 → 同步样式 + 异步加载 .bib（本地读取，解析结果仅存内存）。
+  // 加载/样式变更 bump bibliography.version → 编辑器参考文献 widget、引用
+  // 选择器、静态渲染缓存（signature 键）全部即时生效。
+  useEffect(() => {
+    bibliography.setStyle(settingsApi.settings.citationStyle);
+    void bibliography.setPath(settingsApi.settings.bibliographyPath);
+  }, [settingsApi.settings.citationStyle, settingsApi.settings.bibliographyPath]);
+
   // Open an externally-supplied path (double-clicked .md / `mditor.exe file.md`).
   // 多标签页（V3.6）：打开进新标签页，不会丢当前文档 —— 无需脏确认。
   const maybeOpen = useCallback(
@@ -1204,9 +1218,26 @@ export default function App() {
 
   // ----- export & clipboard helpers -----
   const doExport = useCallback(
-    async (kind: "html" | "pdf" | "png" | "docx") => {
+    async (kind: "html" | "pdf" | "png" | "docx" | "latex") => {
       const ed = editorRef.current;
       if (!ed) return;
+      // LaTeX 走纯前端 md→tex（模块 3，铁律 2：不调 pandoc），输入是源码。
+      if (kind === "latex") {
+        const name =
+          (fileApi.doc.path ? baseName(fileApi.doc.path) : "untitled").replace(
+            MD_EXT_RE,
+            ""
+          ) || "untitled";
+        try {
+          flashStatus("正在导出 LaTeX…", 60_000);
+          await exportLatexFile(ed.getValue(), `${name}.tex`, name);
+          flashStatus("导出完成");
+        } catch (e) {
+          flashStatus("导出失败", 5000);
+          void showAlert(`导出失败：${String(e)}`, "Mditor", "error");
+        }
+        return;
+      }
       let html = ed.getHTML();
       // v4.6：块级公式修复——编辑器把公式块序列化为 <pre data-language=
       // "LaTeX"> 原始源码，导出前再渲染为 KaTeX HTML（PNG 截实时 DOM，无
@@ -1226,6 +1257,13 @@ export default function App() {
           html = resolveWikiLinksInHtml(html, fileApi.doc.path);
         } catch {
           /* 降级失败保留原标记（仍可读） */
+        }
+        // v4.7 模块 3 引用降级（铁律 6）：chip → 编号纯文本 + References 标题
+        // 下注入自动生成的文献表（无文献配置时保留原文形态）。
+        try {
+          html = resolveCitationsForExport(html);
+        } catch {
+          /* 降级失败保留 chip 文本（仍可读） */
         }
       }
       const css = collectThemeCss();
@@ -1294,6 +1332,12 @@ export default function App() {
         html = resolveWikiLinksInHtml(html, fileApiRef.current.doc.path);
       } catch {
         /* 降级失败保留原标记 */
+      }
+      // v4.7 模块 3：引用 chip 同步降级为编号纯文本。
+      try {
+        html = resolveCitationsForExport(html);
+      } catch {
+        /* 降级失败保留 chip 文本 */
       }
       await copyRich(html, plain, collectThemeCss());
       flashStatus("已复制富文本");
@@ -1372,6 +1416,12 @@ export default function App() {
         break;
       case "file_export_docx":
         void doExportRef.current("docx");
+        break;
+      case "file_export_latex":
+        void doExportRef.current("latex");
+        break;
+      case "edit_insert_citation":
+        setCiteOpen(true);
         break;
       case "edit_undo":
         execOnEditor(editorRef.current, "undo");
@@ -2386,6 +2436,7 @@ export default function App() {
         onCode={toggleInlineCode}
         onLink={setLinkOnSelection}
         onMath={toggleInlineMath}
+        onCite={() => setCiteOpen(true)}
         onSetColor={setTextColor}
         onClearColor={clearTextColor}
         getActiveMarks={getActiveMarks}
@@ -2511,6 +2562,16 @@ export default function App() {
         isReady={() => editorRef.current?.ready() ?? false}
         getWikiLinkContext={() => editorRef.current?.getWikiLinkContext() ?? null}
         insertWikiLinkAt={(md, from) => editorRef.current?.insertWikiLinkAt(md, from)}
+      />
+
+      {/* v4.7 模块 3：引用选择器（选区工具栏「引用」/菜单「插入引用」） */}
+      <CitationPicker
+        open={citeOpen}
+        onClose={() => setCiteOpen(false)}
+        onInsert={(raw) => {
+          editorRef.current?.insertAtCursor(raw);
+          editorRef.current?.find();
+        }}
       />
     </div>
   );

@@ -33,8 +33,11 @@ import { remarkMark } from "./remarkMark";
 import { remarkMathFence } from "./remarkMathFence";
 import { remarkMathNumbering } from "./remarkMathNumbering";
 import { remarkWikiLink, type WikiLinkOptions } from "./remarkWikiLink";
+import { remarkCitation, type CitationRemarkOptions } from "./remarkCitation";
+import { remarkFigureNumbering } from "./remarkFigureNumbering";
 import { normalizeMathDelimiters } from "./mathNormalize";
 import { getMathRenderConfig, mathConfigSignature } from "./mathConfig";
+import { bibliography } from "./bibliography";
 
 // Many LLMs emit LaTeX-style math delimiters \( ... \) (inline) and \[ ... \]
 // (display) instead of the $ ... $ / $$ ... $$ that remark-math understands.
@@ -119,6 +122,11 @@ function makeProcessor(macros: Record<string, string>) {
     // null：输出 <a class="wikilink">label</a>（可读文本）；导出链路的
     // href 补全在 wikiLinkNode.resolveWikiLinksInHtml（有 docPath）。
     .use(remarkWikiLink as unknown as Plugin<[WikiLinkOptions]>, { exportMode: true })
+    // v4.7 模块 3：[@引用] → 编号纯文本 + References 标题下自动生成文献表
+    // （配置/数据来自 lib/bibliography，缓存键含其 signature）。
+    .use(remarkCitation as unknown as Plugin<[CitationRemarkOptions]>, { mode: "render" })
+    // v4.7 模块 3：图表 caption/编号 + @fig:@tbl: 交叉引用解析。
+    .use(remarkFigureNumbering as unknown as Plugin)
     .use(remarkRehype, {
       allowDangerousHtml: true, // keep raw html nodes
       // Map the `mark` mdast node (produced by remarkMark) to a <mark> element
@@ -174,7 +182,7 @@ let processor: ReturnType<typeof makeProcessor> | null = null;
 let processorSig = "";
 
 function getProcessor(): ReturnType<typeof makeProcessor> {
-  const sig = mathConfigSignature();
+  const sig = `${mathConfigSignature()}|${bibliography.signature()}`;
   if (!processor || processorSig !== sig) {
     processor = makeProcessor(getMathRenderConfig().macros);
     processorSig = sig;
@@ -261,7 +269,7 @@ export function __getHtmlCacheStatsForTests(): {
 export async function renderMarkdown(md: string): Promise<string> {
   if (!md) return "";
   const normalized = normalizeMathDelimiters(md, { unescapeDollar: true });
-  const key = `${mathConfigSignature()}${SIG_SEP}${normalized}`;
+  const key = `${mathConfigSignature()}|${bibliography.signature()}${SIG_SEP}${normalized}`;
   const cached = cacheGet(key);
   if (cached !== undefined) return cached;
   const file = await getProcessor().process(normalized);
@@ -280,7 +288,7 @@ export async function renderMarkdown(md: string): Promise<string> {
 export function peekRenderedHtml(md: string): string | undefined {
   if (!md) return "";
   const normalized = normalizeMathDelimiters(md, { unescapeDollar: true });
-  return cacheGet(`${mathConfigSignature()}${SIG_SEP}${normalized}`);
+  return cacheGet(`${mathConfigSignature()}|${bibliography.signature()}${SIG_SEP}${normalized}`);
 }
 
 // 配置签名前缀（v4.6）：LRU 键 = sig + \u0000 + 归一化后的 md。签名字符串

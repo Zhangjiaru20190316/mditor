@@ -168,6 +168,15 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
     if (typeof p === "string") set("customCssPath", p);
   };
 
+  // v4.7 模块 3：文献库 .bib 选择（知识功能分组）。
+  const pickBib = async () => {
+    const p = await openDialog({
+      multiple: false,
+      filters: [{ name: "BibTeX", extensions: ["bib", "txt"] }],
+    });
+    if (typeof p === "string") set("bibliographyPath", p);
+  };
+
   const applyAll = async () => {
     await onChange(draft);
     onClose();
@@ -838,6 +847,41 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                     点击跳转、侧栏「链接」页查看反向链接与标签。语法解析本身恒
                     开启（保证文件互通），此开关只控制交互功能；导出时双链自动
                     降级为标准链接或纯文本。
+                  </span>
+                </Field>
+                <Field label="文献库 (.bib)">
+                  <span className="bib-path-row">
+                    <input
+                      className="bib-path-input"
+                      type="text"
+                      placeholder="选择 Zotero / Better BibTeX 导出的 .bib 文件"
+                      value={draft.bibliographyPath}
+                      onChange={(e) => set("bibliographyPath", e.target.value)}
+                    />
+                    <button type="button" className="btn-ghost" onClick={pickBib}>
+                      浏览…
+                    </button>
+                  </span>
+                  <span className="hint">
+                    配置后启用学术引用：[@citekey] 行内引用（选区工具栏「引用」
+                    插入）、文末 # References 标题下自动生成文献表、LaTeX 导出
+                    的 \cite / thebibliography。文件仅本地读取，坏条目自动跳过。
+                  </span>
+                </Field>
+                <Field label="引用样式">
+                  <select
+                    value={draft.citationStyle}
+                    onChange={(e) =>
+                      set("citationStyle", e.target.value as "numeric" | "author-year")
+                    }
+                  >
+                    <option value="numeric">编号 [1]</option>
+                    <option value="author-year">作者-年份 (APA)</option>
+                  </select>
+                  <span className="hint">
+                    编号样式按正文首次引用顺序生成文献表；作者-年份样式按第一
+                    作者字母序（APA）。编辑器内引用 chip 统一显示作者-年份形态，
+                    最终形态以静态渲染与导出为准。
                   </span>
                 </Field>
               </>

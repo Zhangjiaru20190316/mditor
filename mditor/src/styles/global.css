@@ -5070,3 +5070,86 @@ a.wikilink {
   margin-left: 4px;
   font-size: 11px;
 }
+
+/* ---------- 学术引用（v4.7 模块 3） ---------- */
+/* 编辑器内引用 chip（atom 节点 toDOM：<span class="citation">） */
+.ProseMirror span.citation,
+span.citation {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 0.05em 0.3em;
+  cursor: default;
+  border-bottom: 1px dotted var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+/* 「参考文献」标题下的自动生成 widget（PM decoration，只读展示） */
+.md-refs-widget {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 10px 0;
+  background: color-mix(in srgb, var(--accent-soft, var(--bg)) 40%, var(--bg));
+}
+.md-refs-widget-note {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  margin-bottom: 6px;
+}
+.md-refs-widget-list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.md-refs-widget-list li {
+  margin-bottom: 4px;
+}
+/* 引用选择器条目（复用 QuickSwitcher 的 qs-panel 骨架） */
+.cp-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 9px;
+}
+.cp-key {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+.cp-title {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cp-meta {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+.cp-warn {
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: #b8860b;
+}
+/* 设置面板：文献库路径行 */
+.bib-path-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+}
+.bib-path-input {
+  flex: 1;
+  min-width: 0;
+}
+/* 导出产物中的自动生成文献表 */
+ol.md-references {
+  padding-left: 22px;
+  line-height: 1.8;
+}
+.md-references-empty {
+  color: var(--fg-muted);
+  font-style: italic;
+}

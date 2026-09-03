@@ -32,6 +32,7 @@ const HTML_FILTER = [{ name: "HTML", extensions: ["html"] }];
 const PDF_FILTER = [{ name: "PDF", extensions: ["pdf"] }];
 const PNG_FILTER = [{ name: "Image", extensions: ["png"] }];
 const DOCX_FILTER = [{ name: "Word", extensions: ["docx"] }];
+const TEX_FILTER = [{ name: "LaTeX", extensions: ["tex"] }];
 
 /** 单张图片内联上限（过大直接保留引用，防止内存爆掉）。 */
 const INLINE_IMG_MAX_BYTES = 10 * 1024 * 1024;
@@ -336,6 +337,28 @@ export async function exportDocx(
   const result = await htmlToDocx(inlined, null, documentOptions);
   const bytes = toArrayBuffer(result);
   await writeFile(path, new Uint8Array(bytes));
+  return path;
+}
+
+/**
+ * Export to .tex（模块 3，纯前端 md→tex，铁律 2：不调 pandoc）。
+ *
+ * 输入是 Markdown 源码（非编辑器 HTML）——公式源天然平移、[@key] → \cite、
+ * 图表编号交给 LaTeX 计数器（\caption/\label/\ref）、References 标题处生成
+ * thebibliography。产物面向 XeLaTeX + ctexart（含中文），见
+ * lib/exportLatex.ts 头注。返回导出路径或 null（用户取消）。
+ */
+export async function exportLatexFile(
+  markdown: string,
+  suggestedName = "untitled.tex",
+  docTitle?: string
+): Promise<string | null> {
+  const path = await saveDialog({ defaultPath: suggestedName, filters: TEX_FILTER });
+  if (!path) return null;
+  const { markdownToLatex } = await import("./exportLatex");
+  const { tex, warnings } = markdownToLatex(markdown, docTitle);
+  if (warnings.length > 0) console.warn("[mditor] LaTeX 导出告警：", warnings.join("；"));
+  await writeTextFile(path, tex);
   return path;
 }
 
