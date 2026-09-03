@@ -73,10 +73,15 @@ import { QuickSwitcher } from "./components/QuickSwitcher";
 import { LinksPanel } from "./components/LinksPanel";
 import { WikiLinkSuggest } from "./components/WikiLinkSuggest";
 import { CitationPicker } from "./components/CitationPicker";
+import { FlashcardModal } from "./components/FlashcardModal";
+import { FlashcardMaker } from "./components/FlashcardMaker";
 import { wikiLinkOpenRef } from "./lib/wikiLinkNode";
 import { resolveWikiLinksInHtml } from "./lib/wikiLinkExport";
 import { resolveCitationsForExport } from "./lib/citationExport";
+import { degradeFlashcardsInHtml } from "./lib/flashcardExport";
+import { flashcardMarkdown } from "./lib/flashcards";
 import { bibliography } from "./lib/bibliography";
+import { chat } from "./lib/ai";
 import { copyRich } from "./lib/clipboard";
 import { collectThemeCss } from "./lib/themeCss";
 import { showAlert, confirmDialog, choiceDialog } from "./lib/dialogs";
@@ -133,6 +138,15 @@ export default function App() {
   const [quickOpen, setQuickOpen] = useState(false);
   // 引用选择器（v4.7 模块 3：SelectionToolbar「引用」/菜单唤起）。
   const [citeOpen, setCiteOpen] = useState(false);
+  // 复习模式 / 做卡弹层（v4.7 模块 4）。
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [maker, setMaker] = useState<{
+    open: boolean;
+    title: string;
+    initial: { question: string; answer: string };
+    selection: string;
+    isAi: boolean;
+  }>({ open: false, title: "", initial: { question: "", answer: "" }, selection: "", isAi: false });
   const [recentKey, setRecentKey] = useState(0);
   const [autosaveMsg, setAutosaveMsg] = useState("");
   // 单一定时器跟踪状态栏消息的自动清除：连续触发（快速保存 / 文件频繁外部
@@ -1265,6 +1279,12 @@ export default function App() {
         } catch {
           /* 降级失败保留 chip 文本（仍可读） */
         }
+        // v4.7 模块 4 闪卡降级（铁律 6）：卡片容器 → 普通 blockquote。
+        try {
+          html = degradeFlashcardsInHtml(html);
+        } catch {
+          /* 降级失败保留卡片容器（内容仍可读） */
+        }
       }
       const css = collectThemeCss();
       const ctx = { html, css, docPath: fileApi.doc.path };
@@ -1338,6 +1358,12 @@ export default function App() {
         html = resolveCitationsForExport(html);
       } catch {
         /* 降级失败保留 chip 文本 */
+      }
+      // v4.7 模块 4：闪卡容器降级为 blockquote。
+      try {
+        html = degradeFlashcardsInHtml(html);
+      } catch {
+        /* 降级失败保留卡片容器 */
       }
       await copyRich(html, plain, collectThemeCss());
       flashStatus("已复制富文本");
@@ -1422,6 +1448,9 @@ export default function App() {
         break;
       case "edit_insert_citation":
         setCiteOpen(true);
+        break;
+      case "view_review":
+        setReviewOpen(true);
         break;
       case "edit_undo":
         execOnEditor(editorRef.current, "undo");
@@ -2154,6 +2183,80 @@ export default function App() {
   // 快速切换器选中 → 打开文件（openPath 依赖均 stable，身份稳定）。
   const onQuickOpen = useCallback((path: string) => void openPath(path), [openPath]);
 
+  // ---- 闪卡做卡入口（v4.7 模块 4）------------------------------------------
+  const aiRegenerateRef = useRef<(() => Promise<void>) | null>(null);
+
+  // 手动做卡：答案预填选中文本，问题留空可调。
+  const makeFlashcard = useCallback(() => {
+    const sel = editorRef.current?.getSelection() ?? "";
+    setMaker({
+      open: true,
+      title: "做成闪卡",
+      initial: { question: "", answer: sel },
+      selection: sel,
+      isAi: false,
+    });
+  }, []);
+
+  // AI 改写为问答卡：生成 Q/A → 做卡弹层人工确认（不直接插文档）。
+  const aiMakeFlashcard = useCallback(async () => {
+    const sel = editorRef.current?.getSelection() ?? "";
+    if (!sel.trim()) {
+      void showAlert("请先选中要做成闪卡的内容。", "Mditor", "warning");
+      return;
+    }
+    setMaker({
+      open: true,
+      title: "AI 改写为问答卡",
+      initial: { question: "", answer: "" },
+      selection: sel,
+      isAi: true,
+    });
+    const regenerate = async () => {
+      try {
+        const reply = await chat({
+          settings: settingsRef.current.settings,
+          messages: [
+            {
+              role: "system",
+              content: [
+                "你是笔记闪卡生成器。把用户给的笔记内容改写成一张问答闪卡。",
+                "输出格式（严格遵守，不要输出任何其它文字、解释或代码围栏）：",
+                "Q: <问题：一句话，自包含，不依赖原文上下文>",
+                "A: <答案：简短准确，可用一句话或分号列举>",
+              ].join("\n"),
+            },
+            { role: "user", content: sel },
+          ],
+        });
+        const m = reply.match(/Q[:：]\s*([\s\S]*?)\s*\n+A[:：]\s*([\s\S]*)/);
+        const question = m ? m[1].trim() : "";
+        const answer = m ? m[2].trim() : reply.trim();
+        setMaker((prev) => ({
+          ...prev,
+          initial: question || answer ? { question, answer } : prev.initial,
+        }));
+      } catch (e) {
+        void showAlert(`AI 生成失败：${String(e)}`, "Mditor", "error");
+      }
+    };
+    await regenerate();
+    // 「AI 重新生成」经 maker 回调再次触发（闭包持有 sel）。
+    aiRegenerateRef.current = regenerate;
+  }, []);
+
+  // 做卡确认 → 插入 :::flash 块（选区之后，光标随块后）。
+  const insertFlashcard = useCallback((question: string, answer: string) => {
+    editorRef.current?.insertAfterSelection(flashcardMarkdown(question, answer));
+    editorRef.current?.find();
+  }, []);
+
+  // 复习模式打开来源笔记（复用双链反链的行级跳转）。
+  const onOpenNoteAtLine = useCallback(
+    (path: string, line: number) => void openNoteAtLine(path, line),
+    [openNoteAtLine]
+  );
+
   // Stable filtered quick-action arrays (useMemo so identity only changes when
   // the underlying settings array changes, not on every render).
   const selectionActions = useMemo(
@@ -2437,6 +2540,8 @@ export default function App() {
         onLink={setLinkOnSelection}
         onMath={toggleInlineMath}
         onCite={() => setCiteOpen(true)}
+        onFlashcard={makeFlashcard}
+        onAiFlashcard={() => void aiMakeFlashcard()}
         onSetColor={setTextColor}
         onClearColor={clearTextColor}
         getActiveMarks={getActiveMarks}
@@ -2572,6 +2677,32 @@ export default function App() {
           editorRef.current?.insertAtCursor(raw);
           editorRef.current?.find();
         }}
+      />
+
+      {/* v4.7 模块 4：复习模式（菜单「复习闪卡」）与做卡弹层 */}
+      <FlashcardModal
+        open={reviewOpen}
+        onClose={() => setReviewOpen(false)}
+        onOpenNote={onOpenNoteAtLine}
+        enabled={settingsApi.settings.vaultIndexEnabled && settingsApi.settings.flashcardsEnabled}
+      />
+      <FlashcardMaker
+        open={maker.open}
+        title={maker.title}
+        initial={maker.initial}
+        onClose={() => {
+          setMaker((m) => ({ ...m, open: false }));
+          aiRegenerateRef.current = null;
+        }}
+        onInsert={insertFlashcard}
+        onRegenerate={
+          maker.isAi
+            ? () => {
+                const fn = aiRegenerateRef.current;
+                if (fn) void fn();
+              }
+            : undefined
+        }
       />
     </div>
   );

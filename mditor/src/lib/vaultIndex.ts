@@ -17,6 +17,7 @@
 import { readDir, readTextFile, stat, watch } from "@tauri-apps/plugin-fs";
 import { basename, extname, join, toPosix } from "./path-shim";
 import { isUserActive } from "./activity";
+import { scanFlashcards, type ScannedCard } from "./flashcards";
 
 // ---- 纯函数部分（独立导出以便单测） ------------------------------------------
 
@@ -46,6 +47,8 @@ export interface VaultEntry {
   links: VaultLink[];
   tags: string[];
   mtime: number;
+  /** 文内 :::flash 闪卡（模块 4：到期扫描遍历索引，不回读文件）。 */
+  flashcards: ScannedCard[];
 }
 
 /** 行扫描产物。 */
@@ -55,6 +58,7 @@ export interface ParsedVaultDoc {
   headings: VaultHeading[];
   links: VaultLink[];
   tags: string[];
+  flashcards: ScannedCard[];
 }
 
 const HEADING_RE = /^(#{1,6})[ \t]+(.+?)\s*$/;
@@ -74,6 +78,8 @@ export function parseVaultDoc(content: string): ParsedVaultDoc {
   const lines = content.split(/\r?\n/);
   let inFence = false;
   let fenceMark = "";
+  // 模块 4：闪卡扫描（独立行扫描器，与主扫描同样跳过代码围栏）。
+  const flashcards = scanFlashcards(content, "");
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -126,7 +132,7 @@ export function parseVaultDoc(content: string): ParsedVaultDoc {
     }
   }
 
-  return { title, headings, links, tags };
+  return { title, headings, links, tags, flashcards };
 }
 
 function clipLine(s: string): string {
@@ -510,6 +516,7 @@ export class VaultIndexManager {
       headings: parsed.headings,
       links: parsed.links,
       tags: parsed.tags,
+      flashcards: parsed.flashcards.map((c) => ({ ...c, path })),
       mtime: mtime || prev?.mtime || 0,
     });
   }

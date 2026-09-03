@@ -341,6 +341,12 @@ export interface Settings {
    * 显示作者-年份形态（编号依赖全文序，由静态渲染/导出统一处理）。
    */
   citationStyle: "numeric" | "author-year";
+  /**
+   * 间隔重复闪卡（v4.7 模块 4）：:::flash 语法解析恒开启（保持解析管线与
+   * worker 哨兵一致）；本开关控制交互功能面——复习模式入口、做卡/ AI 改写
+   * 按钮。进度存 appDataDir/review-state.json（纯本地）。默认启用。
+   */
+  flashcardsEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -431,6 +437,7 @@ export const DEFAULT_SETTINGS: Settings = {
   wikiLinksEnabled: true,
   bibliographyPath: "",
   citationStyle: "numeric",
+  flashcardsEnabled: true,
 };
 
 /* -------------------------------------------------------------------------- */

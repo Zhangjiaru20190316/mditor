@@ -884,6 +884,19 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                     最终形态以静态渲染与导出为准。
                   </span>
                 </Field>
+                <Field label="间隔重复闪卡">
+                  <input
+                    type="checkbox"
+                    checked={draft.flashcardsEnabled}
+                    onChange={(e) => set("flashcardsEnabled", e.target.checked)}
+                  />
+                  <span className="hint">
+                    :::flash 问答卡（选区工具栏「卡」手动做卡 / AI 菜单「改写为
+                    问答卡」），SM-2 简化调度（间隔表 0/1/3/7/14/30 天 × ease 因
+                    子）。进度只存本地 appDataDir/review-state.json；语法解析恒开
+                    启，此开关控制复习入口与做卡按钮；导出时闪卡降级为引用块。
+                  </span>
+                </Field>
               </>
             )}
           </div>

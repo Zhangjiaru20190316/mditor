@@ -34,6 +34,7 @@ import { remarkMathFence } from "./remarkMathFence";
 import { remarkMathNumbering } from "./remarkMathNumbering";
 import { remarkWikiLink, type WikiLinkOptions } from "./remarkWikiLink";
 import { remarkCitation, type CitationRemarkOptions } from "./remarkCitation";
+import { remarkFlash, type FlashRemarkOptions } from "./remarkFlash";
 import { remarkFigureNumbering } from "./remarkFigureNumbering";
 import { normalizeMathDelimiters } from "./mathNormalize";
 import { getMathRenderConfig, mathConfigSignature } from "./mathConfig";
@@ -125,6 +126,8 @@ function makeProcessor(macros: Record<string, string>) {
     // v4.7 模块 3：[@引用] → 编号纯文本 + References 标题下自动生成文献表
     // （配置/数据来自 lib/bibliography，缓存键含其 signature）。
     .use(remarkCitation as unknown as Plugin<[CitationRemarkOptions]>, { mode: "render" })
+    // v4.7 模块 4：:::flash 闪卡 → blockquote 降级（铁律 6）。
+    .use(remarkFlash as unknown as Plugin<[FlashRemarkOptions]>, { mode: "render" })
     // v4.7 模块 3：图表 caption/编号 + @fig:@tbl: 交叉引用解析。
     .use(remarkFigureNumbering as unknown as Plugin)
     .use(remarkRehype, {

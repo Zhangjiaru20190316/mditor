@@ -58,6 +58,10 @@ interface Props {
   onMath: () => void;
   /** 打开引用选择器（模块 3）：选中 .bib 条目后在光标处插入 [@citekey]。 */
   onCite: () => void;
+  /** 做成闪卡（模块 4）：打开做卡弹层（答案预填选中文本）。 */
+  onFlashcard: () => void;
+  /** AI 改写为问答卡（模块 4）：AI 生成 Q/A 后经做卡弹层人工确认。 */
+  onAiFlashcard: () => void;
   /** Apply a text color to the current selection (rich + source modes). */
   onSetColor: (color: string) => void;
   /** Remove any text color from the current selection. */
@@ -142,6 +146,8 @@ export const SelectionToolbar = memo(function SelectionToolbar({
   onLink,
   onMath,
   onCite,
+  onFlashcard,
+  onAiFlashcard,
   onSetColor,
   onClearColor,
   getActiveMarks,
@@ -531,6 +537,13 @@ export const SelectionToolbar = memo(function SelectionToolbar({
       >
         <em>@</em>
       </button>
+      <button
+        className="sel-btn"
+        title="做成闪卡（答案预填选中文本，插入 :::flash 块）"
+        onClick={onFlashcard}
+      >
+        <em>卡</em>
+      </button>
 
       <span className="sel-sep" />
       {/* ---- Text color — opens a palette submenu (二级菜单). ---- */}
@@ -598,6 +611,13 @@ export const SelectionToolbar = memo(function SelectionToolbar({
 
       {/* ============ AI 二级菜单（常驻 DOM，.open 切换）============ */}
       <div className={`sel-submenu sel-ai-panel${aiOpen ? " open" : ""}`}>
+        <button
+          className="sel-btn sel-menu-item"
+          title="让 AI 把选中内容改写为问答闪卡（人工确认后插入）"
+          onClick={onAiFlashcard}
+        >
+          改写为问答卡
+        </button>
         <button
           className="sel-btn sel-menu-item"
           title="让 AI 解释这段内容"

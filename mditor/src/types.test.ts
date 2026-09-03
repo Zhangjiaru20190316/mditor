@@ -55,6 +55,7 @@ const SETTING_KEYS = [
   "wikiLinksEnabled",
   "bibliographyPath",
   "citationStyle",
+  "flashcardsEnabled",
 ] as const;
 
 /** 重构前（v3.9.7）的标量默认值。 */
@@ -102,6 +103,7 @@ const SCALAR_DEFAULTS: Record<string, unknown> = {
   wikiLinksEnabled: true,
   bibliographyPath: "",
   citationStyle: "numeric",
+  flashcardsEnabled: true,
 };
 
 describe("settings inventory（v4.0.0 分区重构防回归锚点）", () => {

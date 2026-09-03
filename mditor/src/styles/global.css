@@ -5153,3 +5153,181 @@ ol.md-references {
   color: var(--fg-muted);
   font-style: italic;
 }
+
+/* ---------- 间隔重复闪卡（v4.7 模块 4） ---------- */
+/* 编辑器内卡片容器（block 节点 toDOM：<div class="md-flashcard">） */
+.ProseMirror div.md-flashcard {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 10px 0;
+  background: color-mix(in srgb, var(--accent-soft, transparent) 30%, var(--bg));
+}
+.ProseMirror div.md-flashcard > hr {
+  margin: 8px 0;
+  border: none;
+  border-top: 1px dashed var(--border);
+}
+/* 导出产物里的降级形态（blockquote） */
+blockquote.md-flashcard {
+  border-left: 3px solid var(--accent);
+  padding: 6px 14px;
+}
+
+/* 复习模式浮层 */
+.fc-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: modal-in 0.16s ease both;
+}
+.fc-overlay.closing {
+  animation: modal-out 0.2s ease both;
+}
+.fc-panel {
+  width: min(640px, 90vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--card-bg, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 20px 20px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+.fc-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.fc-head h2 {
+  font-size: 15px;
+  margin: 0;
+  flex: 1;
+}
+.fc-progress {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.fc-empty {
+  text-align: center;
+  padding: 36px 12px;
+  color: var(--fg-muted);
+}
+.fc-sub {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.fc-warn {
+  margin-top: 12px;
+  font-size: 12px;
+  color: #b8860b;
+}
+.fc-card {
+  position: relative;
+  min-height: 180px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  cursor: pointer;
+  margin-bottom: 10px;
+  transition: box-shadow 0.15s ease;
+}
+.fc-card:hover {
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12);
+}
+.fc-face {
+  padding: 18px 22px;
+}
+.fc-label {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+.fc-text {
+  font-size: 16px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.fc-hint {
+  position: absolute;
+  bottom: 10px;
+  right: 14px;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+.fc-back {
+  display: none;
+  border-top: 1px dashed var(--border);
+}
+.fc-card.flipped .fc-back {
+  display: block;
+}
+.fc-card.flipped .fc-front .fc-text {
+  opacity: 0.55;
+}
+.fc-card.flipped .fc-hint {
+  display: none;
+}
+.fc-note-link {
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 10px;
+}
+.fc-note-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.fc-flip {
+  width: 100%;
+}
+.fc-grades {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.fc-grade {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 8px 4px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.fc-grade:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.fc-grade .fc-grade-key {
+  display: block;
+  font-size: 10px;
+  color: var(--fg-muted);
+  margin-top: 2px;
+}
+.fc-grade.g0:hover { border-color: #e53935; background: rgba(229, 57, 53, 0.08); }
+.fc-grade.g1:hover { border-color: #fb8c00; background: rgba(251, 140, 0, 0.08); }
+.fc-grade.g2:hover { border-color: #43a047; background: rgba(67, 160, 71, 0.08); }
+.fc-grade.g3:hover { border-color: #1e88e5; background: rgba(30, 136, 229, 0.08); }
+
+/* 做卡弹层 */
+.fc-maker {
+  width: min(520px, 90vw);
+}
+.fc-maker-ta {
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
+}

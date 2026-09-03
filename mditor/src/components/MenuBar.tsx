@@ -104,6 +104,7 @@ function buildMenus(focusMode: boolean, theme: string, typewriter: boolean): Men
         { kind: "item", id: "view_focus", label: "专注模式", mark: "check", marked: focusMode },
         { kind: "item", id: "view_typewriter", label: "打字机模式", mark: "check", marked: typewriter },
         item("view_ai_assistant", "AI 助手", "Ctrl+I"),
+        item("view_review", "复习闪卡…"),
         sep(),
         { kind: "item", id: "theme_light", label: "浅色主题", mark: "dot", marked: theme === "light" },
         { kind: "item", id: "theme_dark", label: "深色主题", mark: "dot", marked: theme === "dark" },

@@ -61,6 +61,7 @@ import { highlightPlugins } from "../lib/highlightMark";
 import { textColorPlugins } from "../lib/textColorMark";
 import { createWikiLinkPlugins } from "../lib/wikiLinkNode";
 import { createCitationPlugins } from "../lib/citationNode";
+import { createFlashcardPlugins } from "../lib/flashcardNode";
 import { remarkMathFenceAlias } from "../lib/remarkMathFenceAlias";
 import { normalizeMathDelimiters } from "../lib/mathNormalize";
 import { mathConfigSignature, parseMathMacros } from "../lib/mathConfig";
@@ -816,6 +817,10 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       // v4.7 模块 3 [@引用] 插件束（schema + remark + 输入规则 + 参考文献
       // widget）：同样无条件注册（两档一致，哨兵两档各 +1）。
       crepe.editor.use(createCitationPlugins());
+
+      // v4.7 模块 4 :::flash 闪卡插件束（schema + remark + 输入规则）：
+      // 无条件注册（两档一致，哨兵两档各 +1）。
+      crepe.editor.use(createFlashcardPlugins());
 
       // ```math 围栏别名（v4.6）：与 Latex 特性同开同关——big 模式下公式整
       // 体降级为纯文本，别名若单独生效会改变 remarkPluginsCtx 插件数，导致

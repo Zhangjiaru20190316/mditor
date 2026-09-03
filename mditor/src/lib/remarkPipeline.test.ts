@@ -129,12 +129,37 @@ describe("remarkPipeline（worker 侧解析一致性）", () => {
     expect((b.children?.[0] as N)?.children?.[0]?.value).toBe("B");
   });
 
-  it("哨兵常量：小文档 10 / 大文档（latex 关）7 个 remark 插件", () => {
+  it("哨兵常量：小文档 11 / 大文档（latex 关）8 个 remark 插件", () => {
     // v4.6：withMath 分支新增 ```math 围栏别名（remarkMathFenceAlias）+1。
     // v4.7：双链解析（remarkWikiLink）两档各 +1（无条件注册）。
     // v4.7 模块 3：行内引用（remarkCitation）两档各 +1（无条件注册）。
-    expect(expectedPluginCount(true)).toBe(10);
-    expect(expectedPluginCount(false)).toBe(7);
+    // v4.7 模块 4：闪卡容器（remarkFlash）两档各 +1（无条件注册）。
+    expect(expectedPluginCount(true)).toBe(11);
+    expect(expectedPluginCount(false)).toBe(8);
+  });
+
+  it(":::flash 容器 → flashcard 节点（v4.7 模块 4 remarkFlash，native 模式）", () => {
+    const tree = parseMarkdownTree(proc, ":::flash\n问题？\n---\n答案。\n:::\n");
+    const cards: N[] = [];
+    const walk = (n: N) => {
+      if (n.type === "flashcard") cards.push(n);
+      (n.children ?? []).forEach(walk);
+    };
+    walk(tree);
+    expect(cards.length).toBe(1);
+    // 卡内保留问题段、分隔线（thematicBreak）、答案段。
+    const kinds = (cards[0].children ?? []).map((c) => c.type);
+    expect(kinds).toContain("paragraph");
+    expect(kinds).toContain("thematicBreak");
+    // big 档（无 math）同样产出 flashcard——插件无条件注册。
+    const treeNoMath = parseMarkdownTree(procNoMath, ":::flash\nQ\n---\nA\n:::\n");
+    const kinds2: string[] = [];
+    const walk2 = (n: N) => {
+      kinds2.push(n.type ?? "?");
+      (n.children ?? []).forEach(walk2);
+    };
+    walk2(treeNoMath);
+    expect(kinds2).toContain("flashcard");
   });
 
   it("[@引用] → citation 节点（v4.7 模块 3 remarkCitation，native 模式）", () => {
