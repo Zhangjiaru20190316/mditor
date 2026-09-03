@@ -5331,3 +5331,95 @@ blockquote.md-flashcard {
   resize: vertical;
   font-family: inherit;
 }
+
+/* ---------- 全库问答 / RAG（v4.7 模块 5） ---------- */
+.ai-rag-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 6px;
+  border-top: 1px dashed var(--border);
+}
+.ai-rag-toggle {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  padding: 2px 10px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.ai-rag-toggle:not(:disabled):hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ai-rag-toggle.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ai-rag-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ai-rag-status {
+  flex: 1;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-rag-ctl {
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 0;
+}
+.ai-rag-ctl:hover {
+  text-decoration: underline;
+}
+/* 回答下方的来源列表 */
+.ai-rag-sources {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+}
+.ai-rag-sources-head {
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-bottom: 4px;
+}
+.ai-rag-src {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 3px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: var(--fg);
+}
+.ai-rag-src:hover {
+  background: var(--accent-soft);
+}
+.ai-rag-src-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent);
+}
+.ai-rag-src-score {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}

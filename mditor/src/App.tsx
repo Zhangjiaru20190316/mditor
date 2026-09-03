@@ -81,6 +81,7 @@ import { resolveCitationsForExport } from "./lib/citationExport";
 import { degradeFlashcardsInHtml } from "./lib/flashcardExport";
 import { flashcardMarkdown } from "./lib/flashcards";
 import { bibliography } from "./lib/bibliography";
+import { ragIndex } from "./lib/ragIndex";
 import { chat } from "./lib/ai";
 import { copyRich } from "./lib/clipboard";
 import { collectThemeCss } from "./lib/themeCss";
@@ -941,6 +942,42 @@ export default function App() {
     void bibliography.setPath(settingsApi.settings.bibliographyPath);
   }, [settingsApi.settings.citationStyle, settingsApi.settings.bibliographyPath]);
 
+  // ---- 全库问答（v4.7 模块 5）----------------------------------------------
+  // big 模式 + 用户活跃 → 嵌入批次让路（铁律 4，同 vaultIndex 纪律）；
+  // 功能开启时预热（从盘载入向量索引）；关闭时暂停进行中的构建。
+  useEffect(() => {
+    ragIndex.shouldYield = () => settingsRef.current.settings.bigDocPerformance;
+    if (settingsApi.settings.ragEnabled) void ragIndex.ensureReady();
+    else ragIndex.pause();
+  }, [settingsApi.settings.ragEnabled]);
+
+  // 全库问答来源跳转：打开笔记后按标题定位（找最近匹配的 heading）。
+  const onOpenRagNote = useCallback(
+    async (path: string, heading?: string) => {
+      await openPath(path);
+      if (!heading) return;
+      // 等文档装载 + 大纲产出后跳标题（尽力而为，失败静默）。
+      window.setTimeout(() => {
+        try {
+          const hit = (docHeadingsRef.current ?? []).find(
+            (h) => h.text === heading || h.text.includes(heading)
+          );
+          if (hit) {
+            jumpToHeadingRef.current?.({
+              level: hit.level,
+              text: hit.text,
+              id: hit.id,
+              children: [],
+            });
+          }
+        } catch {
+          /* 大纲未就绪：留在文档顶部 */
+        }
+      }, 600);
+    },
+    [openPath]
+  );
+
   // Open an externally-supplied path (double-clicked .md / `mditor.exe file.md`).
   // 多标签页（V3.6）：打开进新标签页，不会丢当前文档 —— 无需脏确认。
   const maybeOpen = useCallback(
@@ -1720,6 +1757,11 @@ export default function App() {
     },
     [editMode]
   );
+
+  // 稳定 ref 转发（全库问答来源跳转在 jumpToHeading 定义之前声明，经 ref
+  // 读最新实例——对齐 doExportRef 惯例）。
+  const jumpToHeadingRef = useRef(jumpToHeading);
+  jumpToHeadingRef.current = jumpToHeading;
 
   // Jump the editor to an annotation's marker badge and open its popover.
   // The AnnotationPopover opens via a global mousedown listener, so after
@@ -2521,6 +2563,7 @@ export default function App() {
         onJumpToText={jumpToAiText}
         onAnnotate={onAnnotateReply}
         onOpenSettings={openSettings}
+        onOpenNote={(p, h) => void onOpenRagNote(p, h)}
         onSettingsChange={onSettingsChange}
         onClose={closeAi}
       />

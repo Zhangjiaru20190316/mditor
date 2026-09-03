@@ -56,6 +56,10 @@ const SETTING_KEYS = [
   "bibliographyPath",
   "citationStyle",
   "flashcardsEnabled",
+  "ragEnabled",
+  "ragEmbedBaseUrl",
+  "ragEmbedApiKey",
+  "ragEmbedModel",
 ] as const;
 
 /** 重构前（v3.9.7）的标量默认值。 */
@@ -104,6 +108,10 @@ const SCALAR_DEFAULTS: Record<string, unknown> = {
   bibliographyPath: "",
   citationStyle: "numeric",
   flashcardsEnabled: true,
+  ragEnabled: false,
+  ragEmbedBaseUrl: "",
+  ragEmbedApiKey: "",
+  ragEmbedModel: "",
 };
 
 describe("settings inventory（v4.0.0 分区重构防回归锚点）", () => {

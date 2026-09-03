@@ -14,7 +14,8 @@ export type IoKind =
   | "ipc:dialog"
   | "ipc:clipboard"
   | "ipc:invoke"
-  | "ai:request";
+  | "ai:request"
+  | "ai:embed";
 
 /** 慢阈值默认 2s（文件读写/IPC 的卡顿证据）；Infinity = 不判慢。 */
 const DEFAULT_SLOW_MS = 2000;

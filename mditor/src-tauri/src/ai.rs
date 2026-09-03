@@ -237,6 +237,104 @@ pub async fn ai_chat(
     Ok(ChatResult { content })
 }
 
+/// Payload returned by `ai_embed`: one embedding per input text, in the
+/// ORIGINAL input order (the /embeddings API returns `index` per item and
+/// servers are not required to preserve order).
+#[derive(Debug, Serialize)]
+pub struct EmbedResult {
+    pub vectors: Vec<Vec<f32>>,
+}
+
+/// Call an OpenAI-compatible `/embeddings` endpoint (v4.7 模块 5「全库问答」).
+///
+/// Same CSP rationale as `ai_chat`: the webview's `connect-src` is pinned to
+/// `'self' ipc:`, so embedding requests must go through the Rust side. The
+/// API key is passed per-call and never persisted here. Batches are small
+/// (frontend sends ≤16 texts per call), so a plain total timeout suffices.
+#[command]
+pub async fn ai_embed(
+    base_url: String,
+    api_key: String,
+    model: String,
+    input: Vec<String>,
+) -> Result<EmbedResult, String> {
+    if base_url.trim().is_empty() {
+        return Err("未配置嵌入 Base URL，请在「设置 → 知识功能」中填写。".into());
+    }
+    if model.trim().is_empty() {
+        return Err("未配置嵌入模型名称，请在「设置 → 知识功能」中填写。".into());
+    }
+    if input.is_empty() {
+        return Ok(EmbedResult { vectors: vec![] });
+    }
+
+    let client = http();
+    let endpoint = if base_url.ends_with('/') {
+        format!("{}embeddings", base_url)
+    } else {
+        format!("{}/embeddings", base_url)
+    };
+    let body = serde_json::json!({ "model": model, "input": input });
+    let mut req = client
+        .post(&endpoint)
+        .json(&body)
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS));
+    if !api_key.trim().is_empty() {
+        req = req.bearer_auth(api_key);
+    }
+    let resp = req.send().await.map_err(|e| {
+        let msg = e.to_string();
+        if e.is_timeout() {
+            "嵌入请求超时：请检查网络连接，以及 Base URL 是否可达。".to_string()
+        } else if e.is_connect() {
+            format!("无法连接到嵌入服务：{msg}。请确认 Base URL 正确且网络可用。")
+        } else {
+            format!("嵌入请求失败：{msg}")
+        }
+    })?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.unwrap_or_default();
+    if status >= 400 {
+        return Err(friendly_error(status, &text));
+    }
+
+    // 标准 OpenAI 响应：data[i] = { index, embedding }（index 指回输入序号）。
+    #[derive(Deserialize)]
+    struct EmbeddingsResponse {
+        data: Vec<EmbeddingItem>,
+    }
+    #[derive(Deserialize)]
+    struct EmbeddingItem {
+        index: usize,
+        embedding: Vec<f32>,
+    }
+    let parsed: EmbeddingsResponse = serde_json::from_str(&text).map_err(|e| {
+        format!(
+            "无法解析嵌入响应（可能不是 OpenAI 兼容 /embeddings 接口）：{e}\n原始响应：{}",
+            truncate_error_body(&text)
+        )
+    })?;
+    if parsed.data.len() != input.len() {
+        return Err(format!(
+            "嵌入响应数量不匹配：请求 {} 条，返回 {} 条。",
+            input.len(),
+            parsed.data.len()
+        ));
+    }
+    let mut vectors: Vec<Option<Vec<f32>>> = (0..input.len()).map(|_| None).collect();
+    for item in parsed.data {
+        if item.index >= vectors.len() {
+            return Err(format!("嵌入响应 index 越界：{}", item.index));
+        }
+        vectors[item.index] = Some(item.embedding);
+    }
+    if let Some(i) = vectors.iter().position(|v| v.is_none()) {
+        return Err(format!("嵌入响应缺少第 {i} 条输入的向量。"));
+    }
+    let vectors = vectors.into_iter().flatten().collect();
+    Ok(EmbedResult { vectors })
+}
+
 /// Streaming variant: emits SSE chunks as Tauri events.
 ///
 /// Events (all carry `id` matching `request_id`):

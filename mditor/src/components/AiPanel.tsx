@@ -46,8 +46,10 @@ import {
   buildSelectionMessages,
   buildSystemPrompt,
   chatStream,
+  embedTexts,
   estimateTokens,
   isAiConfigured,
+  isEmbedConfigured,
   resolveActiveModel,
   type ChatMessage,
 } from "../lib/ai";
@@ -58,6 +60,10 @@ import { DiffReview } from "./DiffReview";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useDelayedUnmount } from "../hooks/useDelayedUnmount";
 import { AiIcon, TrashIcon, CloseIcon, ChevronRightIcon } from "./icons";
+import { buildRagMessages, RAG_TOP_K, toSources, type RagSource } from "../lib/rag";
+import { ragIndex } from "../lib/ragIndex";
+import { vaultIndex } from "../lib/vaultIndex";
+import { confirmDialog } from "../lib/dialogs";
 import type { Settings, Theme, ThinkingStrength } from "../types";
 
 export interface AiPanelHandle {
@@ -110,6 +116,8 @@ interface Props {
   onAnnotate: (reply: string, anchorText?: string, range?: { from: number; to: number } | null) => Promise<void> | void;
   /** Open the settings modal (jumped to from the "not configured" banner). */
   onOpenSettings: () => void;
+  /** 全库问答（v4.7 模块 5）：打开来源笔记并尽量跳到对应标题。 */
+  onOpenNote: (path: string, heading?: string) => void;
   /** Apply a settings patch (used by the header model / thinking selectors). */
   onSettingsChange: (patch: Partial<Settings>) => void;
   /** 关闭 AI 面板（顶部 ✕ 按钮）。 */
@@ -127,6 +135,10 @@ interface Msg {
   id: number;
   role: Role;
   content: string;
+  /** （用户消息）全库问答模式标记（渲染模式 chip）。 */
+  rag?: boolean;
+  /** （回答）全库问答的来源块列表（可点击跳转对应笔记）。 */
+  sources?: RagSource[];
   /** Which context this turn operated on (drives the action buttons). */
   mode: CtxMode;
   /** The selection text, when mode === "selection" (kept so the tag can show). */
@@ -160,13 +172,21 @@ interface Msg {
 const MAX_MESSAGES = 100;
 
 export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
-  { open, settings, getNote, onInsert, onInsertAfterSelection, onApplyChanges, onJumpToText, onAnnotate, onOpenSettings, onSettingsChange, onClose },
+  { open, settings, getNote, onInsert, onInsertAfterSelection, onApplyChanges, onJumpToText, onAnnotate, onOpenSettings, onOpenNote, onSettingsChange, onClose },
   ref
 ) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // ---- 全库问答（v4.7 模块 5）-----------------------------------------------
+  const [ragOn, setRagOn] = useState(false);
+  const [ragStats, setRagStats] = useState(() => ragIndex.stats());
+  useEffect(() => {
+    const un = ragIndex.subscribe(() => setRagStats(ragIndex.stats()));
+    setRagStats(ragIndex.stats());
+    return un;
+  }, []);
   /** 面板内轻提示（审查应用成功等），下一次发送/清空时消失。 */
   const [notice, setNotice] = useState("");
   /** 当前展开追问输入框的回答 id（-1 = 无）。 */
@@ -400,6 +420,8 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
       /** 内置动作（一键修复格式）：预组装请求消息；autoReview 时成功完成后
        *  自动打开该条回复的改动预览。 */
       preset?: { messages: ChatMessage[]; autoReview?: boolean };
+      /** 全库问答（v4.7 模块 5）：本回合的来源块（挂在回答消息上）。 */
+      ragSources?: RagSource[];
     } = { mode: "full" }
   ) => {
     const text = raw.trim();
@@ -410,6 +432,37 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     }
     setError("");
     setNotice("");
+
+    // ---- 全库问答（v4.7 模块 5）：问题 → 嵌入 → 余弦 top-k → 上下文消息。
+    // 追问（parent）走线程链携带上下文，不重新检索；失败静默回退普通全文
+    // 模式（铁律：不阻塞交互）。
+    let ragSources = opts.ragSources;
+    if (ragOn && !opts.preset && !opts.parent) {
+      if (!settings.ragEnabled || !isEmbedConfigured(settings)) {
+        setError("全库问答需先在「设置 → 知识功能」中开启并配置嵌入模型。");
+        return;
+      }
+      if (!ragIndex.isBuilt(settings.ragEmbedModel)) {
+        setError("全库向量索引尚未构建——请点击输入框上方的「构建索引」。");
+        return;
+      }
+      try {
+        setNotice("正在检索笔记库…");
+        const [qvec] = await embedTexts(settings, [text]);
+        const hits = ragIndex.search(qvec, RAG_TOP_K);
+        ragSources = toSources(hits);
+        opts = {
+          ...opts,
+          mode: "full",
+          preset: { messages: buildRagMessages(text, ragSources) },
+          ragSources,
+        };
+        setNotice("");
+      } catch (e) {
+        // 回退普通对话模式（不上传任何库内容，只带当前笔记）。
+        setNotice(`全库检索失败，已回退普通模式：${String(e)}`);
+      }
+    }
 
     const parent = opts.parent;
     const quote = opts.quote?.trim() ? opts.quote.trim() : undefined;
@@ -517,6 +570,7 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
           id: userMsgId,
           role: "user",
           content: text,
+          rag: ragOn && !!ragSources,
           mode: opts.mode,
           selection: effSelection,
           quote,
@@ -532,6 +586,7 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
           id: aiMsgId,
           role: "assistant",
           content: "",
+          sources: ragSources,
           mode: opts.mode,
           selection: effSelection,
           range,
@@ -810,6 +865,33 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
 
   // Keep a ref to the latest `send` so the imperative handle below can stay
   // stable (empty deps) instead of rebuilding every turn. Without this, every
+  // 全库问答索引构建（v4.7 模块 5）：首次构建前明示成本（嵌入 API 处理 N 个
+  // 文档），用户确认后才开始（铁律：消耗 API 的功能须显式授权）。
+  const startRagBuild = async () => {
+    if (!settings.ragEnabled || !isEmbedConfigured(settings)) {
+      setError("请先在「设置 → 知识功能」中开启全库问答并配置嵌入模型。");
+      return;
+    }
+    const entries = vaultIndex.entries();
+    if (entries.length === 0) {
+      setError("全库索引为空——请先打开工作区并等待索引完成。");
+      return;
+    }
+    if (!ragIndex.isBuilt(settings.ragEmbedModel)) {
+      const ok = await confirmDialog(
+        `将调用嵌入 API 处理 ${entries.length} 个文档（约 ${Math.max(
+          1,
+          Math.round(entries.length * 4)
+        )} 个文本块），会产生相应 API 费用。之后增量更新只对改动的块计费。\n\n确认开始构建？`,
+        "全库问答"
+      );
+      if (!ok) return;
+    }
+    void ragIndex
+      .resume(entries, settings, (texts) => embedTexts(settings, texts))
+      .catch((e) => setError(`索引构建失败：${String(e)}`));
+  };
+
   // chat message makes `askSelection` a new function — harmless, but the
   // selection toolbar's poll loop (App.tsx) re-resolves it needlessly.
   const sendRef = useRef(send);
@@ -1013,6 +1095,7 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
                         onAnnotate={() => void handleAnnotate(m.id, m.content, m.selection, m.range)}
                         annotating={annotatingId === m.id}
                         onCopy={() => navigator.clipboard?.writeText(m.content)}
+                        onOpenNote={onOpenNote}
                       />
                     </div>
                   );
@@ -1023,6 +1106,52 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
               <div className="ai-msg ai-msg-assistant ai-typing">正在思考…</div>
             )}
             {error && <div className="ai-error">{error}</div>}
+          </div>
+
+          {/* v4.7 模块 5：全库问答开关 + 索引构建（默认关；开启前需配置嵌入模型）。
+              构建走 appDataDir/rag-index.json 增量缓存，暂停/续跑随时可续。 */}
+          <div className="ai-rag-row">
+            <button
+              className={`ai-rag-toggle${ragOn ? " on" : ""}`}
+              title={
+                settings.ragEnabled
+                  ? "对整个笔记库提问：问题嵌入 → 余弦检索 top-8 → 带来源回答"
+                  : "需先在「设置 → 知识功能」中开启全库问答并配置嵌入模型"
+              }
+              disabled={!settings.ragEnabled}
+              aria-pressed={ragOn}
+              onClick={() => setRagOn((v) => !v)}
+            >
+              全库问答
+            </button>
+            {ragOn && (
+              <>
+                <span
+                  className="ai-rag-status"
+                  title={
+                    ragStats.error ??
+                    `${ragStats.docs} 篇 / ${ragStats.chunks} 块 · 模型 ${ragStats.model || "未设置"}`
+                  }
+                >
+                  {ragStats.phase === "building"
+                    ? `构建中 ${ragStats.done}/${ragStats.total}`
+                    : ragStats.phase === "paused"
+                      ? `已暂停（${ragStats.done}/${ragStats.total}）`
+                      : ragStats.phase === "error"
+                        ? "构建失败（悬停查看）"
+                        : `${ragStats.chunks} 块已索引`}
+                </span>
+                {ragStats.phase === "building" ? (
+                  <button className="ai-rag-ctl" onClick={() => ragIndex.pause()}>
+                    暂停
+                  </button>
+                ) : (
+                  <button className="ai-rag-ctl" onClick={() => void startRagBuild()}>
+                    {ragStats.phase === "paused" ? "续跑" : "构建索引"}
+                  </button>
+                )}
+              </>
+            )}
           </div>
 
           <div className="ai-input-row">
@@ -1102,6 +1231,8 @@ interface MsgRowProps {
   /** True while this reply is being refined into an annotation. */
   annotating: boolean;
   onCopy: () => void;
+  /** 全库问答：打开来源笔记（v4.7 模块 5）。 */
+  onOpenNote: (path: string, heading?: string) => void;
 }
 
 // 思考阶段动效占位：reasoning 不可用（非推理模型 / 首字未到）时显示三点跳动
@@ -1149,6 +1280,7 @@ const MsgRow = memo(function MsgRow({
   onAnnotate,
   annotating,
   onCopy,
+  onOpenNote,
 }: MsgRowProps) {
   const isAssistant = msg.role === "assistant";
   const hasContent = msg.content.length > 0;
@@ -1253,6 +1385,7 @@ const MsgRow = memo(function MsgRow({
         style={threadStyle}
       >
         {isThread && <span className="ai-thread-tag">追问</span>}
+        {msg.rag && <span className="ai-ctx-tag">全库问答</span>}
         {msg.quote && (
           <div className="ai-quote-chip" title={msg.quote}>
             {msg.quote}
@@ -1312,6 +1445,26 @@ const MsgRow = memo(function MsgRow({
           />
         </div>
       ) : null}
+      {/* 全库问答来源（v4.7 模块 5）：回答完成后展示可点击的来源笔记列表。 */}
+      {!msg.streaming && msg.sources && msg.sources.length > 0 && (
+        <div className="ai-rag-sources">
+          <div className="ai-rag-sources-head">来源（点击跳转）</div>
+          {msg.sources.map((s, i) => (
+            <button
+              key={`${s.path}-${i}`}
+              className="ai-rag-src"
+              title={s.snippet}
+              onClick={() => onOpenNote(s.path, s.heading || undefined)}
+            >
+              <span className="ai-rag-src-name">
+                {s.name}
+                {s.heading ? ` › ${s.heading}` : ""}
+              </span>
+              <span className="ai-rag-src-score">{(s.score * 100).toFixed(0)}%</span>
+            </button>
+          ))}
+        </div>
+      )}
       {/* 划选追问入口：仅已完成回答的正文上方划选时出现。 */}
       {selChip && (
         <div

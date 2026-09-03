@@ -897,6 +897,55 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                     启，此开关控制复习入口与做卡按钮；导出时闪卡降级为引用块。
                   </span>
                 </Field>
+                <Field label="全库问答 (RAG)">
+                  <input
+                    type="checkbox"
+                    checked={draft.ragEnabled}
+                    onChange={(e) => set("ragEnabled", e.target.checked)}
+                  />
+                  <span className="hint">
+                    对整个笔记库提问（AI 面板「全库问答」开关）：问题嵌入 → 余弦
+                    检索 top-8 → 带来源回答。默认关闭——构建索引会调用嵌入 API
+                    产生费用（首次构建有成本确认提示）；向量索引只存本地
+                    appDataDir/rag-index.json，嵌入请求经应用内代理（渲染层不直
+                    连外网）。
+                  </span>
+                </Field>
+                {draft.ragEnabled && (
+                  <>
+                    <Field label="嵌入 Base URL">
+                      <input
+                        type="text"
+                        placeholder="https://api.openai.com/v1"
+                        value={draft.ragEmbedBaseUrl}
+                        onChange={(e) => set("ragEmbedBaseUrl", e.target.value)}
+                      />
+                      <span className="hint">
+                        OpenAI 兼容 /embeddings 端点的 Base URL（独立于对话模型；
+                        留空表示未启用）。
+                      </span>
+                    </Field>
+                    <Field label="嵌入 API Key">
+                      <input
+                        type="password"
+                        placeholder="sk-…（本地服务可留空）"
+                        value={draft.ragEmbedApiKey}
+                        onChange={(e) => set("ragEmbedApiKey", e.target.value)}
+                      />
+                    </Field>
+                    <Field label="嵌入模型">
+                      <input
+                        type="text"
+                        placeholder="text-embedding-3-small"
+                        value={draft.ragEmbedModel}
+                        onChange={(e) => set("ragEmbedModel", e.target.value)}
+                      />
+                      <span className="hint">
+                        更换模型后索引自动全量重建（向量语义空间不兼容）。
+                      </span>
+                    </Field>
+                  </>
+                )}
               </>
             )}
           </div>

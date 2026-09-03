@@ -347,6 +347,19 @@ export interface Settings {
    * 按钮。进度存 appDataDir/review-state.json（纯本地）。默认启用。
    */
   flashcardsEnabled: boolean;
+  /**
+   * 全库问答 / RAG（v4.7 模块 5）：默认关闭——构建索引消耗嵌入 API（需
+   * 用户显式配置嵌入模型并确认成本提示）。开启后在 AI 面板出现「全库问答」
+   * 开关；向量索引只存本地 appDataDir/rag-index.json，嵌入请求经 Rust 代理
+   * （渲染层不直连外网，CSP 不变）。
+   */
+  ragEnabled: boolean;
+  /** 嵌入服务 Base URL（OpenAI 兼容 /embeddings；独立于对话模型配置）。 */
+  ragEmbedBaseUrl: string;
+  /** 嵌入服务 API Key（空串允许本地服务）。 */
+  ragEmbedApiKey: string;
+  /** 嵌入模型名（如 text-embedding-3-small；换模型自动全量重建索引）。 */
+  ragEmbedModel: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -438,6 +451,10 @@ export const DEFAULT_SETTINGS: Settings = {
   bibliographyPath: "",
   citationStyle: "numeric",
   flashcardsEnabled: true,
+  ragEnabled: false,
+  ragEmbedBaseUrl: "",
+  ragEmbedApiKey: "",
+  ragEmbedModel: "",
 };
 
 /* -------------------------------------------------------------------------- */

@@ -257,6 +257,44 @@ export function isAiConfigured(s: Settings): boolean {
   return m.baseUrl.trim().length > 0 && m.model.trim().length > 0;
 }
 
+/** True when the RAG embedding endpoint has enough config (v4.7 模块 5). */
+export function isEmbedConfigured(s: Settings): boolean {
+  return (
+    (s.ragEmbedBaseUrl ?? "").trim().length > 0 &&
+    (s.ragEmbedModel ?? "").trim().length > 0
+  );
+}
+
+/**
+ * Embed texts via the Rust-side `/embeddings` proxy (v4.7 模块 5).
+ *
+ * CSP 红线：渲染层不得直连外网（connect-src 'self' ipc:），嵌入请求与
+ * ai_chat 同走 Rust 代理；API key 每次调用透传、不在 Rust 侧持久化。
+ * 返回向量与输入同序（Rust 侧已按 index 归位）。
+ */
+export async function embedTexts(
+  s: Settings,
+  texts: string[]
+): Promise<number[][]> {
+  if (texts.length === 0) return [];
+  const result = await tracedIo<{ vectors: number[][] }>(
+    "ai:embed",
+    `ai_embed ${s.ragEmbedModel} ×${texts.length}`,
+    () =>
+      invoke<{ vectors: number[][] }>("ai_embed", {
+        baseUrl: s.ragEmbedBaseUrl,
+        apiKey: s.ragEmbedApiKey,
+        model: s.ragEmbedModel,
+        input: texts,
+      }),
+    { slowMs: 60_000 }
+  );
+  if (!Array.isArray(result?.vectors)) {
+    throw new Error("嵌入响应异常：vectors 缺失或非数组。");
+  }
+  return result.vectors;
+}
+
 /** Built-in default system prompt (used when settings.aiSystemPrompt is empty). */
 const DEFAULT_SYSTEM_PROMPT = [
   "你是一个 Markdown 写作助手，集成在 Mditor 编辑器中。",
