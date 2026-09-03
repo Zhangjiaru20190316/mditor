@@ -33,6 +33,7 @@ const SECTIONS = [
   "AI 助手",
   "快捷操作",
   "工作区",
+  "知识功能",
 ] as const;
 /** 导航项高度 + 相邻间距（px）——指示条 translateY 的步长。 */
 const NAV_ITEM_H = 34;
@@ -808,6 +809,24 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                     </button>
                   </>
                 )}
+              </>
+            )}
+
+            {section === 7 && (
+              <>
+                <Field label="全库索引">
+                  <input
+                    type="checkbox"
+                    checked={draft.vaultIndexEnabled}
+                    onChange={(e) => set("vaultIndexEnabled", e.target.checked)}
+                  />
+                  <span className="hint">
+                    扫描工作区全部 Markdown 文件，维护本地索引（标题 / 双向链接 /
+                    标签），供 Ctrl+P 快速打开、反向链接面板、标签过滤与复习功能
+                    复用。纯本地运行、不联网、不落盘；扫描在空闲时段分批进行，
+                    保存时只增量更新当前文件。
+                  </span>
+                </Field>
               </>
             )}
           </div>

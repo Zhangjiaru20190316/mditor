@@ -315,6 +315,13 @@ export interface Settings {
    * tree (VS Code "Remove from Workspace" style). Managed/restoreable in 设置.
    */
   excludedPaths: string[];
+  /**
+   * 全库索引（知识功能地基，v4.7）：扫描 workspace 全部 .md 维护内存索引
+   * （标题/大纲/双链/标签），供 Ctrl+P 快速切换、反链面板、标签过滤、闪卡
+   * 到期扫描与全库问答复用。纯本地、无网络请求，默认启用。索引只在内存中
+   * （不落盘）；扫描分批 + idle 调度，保存与文件监听走单文件增量更新。
+   */
+  vaultIndexEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -401,6 +408,7 @@ export const DEFAULT_SETTINGS: Settings = {
     },
   ],
   excludedPaths: [],
+  vaultIndexEnabled: true,
 };
 
 /* -------------------------------------------------------------------------- */

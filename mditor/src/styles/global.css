@@ -4788,3 +4788,117 @@ body.is-dragging-md::after {
   cursor: not-allowed;
   filter: none;
 }
+
+/* ---------- 快速切换器（Ctrl+P，v4.7 知识功能） ---------- */
+.qs-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 105; /* 高于常规弹窗(100)，浮层语义 */
+  background: rgba(0, 0, 0, 0.28);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  animation: modal-bg-in 0.16s ease both;
+}
+.qs-overlay.closing {
+  animation: modal-bg-out 0.16s ease both;
+  pointer-events: none;
+}
+.qs-panel {
+  width: min(560px, 90vw);
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card-bg, var(--bg));
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.22);
+  overflow: hidden;
+  animation: modal-card-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.qs-overlay.closing .qs-panel {
+  animation: modal-card-out 0.18s ease both;
+}
+.qs-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.qs-prefix {
+  color: var(--accent);
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+.qs-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: 15px;
+  font-family: inherit;
+}
+.qs-x {
+  border: none;
+  background: transparent;
+  color: var(--fg-dim, inherit);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+}
+.qs-x:hover {
+  background: var(--hover, rgba(128, 128, 128, 0.15));
+}
+.qs-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+}
+.qs-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.qs-item.sel {
+  background: var(--accent-soft);
+}
+.qs-title {
+  flex-shrink: 0;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qs-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-size: 12px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+}
+.qs-empty,
+.qs-cmd-hint {
+  padding: 18px 12px;
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 13px;
+}
+.qs-foot {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}

@@ -67,6 +67,8 @@ import { readFresh, peekHoverContent } from "./lib/filePrefetch";
 import { prepareDoc } from "./lib/parsePipeline";
 import { toPosix } from "./lib/path-shim";
 import { exportHtml, exportPdf, exportPng, exportDocx } from "./lib/exporter";
+import { vaultIndex } from "./lib/vaultIndex";
+import { QuickSwitcher } from "./components/QuickSwitcher";
 import { copyRich } from "./lib/clipboard";
 import { collectThemeCss } from "./lib/themeCss";
 import { showAlert, confirmDialog, choiceDialog } from "./lib/dialogs";
@@ -119,6 +121,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  // Ctrl+P 快速切换器（v4.7 知识功能）。
+  const [quickOpen, setQuickOpen] = useState(false);
   const [recentKey, setRecentKey] = useState(0);
   const [autosaveMsg, setAutosaveMsg] = useState("");
   // 单一定时器跟踪状态栏消息的自动清除：连续触发（快速保存 / 文件频繁外部
@@ -888,6 +892,22 @@ export default function App() {
     });
   }, []);
 
+  // ---- 全库索引（v4.7 知识功能地基）----------------------------------------
+  // 工作区/排除项/开关变化时重挂扫描与文件监听；索引在 idle 分批构建，
+  // 不阻塞启动与编辑。保存事件（手动 + 自动保存回调）走单文件增量更新。
+  // 关闭开关 → 拆监听停扫描（内存索引保留到进程退出，无持久化数据）。
+  useEffect(() => {
+    const enabled = settingsApi.settings.vaultIndexEnabled;
+    vaultIndex.enabled = enabled;
+    // 大文档性能模式开启时，用户正在输入/滚动 → 全库扫描让路（铁律 4）。
+    vaultIndex.shouldYield = () => settingsRef.current.settings.bigDocPerformance;
+    if (!enabled || workspaces.length === 0) {
+      vaultIndex.dispose();
+      return;
+    }
+    vaultIndex.setRoots(workspaces, excludedSet);
+  }, [workspaces, excludedSet, settingsApi.settings.vaultIndexEnabled]);
+
   // Open an externally-supplied path (double-clicked .md / `mditor.exe file.md`).
   // 多标签页（V3.6）：打开进新标签页，不会丢当前文档 —— 无需脏确认。
   const maybeOpen = useCallback(
@@ -1040,6 +1060,12 @@ export default function App() {
         case "o":
           e.preventDefault();
           dispatchMenuRef.current(e.shiftKey ? "file_open_folder" : "file_open");
+          break;
+        case "p":
+          // Ctrl+P：快速切换器（v4.7）。浏览器打印无默认快捷键冲突（Ctrl+P
+          // 在 WebView2 默认打印，编辑器场景统一让位给文件跳转）。
+          e.preventDefault();
+          setQuickOpen(true);
           break;
         case "\\":
           e.preventDefault();
@@ -1291,15 +1317,32 @@ export default function App() {
       case "file_add_folder":
         void addFolderFromDialog();
         break;
+      case "file_quick_open":
+        setQuickOpen(true);
+        break;
       case "file_save":
         // 乐观反馈：立即提示「已保存」，不等待落盘；失败时覆盖为「保存失败」。
+        // 保存成功后把内存内容推进全库索引（单文件增量，铁律 4）。
         flashStatus("已保存");
-        fa.save(() => editorRef.current?.getValue() ?? "").catch(() =>
-          flashStatus("保存失败", 5000)
-        );
+        {
+          const saved = editorRef.current?.getValue() ?? "";
+          const savedPath = fa.doc.path;
+          fa.save(() => saved)
+            .then(() => {
+              if (savedPath) vaultIndex.noteSaved(savedPath, saved);
+            })
+            .catch(() => flashStatus("保存失败", 5000));
+        }
         break;
       case "file_save_as":
-        void fa.saveAs(() => editorRef.current?.getValue() ?? "");
+        {
+          const saved = editorRef.current?.getValue() ?? "";
+          void fa.saveAs(() => saved).then((ok) => {
+            // saveAs 成功后 doc.path 已更新为落盘路径（useFile.saveAs 语义）。
+            const p = ok ? fa.doc.path : null;
+            if (p) vaultIndex.noteSaved(p, saved);
+          });
+        }
         break;
       case "file_export_html":
         void doExportRef.current("html");
@@ -1960,6 +2003,11 @@ export default function App() {
   const onAutosaved = useCallback(() => {
     flashStatus("已自动保存");
     setRecentKey((k) => k + 1);
+    // 自动保存同样推进全库索引（单文件增量）。
+    const fa = fileApiRef.current;
+    if (fa.doc.path) {
+      vaultIndex.noteSaved(fa.doc.path, editorRef.current?.getValue() ?? fa.doc.content);
+    }
   }, [flashStatus]);
   const onWatcherStatus = useCallback(
     (msg: string, kind: "sync" | "warn") => {
@@ -1990,6 +2038,9 @@ export default function App() {
     },
     []
   );
+
+  // 快速切换器选中 → 打开文件（openPath 依赖均 stable，身份稳定）。
+  const onQuickOpen = useCallback((path: string) => void openPath(path), [openPath]);
 
   // Stable filtered quick-action arrays (useMemo so identity only changes when
   // the underlying settings array changes, not on every render).
@@ -2362,6 +2413,13 @@ export default function App() {
         initialText={linkDialogText}
         onConfirm={onInsertLinkConfirm}
         onClose={() => setLinkDialogOpen(false)}
+      />
+
+      {/* v4.7 知识功能：Ctrl+P 快速切换器 */}
+      <QuickSwitcher
+        open={quickOpen}
+        onClose={() => setQuickOpen(false)}
+        onOpen={onQuickOpen}
       />
     </div>
   );
