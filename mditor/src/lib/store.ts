@@ -7,6 +7,7 @@
 // All access is async. The store is lazily loaded and cached for the session.
 
 import { LazyStore } from "@tauri-apps/plugin-store";
+import { emit } from "@tauri-apps/api/event";
 import {
   DEFAULT_SETTINGS,
   type AiModelConfig,
@@ -81,6 +82,10 @@ function migrateSettings(s: Settings, raw: Partial<Settings>): Settings {
 export async function saveSettings(s: Settings): Promise<void> {
   await store.set("settings", s);
   await store.save();
+  // v4.8 多窗口同步：落盘成功后广播。各窗 useSettings 监听后幂等重载磁盘
+  // 设置（主题等即时一致；自己收到自己的回声也无害——盘上内容与内存相同）。
+  // emit 失败静默：单窗口或事件层异常时维持各自现状，不影响保存本身。
+  await emit("settings-changed").catch(() => undefined);
 }
 
 // In-memory mirror of the `recent` list: keeps hot-path reads (every save

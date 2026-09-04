@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readTextFile } from "@tauri-apps/plugin-fs";
+import { listen } from "@tauri-apps/api/event";
 import {
   loadSettings,
   saveSettings,
@@ -113,6 +114,34 @@ export function useSettings(): SettingsApi {
         setLoading(false);
       }
     })();
+  }, []);
+
+  // v4.8 多窗口同步：另一窗保存设置后（saveSettings 广播 settings-changed）
+  // 幂等重载磁盘设置——主题 / 字号等即时跟随。自己收到自己的回声无害
+  // （重读到的是刚写入的同一份内容）。注册一次；不与 update() 的本地写
+  // 合并——本地写仍即时生效，这里只处理「别的窗口改了」的回放。
+  // 引用稳定性：监听器不依赖任何 state，本 effect 不参与返回值的 memo。
+  useEffect(() => {
+    const unlistenP = listen("settings-changed", () => {
+      void (async () => {
+        try {
+          const s = await loadSettings();
+          // 与初始加载同一顺序：模块开关先于 setSettings 生效。
+          setBigDocModeEnabled(s.bigDocPerformance);
+          setBigDocViewportEnabled(s.bigDocViewport);
+          setMathRenderConfig({
+            autoNumber: s.mathAutoNumber,
+            macros: parseMathMacros(s.mathMacros),
+          });
+          setSettings(s);
+        } catch {
+          /* 磁盘瞬时不可读等：保持本窗现状，下次广播再试 */
+        }
+      })();
+    });
+    return () => {
+      unlistenP.then((fn) => fn());
+    };
   }, []);
 
   const update = useCallback(

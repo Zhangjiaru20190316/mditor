@@ -106,10 +106,12 @@ function sameEntries(a: TreeNode[], b: TreeNode[]): boolean {
 const CHILD_CHUNK = 300;
 
 interface Props {
-  /** 工作区根目录列表（多根，V4.4）。空列表时组件不该被渲染（App 显示空态）。 */
+  /** 工作区根目录列表（多根，V4.4）。空数组时组件不该被渲染（App 显示空态）。 */
   roots: string[];
   activePath: string | null;
   onOpen: (path: string) => void;
+  /** v4.8 多窗口：右键「在新窗口打开」——不动本窗标签，新窗直接加载该文档。 */
+  onOpenNewWindow?: (path: string) => void;
   onChanged?: (change: TreeChange) => void;
   /** Absolute paths removed from the workspace tree (kept on disk). */
   excludedPaths: Set<string>;
@@ -125,7 +127,7 @@ interface MenuState {
   node: TreeNode;
 }
 
-export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onChanged, excludedPaths, onExclude, onRemoveRoot }: Props) {
+export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOpenNewWindow, onChanged, excludedPaths, onExclude, onRemoveRoot }: Props) {
   // T4: lazy tree state — dir path → loaded children, the expanded set, and the
   // set of dirs whose children are currently being read (for a "…" placeholder).
   const [childrenMap, setChildrenMap] = useState<Map<string, TreeNode[]>>(new Map());
@@ -149,6 +151,8 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onCh
   onChangedRef.current = onChanged;
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
+  const onOpenNewWindowRef = useRef(onOpenNewWindow);
+  onOpenNewWindowRef.current = onOpenNewWindow;
   const onExcludeRef = useRef(onExclude);
   onExcludeRef.current = onExclude;
   const onRemoveRootRef = useRef(onRemoveRoot);
@@ -832,6 +836,7 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onCh
           onClose={closeMenu}
           entries={treeMenuEntries(menu.node, {
             onOpen: openFile,
+            onOpenNewWindow: (p) => onOpenNewWindowRef.current?.(p),
             onRename: startRename,
             onDelete: deleteNode,
             onNewFile: (dir) => void createItem("file", dir),
@@ -1128,6 +1133,8 @@ const RenameInput = memo(function RenameInput({
 
 interface TreeMenuCallbacks {
   onOpen: (path: string) => void;
+  /** v4.8：右键「在新窗口打开」（仅文件项；未传入时隐藏该项）。 */
+  onOpenNewWindow?: (path: string) => void;
   onRename: (path: string) => void;
   onDelete: (node: TreeNode) => void;
   onNewFile: (dir: string) => void;
@@ -1160,6 +1167,9 @@ function treeMenuEntries(node: TreeNode, cb: TreeMenuCallbacks): CtxEntry[] {
       ]
     : [
         mkItem("open", "打开", () => cb.onOpen(node.path)),
+        ...(cb.onOpenNewWindow
+          ? [mkItem("open-new-window", "在新窗口打开", () => cb.onOpenNewWindow?.(node.path))]
+          : []),
         mkItem("rename", "重命名", () => cb.onRename(node.path)),
         mkItem("copy", "复制路径", () => void cb.onCopyPath(node.path)),
         mkItem("exclude", "从工作区移除", () => cb.onExclude(node)),

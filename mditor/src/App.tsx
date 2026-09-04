@@ -3,8 +3,9 @@
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { exit } from "@tauri-apps/plugin-process";
 import { readTextFile, readFile } from "@tauri-apps/plugin-fs";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -96,6 +97,14 @@ import {
 import { dedupeRoots, samePathFold } from "./lib/workspaces";
 import { dismissSplash } from "./lib/splash";
 import { takeHealSnapshot } from "./lib/session";
+import {
+  formatWindowTitle,
+  moveTabToNewWindow,
+  openEmptyNewWindow,
+  openPathInNewWindow,
+  parseBootParams,
+  takeHandoff,
+} from "./lib/multiWindow";
 import { countWords } from "./lib/textStats";
 import { isBigDoc } from "./lib/memory";
 import { motionEnabled } from "./lib/motion";
@@ -414,9 +423,12 @@ export default function App() {
   );
 
   /** 关闭标签：有路径且脏 → 先保存；未命名且脏 → 确认丢弃；关最后一个
-   *  → 回到一个干净的未命名标签。 */
+   *  → 回到一个干净的未命名标签。
+   *  v4.8 多窗口：`migrated` = 内容已随「移到新窗口」安全转移（有路径脏
+   *  标签已落盘、未命名脏缓冲已 stash 进新窗），跳过保存与丢弃确认——
+   *  弹「关闭后将丢失」对已迁移的内容是假警报。 */
   const closeTab = useCallback(
-    async (key: string) => {
+    async (key: string, opts?: { migrated?: boolean }) => {
       const cur = tabsRef.current;
       const idx = cur.findIndex((t) => t.key === key);
       if (idx < 0) return;
@@ -428,7 +440,7 @@ export default function App() {
         content = getCurrentContent();
         dirty = fileApiRef.current.doc.dirty;
       }
-      if (dirty && target.path) {
+      if (dirty && target.path && !opts?.migrated) {
         try {
           if (isActive) {
             await fileApiRef.current.writeOnly(() => content);
@@ -440,7 +452,7 @@ export default function App() {
         } catch {
           /* 保存失败继续关闭（内存快照已丢弃前提示） */
         }
-      } else if (dirty && !target.path) {
+      } else if (dirty && !target.path && !opts?.migrated) {
         const ok = await confirmDialog(
           `「${target.name}」有未保存的内容，关闭后将丢失。确认关闭？`
         );
@@ -478,6 +490,59 @@ export default function App() {
   activateTabRef.current = activateTab;
   const closeTabRef = useRef(closeTab);
   closeTabRef.current = closeTab;
+
+  /** v4.8 多窗口：把标签移到新窗口（TabsBar 右键「移到新窗口」）。有路径
+   *  的脏标签先静默落盘（沿用手动 close 语义：落盘优于弹窗），以干净状态
+   *  迁移；未命名脏缓冲把内容原样 stash 进新窗、脏标记完整保留。迁移成功
+   *  后以 `migrated` 关闭本窗该标签（跳过丢弃确认——内容已在另一窗口）。
+   *  滚动位置仅活动标签有 live 值可取（非活动标签的滚动记忆在 Editor 的
+   *  per-tab 记忆里，跨窗不迁移，best-effort 从顶部开始）。 */
+  const moveToNewWindow = useCallback(
+    async (key: string) => {
+      const cur = tabsRef.current;
+      const target = cur.find((t) => t.key === key);
+      if (!target) return;
+      const isActive = key === activeKeyRef.current;
+      const fa = fileApiRef.current;
+      let path = target.path;
+      let content = target.content;
+      let dirty = target.dirty;
+      if (isActive) {
+        const d = fa.doc;
+        path = d.path;
+        dirty = d.dirty;
+        // 干净标签免序列化（同 snapshotActiveTab）；脏标签向编辑器要实时值。
+        content = d.dirty ? getCurrentContent() : d.content;
+      }
+      if (dirty && path) {
+        try {
+          if (isActive) await fa.writeOnly(() => content);
+          else {
+            const { saveMd } = await import("./lib/tauriFs");
+            await saveMd(path, content);
+          }
+          dirty = false;
+        } catch {
+          /* 落盘失败：保脏迁移（内容不丢，新窗里仍是脏缓冲） */
+        }
+      }
+      const scrollTop = isActive
+        ? (document.querySelector<HTMLElement>(".mditor-editor-host")?.scrollTop ?? 0)
+        : 0;
+      try {
+        await moveTabToNewWindow(
+          { key: target.key, path, name: target.name, dirty, content },
+          scrollTop
+        );
+      } catch (e) {
+        noteOpError("move-tab-window", e);
+        void showAlert("打开新窗口失败", "Mditor", "error");
+        return;
+      }
+      await closeTabRef.current(key, { migrated: true });
+    },
+    [getCurrentContent]
+  );
 
   // ---- 关闭前收尾（v3.9.5 优化：落盘优于弹窗）-----------------------------
   // 点 X / Alt+F4 / 菜单退出默认直接结束进程，脏缓冲若没等到下一个自动保存
@@ -562,24 +627,40 @@ export default function App() {
   // 防重入（收尾期间的第二次关闭请求直接忽略，避免并发弹窗/并发 destroy）。
   const destroyingRef = useRef(false);
   const shutdownInFlightRef = useRef(false);
+  // 「退出」广播的 5s 硬退兜底计时器（app_exit 发起窗持有；本窗监听器收到
+  // 广播即取消——见 dispatchMenu 的 app_exit case 与 app-quit-request 监听）。
+  const quitFallbackTimerRef = useRef<number | undefined>(undefined);
 
-  /** 强制关闭：destroy() 与 exit(0) 兜底**并行调度**。Tauri 在 Windows 上的
-   *  destroy 在 close-requested 回调内有被吞/挂起的已知不可靠记录——v3.9.6
-   *  把 exit 兜底排在 `await destroy()` 之后且延迟 1s，destroy 一挂起兜底就
-   *  永远排不上日程，第一击就此死等，用户只能靠第二击的放行路径关窗（「退出
-   *  要点两次」的根因）。现在 destroy 不等待，250ms 后进程仍在即 exit(0)
-   *  硬退（收尾已在上层完成，硬退无数据可丢），exit 再失败回头补一次
-   *  destroy（v3.9.7）。 */
+  /** 强制关闭（v4.8 多窗口分级）：先无条件 destroy 自己——destroy 单个窗口
+   *  从不带走其它窗口。250ms 后本窗仍存活（Windows 上 destroy 在
+   *  close-requested 回调内有被吞/挂起的已知不可靠记录，v3.9.6/3.9.7）时
+   *  再盘点全 app 窗口数：仅当本窗已是最后一窗才允许 exit(0) 硬退（此时
+   *  整 app 退出 == 关闭本窗，收尾已在上层完成，硬退无数据可丢，语义与
+   *  单窗时代完全一致）；还有别的窗口则什么也不做——进程的生死交给最后
+   *  一个窗口的关闭收尾。双窗同时 destroy 的竞态由此天然安全：后消亡的
+   *  一方在 +250ms 时观察到自己已是最后一窗，由它兜底 exit；先消亡的一
+   *  方计时器随 webview 湮灭，不会再发号施令。 */
   const forceClose = useCallback(async () => {
     destroyingRef.current = true;
-    void getCurrentWindow().destroy().catch(() => {
-      /* destroy 失败（窗口已不在/被吞）— 交给 exit 兜底 */
+    const self = getCurrentWindow();
+    void self.destroy().catch(() => {
+      /* destroy 失败（窗口已不在/被吞）— 交给 250ms 后的最后一窗判定 */
     });
     window.setTimeout(() => {
-      void exit(0).catch(() => {
-        /* exit 也失败（权限等）— 最后再试一次 destroy */
-        void getCurrentWindow().destroy().catch(() => {});
-      });
+      void (async () => {
+        let count = 1;
+        try {
+          count = (await WebviewWindow.getAll()).length;
+        } catch {
+          /* getAll 失败（运行时异常）：按最后一窗处理，保留单窗旧行为 */
+        }
+        if (count <= 1) {
+          void exit(0).catch(() => {
+            /* exit 也失败（权限等）— 最后再试一次 destroy */
+            void self.destroy().catch(() => {});
+          });
+        }
+      })();
     }, 250);
   }, []);
   const forceCloseRef = useRef(forceClose);
@@ -640,6 +721,25 @@ export default function App() {
       })
     );
   }, [fileApi.doc]);
+
+  // ---- 窗口标题同步（v4.8 多窗口）--------------------------------------------
+  // 活动标签 name/dirty → 原生窗口标题：任务栏预览与 Alt+Tab 据此区分各
+  // 窗口的文档与保存状态（自绘标题栏不受影响；main 窗口同样生效）。依赖
+  // 收敛为两个原始值——仅当名字或脏态实际变化才发起一次 setTitle IPC，
+  // 打字期间（name/dirty 不变）零开销。
+  const activeTabForTitle = tabs.find((t) => t.key === activeKey) ?? null;
+  useEffect(() => {
+    void getCurrentWindow()
+      .setTitle(
+        formatWindowTitle(
+          activeTabForTitle?.name ?? "未命名.md",
+          activeTabForTitle?.dirty ?? false
+        )
+      )
+      .catch(() => {
+        /* 标题是纯装饰，失败静默（平台不支持 / 窗口收尾中） */
+      });
+  }, [activeTabForTitle?.name, activeTabForTitle?.dirty]);
 
   // 面板宽度拖拽调节（模块 C）：拖拽中直接改 CSS 变量保证跟手，松手时持久化。
   const sidebarResize = useResizable({
@@ -789,13 +889,26 @@ export default function App() {
   // content once the editor is ready — and best-effort restore the scroll
   // position. Mode intentionally resets to wysiwyg: restoring it would race
   // with the content load (switchMode captures live content into the rebuild).
+  //
+  // v4.8 多窗口启动路由（挂载时一次；与 heal 合并进同一 effect 保证优先级
+  // 唯一）：heal snapshot（本窗自愈重载，状态最新）> handoff（标签迁移载荷）
+  // > path（新窗口直接打开文档）> 都没有 → 维持现状（main：空白未命名）。
+  // 自愈重载会保留 URL 查询串，快照必须压过启动参数——用户在 doc 窗口里
+  // 可能早已切了标签，重载后回到快照记录的状态而不是 URL 里的初始文档。
   useEffect(() => {
+    // 非 main 窗口跳过开屏（铁律 1：splash / PendingFile / heal 冷启动路径
+    // 只属于 main）。立即淡出，不等工作区恢复的双 rAF——新窗口要尽快落在
+    // 目标文档上。
+    if (getCurrentWindow().label !== "main") dismissSplash();
+
     const snap = takeHealSnapshot();
-    if (!snap) return;
+    const boot = parseBootParams(window.location.search);
+    if (!snap && !boot.handoff && !boot.path) return;
     let cancelled = false;
 
-    const restoreScroll = () => {
-      if (snap.scrollTop <= 0) return;
+    /** 滚动恢复梯子（heal / handoff 共用，best-effort、失败静默）。 */
+    const restoreScrollTo = (scrollTop: number, tag: string) => {
+      if (scrollTop <= 0) return;
       // Give Milkdown a beat to render the (possibly large) reopened document
       // before pinning scroll; non-fatal if it lands slightly off. Retry
       // ladder: a tall doc may not have laid out by the first attempt, and a
@@ -806,10 +919,10 @@ export default function App() {
           if (cancelled) return;
           const el = document.querySelector<HTMLElement>(".mditor-editor-host");
           if (!el) return;
-          noteScrollWrite("heal-restore");
-          el.scrollTop = snap.scrollTop;
+          noteScrollWrite(tag);
+          el.scrollTop = scrollTop;
           if (
-            Math.abs(el.scrollTop - snap.scrollTop) > 4 &&
+            Math.abs(el.scrollTop - scrollTop) > 4 &&
             tries > 0
           ) {
             tryScroll(600, tries - 1);
@@ -819,28 +932,60 @@ export default function App() {
       tryScroll(250, 2);
     };
 
+    const applyHandoff = async (handoffId: string) => {
+      const payload = await takeHandoff(handoffId);
+      if (!payload || cancelled) return;
+      const { tab, scrollTop } = payload;
+      // 恢复为初始标签（含未命名脏缓冲：showDoc 直载 dirty 状态）：整表替换
+      // 挂载时的空白未命名标签，沿用原 key 保持滚动记忆。同 newUntitledTab
+      // 的 token 收发——内容已在内存（无 IO），只走顶栏动画。
+      const startedAt = performance.now();
+      const token = beginSwitch(tab.path, false);
+      setTabs([tab]);
+      setActiveKey(tab.key);
+      activeKeyRef.current = tab.key;
+      fileApiRef.current.showDoc(
+        { path: tab.path, content: tab.content, dirty: tab.dirty },
+        tab.key
+      );
+      finishSwitch(token, startedAt);
+      restoreScrollTo(scrollTop, "handoff-restore");
+    };
+
     const apply = async () => {
-      if (snap.path) {
-        await openPath(snap.path);
-        if (cancelled) return;
-        restoreScroll();
+      if (snap) {
+        if (snap.path) {
+          await openPath(snap.path);
+          if (cancelled) return;
+          restoreScrollTo(snap.scrollTop, "heal-restore");
+          return;
+        }
+        if (snap.untitledContent != null) {
+          // A fresh boot already starts on an untitled empty buffer; wait for the
+          // editor to be ready, then seed the captured content.
+          const trySet = (tries: number) => {
+            if (cancelled) return;
+            const ed = editorRef.current;
+            if (ed?.ready()) {
+              ed.setValue(snap.untitledContent ?? "");
+              fileApiRef.current.markDirty();
+              restoreScrollTo(snap.scrollTop, "heal-restore");
+            } else if (tries < 80) {
+              window.setTimeout(() => trySet(tries + 1), 50);
+            }
+          };
+          trySet(0);
+        }
         return;
       }
-      if (snap.untitledContent != null) {
-        // A fresh boot already starts on an untitled empty buffer; wait for the
-        // editor to be ready, then seed the captured content.
-        const trySet = (tries: number) => {
-          if (cancelled) return;
-          const ed = editorRef.current;
-          if (ed?.ready()) {
-            ed.setValue(snap.untitledContent ?? "");
-            fileApiRef.current.markDirty();
-            restoreScroll();
-          } else if (tries < 80) {
-            window.setTimeout(() => trySet(tries + 1), 50);
-          }
-        };
-        trySet(0);
+      if (boot.handoff) {
+        await applyHandoff(boot.handoff);
+        return;
+      }
+      if (boot.path) {
+        // 复用 openPath 全语义（同路径去重 / 预读缓存 / 切换动画）；挂载时的
+        // 干净空未命名标签被原位替换，不叠加多余标签。
+        await openPath(boot.path);
       }
     };
 
@@ -848,7 +993,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [openPath]);
+  }, [openPath, beginSwitch, finishSwitch]);
 
   // React to file-tree mutations (delete / rename) coming from FileTree.
   //   * deleted: drop every tab whose file vanished (dirty tabs with a path
@@ -1021,6 +1166,44 @@ export default function App() {
     };
   }, []); // ← register once — never re-attach
 
+  // ----- v4.8 多窗口：整 app 退出广播 ----------------------------------------
+  // 「退出」菜单 emit("app-quit-request")，各窗（含发起窗）各自 close() 走
+  // 自己的关闭管线（onCloseRequested → shutdownSequence → forceClose）。
+  // 注册一次；本窗若持有 5s 硬退兜底计时器，收到广播（协议回路通）即取消。
+  useEffect(() => {
+    const unlistenP = listen("app-quit-request", () => {
+      if (quitFallbackTimerRef.current !== undefined) {
+        window.clearTimeout(quitFallbackTimerRef.current);
+        quitFallbackTimerRef.current = undefined;
+      }
+      void getCurrentWindow().close();
+    });
+    return () => {
+      unlistenP.then((fn) => fn());
+    };
+  }, []); // ← register once — never re-attach
+
+  // ----- v4.8 多窗口：窗口重新聚焦时刷新「最近」列表 --------------------------
+  // 多窗并发 pushRecent 为 last-write-wins（已知可接受，见 CHANGELOG）；后台
+  // 窗口聚焦回来时 bump recentKey 让侧栏重读（loadRecent 命中内存镜像，零
+  // IO 成本），看到其它窗口打开过的文件。注册一次；仅聚焦沿生效。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    getCurrentWindow()
+      .onFocusChanged(({ payload }) => {
+        if (payload) setRecentKey((k) => k + 1);
+      })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {
+        /* 平台/权限不支持 focus 事件 — 静默（只是不自动刷新最近列表） */
+      });
+    return () => {
+      unlisten?.();
+    };
+  }, []); // ← register once — never re-attach
+
   // ----- external file open (double-click a .md in Explorer / `mditor.exe f.md`) -----
   // Two paths share the same `maybeOpen`:
   //   1) app launched WITH a file arg while not running → Rust stashed it in
@@ -1028,9 +1211,14 @@ export default function App() {
   //   2) app already running → second launch is caught by the single-instance
   //      plugin and re-emitted here as `open-file`.
   useEffect(() => {
-    invoke<string | null>("get_pending_file").then((p) => {
-      if (p) maybeOpen(p);
-    });
+    // PendingFile 只属于 main 冷启动（铁律 1）：命令行带 .md 启动的暂存路径
+    // 由 main 独占消费。实际时序上 doc 窗口总在 main 挂载之后才创建，这里
+    // 显式挡住语义，防止未来启动顺序变化时 doc 窗口误领。
+    if (getCurrentWindow().label === "main") {
+      invoke<string | null>("get_pending_file").then((p) => {
+        if (p) maybeOpen(p);
+      });
+    }
     const unlistenP = listen<string>("open-file", (ev) => {
       if (ev.payload) maybeOpen(ev.payload);
     });
@@ -1125,7 +1313,9 @@ export default function App() {
           break;
         case "n":
           e.preventDefault();
-          dispatchMenuRef.current("file_new");
+          // v4.8 多窗口：Ctrl/Cmd+Shift+N 新建窗口；Ctrl+N 仍新建标签，不冲突。
+          if (e.shiftKey) dispatchMenuRef.current("file_new_window");
+          else dispatchMenuRef.current("file_new");
           break;
         case "o":
           e.preventDefault();
@@ -1190,6 +1380,19 @@ export default function App() {
       statusTimerRef.current = undefined;
     }, ms);
   }, []);
+
+  // v4.8 多窗口：在新窗口打开文档（文件树 / 最近列表右键共用入口）。
+  // 稳定引用（flashStatus 空依赖）——FileTree/RecentList 均 memo，打字期间
+  // 不穿透重渲染。
+  const openInNewWindow = useCallback(
+    (p: string) => {
+      void openPathInNewWindow(p).catch((e) => {
+        noteOpError("open-in-new-window", e);
+        flashStatus("打开新窗口失败", 5000);
+      });
+    },
+    [flashStatus]
+  );
 
   // ----- multi-root workspace helpers (V4.4) -----
   // 添加一个根（大小写折叠去重；成功后开侧栏树页 + 记入最近工作区）。
@@ -1429,6 +1632,13 @@ export default function App() {
       case "file_new_template":
         setTemplateOpen(true);
         break;
+      case "file_new_window":
+        // v4.8 多窗口：新建空白窗口（菜单「新建窗口」/ Ctrl+Shift+N）。
+        void openEmptyNewWindow().catch((e) => {
+          noteOpError("new-window", e);
+          flashStatus("新建窗口失败", 5000);
+        });
+        break;
       case "file_open":
         void (async () => {
           const ok = await fa.open();
@@ -1547,14 +1757,30 @@ export default function App() {
         setAboutOpen(true);
         break;
       case "app_exit":
-        // 退出前收尾（v3.9.5）：exit(0) 直接结束进程、不会走窗口关闭事件，
-        // 这里先与「点 X」共用同一序列——有路径的脏标签静默落盘，未命名
-        // 脏缓冲确认后再退。序列带超时兜底，exit 失败时退回 forceClose。
+        // v4.8 多窗口「退出」= 广播协议：emit("app-quit-request")（含自己），
+        // 各窗自行 close() 走现有 onCloseRequested → shutdownSequence（flush
+        // 3s + 未命名确认）→ forceClose 管线。任何窗口的用户取消（未命名脏
+        // 缓冲确认点「否」）→ 该窗留存、整个 app 保留——与浏览器一致；最后
+        // 一窗关闭时 forceClose 自然 exit。跨窗「一窗收尾中另一窗发起退出」
+        // 由各窗独立的 shutdownInFlightRef 串行消化，无需全局锁。
+        // 兜底：先挂 5s 硬退计时器再广播；本窗监听器收到事件（协议回路通）
+        // 即取消——计时器只在「广播丢包/监听器全挂」的病态场景触发，且确认
+        // 弹窗期间（监听器早已收到过事件）不会被误伤。
         void (async () => {
+          quitFallbackTimerRef.current = window.setTimeout(() => {
+            quitFallbackTimerRef.current = undefined;
+            void exit(0).catch(() => {
+              /* 兜底路径不再连环重试 */
+            });
+          }, 5000);
           try {
-            if (await shutdownRef.current()) await exit(0);
+            await emit("app-quit-request");
           } catch (err) {
-            noteOpError("menu-exit", err);
+            noteOpError("menu-exit-broadcast", err);
+            if (quitFallbackTimerRef.current !== undefined) {
+              window.clearTimeout(quitFallbackTimerRef.current);
+              quitFallbackTimerRef.current = undefined;
+            }
             await forceCloseRef.current();
           }
         })();
@@ -2335,6 +2561,7 @@ export default function App() {
         activeKey={activeKey}
         onActivate={(k) => void activateTab(k)}
         onClose={(k) => void closeTab(k)}
+        onMoveToNewWindow={(k) => void moveToNewWindow(k)}
       />
       <aside className={`sidebar ${sidebarOpen ? "open" : "closed"}${docSwitching ? " is-switching" : ""}`}>
         <nav className="sb-tabs">
@@ -2416,6 +2643,7 @@ export default function App() {
                   roots={workspaces}
                   activePath={pendingPath ?? fileApi.doc.path}
                   onOpen={openPath}
+                  onOpenNewWindow={openInNewWindow}
                   onChanged={onTreeChange}
                   excludedPaths={excludedSet}
                   onExclude={handleExclude}
@@ -2454,7 +2682,7 @@ export default function App() {
             />
           )}
           {sidebarTab === "recent" && (
-            <RecentList onOpen={openPath} refreshKey={recentKey} />
+            <RecentList onOpen={openPath} refreshKey={recentKey} onOpenNewWindow={openInNewWindow} />
           )}
           {sidebarTab === "search" && (
             <>

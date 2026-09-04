@@ -1,4 +1,4 @@
-// 文档标签栏（V3.6 多标签页）。仅当打开 ≥2 个标签时渲染（单文档不占空间，
+// 文档标签栏（V3.6 多标签）。仅当打开 ≥2 个标签时渲染（单文档不占空间，
 // 与此前的单文档形态完全一致）。
 //
 // 交互：点击切换；中键 / × 关闭；未保存显示圆点（替代 ×，hover 时 × 回归，
@@ -10,16 +10,22 @@
 // 保存/确认逻辑不等动画、立即更新 tabs，残影只是视觉层；「无」档 /
 // prefers-reduced-motion 下退场动画被全局 kill switch 压成瞬时，残影窗口
 // 仅剩卸载时序。
+//
+// v4.8 多窗口：标签右键菜单（复用共享 ContextMenu），单项「移到新窗口」
+// ——把该标签（含未命名脏缓冲）迁移到新建的文档窗口，本窗关闭该标签。
 
 import { memo, useEffect, useRef, useState } from "react";
 import type { TabItem } from "../types";
 import { CloseIcon, MarkdownFileIcon } from "./icons";
+import { ContextMenu, type CtxEntry } from "./ContextMenu";
 
 interface Props {
   tabs: TabItem[];
   activeKey: string;
   onActivate: (key: string) => void;
   onClose: (key: string) => void;
+  /** v4.8：把标签移到新窗口（未命名脏缓冲的内容随迁移完整保留）。 */
+  onMoveToNewWindow: (key: string) => void;
 }
 
 /** 关闭退场残影的保留时长（与 CSS tab-out 动画对齐）。 */
@@ -30,11 +36,16 @@ export const TabsBar = memo(function TabsBar({
   activeKey,
   onActivate,
   onClose,
+  onMoveToNewWindow,
 }: Props) {
   // 刚从 props.tabs 里消失、正在播退场动画的标签（按关闭前快照渲染）。
   const [ghosts, setGhosts] = useState<TabItem[]>([]);
   const prevTabsRef = useRef(tabs);
   const ghostTimersRef = useRef<number[]>([]);
+  // 右键菜单：定位 + 目标标签 key（复用 FileTree 的 ContextMenu 壳）。
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; key: string } | null>(
+    null
+  );
 
   useEffect(() => {
     const prev = prevTabsRef.current;
@@ -69,6 +80,17 @@ export const TabsBar = memo(function TabsBar({
 
   if (tabs.length < 2 && ghosts.length === 0) return null;
 
+  const ctxEntries: CtxEntry[] = ctxMenu
+    ? [
+        {
+          kind: "item",
+          key: "move-window",
+          label: "移到新窗口",
+          fn: () => onMoveToNewWindow(ctxMenu.key),
+        },
+      ]
+    : [];
+
   return (
     <div className="tabbar" role="tablist" aria-label="打开的文档">
       {tabs.map((t) => {
@@ -81,6 +103,10 @@ export const TabsBar = memo(function TabsBar({
             className={`tabbar-tab${active ? " active" : ""}`}
             title={t.path ?? "未命名"}
             onClick={() => onActivate(t.key)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setCtxMenu({ x: e.clientX, y: e.clientY, key: t.key });
+            }}
             onMouseDown={(e) => {
               // 中键关闭（浏览器习惯）。
               if (e.button === 1) {
@@ -116,6 +142,15 @@ export const TabsBar = memo(function TabsBar({
           </button>
         </div>
       ))}
+      {/* v4.8：标签右键「移到新窗口」 */}
+      {ctxMenu && (
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          entries={ctxEntries}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
     </div>
   );
 });

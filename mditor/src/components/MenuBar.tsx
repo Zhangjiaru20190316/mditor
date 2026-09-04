@@ -63,6 +63,7 @@ function buildMenus(focusMode: boolean, theme: string, typewriter: boolean): Men
       entries: [
         item("file_new", "新建", "Ctrl+N"),
         item("file_new_template", "从模板新建…"),
+        item("file_new_window", "新建窗口", "Ctrl+Shift+N"),
         item("file_open", "打开文件…", "Ctrl+O"),
         item("file_open_folder", "打开文件夹…", "Ctrl+Shift+O"),
         item("file_add_folder", "添加文件夹到工作区…"),
