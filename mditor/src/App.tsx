@@ -939,6 +939,14 @@ export default function App() {
       // 恢复为初始标签（含未命名脏缓冲：showDoc 直载 dirty 状态）：整表替换
       // 挂载时的空白未命名标签，沿用原 key 保持滚动记忆。同 newUntitledTab
       // 的 token 收发——内容已在内存（无 IO），只走顶栏动画。
+      // 防 key 碰撞：恢复的未命名标签占据 untitled-{n} 命名空间——把本窗
+      // 计数器推过它，否则后续 Ctrl+N 会生成重复 key（React 渲染错乱）。
+      const seqMatch = /^untitled-(\d+)$/.test(tab.key)
+        ? Number(tab.key.slice("untitled-".length))
+        : 0;
+      if (seqMatch > 0) {
+        untitledSeqRef.current = Math.max(untitledSeqRef.current, seqMatch);
+      }
       const startedAt = performance.now();
       const token = beginSwitch(tab.path, false);
       setTabs([tab]);
