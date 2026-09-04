@@ -6,11 +6,13 @@
 //!   * expose a couple of small Rust commands that are awkward to do from JS
 //!     (appending to the diagnostics log, converting a filesystem path to an
 //!      `asset://` URL, resolving the app data dir)
-//!   * forward native menu events to the React frontend via `app.emit`
+//!   * forward native menu events to the React frontend via `emit_to` on the
+//!     focused window (v4.8 多窗口定向路由)
 
 mod commands;
 mod ai;
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 #[cfg(not(target_os = "windows"))]
@@ -21,6 +23,31 @@ use tauri::{Emitter, Manager};
 /// (e.g. the user double-clicked a `.md` while the app was NOT running yet).
 /// The frontend pulls and clears it once via the `get_pending_file` command.
 pub struct PendingFile(pub Mutex<Option<String>>);
+
+/// 最近聚焦窗口的 label（v4.8 多窗口焦点路由）。单实例的 `open-file` 与
+/// 原生菜单事件不再全 app 广播（那会让每个窗口都开同一个文件），改为
+/// `emit_to` 只投给焦点窗口。初始值 "main"——启动后没有任何焦点事件时
+/// （理论窗口：启动即有文件参数）退化为旧的 main 行为。
+pub struct LastFocused(pub Mutex<String>);
+
+/// 焦点路由目标：优先记录的焦点窗口；该窗口已销毁则回落 main。
+/// 返回 None = 进程里一个可用窗口都没有（收尾瞬间），调用方自行放弃。
+fn focused_webview_window<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Option<tauri::WebviewWindow<R>> {
+    let label = app
+        .state::<LastFocused>()
+        .0
+        .lock()
+        .ok()
+        .map(|g| g.clone());
+    match label {
+        Some(l) => app
+            .get_webview_window(&l)
+            .or_else(|| app.get_webview_window("main")),
+        None => app.get_webview_window("main"),
+    }
+}
 
 /// Extension list — kept in sync with `MD_FILTERS` in `src/lib/tauriFs.ts`.
 const MD_EXTS: &[&str] = &["md", "markdown", "mdx", "mdown"];
@@ -51,6 +78,7 @@ fn find_md_arg(args: &[String]) -> Option<String> {
 pub mod menu_ids {
     pub const NEW: &str = "file_new";
     pub const NEW_TEMPLATE: &str = "file_new_template";
+    pub const NEW_WINDOW: &str = "file_new_window";
     pub const OPEN: &str = "file_open";
     pub const OPEN_FOLDER: &str = "file_open_folder";
     pub const ADD_FOLDER: &str = "file_add_folder";
@@ -95,6 +123,8 @@ pub fn run() {
     // When the app is already running and a second `.md` is double-clicked,
     // this callback fires with the new command line — we forward the path to
     // the live frontend and raise the window instead of spawning a 2nd process.
+    // v4.8 多窗口：open-file 与抬升都定向到焦点窗口（不再全 app 广播——
+    // 广播会让每个窗口都开这个文件；硬编码 main 则永远冷落其它窗口）。
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -102,9 +132,12 @@ pub fn run() {
                 // Best-effort: if the frontend hasn't mounted its listener yet
                 // (shouldn't happen here since the app is already running), it
                 // just misses the event.
-                let _ = app.emit("open-file", path);
+                if let Some(w) = focused_webview_window(app) {
+                    let _ = app.emit_to(w.label(), "open-file", path);
+                }
             }
-            if let Some(w) = app.get_webview_window("main") {
+            let target = focused_webview_window(app);
+            if let Some(w) = target {
                 let _ = w.unminimize();
                 let _ = w.show();
                 let _ = w.set_focus();
@@ -119,11 +152,16 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_process::init())
         .manage(PendingFile(Mutex::new(None)))
+        .manage(LastFocused(Mutex::new("main".to_string())))
+        .manage(commands::TabPayloadStash(Mutex::new(HashMap::new())))
         .invoke_handler(tauri::generate_handler![
             commands::append_log,
             commands::app_data_dir,
             commands::get_pending_file,
             commands::fetch_image,
+            commands::create_doc_window,
+            commands::stash_tab_payload,
+            commands::take_tab_payload,
             ai::ai_chat,
             ai::ai_chat_stream,
             ai::ai_chat_cancel,
@@ -138,6 +176,7 @@ pub fn run() {
                 let file_menu = SubmenuBuilder::new(app, "文件")
                     .text(NEW, "新建")
                     .text(NEW_TEMPLATE, "从模板新建…")
+                    .text(NEW_WINDOW, "新建窗口")
                     .text(OPEN, "打开文件…")
                     .text(OPEN_FOLDER, "打开文件夹…")
                     .text(ADD_FOLDER, "添加文件夹到工作区…")
@@ -232,9 +271,29 @@ pub fn run() {
         .on_menu_event(|app_handle, event| {
             // Forward every custom menu click to the frontend as `menu` event.
             // Native (predefined) items (copy/paste/quit/...) are handled by the OS.
+            // v4.8 多窗口：定向投给焦点窗口（全 app 广播会让每个窗口都执行
+            // 一次菜单动作——保存/导出全都会串台）。
             let id = event.id().0.as_str().to_string();
             // Best-effort emit: if the frontend isn't ready yet it just misses it.
-            let _ = app_handle.emit("menu", id);
+            if let Some(w) = focused_webview_window(app_handle) {
+                let _ = app_handle.emit_to(w.label(), "menu", id);
+            }
+        })
+        // v4.8 多窗口：记录最近聚焦的窗口 label，供单实例 open-file 与原生
+        // 菜单事件做 emit_to 定向路由。Focused(false) 不清除记录——失焦瞬
+        // 间（比如点进另一个应用）仍应路由到用户最后所在的 Mditor 窗口。
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Focused(true)) {
+                let label = window.label().to_string();
+                if let Ok(mut g) = window
+                    .app_handle()
+                    .state::<LastFocused>()
+                    .0
+                    .lock()
+                {
+                    *g = label;
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running Mditor");
