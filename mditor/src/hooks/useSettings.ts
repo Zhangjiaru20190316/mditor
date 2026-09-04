@@ -126,6 +126,11 @@ export function useSettings(): SettingsApi {
       void (async () => {
         try {
           const s = await loadSettings();
+          // 回声去重：盘上内容与本窗内存一致时不 setState。两处对象都出自
+          // 同一 merge 路径（键序稳定），JSON 相等判定可靠；省掉 settingsApi
+          // 引用变化引发的级联 effect 重跑（excludedPaths 新引用会让
+          // vaultIndex 全量重挂文件监听）。
+          if (JSON.stringify(s) === JSON.stringify(settingsRef.current)) return;
           // 与初始加载同一顺序：模块开关先于 setSettings 生效。
           setBigDocModeEnabled(s.bigDocPerformance);
           setBigDocViewportEnabled(s.bigDocViewport);
