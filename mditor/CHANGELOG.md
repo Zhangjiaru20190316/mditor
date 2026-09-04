@@ -1,5 +1,33 @@
 # Changelog
 
+## 4.8.0 (2026-09-04)（多窗口多开）
+
+从「单窗口多标签」升级为「多窗口多开」：每个窗口是一套完整编辑器（自带标签栏 / 侧栏 / AI 面板），可开任意多个窗口，把不同文档分窗并排（Win+左/右分屏）对比阅读，用任务栏 / Alt+Tab 切换。零新依赖（前端无新 npm 包，Rust 无新 crate，WebviewWindowBuilder 为 tauri 自带）。
+
+### 新增
+
+- **窗口基座（Rust）**：`create_doc_window` 命令建窗——第一窗口 label 恒为 `main`（冷启动路径 PendingFile / heal snapshot / splash 只属于它），新窗口 `doc-{n}`（计数器 + 存活检查）；级联定位（相对源窗口偏移 32px，clamp ≥0）；URL 只带 `path` / `handoff` 短参数，dev/build 双模式正确解析
+- **标签迁移 handoff**：未命名脏缓冲、大文档快照走 Rust 侧 stash（存-取-删，60s TTL 惰性清理），绝不进 URL 查询参数；新窗恢复为初始标签（含脏标记）并尽力恢复滚动位置
+- **焦点路由**：单实例二次启动（双击 .md）与原生菜单事件 `emit_to` 定向到焦点窗口（此前全 app 广播会让每个窗口都开同一文件 / 重复执行菜单动作）；抬升目标从硬编码 main 改为焦点窗口
+- **关闭语义分级**：关一个窗口绝不再带走其它窗口——`forceClose` 先 destroy 自己，250ms 后仍存活且已是最后一窗才 `exit(0)` 硬退（双窗同时 destroy 的竞态由「后消亡者兜底」天然安全）；所有关闭路径（点 X / Alt+F4 / 菜单退出 / 落盘超时兜底）统一过这条检查
+- **「退出」广播协议**：菜单退出 emit `app-quit-request`，各窗自行走现有 flush（3s 超时）+ 未命名确认 → forceClose 管线；任一窗口取消确认 → 整 app 保留（与浏览器一致）；5s 硬退兜底仅在广播回路断裂的病态场景触发（监听器收到事件即取消）
+- **入口 UI 四件套**：菜单「新建窗口」（Ctrl+Shift+N，与 Ctrl+N 新标签不冲突）；标签右键「移到新窗口」（未命名脏缓冲内容+脏标记完整迁移，有路径脏标签先落盘）；文件树 / 最近列表右键「在新窗口打开」（本窗标签不动）
+- **窗口标题同步**：活动标签 name/dirty → 原生窗口标题（`• name — Mditor`），任务栏预览与 Alt+Tab 可区分各窗口文档与保存状态；依赖收敛为两个原始值，打字期间零 IPC
+- **多窗一致性**：设置保存后广播 `settings-changed`，各窗幂等重载（主题等即时跟随）；窗口重新聚焦时刷新「最近」列表；同文件开两窗时干净窗随另一窗保存秒级自动重载（对比阅读的实时同步，复用现有 file watcher 语义不改）
+
+### 工程纪律
+
+- capabilities：windows 由 `["main"]` 扩为 `["main", "doc-*"]`；仅增补 `core:window:allow-destroy` / `core:window:allow-set-title` 两项必需权限（`getAll` / `emit` / `listen` 已含于 core:default），CSP 不变
+- 零状态架构迁移：每窗口独立 App 实例，App.tsx 的 ref 镜像 / 空依赖稳定回调 / 「监听注册一次」模式全部延续
+- vitest 532 → 539（新增 multiWindow 7 用例：URL 构建/解析往返含 `#`、`&`、中文、空格路径，标题格式，空串参数边界）；Rust urlencode 单测随行
+- 明确不做（防镀金）：标签拖拽出窗、窗口内 split 分栏、跨窗拖放 / 合并窗口、多窗布局会话恢复、跨窗共享 vaultIndex / RAG 索引、QuickSwitcher Ctrl+Enter 新窗打开
+
+### 已知成本与已知问题
+
+- 每窗口约一个 webview 的额外内存（独立 vaultIndex / AI 面板实例，接受重复成本，不做跨窗共享）；后台窗口动画已由 `app-idle` 让路
+- 多窗并发 `pushRecent` 为 last-write-wins（极端时序下最近列表排序可能丢一条窗口间交错，重聚焦自动刷新兜底）
+- 非 Windows 原生菜单事件与单实例 open-file 定向到「最近聚焦」窗口；焦点记录在窗口全部失焦时保留最后值（点进其它应用后再双击 .md，仍路由到用户最后所在的 Mditor 窗口）
+
 ## 4.7.0-beta.1 (2026-09-03)（知识功能套件：全库索引 / 双链 / 学术引用 / 闪卡 / 全库问答）
 
 从「单文件编辑器」到「本地优先的知识工具」的五模块升级，共享一个全库索引地基，全部数据留在本地（语法规范见 `docs/research-features.md`，验收样例 `docs/demo.md`）。索引 / 双链 / 闪卡默认启用（纯本地）；RAG 默认关闭（消耗嵌入 API，需显式配置）。
