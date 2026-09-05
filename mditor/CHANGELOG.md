@@ -1,5 +1,37 @@
 # Changelog
 
+## 4.9.0 (2026-09-05)（AI Agent：工具调用 / 批量整理 / 改动清单审阅）
+
+AI 面板从「纯对话」升级为可选的 **Agent 架构**：面板顶部新增「对话 | Agent」分段开关（选择持久化），Agent 模式下 AI 能真正检索、读取、编辑、新建、重命名、删除笔记并支持批量整理。普通对话模式行为与改造前完全一致（请求体逐字节不变，见 Rust 单测锚点）；全部改动先暂存内存、经「改动清单」审阅后才落地。零新增 Rust / npm 依赖（trash crate 因网络不可达改用规格书备选方案：Windows PowerShell 回收站 API）。
+
+### 新增
+
+- **Rust tool calling 管线**：`ChatMessage` 可选 `tool_calls` / `tool_call_id` 字段（`skip_serializing_if` 保证旧消息序列化逐字节一致）；`ai_chat` / `ai_chat_stream` 新增可选 `tools` 参数透传（None 时不发送该键）；SSE 流式 `tool_calls` 分片增量聚合（按 index 分组、id/name 取首非空、arguments 拼接）+ 新事件 `ai_stream_tool_calls`（仅 `finish_reason == "tool_calls"` 发射一次，[DONE]/EOF 补发安全网兜住漏发 finish_reason 的兼容实现）
+- **前端 Agent 核心（`src/lib/agent/` 五模块）**：`types`（AgentMessage / ToolDefinition / ChangePlan 等）、`tools`（10 工具注册表 + 安全边界）、`loop`（runAgent 主循环，上限 12 轮、到顶强制收尾轮、tools 不支持自动降级普通对话并提示、arguments 非法 JSON 回传自纠）、`prompt`（Agent system prompt：路径 + 大纲 + 短文内联 + 工作区根）、`apply`（ChangePlan 应用：部分勾选重算 + 应用时二次校验 old_text）；`lib/ai.ts` 新增 `agentChatStream`（不动现有 `chatStream`，复用同一套事件 / 模型解析 / 取消链路）
+- **10 个工具**：`read_note`（截断保护）/ `get_outline`（围栏内 # 不误判）/ `list_notes`（上限 300，复用 workspaceSearch 收集逻辑）/ `search_notes`（关键词全文检索）/ `semantic_search`（向量检索，未配置时提示改用关键词）/ `edit_note`（old_text 唯一匹配语义 + replace_all + 工作副本链式生效）/ `append_to_note` / `create_note` / `rename_note` / `delete_note`；工具结果 JSON 字符串化、超 24k 字符截断置 `truncated`
+- **写入策略可配置**：设置 → AI → Agent 小节新增 `agentWriteMode`（默认 `confirm` 逐条审阅；`auto` 仅当前笔记的编辑/追加循环结束直接应用 + toast 提示 Ctrl+Z 可撤销）；create/rename/delete 无论如何都需确认
+- **AiPanel 集成**：模式分段开关（持久化 `aiPanelMode`，默认 chat）；工具调用卡片（图标 + 中文名 + 参数摘要 + 执行中/成功/失败状态 + 可展开结果预览）与流式文本按发生顺序穿插（消息时间线）；AgentPlanReview 跨文件改动清单（按文件分组、edit 可展开 diff、逐条勾选 / 全选 / 放弃，delete 标红明示「移入回收站」）；快捷指令在 Agent 模式作为首条用户消息进入 agent 链路；RAG 开关对 Agent 模式隐藏（检索由工具承担）
+- **回收站删除（红线 trash > rm）**：新 Rust 命令 `trash_file`——零依赖跨平台实现（Windows PowerShell `Microsoft.VisualBasic.FileIO` + `SendToRecycleBin`，路径经环境变量传入零转义面；macOS Finder osascript；Linux gio trash / trash-put）；`fileOps.deleteFile` / `deleteDirRecursive` 迁移至回收站，全代码库不再有不可恢复删除调用
+- **工作副本与 ChangePlan**：Agent 循环期间写类工具只改内存工作副本 + 追加 op（上限 100 条），同文件多条 op 依序链式生效；应用时对磁盘/编辑器实际内容二次校验 old_text，外部修改导致的冲突标记失败并展示原因；当前笔记编辑走 `aiWriteDoc`（一步撤销 + markDirty → 自动保存链路），其他文件读改写一次落盘，create/rename 拒绝覆盖已存在目标
+
+### 安全边界
+
+- 写类工具路径必须解析后落在已打开的工作区根目录内（拒绝 `..` 穿越与越界绝对路径；当前笔记本身除外）；相对路径挂第一个工作区根（工具结果恒返回绝对路径）
+- FS 操作应用后经现有 `TreeChange` 处理（关标签 / 改路径 / 清最近列表）+ `mditor:vault-mutated` 轻量事件刷新文件树；当前笔记被删除/重命名给出明确提示（绝不静默关闭）
+
+### 工程纪律
+
+- 向后兼容锚点：`chat_message_serialization_unchanged_without_tool_fields`（无 tool 字段序列化逐字节一致）、`build_request_body_tools_passthrough`（None 无 tools 键）；`ai_chat`（测试连接）行为不变
+- vitest 539 → 578（新增 agent 39 用例：路径安全边界 / edit 匹配语义 / 工作副本链式 / 大纲围栏 / prompt 阈值 / 主循环消息序列与降级与上限 / apply 重算）；Rust 测试 9 → 15（聚合多分片多 index 交错 / 线格式样例回放 / 序列化兼容 / 请求体透传）
+- Settings 新增 `aiPanelMode` / `agentWriteMode`（types.test.ts 清单锚点同步更新）；多窗口设置同步（`settings-changed` 广播）天然覆盖新字段
+
+### 已知限制
+
+- 语义检索依赖嵌入配置与已建向量索引（未配置时工具返回错误并引导模型改用 `search_notes`）
+- Ollama 等本地模型可能不支持 tools：自动降级为不带 tools 的普通对话（面板提示「已降级」），降级后无工具能力
+- Agent 模式的追问/批注/插入等动作基于最终纯文本回答（工具卡片仅展示）；选区问答与「一键修复格式」恒走普通对话链路
+- Windows 回收站删除经 PowerShell 子进程（约数百 ms）；trash crate 方案因本环境 crates.io 不可达而未采用，代码留有清晰分层，后续可无痛切换
+
 ## 4.8.0 (2026-09-04)（多窗口多开）
 
 从「单窗口多标签」升级为「多窗口多开」：每个窗口是一套完整编辑器（自带标签栏 / 侧栏 / AI 面板），可开任意多个窗口，把不同文档分窗并排（Win+左/右分屏）对比阅读，用任务栏 / Alt+Tab 切换。零新依赖（前端无新 npm 包，Rust 无新 crate，WebviewWindowBuilder 为 tauri 自带）。

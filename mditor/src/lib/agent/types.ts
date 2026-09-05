@@ -81,6 +81,11 @@ export interface ToolCallRecord {
   result: string;
 }
 
+/** Agent 消息时间线：文本段与工具卡片按发生顺序穿插展示。 */
+export type AgentTimelineItem =
+  | { type: "text"; text: string }
+  | { type: "tool"; record: ToolCallRecord };
+
 /** 空计划（循环无写操作时）。 */
 export function emptyPlan(): ChangePlan {
   return { ops: [], workingCopies: new Map() };
