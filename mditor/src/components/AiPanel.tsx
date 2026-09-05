@@ -57,6 +57,7 @@ import { buildThreadHistory } from "../lib/aiThread";
 import { applyHunks, diffText, unwrapWholeFence, type DiffHunk } from "../lib/diff";
 import { MarkdownText } from "./MarkdownText";
 import { DiffReview } from "./DiffReview";
+import { AgentPlanReview } from "./AgentPlanReview";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useDelayedUnmount } from "../hooks/useDelayedUnmount";
 import { AiIcon, TrashIcon, CloseIcon, ChevronRightIcon } from "./icons";
@@ -64,6 +65,11 @@ import { buildRagMessages, RAG_TOP_K, toSources, type RagSource } from "../lib/r
 import { ragIndex } from "../lib/ragIndex";
 import { vaultIndex } from "../lib/vaultIndex";
 import { confirmDialog } from "../lib/dialogs";
+import { runAgent } from "../lib/agent/loop";
+import { applyChangePlan, type ApplyPlanOutcome } from "../lib/agent/apply";
+import { CURRENT_KEY, TOOL_BY_NAME, normPath, type ToolContext } from "../lib/agent/tools";
+import { emptyPlan, type AgentTimelineItem, type ChangePlan, type ToolCallRecord } from "../lib/agent/types";
+import type { TreeChange } from "./FileTree";
 import type { Settings, Theme, ThinkingStrength } from "../types";
 
 export interface AiPanelHandle {
@@ -100,6 +106,10 @@ interface Props {
   settings: Settings;
   /** Read the current note text (for the system-prompt context). */
   getNote: () => string;
+  /** 当前笔记的磁盘绝对路径（null = 未命名）——Agent 工具的当前笔记锚点（v4.9）。 */
+  getNotePath: () => string | null;
+  /** 工作区根列表（Agent 检索/文件操作的安全边界基准，v4.9）。 */
+  workspaces: string[];
   /** Insert AI output at the cursor (full-doc mode) — one undo step. */
   onInsert: (md: string) => void;
   /** Insert AI output immediately after the current selection. */
@@ -122,6 +132,8 @@ interface Props {
   onSettingsChange: (patch: Partial<Settings>) => void;
   /** 关闭 AI 面板（顶部 ✕ 按钮）。 */
   onClose: () => void;
+  /** Agent 应用 FS 操作后的变更通知（复用 App 的 FileTree TreeChange 处理，v4.9）。 */
+  onTreeChange?: (change: TreeChange) => void;
 }
 
 type Role = "user" | "assistant";
@@ -159,9 +171,15 @@ interface Msg {
   /** True while this assistant message is still streaming in. */
   streaming?: boolean;
   /** Reasoning / thinking tokens (reasoning models only). Shown in a
-   * collapsible block above the answer: auto-expands while the model thinks,
-   * auto-collapses once the visible answer starts flowing in. */
+   *  collapsible block above the answer: auto-expands while the model thinks,
+   *  auto-collapses once the visible answer starts flowing in. */
   reasoning?: string;
+  /** （v4.9 Agent）时间线：文本段与工具卡片按发生顺序穿插。存在时正文渲染
+   *  走时间线而非 content（content 仅在回合结束时结算为纯文本，供插入/
+   *  复制/追问等动作使用）。 */
+  timeline?: AgentTimelineItem[];
+  /** （v4.9 Agent）本条用户消息走 Agent 链路（渲染模式 chip）。 */
+  agent?: boolean;
 }
 
 // Cap the in-memory conversation: each finished assistant reply holds a full
@@ -172,7 +190,7 @@ interface Msg {
 const MAX_MESSAGES = 100;
 
 export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
-  { open, settings, getNote, onInsert, onInsertAfterSelection, onApplyChanges, onJumpToText, onAnnotate, onOpenSettings, onOpenNote, onSettingsChange, onClose },
+  { open, settings, getNote, getNotePath, workspaces, onInsert, onInsertAfterSelection, onApplyChanges, onJumpToText, onAnnotate, onOpenSettings, onOpenNote, onSettingsChange, onClose, onTreeChange },
   ref
 ) {
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -202,6 +220,21 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
   const streamOutRef = useRef("");
   /** 进行中的改动预览（非空时面板切换为审查视图）。 */
   const [review, setReview] = useState<ReviewState | null>(null);
+  // ---- Agent 链路（v4.9）-----------------------------------------------------
+  /** Agent 模式进行中请求的中止器（「停止」按钮触发）。 */
+  const agentAbortRef = useRef<AbortController | null>(null);
+  /** Agent 改动清单审阅（非空时面板切换为清单视图）。 */
+  const [agentReview, setAgentReview] = useState<{
+    plan: ChangePlan;
+    decisions: Record<string, boolean>;
+  } | null>(null);
+  // Agent 回合中工具卡片/时间线的更新走 ref 镜像，保持回调稳定。
+  const workspacesRef = useRef(workspaces);
+  workspacesRef.current = workspaces;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const getNotePathRef = useRef(getNotePath);
+  getNotePathRef.current = getNotePath;
   // Id of the assistant message currently being refined into an annotation
   // (shows a busy hint on its "批注" button). -1 when idle. Tracked by stable
   // message id (not array index) so the hint stays on the right row even if the
@@ -255,13 +288,34 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
       const next = [...prev];
       for (let i = next.length - 1; i >= 0; i--) {
         if (next[i].role === "assistant" && next[i].streaming) {
-          next[i] = {
-            ...next[i],
-            content: hasContent ? next[i].content + contentDelta : next[i].content,
-            reasoning: hasReasoning
-              ? (next[i].reasoning ?? "") + reasoningDelta
-              : next[i].reasoning,
-          };
+          // Agent 消息：正文进时间线（与工具卡片按发生顺序穿插），不进 content
+          // ——content 只在回合结束时结算为纯文本供插入/复制/追问使用。
+          if (next[i].timeline) {
+            const tl: AgentTimelineItem[] = [...(next[i].timeline ?? [])];
+            if (hasContent) {
+              const last = tl[tl.length - 1];
+              if (last && last.type === "text") {
+                tl[tl.length - 1] = { type: "text", text: last.text + contentDelta };
+              } else {
+                tl.push({ type: "text", text: contentDelta });
+              }
+            }
+            next[i] = {
+              ...next[i],
+              timeline: tl,
+              reasoning: hasReasoning
+                ? (next[i].reasoning ?? "") + reasoningDelta
+                : next[i].reasoning,
+            };
+          } else {
+            next[i] = {
+              ...next[i],
+              content: hasContent ? next[i].content + contentDelta : next[i].content,
+              reasoning: hasReasoning
+                ? (next[i].reasoning ?? "") + reasoningDelta
+                : next[i].reasoning,
+            };
+          }
           break;
         }
       }
@@ -311,6 +365,7 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
       setUsage({ input: 0, output: 0 });
       streamOutRef.current = "";
       setReview(null);
+      setAgentReview(null);
       // 精炼流挂起（invoke 永不落地）时 handleAnnotate 的 finally 不会执行，
       // 复位防「批注」按钮永久停在“精炼中…”禁用态。
       setAnnotatingId(-1);
@@ -321,6 +376,8 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
   // Tear down any in-flight stream on unmount / close.
   useEffect(() => {
     if (!open) {
+      agentAbortRef.current?.abort();
+      agentAbortRef.current = null;
       streamRef.current?.cancel();
       streamRef.current = null;
       setLoading(false);
@@ -339,12 +396,16 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
         cancelAnimationFrame(rafIdRef.current);
         rafIdRef.current = null;
       }
+      agentAbortRef.current?.abort();
+      agentAbortRef.current = null;
       streamRef.current?.cancel();
       streamRef.current = null;
     };
   }, []);
 
   const configured = isAiConfigured(settings);
+  /** Agent 模式（v4.9）：面板顶部「对话 | Agent」分段开关的当前档。 */
+  const agentMode = settings.aiPanelMode === "agent";
 
   const fullActions = useMemo(
     () => settings.aiQuickActions.filter((a) => a.scope === "full"),
@@ -432,6 +493,13 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     }
     setError("");
     setNotice("");
+
+    // Agent 模式（v4.9）：全文问答 / 快捷指令走 runAgent 工具循环。选区、
+    // 追问、内置动作（一键修复等 preset）保持普通对话行为不变。
+    if (agentMode && opts.mode === "full" && !opts.preset && !opts.parent) {
+      await sendAgent(text);
+      return;
+    }
 
     // ---- 全库问答（v4.7 模块 5）：问题 → 嵌入 → 余弦 top-k → 上下文消息。
     // 追问（parent）走线程链携带上下文，不重新检索；失败静默回退普通全文
@@ -690,14 +758,259 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     });
   };
 
+  // ---- Agent 链路（v4.9）----------------------------------------------------
+  // runAgent 驱动「模型 → 工具 → 模型」循环：流式正文/思考进时间线（与工具
+  // 卡片按发生顺序穿插），工具结果驱动卡片状态；循环结束产出 ChangePlan，
+  // 按 agentWriteMode 分流（auto：当前笔记 edit/append 直接应用；其余一律
+  // 弹 AgentPlanReview 审阅）。
+
   // 结算一次流式输出的本地 token 估算（完成/出错/停止/清空时调用）。
+  // （提前到 Agent 段之前定义——sendAgent 的依赖数组在渲染期引用它。）
   const tallyOutput = useCallback(() => {
     const out = streamOutRef.current;
     streamOutRef.current = "";
     if (out) setUsage((u) => ({ ...u, output: u.output + estimateTokens(out) }));
   }, []);
 
+  /** 把流式缓冲立即落到消息（回合结束/出错前调用，避免丢尾帧）。 */
+  const flushNow = useCallback(() => {
+    if (rafIdRef.current != null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    if (pendingDeltaRef.current.length > 0 || pendingReasoningRef.current.length > 0) {
+      flushDelta();
+    }
+  }, [flushDelta]);
+
+  /** 时间线上的工具卡片 upsert：无 patch（或 callId 不存在）时新增，否则原地更新。 */
+  const upsertAgentTool = useCallback(
+    (record: ToolCallRecord, patch?: Partial<ToolCallRecord>) => {
+      setMessages((prev) => {
+        const next = [...prev];
+        for (let i = next.length - 1; i >= 0; i--) {
+          const m = next[i];
+          if (m.role === "assistant" && m.streaming && m.timeline) {
+            const exists = m.timeline.some(
+              (it) => it.type === "tool" && it.record.callId === record.callId
+            );
+            const tl = exists
+              ? m.timeline.map((it) =>
+                  it.type === "tool" && it.record.callId === record.callId
+                    ? { type: "tool" as const, record: { ...it.record, ...patch } }
+                    : it
+                )
+              : [...m.timeline, { type: "tool" as const, record }];
+            next[i] = { ...m, timeline: tl };
+            break;
+          }
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  /** 回合收尾：结算纯文本 content（供插入/复制/追问），置 streaming=false。 */
+  const finalizeAgentMessage = useCallback((id: number, answerText: string) => {
+    setMessages((prev) => {
+      const next = [...prev];
+      const i = next.findIndex((m) => m.id === id);
+      if (i >= 0) {
+        const m = next[i];
+        const joined = (m.timeline ?? [])
+          .filter((it): it is { type: "text"; text: string } => it.type === "text")
+          .map((it) => it.text)
+          .join("");
+        const text = answerText || joined;
+        const hasTool = (m.timeline ?? []).some((it) => it.type === "tool");
+        if (!text && !m.reasoning && !hasTool) {
+          next.splice(i, 1);
+        } else {
+          next[i] = { ...m, streaming: false, content: text };
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  /** Agent 改动的应用出口（当前笔记经 onApplyChanges 一步撤销写回）。 */
+  const runApply = useCallback(
+    async (plan: ChangePlan, selected: Set<string>): Promise<ApplyPlanOutcome> => {
+      return applyChangePlan(plan, selected, {
+        currentPath: getNotePathRef.current(),
+        getCurrentNote: getNote,
+        writeCurrentNote: (merged) => {
+          onApplyChanges({ mode: "full", range: null, original: getNote(), merged });
+        },
+      });
+    },
+    [getNote, onApplyChanges]
+  );
+
+  /** 应用结果上报：提示 + FS 变更通知（标签页/最近列表 + 文件树刷新）。 */
+  const reportAgentApply = useCallback(
+    (outcome: ApplyPlanOutcome) => {
+      const failed = outcome.results.filter((r) => !r.ok);
+      const okCount = outcome.results.length - failed.length;
+      const fs = outcome.fs;
+      // FS 变更 → 复用 App 的 FileTree TreeChange 处理（关标签/改路径/清最近）。
+      if (fs.deleted.length > 0) onTreeChange?.({ type: "deleted", paths: fs.deleted });
+      for (const r of fs.renamed) onTreeChange?.({ type: "renamed", from: r.from, to: r.to });
+      if (fs.created.length + fs.renamed.length + fs.deleted.length > 0) {
+        // 文件树刷新（FileTree 监听的轻量全局事件）。
+        window.dispatchEvent(new CustomEvent("mditor:vault-mutated"));
+      }
+      const parts: string[] = [];
+      if (okCount > 0) parts.push(`已应用 ${okCount} 条改动`);
+      if (failed.length > 0) parts.push(`${failed.length} 条失败`);
+      // 当前笔记被删除/重命名：明确提示（标签处理已由 onTreeChange 完成，
+      // 绝不静默关闭）。
+      const cur = getNotePathRef.current();
+      if (cur) {
+        const ncur = normPath(cur);
+        if (fs.deleted.some((p) => normPath(p) === ncur)) {
+          parts.push("当前笔记已移入系统回收站（可恢复），其标签已关闭");
+        } else if (fs.renamed.some((r) => normPath(r.from) === ncur)) {
+          parts.push("当前笔记已重命名，标签与路径已同步");
+        }
+      }
+      setNotice(parts.length > 0 ? parts.join("，") + "。" : "没有可应用的改动。");
+      if (failed.length > 0) {
+        setError(
+          `部分改动未应用：${failed
+            .map((f) => f.error ?? "未知原因")
+            .join("；")
+            .slice(0, 300)}`
+        );
+      }
+    },
+    [onTreeChange]
+  );
+
+  /** 循环结束后的改动分流：auto 当前笔记内容编辑直接应用，其余进审阅。 */
+  const handleAgentPlan = useCallback(
+    async (plan: ChangePlan) => {
+      const s = settingsRef.current;
+      const curPath = getNotePathRef.current();
+      const curKey = curPath ? normPath(curPath) : CURRENT_KEY;
+      let remaining = plan.ops;
+      if (s.agentWriteMode === "auto") {
+        const autoOps = plan.ops.filter(
+          (o) => (o.kind === "edit" || o.kind === "append") && normPath(o.path) === curKey
+        );
+        if (autoOps.length > 0) {
+          const outcome = await runApply(plan, new Set(autoOps.map((o) => o.opId)));
+          const okCount = outcome.results.filter((r) => r.ok).length;
+          if (okCount > 0) setNotice(`已自动应用 ${okCount} 处当前笔记修改（Ctrl+Z 可撤销）。`);
+          if (outcome.results.some((r) => !r.ok)) reportAgentApply(outcome);
+          const autoIds = new Set(autoOps.map((o) => o.opId));
+          remaining = plan.ops.filter((o) => !autoIds.has(o.opId));
+        }
+      }
+      if (remaining.length > 0) {
+        setAgentReview({
+          plan: { ops: remaining, workingCopies: plan.workingCopies },
+          decisions: Object.fromEntries(remaining.map((o) => [o.opId, true])),
+        });
+      }
+    },
+    [runApply, reportAgentApply]
+  );
+
+  const sendAgent = useCallback(
+    async (text: string) => {
+      const userMsgId = ++msgIdRef.current;
+      const aiMsgId = ++msgIdRef.current;
+      turnAnchorIdRef.current = userMsgId;
+      setMessages((prev) => {
+        const next: Msg[] = [
+          ...prev,
+          { id: userMsgId, role: "user", content: text, mode: "full", agent: true },
+          { id: aiMsgId, role: "assistant", content: "", mode: "full", timeline: [], streaming: true },
+        ];
+        return next.length > MAX_MESSAGES ? next.slice(next.length - MAX_MESSAGES) : next;
+      });
+      setInput("");
+      setFollowUpFor(-1);
+      setFollowUpDraft("");
+      setFollowUpQuote(null);
+      streamOutRef.current = "";
+      setLoading(true);
+      setUsage((u) => ({ ...u, input: u.input + estimateTokens(text) }));
+
+      const ac = new AbortController();
+      agentAbortRef.current = ac;
+      const ctx: ToolContext = {
+        currentPath: getNotePathRef.current(),
+        getCurrentNote: getNote,
+        workspaces: workspacesRef.current,
+        settings: settingsRef.current,
+        plan: emptyPlan(),
+      };
+
+      let result: Awaited<ReturnType<typeof runAgent>>;
+      try {
+        result = await runAgent({
+          ctx,
+          userMessage: text,
+          signal: ac.signal,
+          onEvent: (e) => {
+            if (e.type === "chunk") {
+              if (e.delta) pendingDeltaRef.current.push(e.delta);
+            } else if (e.type === "reasoning") {
+              if (e.delta) pendingReasoningRef.current.push(e.delta);
+            } else if (e.type === "tool-start") {
+              upsertAgentTool(e.record);
+            } else if (e.type === "tool-end") {
+              upsertAgentTool(
+                {
+                  callId: e.callId,
+                  name: "",
+                  argsRaw: "",
+                  status: e.status,
+                  summary: e.summary,
+                  result: e.result,
+                },
+                { status: e.status, summary: e.summary, result: e.result }
+              );
+            } else if (e.type === "degraded") {
+              setNotice("当前模型不支持工具调用，已降级为普通对话。");
+            }
+            if ((e.type === "chunk" || e.type === "reasoning") && rafIdRef.current == null) {
+              rafIdRef.current = requestAnimationFrame(flushDelta);
+            }
+          },
+        });
+      } catch (e) {
+        flushNow();
+        finalizeAgentMessage(aiMsgId, "");
+        setError(String(e));
+        setLoading(false);
+        agentAbortRef.current = null;
+        return;
+      }
+      flushNow();
+      finalizeAgentMessage(aiMsgId, result.answer);
+      tallyOutput();
+      setLoading(false);
+      agentAbortRef.current = null;
+      if (!result.cancelled && result.plan.ops.length > 0) {
+        await handleAgentPlan(result.plan);
+      }
+    },
+    [getNote, flushNow, finalizeAgentMessage, handleAgentPlan, upsertAgentTool, flushDelta, tallyOutput]
+  );
+
   const stop = () => {
+    // Agent 回合：中止器触发 runAgent 取消路径，收尾（flush/结算/清 loading）
+    // 由 sendAgent 的 await 返回后的续体完成；这里同步翻 loading 让按钮即时复位。
+    if (agentAbortRef.current) {
+      agentAbortRef.current.abort();
+      tallyOutput();
+      setLoading(false);
+      return;
+    }
     streamRef.current?.cancel();
     streamRef.current = null;
     tallyOutput();
@@ -716,6 +1029,8 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
   };
 
   const clearChat = () => {
+    agentAbortRef.current?.abort();
+    agentAbortRef.current = null;
     streamRef.current?.cancel();
     streamRef.current = null;
     tallyOutput();
@@ -728,6 +1043,7 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     setFollowUpQuote(null);
     setUsage({ input: 0, output: 0 });
     setReview(null);
+    setAgentReview(null);
     activeSelectionRef.current = "";
   };
 
@@ -863,6 +1179,45 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
     }
   }, [messages, openReview]);
 
+  // ---- Agent 改动清单审阅（v4.9）---------------------------------------------
+
+  const toggleAgentOp = useCallback((opId: string) => {
+    setAgentReview((prev) =>
+      prev
+        ? { ...prev, decisions: { ...prev.decisions, [opId]: !prev.decisions[opId] } }
+        : prev
+    );
+  }, []);
+
+  const setAgentAll = useCallback((accept: boolean) => {
+    setAgentReview((prev) =>
+      prev
+        ? {
+            ...prev,
+            decisions: Object.fromEntries(prev.plan.ops.map((o) => [o.opId, accept])),
+          }
+        : prev
+    );
+  }, []);
+
+  const cancelAgentReview = useCallback(() => setAgentReview(null), []);
+
+  const applyAgentReview = useCallback(async () => {
+    if (!agentReview) return;
+    const selected = new Set(
+      Object.entries(agentReview.decisions)
+        .filter(([, v]) => v)
+        .map(([k]) => k)
+    );
+    if (selected.size === 0) {
+      setAgentReview(null);
+      return;
+    }
+    const outcome = await runApply(agentReview.plan, selected);
+    reportAgentApply(outcome);
+    setAgentReview(null);
+  }, [agentReview, runApply, reportAgentApply]);
+
   // Keep a ref to the latest `send` so the imperative handle below can stay
   // stable (empty deps) instead of rebuilding every turn. Without this, every
   // 全库问答索引构建（v4.7 模块 5）：首次构建前明示成本（嵌入 API 处理 N 个
@@ -986,13 +1341,33 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
         </div>
       </div>
 
+      {/* 模式分段开关（v4.9）：普通对话（现状）| Agent（工具调用链路）。 */}
+      <div className="ai-mode-row">
+        <div className="ai-mode-switch" role="group" aria-label="AI 面板模式">
+          <button
+            className={agentMode ? "" : "on"}
+            title="普通对话：AI 只回答，不操作文件（行为与既往一致）"
+            onClick={() => onSettingsChange({ aiPanelMode: "chat" })}
+          >
+            对话
+          </button>
+          <button
+            className={agentMode ? "on" : ""}
+            title="Agent：AI 可检索/读取/编辑/新建/重命名/删除笔记；改动先暂存，审阅后才应用"
+            onClick={() => onSettingsChange({ aiPanelMode: "agent" })}
+          >
+            Agent
+          </button>
+        </div>
+      </div>
+
       {!configured && (
         <div className="ai-banner">
           尚未配置 AI。<button onClick={onOpenSettings}>去设置</button>
         </div>
       )}
 
-      {activeSelectionRef.current && !review && (
+      {activeSelectionRef.current && !review && !agentReview && (
         <div className="ai-ctx-banner" title={activeSelectionRef.current}>
           当前针对「选中片段」回答。
           <button
@@ -1006,7 +1381,7 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
         </div>
       )}
 
-      {notice && !review && <div className="ai-notice">{notice}</div>}
+      {notice && !review && !agentReview && <div className="ai-notice">{notice}</div>}
 
       {review ? (
         <DiffReview
@@ -1018,6 +1393,18 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
           onApply={applyReview}
           onCancel={cancelReview}
           onJump={jumpToHunk}
+        />
+      ) : agentReview ? (
+        <AgentPlanReview
+          plan={agentReview.plan}
+          currentKey={
+            getNotePath() ? normPath(getNotePath()!) : CURRENT_KEY
+          }
+          decisions={agentReview.decisions}
+          onToggle={toggleAgentOp}
+          onSetAll={setAgentAll}
+          onApply={() => void applyAgentReview()}
+          onCancel={cancelAgentReview}
         />
       ) : (
         <>
@@ -1046,12 +1433,26 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
           <div className="ai-msgs" ref={scrollRef}>
             {messages.length === 0 && !loading && (
               <div className="ai-empty">
-                问任何关于这篇笔记的问题，或试试上方的快捷操作。
-                <br />
-                选中文字可针对片段提问 / 改写 / 翻译；每条回答下的「追问」可就
-                该回答继续深入。
-                <br />
-                例如：「这篇笔记的要点是什么？」「把第二段改得更简洁。」
+                {agentMode ? (
+                  <>
+                    Agent 模式：AI 可以检索、读取、编辑、新建、重命名和删除笔记。
+                    <br />
+                    所有改动先暂存为「改动清单」，审阅（可逐条勾选）后才应用；
+                    删除进系统回收站，可恢复。
+                    <br />
+                    例如：「我哪几篇笔记讲过 X？」「把当前笔记的二级标题统一
+                    改成大写」「给 XX 文件夹下的笔记统一加 frontmatter」。
+                  </>
+                ) : (
+                  <>
+                    问任何关于这篇笔记的问题，或试试上方的快捷操作。
+                    <br />
+                    选中文字可针对片段提问 / 改写 / 翻译；每条回答下的「追问」可就
+                    该回答继续深入。
+                    <br />
+                    例如：「这篇笔记的要点是什么？」「把第二段改得更简洁。」
+                  </>
+                )}
               </div>
             )}
             {rows.length > 0 && (
@@ -1109,8 +1510,11 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
           </div>
 
           {/* v4.7 模块 5：全库问答开关 + 索引构建（默认关；开启前需配置嵌入模型）。
-              构建走 appDataDir/rag-index.json 增量缓存，暂停/续跑随时可续。 */}
-          <div className="ai-rag-row">
+              构建走 appDataDir/rag-index.json 增量缓存，暂停/续跑随时可续。
+              v4.9：Agent 模式下隐藏——检索已由工具（search_notes /
+              semantic_search）承担。 */}
+          {!agentMode && (
+            <div className="ai-rag-row">
             <button
               className={`ai-rag-toggle${ragOn ? " on" : ""}`}
               title={
@@ -1152,15 +1556,20 @@ export const AiPanel = memo(forwardRef<AiPanelHandle, Props>(function AiPanel(
                 )}
               </>
             )}
-          </div>
+            </div>
+          )}
 
           <div className="ai-input-row">
             <textarea
               className="ai-input"
               placeholder={
-                activeSelectionRef.current
-                  ? "针对选中片段提问，Enter 发送，Shift+Enter 换行"
-                  : "输入问题，Enter 发送，Shift+Enter 换行"
+                agentMode
+                  ? activeSelectionRef.current
+                    ? "Agent 模式针对全文工作；选区问答请切回「对话」"
+                    : "描述任务，Enter 发送——Agent 将检索并修改笔记（改动需审阅）"
+                  : activeSelectionRef.current
+                    ? "针对选中片段提问，Enter 发送，Shift+Enter 换行"
+                    : "输入问题，Enter 发送，Shift+Enter 换行"
               }
               value={input}
               rows={2}
@@ -1261,6 +1670,34 @@ const ThinkingDots = memo(function ThinkingDots() {
   );
 });
 
+/** Agent 工具调用卡片（v4.9）：图标 + 工具中文名 + 参数/结果摘要 + 状态，
+ * 可展开结果预览（代码块样式）。状态自持 expanded，卸载即清。 */
+const ToolCard = memo(function ToolCard({ record }: { record: ToolCallRecord }) {
+  const [open, setOpen] = useState(false);
+  const label = TOOL_BY_NAME.get(record.name)?.label ?? record.name;
+  return (
+    <div className={`agent-card agent-card-${record.status}`}>
+      <button
+        className="agent-card-head"
+        onClick={() => setOpen((v) => !v)}
+        title={record.argsRaw.slice(0, 300)}
+      >
+        <span className="agent-card-dot" aria-hidden="true" />
+        <span className="agent-card-label">{label}</span>
+        {record.summary && <span className="agent-card-summary">{record.summary}</span>}
+        <span className="agent-card-caret">
+          <ChevronRightIcon size={11} className={`chevron${open ? " open" : ""}`} />
+        </span>
+      </button>
+      {open && record.result && (
+        <pre className="agent-card-result">
+          {record.result.length > 4000 ? record.result.slice(0, 4000) + "\n…（截断）" : record.result}
+        </pre>
+      )}
+    </div>
+  );
+});
+
 const MsgRow = memo(function MsgRow({
   msg,
   depth,
@@ -1286,6 +1723,10 @@ const MsgRow = memo(function MsgRow({
   const hasContent = msg.content.length > 0;
   const hasReasoning = !!(msg.reasoning && msg.reasoning.length > 0);
   const isThread = depth > 0;
+  // Agent 时间线消息：已有文本段（流式或定稿）时不再显示「正在思考」占位。
+  const hasTimelineText = (msg.timeline ?? []).some(
+    (it) => it.type === "text" && it.text.length > 0
+  );
   const fuRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     if (followUpActive) fuRef.current?.focus();
@@ -1386,6 +1827,7 @@ const MsgRow = memo(function MsgRow({
       >
         {isThread && <span className="ai-thread-tag">追问</span>}
         {msg.rag && <span className="ai-ctx-tag">全库问答</span>}
+        {msg.agent && <span className="ai-ctx-tag agent">Agent</span>}
         {msg.quote && (
           <div className="ai-quote-chip" title={msg.quote}>
             {msg.quote}
@@ -1424,7 +1866,33 @@ const MsgRow = memo(function MsgRow({
           )}
         </div>
       )}
-      {msg.streaming ? (
+      {/* Agent 时间线（v4.9）：文本段与工具卡片按发生顺序穿插。流式期间纯文本
+          + 光标；定稿后文本段用 MarkdownText 渲染（与普通回答一致）。 */}
+      {msg.timeline ? (
+        <div className="agent-timeline">
+          {msg.timeline.map((it, i) =>
+            it.type === "tool" ? (
+              <ToolCard key={`tool-${it.record.callId}`} record={it.record} />
+            ) : it.text ? (
+              msg.streaming ? (
+                <div key={`text-${i}`} className="ai-msg-content agent-text ai-streaming">
+                  {it.text}
+                  <span className="ai-cursor" aria-hidden="true">▍</span>
+                </div>
+              ) : (
+                <div
+                  key={`text-${i}`}
+                  ref={i === 0 ? bodyRef : undefined}
+                  className="ai-msg-body"
+                >
+                  <MarkdownText content={it.text} theme={theme} className="ai-msg-content" />
+                </div>
+              )
+            ) : null
+          )}
+          {msg.streaming && !hasTimelineText && !hasReasoning && <ThinkingDots />}
+        </div>
+      ) : msg.streaming ? (
         hasContent ? (
           // 正文流入中：纯文本 + 闪烁光标（streaming 结束后因条件渲染自动移除）
           <div className="ai-msg-content ai-streaming">

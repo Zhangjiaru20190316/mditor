@@ -636,6 +636,26 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                   </span>
                 </Field>
 
+                {/* v4.9 Agent 小节：模式说明 + 写入策略（模式本身在 AI 面板顶部切换）。 */}
+                <div className="field-section">Agent</div>
+                <Field label="Agent 写入策略">
+                  <select
+                    value={draft.agentWriteMode}
+                    onChange={(e) =>
+                      set("agentWriteMode", e.target.value as Settings["agentWriteMode"])
+                    }
+                  >
+                    <option value="confirm">逐条确认（默认）</option>
+                    <option value="auto">自动应用当前笔记编辑</option>
+                  </select>
+                  <span className="hint">
+                    Agent 模式（AI 面板顶部「对话 | Agent」切换）下改动的落地方式。
+                    「自动」仅对当前笔记的内容编辑（编辑/追加）在循环结束后直接应用
+                    （Ctrl+Z 可一步撤销）；其他文件与文件系统操作（新建/重命名/删除）
+                    无论如何都要经「改动清单」审阅确认，删除一律进系统回收站（可恢复）。
+                  </span>
+                </Field>
+
                 {/* Advanced sampling params — collapsed by default (平滑展开/收起)。 */}
                 <button
                   type="button"

@@ -2459,6 +2459,294 @@ body.is-resizing .ai-panel {
   font-size: var(--font-size-s);
 }
 
+/* ---- Agent 模式（v4.9）：模式分段开关 / 工具卡片 / 时间线 / 改动清单 ------- */
+
+/* 面板顶部「对话 | Agent」分段开关（紧贴 .ai-head 下方）。 */
+.ai-mode-row {
+  display: flex;
+  justify-content: center;
+  padding: 8px 14px 0;
+}
+.ai-mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  overflow: hidden;
+  background: var(--card-bg);
+}
+.ai-mode-switch button {
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--font-size-s);
+  padding: 4px 18px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.ai-mode-switch button:hover {
+  color: var(--fg);
+}
+.ai-mode-switch button.on {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Agent 消息时间线：文本段与工具卡片按发生顺序纵向排列。 */
+.agent-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 100%;
+}
+.agent-timeline .agent-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 工具调用卡片：紧凑行 + 可展开结果预览（代码块样式）。 */
+.agent-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--card-bg);
+  overflow: hidden;
+}
+.agent-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: var(--font-size-s);
+  padding: 5px 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.13s ease;
+}
+.agent-card-head:hover {
+  background: var(--hover);
+}
+.agent-card-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--fg-muted);
+}
+.agent-card-ok .agent-card-dot {
+  background: var(--success);
+}
+.agent-card-error .agent-card-dot {
+  background: var(--danger);
+}
+.agent-card-running .agent-card-dot {
+  background: var(--accent);
+  animation: agent-card-pulse 1s ease-in-out infinite;
+}
+@keyframes agent-card-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.agent-card-label {
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.agent-card-summary {
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.agent-card-caret {
+  color: var(--fg-muted);
+  flex: 0 0 auto;
+  display: inline-flex;
+}
+.agent-card-caret .chevron {
+  transition: transform 0.15s ease;
+}
+.agent-card-caret .chevron.open {
+  transform: rotate(90deg);
+}
+.agent-card-result {
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: rgba(127, 127, 127, 0.08);
+  color: var(--fg-muted);
+  font-family: var(--mono-font, monospace);
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+}
+/* 用户消息上的 Agent 模式 chip（区别于「全库问答」）。 */
+.ai-ctx-tag.agent {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Agent 改动清单审阅（与 .diff-review 同域的独立容器）。 */
+.apr {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--sidebar-bg);
+}
+.apr-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.apr-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  overflow: hidden;
+}
+.apr-group-head {
+  padding: 6px 10px;
+  background: var(--card-bg);
+  font-size: var(--font-size-s);
+  font-weight: 600;
+  color: var(--fg);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.apr-group-count {
+  margin-left: 8px;
+  color: var(--fg-muted);
+  font-weight: 400;
+  font-size: var(--font-size-xs);
+}
+.apr-op {
+  border-bottom: 1px solid var(--border);
+}
+.apr-op:last-child {
+  border-bottom: none;
+}
+.apr-op.off {
+  opacity: 0.55;
+}
+.apr-op-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.apr-check {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0 0 10px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.apr-check input {
+  cursor: pointer;
+}
+.apr-op-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: var(--font-size-s);
+  padding: 7px 10px 7px 0;
+  cursor: pointer;
+  text-align: left;
+}
+.apr-op-main:hover {
+  background: var(--hover);
+}
+.apr-op-kind {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  padding: 1px 7px;
+  border-radius: var(--radius-m);
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.apr-op-kind.danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.apr-op-title {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.apr-op-tag {
+  margin-left: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+}
+.apr-op-note {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  color: var(--danger);
+}
+.apr-op-caret {
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+  display: inline-flex;
+}
+.apr-op-caret .chevron {
+  transition: transform 0.15s ease;
+}
+.apr-op-caret .chevron.open {
+  transform: rotate(90deg);
+}
+.apr-diff {
+  border-top: 1px dashed var(--border);
+  padding: 6px 10px;
+}
+.apr-diff-hunk {
+  margin-bottom: 4px;
+}
+.apr-diff-hunk:last-child {
+  margin-bottom: 0;
+}
+.apr-diff-empty {
+  padding: 6px 10px;
+  color: var(--fg-muted);
+  font-size: var(--font-size-s);
+  border-top: 1px dashed var(--border);
+}
+.apr-op-danger {
+  background: var(--danger-soft);
+}
+.apr-op-preview {
+  border-top: 1px dashed var(--border);
+}
+.apr-op-preview pre {
+  margin: 0;
+  padding: 8px 10px;
+  font-family: var(--mono-font, monospace);
+  font-size: var(--font-size-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow: auto;
+  color: var(--fg-muted);
+}
+
 /* ---- 追问线程（对 AI 回答追问）------------------------------------------ */
 /* 追问层级：左侧连接线 + 弱化底色，与根层对话一眼区分。缩进宽度由
    MsgRow 的 inline marginLeft 控制（封顶 4 层）。 */

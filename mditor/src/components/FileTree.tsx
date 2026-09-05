@@ -256,6 +256,14 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
     })();
   }, []);
 
+  // v4.9 Agent：应用改动清单（新建/重命名/删除）后由 AI 面板广播的轻量全局
+  // 事件——树自身没有对应 UI 操作，必须外部触发才能看到 Agent 的 FS 变更。
+  useEffect(() => {
+    const handler = () => refreshAll();
+    window.addEventListener("mditor:vault-mutated", handler);
+    return () => window.removeEventListener("mditor:vault-mutated", handler);
+  }, [refreshAll]);
+
   // ---- initial load + reload all loaded levels when roots/excludedPaths change
   // Always (re)load EVERY root's top level and refresh any previously-loaded
   // levels that still live under one of the current roots; entries from roots

@@ -2162,6 +2162,8 @@ export default function App() {
   // ---- them (SearchBar, AiPanel, SelectionToolbar) skip re-renders during typing.
   const closeSearch = useCallback(() => setSearchOpen(false), []);
   const getMarkdown = useCallback(() => editorRef.current?.getValue() ?? "", []);
+  /** 当前笔记磁盘路径（null = 未命名）——Agent 工具的当前笔记锚点（v4.9）。 */
+  const getNotePath = useCallback(() => fileApiRef.current.doc.path, []);
   const setMarkdown = useCallback((md: string) => editorRef.current?.setValue(md), []);
   const focusEditor = useCallback(() => editorRef.current?.find(), []);
   const getEditorSelection = useCallback(
@@ -2793,6 +2795,8 @@ export default function App() {
         open={aiOpen}
         settings={settingsApi.settings}
         getNote={getMarkdown}
+        getNotePath={getNotePath}
+        workspaces={workspaces}
         onInsert={aiInsert}
         onInsertAfterSelection={insertAfterSelection}
         onApplyChanges={applyAiChanges}
@@ -2802,6 +2806,7 @@ export default function App() {
         onOpenNote={(p, h) => void onOpenRagNote(p, h)}
         onSettingsChange={onSettingsChange}
         onClose={closeAi}
+        onTreeChange={onTreeChange}
       />
 
       <SelectionToolbar

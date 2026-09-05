@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "./types";
 
-/** 重构前（v3.9.7）的 Settings 字段全集 + v4.1 motionLevel + v4.2 devMode + v4.4.1 bigDocPerformance + v4.6 mathAutoNumber/mathMacros + v4.6.1 bigDocViewport + v4.7 vaultIndexEnabled/wikiLinksEnabled + v4.7 模块 3 bibliographyPath/citationStyle。 */
+/** 重构前（v3.9.7）的 Settings 字段全集 + v4.1 motionLevel + v4.2 devMode + v4.4.1 bigDocPerformance + v4.6 mathAutoNumber/mathMacros + v4.6.1 bigDocViewport + v4.7 vaultIndexEnabled/wikiLinksEnabled + v4.7 模块 3 bibliographyPath/citationStyle + v4.9 Agent aiPanelMode/agentWriteMode。 */
 const SETTING_KEYS = [
   "theme",
   "motionLevel",
@@ -47,6 +47,8 @@ const SETTING_KEYS = [
   "aiHistoryBudgetTokens",
   "aiAnnotateMaxChars",
   "aiThinkingStrength",
+  "aiPanelMode",
+  "agentWriteMode",
   "aiModels",
   "aiActiveModelId",
   "aiQuickActions",
@@ -102,6 +104,8 @@ const SCALAR_DEFAULTS: Record<string, unknown> = {
   aiHistoryBudgetTokens: 8000,
   aiAnnotateMaxChars: 4000,
   aiThinkingStrength: "off",
+  aiPanelMode: "chat",
+  agentWriteMode: "confirm",
   aiActiveModelId: "default",
   vaultIndexEnabled: true,
   wikiLinksEnabled: true,
