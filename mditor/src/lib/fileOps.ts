@@ -2,17 +2,19 @@
 //
 // Deliberately kept separate from tauriFs.ts (which is read/open/save only) so
 // the "destructive" surface is easy to audit. Everything here is pure frontend
-// — no Rust commands required. The fs plugin permissions (fs:allow-remove /
-// fs:allow-rename / fs:allow-mkdir / fs:allow-write-file) are already granted
-// globally via capabilities/default.json.
+// — no Rust commands required for create / rename (fs plugin permissions are
+// granted globally via capabilities/default.json). DELETION is the exception:
+// since v4.9 deleteFile / deleteDirRecursive route through the Rust
+// `trash_file` command (system recycle bin, recoverable) — the project red
+// line is trash > rm, and no code path may hard-delete.
 
 import {
-  remove,
   rename,
   mkdir,
   writeTextFile,
   exists,
 } from "@tauri-apps/plugin-fs";
+import { invoke } from "@tauri-apps/api/core";
 import { dirname, join } from "./path-shim";
 import { tracedIo } from "./ipcTrace";
 
@@ -43,14 +45,19 @@ export function validateName(name: string): string | null {
   return null;
 }
 
-/** Remove a single file. */
+/** Remove a single file — to the system recycle bin (recoverable). */
 export async function deleteFile(path: string): Promise<void> {
-  await tracedIo("file:mut", `删除文件 ${path}`, () => remove(path));
+  await tracedIo("file:mut", `移入回收站 ${path}`, () =>
+    invoke("trash_file", { path })
+  );
 }
 
-/** Remove a directory and everything inside it (like `rm -r`). */
+/** Remove a directory and everything inside it — the whole folder goes to
+ *  the recycle bin (recoverable), matching the old recursive remove. */
 export async function deleteDirRecursive(path: string): Promise<void> {
-  await tracedIo("file:mut", `删除目录 ${path}`, () => remove(path, { recursive: true }));
+  await tracedIo("file:mut", `移入回收站（目录） ${path}`, () =>
+    invoke("trash_file", { path })
+  );
 }
 
 /** Create a directory (and any missing parents). */

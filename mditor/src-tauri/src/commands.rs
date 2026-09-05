@@ -219,6 +219,97 @@ pub fn take_tab_payload(state: State<'_, TabPayloadStash>, id: String) -> Option
     map.remove(&id).map(|(payload, _)| payload)
 }
 
+// ---- 回收站删除（v4.9 Agent 删除红线：trash > rm——删除必须可恢复）----------
+//
+// 零依赖实现（不引入 trash crate，延续 v4.8 的零新增 Rust 依赖纪律）：
+//   * Windows：PowerShell 的 Microsoft.VisualBasic.FileIO（SendToRecycleBin），
+//     文件与目录（整目录）都支持。路径经环境变量传入——完全绕开引号/转义
+//     问题（含中文、空格、`&` 等文件名）。
+//   * macOS：osascript 让 Finder 删除（进废纸篓）。
+//   * Linux：gio trash（GLib 桌面环境标配），退化尝试 trash-put。
+// 任何一条路径失败都返回带 stderr 的错误，绝不回落到不可恢复删除。
+
+/// 把一个文件（或目录，含内容）移入系统回收站。
+#[command]
+pub fn trash_file(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err(format!("文件不存在：{path}"));
+    }
+    let is_dir = p.is_dir();
+    trash_on_current_os(p, is_dir)
+}
+
+#[cfg(target_os = "windows")]
+fn trash_on_current_os(p: &Path, is_dir: bool) -> Result<(), String> {
+    // 路径经 env 传入 PowerShell：CreateProcessW 的 unicode 环境块原样保真，
+    // 脚本里只引用 $env: 变量，不存在任何转义面。
+    let method = if is_dir { "DeleteDirectory" } else { "DeleteFile" };
+    let script = format!(
+        "Add-Type -AssemblyName Microsoft.VisualBasic; \
+         [Microsoft.VisualBasic.FileIO.FileSystem]::{method}(\
+         $env:MDITOR_TRASH_PATH, 'OnlyErrorDialogs', 'SendToRecycleBin')"
+    );
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .env("MDITOR_TRASH_PATH", p)
+        .output()
+        .map_err(|e| format!("启动 PowerShell 失败：{e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "移入回收站失败：{}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn trash_on_current_os(p: &Path, _is_dir: bool) -> Result<(), String> {
+    // Finder 的 delete 即移入废纸篓。路径里的反斜杠与双引号转义后内联。
+    let quoted = p
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    let script = format!("tell application \"Finder\" to delete POSIX file \"{quoted}\"");
+    let out = std::process::Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .map_err(|e| format!("启动 osascript 失败：{e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "移入废纸篓失败：{}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn trash_on_current_os(p: &Path, _is_dir: bool) -> Result<(), String> {
+    // 参数直接经 exec 传入（无 shell），无转义面。gio 优先，trash-put 兜底。
+    for tool in ["gio trash", "trash-put"] {
+        let (prog, rest) = tool.split_once(' ').unwrap_or((tool, ""));
+        let mut cmd = std::process::Command::new(prog);
+        if !rest.is_empty() {
+            cmd.arg(rest);
+        }
+        if let Ok(out) = cmd.arg(p).output() {
+            if out.status.success() {
+                return Ok(());
+            }
+        }
+    }
+    Err("移入回收站失败：系统无 gio / trash-put 可用（freedesktop trash 协议工具）".into())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn trash_on_current_os(_p: &Path, _is_dir: bool) -> Result<(), String> {
+    Err("当前平台不支持回收站删除".into())
+}
+
 /// 新建一个文档窗口（label = doc-{n}，第一窗口 main 恒由配置静态创建）。
 ///
 /// * URL 只带短参数：`index.html?path=…&handoff=…`（只拼有值的参数）；

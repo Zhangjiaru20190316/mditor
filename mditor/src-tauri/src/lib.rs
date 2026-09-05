@@ -162,6 +162,7 @@ pub fn run() {
             commands::create_doc_window,
             commands::stash_tab_payload,
             commands::take_tab_payload,
+            commands::trash_file,
             ai::ai_chat,
             ai::ai_chat_stream,
             ai::ai_chat_cancel,
