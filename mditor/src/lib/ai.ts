@@ -10,6 +10,7 @@ import { sysEmit } from "./sysDebug";
 import { tracedIo } from "./ipcTrace";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AiModelConfig, AiContextStrategy, Settings } from "../types";
+import type { AgentMessage, ToolCall, ToolDefinition } from "./agent/types";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -658,5 +659,167 @@ export function chatStream(
       // 命令时静默降级为旧行为。
       void invoke("ai_chat_cancel", { requestId }).catch(() => {});
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Agent streaming（v4.9）—— tool calling 变体
+// ---------------------------------------------------------------------------
+// 与 chatStream 的关系：不动其签名与行为（普通对话红线），此处按同一套
+// 事件管线多监听一个 ai_stream_tool_calls（Rust 聚合产物），并把整轮收进
+// 一个 Promise——Agent 循环需要「正文 + 工具调用」的整圆结果来决定是否
+// 追加 tool 消息继续迭代。取消复用 ai_chat_cancel 停止按钮链路：cancel()
+// 以 cancelled=true + 已积累的部分内容 resolve。
+
+/** Rust StreamToolCalls 事件的载荷形态（镜像 ai.rs）。 */
+interface StreamToolCallsEvent {
+  id: string;
+  tool_calls: ToolCall[];
+}
+
+/** 一轮 Agent 流式请求的完整结果。 */
+export interface AgentStreamResult {
+  content: string;
+  reasoning: string;
+  toolCalls: ToolCall[];
+  /** 用户点了「停止」（或组件卸载）：content/reasoning 为部分内容。 */
+  cancelled: boolean;
+}
+
+export interface AgentChatStreamOptions {
+  settings: Settings;
+  messages: AgentMessage[];
+  /** null/undefined = 不带 tools 字段（降级路径 / 收尾轮）。 */
+  tools?: ToolDefinition[] | null;
+  requestId: string;
+  /** 流式正文/思考增量（低频；tool 调用结果由 promise 承载）。 */
+  onChunk?: (delta: string) => void;
+  onReasoning?: (delta: string) => void;
+}
+
+export interface AgentStreamHandle {
+  cancel: () => void;
+  promise: Promise<AgentStreamResult>;
+}
+
+export function agentChatStream(opts: AgentChatStreamOptions): AgentStreamHandle {
+  const { settings, messages, tools, requestId, onChunk, onReasoning } = opts;
+  const m = resolveActiveModel(settings);
+  let cancelled = false;
+  let settled = false;
+  const unlistenFns: UnlistenFn[] = [];
+
+  let content = "";
+  let reasoning = "";
+  let toolCalls: ToolCall[] = [];
+
+  const cleanup = () => {
+    unlistenFns.splice(0).forEach((fn) => fn());
+  };
+  const detach = (fn: UnlistenFn) => {
+    if (settled) fn();
+    else unlistenFns.push(fn);
+  };
+
+  let resolveP!: (r: AgentStreamResult) => void;
+  let rejectP!: (e: Error) => void;
+  const promise = new Promise<AgentStreamResult>((res, rej) => {
+    resolveP = res;
+    rejectP = rej;
+  });
+
+  const settleOk = () => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    resolveP({ content, reasoning, toolCalls, cancelled });
+  };
+  const settleErr = (err: string) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    rejectP(new Error(err));
+  };
+
+  listen<StreamChunkEvent>("ai_stream_chunk", (ev) => {
+    if (ev.payload.id !== requestId || settled || cancelled) return;
+    if (ev.payload.delta) {
+      content += ev.payload.delta;
+      onChunk?.(ev.payload.delta);
+    }
+  }).then(detach);
+  if (onReasoning) {
+    listen<StreamReasoningEvent>("ai_stream_reasoning", (ev) => {
+      if (ev.payload.id !== requestId || settled || cancelled) return;
+      if (ev.payload.delta) {
+        reasoning += ev.payload.delta;
+        onReasoning(ev.payload.delta);
+      }
+    }).then(detach);
+  }
+  // 聚合完成的工具调用（仅 finish_reason=="tool_calls" / 收尾安全网发射一次，
+  // 先于 done 事件到达）：覆盖式记录——单轮至多一批。
+  listen<StreamToolCallsEvent>("ai_stream_tool_calls", (ev) => {
+    if (ev.payload.id !== requestId || settled || cancelled) return;
+    toolCalls = Array.isArray(ev.payload.tool_calls) ? ev.payload.tool_calls : [];
+  }).then(detach);
+  listen<StreamDoneEvent>("ai_stream_done", (ev) => {
+    if (ev.payload.id !== requestId || settled || cancelled) return;
+    settleOk();
+  }).then(detach);
+  listen<StreamErrorEvent>("ai_stream_error", (ev) => {
+    if (ev.payload.id !== requestId || settled || cancelled) return;
+    sysEmit("ai:stream-fail", `AI 流式错误：${ev.payload.error.slice(0, 160)}`, {
+      level: "error",
+      data: { requestId, error: ev.payload.error.slice(0, 300), model: m.model },
+    });
+    settleErr(ev.payload.error);
+  }).then(detach);
+
+  // Kick off the backend（tools 仅在有值时携带——None 时 Rust 不发送该字段）。
+  invoke("ai_chat_stream", {
+    baseUrl: m.baseUrl,
+    apiKey: m.apiKey,
+    model: m.model,
+    provider: m.provider,
+    thinkingStrength: settings.aiThinkingStrength,
+    messages,
+    temperature: settings.aiTemperature,
+    maxTokens: settings.aiMaxTokens || undefined,
+    topP: settings.aiTopP,
+    tools: tools && tools.length > 0 ? tools : undefined,
+    requestId,
+  })
+    .then(() => {
+      // done 事件是权威收尾信号；invoke 先落地（事件竞速丢失）时延迟一拍
+      // 兜底 resolve——留 60ms 让已发射的 tool_calls/chunk 事件先进入监听器。
+      if (!settled && !cancelled) {
+        sysEmit("ai:stream-abnormal-end", "AI 流式结束但未收到 done 事件（异常收尾）", {
+          level: "warn",
+          data: { requestId, model: m.model },
+        });
+        window.setTimeout(() => {
+          if (!settled && !cancelled) settleOk();
+        }, 60);
+      }
+    })
+    .catch((e) => {
+      if (cancelled || settled) return;
+      sysEmit("ai:stream-fail", `AI 流式启动/请求失败：${String(e).slice(0, 160)}`, {
+        level: "error",
+        data: { requestId, error: String(e).slice(0, 300), model: m.model },
+      });
+      settleErr(String(e));
+    });
+
+  return {
+    cancel: () => {
+      if (settled) return;
+      cancelled = true;
+      settleOk();
+      // 同 chatStream：通知 Rust 停拉上游流（不再消耗计费 token）。
+      void invoke("ai_chat_cancel", { requestId }).catch(() => {});
+    },
+    promise,
   };
 }

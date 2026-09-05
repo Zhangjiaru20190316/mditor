@@ -47,6 +47,11 @@ function migrateSettings(s: Settings, raw: Partial<Settings>): Settings {
     s.aiMaxTokens = DEFAULT_SETTINGS.aiMaxTokens;
   }
 
+  // v4.9 Agent：面板模式与写入策略。缺失由 DEFAULT_SETTINGS 合并兜底，
+  // 这里归一非法值（手改 mditor.json 等）。
+  if (s.aiPanelMode !== "agent") s.aiPanelMode = "chat";
+  if (s.agentWriteMode !== "auto") s.agentWriteMode = "confirm";
+
   // No stored model list: seed from legacy flat fields if the user configured
   // anything (non-empty baseUrl or model).
   const legacyConfigured =

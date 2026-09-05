@@ -99,8 +99,12 @@ function clipLine(line: string, col: number): string {
   return (start > 0 ? "…" : "") + trimmed.slice(start, start + 159);
 }
 
-/** 递归收集工作区内所有 md 文件路径（深度优先、跳过黑名单/排除项）。 */
-async function collectMdFiles(
+/**
+ * 递归收集工作区内所有 md 文件路径（深度优先、跳过黑名单/排除项）。
+ * v4.9 起导出：Agent 的 list_notes 工具复用同一收集逻辑（同一套跳过规则，
+ * 避免两处黑名单漂移）。
+ */
+export async function collectMdFiles(
   root: string,
   excluded: Set<string> | undefined,
   maxFiles: number

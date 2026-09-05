@@ -299,6 +299,17 @@ export interface Settings {
    */
   aiThinkingStrength: ThinkingStrength;
   /**
+   * AI 面板当前模式（v4.9 Agent）："chat" 普通对话（默认，行为与改造前完全
+   * 一致）；"agent" 工具调用链路（检索/读取/编辑/新建/重命名/删除笔记）。
+   */
+  aiPanelMode: "chat" | "agent";
+  /**
+   * Agent 写入策略（v4.9）："confirm"（默认）所有改动经审阅 UI 逐条确认；
+   * "auto" 仅当前笔记的内容编辑（edit/append）循环结束直接应用（Ctrl+Z 兜底），
+   * 文件系统级操作（create/rename/delete）无论如何都弹审阅。
+   */
+  agentWriteMode: "confirm" | "auto";
+  /**
    * Configured model connections (multi-model). The active one is selected by
    * `aiActiveModelId`. Kept alongside the legacy flat `aiBaseUrl/aiApiKey/
    * aiModel/aiProvider` fields, which are used as a migration source / fallback
@@ -401,6 +412,8 @@ export const DEFAULT_SETTINGS: Settings = {
   aiHistoryBudgetTokens: 8000,
   aiAnnotateMaxChars: 4000,
   aiThinkingStrength: "off",
+  aiPanelMode: "chat",
+  agentWriteMode: "confirm",
   aiModels: [
     {
       id: "default",
