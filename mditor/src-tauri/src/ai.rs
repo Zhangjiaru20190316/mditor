@@ -15,7 +15,7 @@
 //! Compatible endpoints include OpenAI, DeepSeek, 智谱 GLM, Moonshot, OpenRouter,
 //! and local servers like Ollama (`http://localhost:11434/v1`) or LM Studio.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -108,16 +108,31 @@ const CONNECT_TIMEOUT_SECS: u64 = 10;
 const MAX_BUFFER_BYTES: usize = 1 * 1024 * 1024; // 1 MiB
 
 /// One chat message, mirroring OpenAI's wire format.
+///
+/// Agent 链路（v4.9）扩展了两个可选字段：assistant 消息可携带 `tool_calls`
+/// （模型发起的工具调用数组），tool 消息以 `tool_call_id` 回执对应调用。
+/// 两个都 `#[serde(default, skip_serializing_if)]`——旧调用方只传
+/// role/content 时反序列化不受影响，且序列化输出与旧格式逐字节一致
+/// （普通对话的请求体零变化，见单测 chat_message_serialization_unchanged_*）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
-    pub role: String, // "system" | "user" | "assistant"
+    pub role: String, // "system" | "user" | "assistant" | "tool"
     pub content: String,
+    /// assistant 消息的工具调用数组（OpenAI 完整格式，流式聚合产物）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<serde_json::Value>,
+    /// tool 消息的回执 id（对应某个 tool_calls[i].id）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 /// Payload returned to the frontend.
 #[derive(Debug, Serialize)]
 pub struct ChatResult {
     pub content: String,
+    /// 非流式响应里的工具调用数组（Agent 链路对称支持；普通对话为 None）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<serde_json::Value>,
 }
 
 /// Truncate an upstream error body to at most 300 chars (plus an ellipsis when
@@ -165,6 +180,7 @@ pub async fn ai_chat(
     temperature: Option<f32>,
     max_tokens: Option<u32>,
     top_p: Option<f32>,
+    tools: Option<serde_json::Value>,
 ) -> Result<ChatResult, String> {
     if base_url.trim().is_empty() {
         return Err("未配置 AI Base URL，请在「设置 → AI」中填写。".into());
@@ -187,6 +203,7 @@ pub async fn ai_chat(
         top_p,
         false,
         thinking.as_ref(),
+        tools.as_ref(),
     );
 
     let resp = send_request(
@@ -216,6 +233,9 @@ pub async fn ai_chat(
     #[derive(Deserialize)]
     struct CompletionMessage {
         content: Option<String>,
+        // Agent 链路：模型直接发起的工具调用（对称支持；普通对话为 None）。
+        #[serde(default)]
+        tool_calls: Option<serde_json::Value>,
     }
 
     let parsed: CompletionResponse = serde_json::from_str(&text).map_err(|e| {
@@ -227,14 +247,14 @@ pub async fn ai_chat(
         )
     })?;
 
-    let content = parsed
-        .choices
-        .into_iter()
-        .next()
-        .and_then(|c| c.message.content)
+    let first = parsed.choices.into_iter().next();
+    let content = first
+        .as_ref()
+        .and_then(|c| c.message.content.clone())
         .unwrap_or_default();
+    let tool_calls = first.and_then(|c| c.message.tool_calls);
 
-    Ok(ChatResult { content })
+    Ok(ChatResult { content, tool_calls })
 }
 
 /// Payload returned by `ai_embed`: one embedding per input text, in the
@@ -340,8 +360,12 @@ pub async fn ai_embed(
 /// Events (all carry `id` matching `request_id`):
 ///   * `ai_stream_chunk`     → `{ id, delta }`  (visible answer tokens)
 ///   * `ai_stream_reasoning` → `{ id, delta }`  (thinking tokens; reasoning models only)
+///   * `ai_stream_tool_calls`→ `{ id, tool_calls }` (聚合完成的工具调用数组；仅 finish_reason == "tool_calls" 时发射一次)
 ///   * `ai_stream_done`      → `{ id }`
 ///   * `ai_stream_error`     → `{ id, error }`
+///
+/// `tools`（v4.9 Agent 链路）透传给上游；None 时不发送该字段，普通对话
+/// 请求体逐字节不变。流式 tool_calls 的分片聚合见下方 `AggToolCall`。
 ///
 /// The command returns `Ok(())` once the stream closes cleanly; a stream-level
 /// error is delivered via the `ai_stream_error` event AND returned as `Err`,
@@ -359,6 +383,7 @@ pub async fn ai_chat_stream(
     temperature: Option<f32>,
     max_tokens: Option<u32>,
     top_p: Option<f32>,
+    tools: Option<serde_json::Value>,
     request_id: String,
 ) -> Result<(), String> {
     if base_url.trim().is_empty() {
@@ -386,6 +411,7 @@ pub async fn ai_chat_stream(
         top_p,
         true,
         thinking.as_ref(),
+        tools.as_ref(),
     );
 
     // Streaming: NO total timeout — a slow but healthy stream may legitimately
@@ -413,6 +439,10 @@ pub async fn ai_chat_stream(
     // burst of frames arrives inside one big chunk.
     let mut buf: Vec<u8> = Vec::new();
     let mut pos: usize = 0;
+    // 流式 tool_calls 分片聚合（v4.9 Agent 链路）：key = delta 序号，值按
+    // OpenAI 线格式逐片拼接（见 merge_tool_call_deltas）。普通对话（不带
+    // tools）恒为空，任何路径零影响。
+    let mut tool_agg: BTreeMap<u64, AggToolCall> = BTreeMap::new();
 
     while let Some(chunk_result) = stream.next().await {
         // 前端已取消：停拉上游流（不再消耗计费 token），按正常收尾通知。
@@ -450,6 +480,12 @@ pub async fn ai_chat_stream(
                 None => continue, // event/id lines we don't use
             };
             if data == "[DONE]" {
+                // 安全网：部分兼容实现流完 tool_calls 分片却不给显式
+                // finish_reason=="tool_calls"，此处补发聚合结果（空表无操作；
+                // finish_reason 路径发射后已直接 return，不会与之重复）。
+                if !emit_pending_tool_calls(&app, &request_id, &tool_agg) {
+                    return Ok(());
+                }
                 let _ = app.emit("ai_stream_done", StreamDone { id: request_id.clone() });
                 return Ok(());
             }
@@ -478,6 +514,10 @@ pub async fn ai_chat_stream(
                 reasoning: Option<String>,
                 #[serde(default)]
                 reasoning_content: Option<String>,
+                // 工具调用分片（v4.9）：每片带 index 定位，function.arguments
+                // 为增量字符串，需跨帧拼接（聚合见 merge_tool_call_deltas）。
+                #[serde(default)]
+                tool_calls: Option<Vec<ToolCallDelta>>,
             }
             let parsed: ChunkResponse = match serde_json::from_str(data) {
                 Ok(p) => p,
@@ -520,9 +560,35 @@ pub async fn ai_chat_stream(
                     }
                 }
                 // Some providers signal end via finish_reason without [DONE].
-                if choice.finish_reason.as_deref() == Some("stop") {
-                    let _ = app.emit("ai_stream_done", StreamDone { id: request_id.clone() });
-                    return Ok(());
+                // tool_calls 路径（v4.9）：先把聚合表组转成 OpenAI 完整格式
+                // 发射一次（ai_stream_tool_calls），随后照常 done。
+                match choice.finish_reason.as_deref() {
+                    Some("stop") => {
+                        let _ = app.emit("ai_stream_done", StreamDone { id: request_id.clone() });
+                        return Ok(());
+                    }
+                    Some("tool_calls") => {
+                        if !tool_agg.is_empty()
+                            && !emit_to_frontend(
+                                &app,
+                                "ai_stream_tool_calls",
+                                StreamToolCalls {
+                                    id: request_id.clone(),
+                                    tool_calls: finalize_tool_calls(&tool_agg),
+                                },
+                            )
+                        {
+                            return Ok(());
+                        }
+                        let _ = app.emit("ai_stream_done", StreamDone { id: request_id.clone() });
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+                // 工具调用分片：逐片并入聚合表（取消检查由外层每个 chunk 到达
+                // 时的 stream_cancelled 覆盖——含 tool_calls 的 delta 同样生效）。
+                if let Some(tcs) = choice.delta.tool_calls {
+                    merge_tool_call_deltas(&mut tool_agg, &tcs);
                 }
             }
         }
@@ -546,7 +612,10 @@ pub async fn ai_chat_stream(
     }
 
     // Stream ended without an explicit terminator — still signal done so the
-    // UI exits its "thinking" state.
+    // UI exits its "thinking" state. 未决工具调用同样补发（同 [DONE] 安全网）。
+    if !emit_pending_tool_calls(&app, &request_id, &tool_agg) {
+        return Ok(());
+    }
     let _ = app.emit("ai_stream_done", StreamDone { id: request_id });
     Ok(())
 }
@@ -586,7 +655,8 @@ fn emit_to_frontend(app: &AppHandle, event: &str, payload: impl Serialize + Clon
 /// Build the chat-completions JSON body. Optional sampling params are only
 /// included when `Some`, so we never send `max_tokens: 0` (which some servers
 /// reject). `thinking`, when `Some`, is merged in as-is (provider-specific fields
-/// computed by `thinking_fields`).
+/// computed by `thinking_fields`). `tools`（v4.9 Agent 链路）透传；None 时不
+/// 出现该键，普通对话请求体逐字节不变。
 fn build_request_body(
     model: &str,
     messages: &[ChatMessage],
@@ -595,6 +665,7 @@ fn build_request_body(
     top_p: Option<f32>,
     stream: bool,
     thinking: Option<&serde_json::Value>,
+    tools: Option<&serde_json::Value>,
 ) -> serde_json::Value {
     let mut body = serde_json::json!({
         "model": model,
@@ -621,7 +692,107 @@ fn build_request_body(
             obj.extend(t_obj.iter().map(|(k, v)| (k.clone(), v.clone())));
         }
     }
+    if let Some(t) = tools {
+        body["tools"] = t.clone();
+    }
     body
+}
+
+// ---- 流式 tool_calls 增量聚合（v4.9 Agent 链路）------------------------------
+//
+// OpenAI 流式协议中 tool_calls 的 function.arguments 是分片拼接的：
+//   delta: {"tool_calls":[{"index":0,"id":"call_1","type":"function",
+//           "function":{"name":"search_notes","arguments":""}}]}
+//   delta: {"tool_calls":[{"index":0,"function":{"arguments":"{\"qu"}}]}
+//   delta: {"tool_calls":[{"index":0,"function":{"arguments":"ery\":\"foo\"}"}}]}
+//   finish_reason: "tool_calls"
+// 聚合规则：按 index 分组（缺失时用数组下标兜底）；id/name 取首个非空值；
+// arguments 字符串拼接；finish_reason == "tool_calls" 时按 index 排序输出
+// 完整数组（BTreeMap 天然有序）。arguments 不在此处校验 JSON 合法性——
+// 非法片段原样透传，由前端 Agent 循环把解析失败回传给模型自我纠正。
+
+/// 单帧 delta.tool_calls[i] 的线格式（字段全部可选：首片带 id/name，后续
+/// 片通常只有 arguments 增量）。
+#[derive(Deserialize, Default, Clone, Debug)]
+struct ToolCallDelta {
+    #[serde(default)]
+    index: Option<u64>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    function: Option<FunctionDelta>,
+}
+
+#[derive(Deserialize, Default, Clone, Debug)]
+struct FunctionDelta {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
+}
+
+/// 聚合中的单个工具调用（空串 = 尚未见到该字段）。
+#[derive(Default, Clone, Debug, PartialEq)]
+struct AggToolCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+/// 把一帧 delta.tool_calls 数组合并进聚合表。纯函数，可单测。
+fn merge_tool_call_deltas(agg: &mut BTreeMap<u64, AggToolCall>, deltas: &[ToolCallDelta]) {
+    for (fallback, d) in deltas.iter().enumerate() {
+        let key = d.index.unwrap_or(fallback as u64);
+        let slot = agg.entry(key).or_default();
+        if let Some(id) = d.id.as_deref() {
+            if !id.is_empty() && slot.id.is_empty() {
+                slot.id = id.to_string();
+            }
+        }
+        if let Some(f) = &d.function {
+            if let Some(name) = f.name.as_deref() {
+                if !name.is_empty() && slot.name.is_empty() {
+                    slot.name = name.to_string();
+                }
+            }
+            if let Some(args) = f.arguments.as_deref() {
+                slot.arguments.push_str(args);
+            }
+        }
+    }
+}
+
+/// 聚合表 → OpenAI 完整 tool_calls 数组（BTreeMap 按 index 升序）。
+fn finalize_tool_calls(agg: &BTreeMap<u64, AggToolCall>) -> Vec<serde_json::Value> {
+    agg.values()
+        .map(|c| {
+            serde_json::json!({
+                "id": c.id,
+                "type": "function",
+                "function": { "name": c.name, "arguments": c.arguments },
+            })
+        })
+        .collect()
+}
+
+/// 流正常收尾（[DONE]/EOF）时的未决工具调用安全网。空表无操作；发射失败
+/// （前端接收方已消失）返回 false，调用方停止拉流按正常收尾退出。
+fn emit_pending_tool_calls(
+    app: &AppHandle,
+    request_id: &str,
+    agg: &BTreeMap<u64, AggToolCall>,
+) -> bool {
+    if agg.is_empty() {
+        return true;
+    }
+    emit_to_frontend(
+        app,
+        "ai_stream_tool_calls",
+        StreamToolCalls {
+            id: request_id.to_string(),
+            tool_calls: finalize_tool_calls(agg),
+        },
+    )
 }
 
 /// Map a (provider, thinking_strength) pair to the JSON fields the provider's
@@ -703,6 +874,14 @@ struct StreamReasoning {
     delta: String,
 }
 
+/// v4.9 Agent 链路：聚合完成的工具调用数组（仅 finish_reason == "tool_calls"
+/// 或收尾安全网时发射一次，先于 ai_stream_done）。
+#[derive(Serialize, Clone)]
+struct StreamToolCalls {
+    id: String,
+    tool_calls: Vec<serde_json::Value>,
+}
+
 #[derive(Serialize, Clone)]
 struct StreamDone {
     id: String,
@@ -742,5 +921,191 @@ mod tests {
         r.cancel("d"); // 触及上限 → 整表清空后插入 d
         assert!(!r.is_cancelled("a"));
         assert!(r.is_cancelled("d"));
+    }
+
+    // ---- v4.9 tool calling：序列化兼容 / 聚合 / 请求体 ------------------------
+
+    fn plain_msg(role: &str, content: &str) -> ChatMessage {
+        ChatMessage {
+            role: role.to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    fn tc_delta(index: Option<u64>, id: Option<&str>, name: Option<&str>, args: Option<&str>) -> ToolCallDelta {
+        ToolCallDelta {
+            index,
+            id: id.map(|s| s.to_string()),
+            function: Some(FunctionDelta {
+                name: name.map(|s| s.to_string()),
+                arguments: args.map(|s| s.to_string()),
+            }),
+        }
+    }
+
+    /// 向后兼容红线：无 tool 字段的消息序列化结果与旧格式逐字节一致
+    /// （普通对话的请求体零变化）。
+    #[test]
+    fn chat_message_serialization_unchanged_without_tool_fields() {
+        let json = serde_json::to_string(&plain_msg("user", "你好")).unwrap();
+        assert_eq!(json, r#"{"role":"user","content":"你好"}"#);
+        let json = serde_json::to_string(&plain_msg("system", "sys")).unwrap();
+        assert_eq!(json, r#"{"role":"system","content":"sys"}"#);
+    }
+
+    /// 带 tool 字段的消息形状正确；旧调用（只传 role/content）能反序列化。
+    #[test]
+    fn chat_message_roundtrip_with_tool_fields() {
+        let assistant = ChatMessage {
+            role: "assistant".into(),
+            content: String::new(),
+            tool_calls: Some(serde_json::json!([{
+                "id": "call_1", "type": "function",
+                "function": { "name": "search_notes", "arguments": "{\"query\":\"x\"}" }
+            }])),
+            tool_call_id: None,
+        };
+        let json = serde_json::to_string(&assistant).unwrap();
+        assert!(json.contains(r#""tool_calls""#));
+        let back: ChatMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.role, "assistant");
+        assert!(back.tool_calls.is_some());
+        // 旧格式（无 tool 键）→ 字段为 None。
+        let old: ChatMessage = serde_json::from_str(r#"{"role":"tool","content":"{}"}"#).unwrap();
+        assert_eq!(old.tool_calls, None);
+        assert_eq!(old.tool_call_id, None);
+        // tool 消息回执 id。
+        let tool_msg = ChatMessage {
+            role: "tool".into(),
+            content: "{}".into(),
+            tool_calls: None,
+            tool_call_id: Some("call_1".into()),
+        };
+        let json = serde_json::to_string(&tool_msg).unwrap();
+        assert_eq!(
+            json,
+            r#"{"role":"tool","content":"{}","tool_call_id":"call_1"}"#
+        );
+    }
+
+    /// 聚合：同一 index 的 arguments 分片拼接，id/name 取首个非空值。
+    #[test]
+    fn tool_call_aggregation_concatenates_fragments() {
+        let mut agg = BTreeMap::new();
+        merge_tool_call_deltas(&mut agg, &[tc_delta(Some(0), Some("call_1"), Some("search_notes"), Some(""))]);
+        merge_tool_call_deltas(&mut agg, &[tc_delta(Some(0), None, None, Some("{\"qu"))]);
+        merge_tool_call_deltas(&mut agg, &[tc_delta(Some(0), None, Some("ignored-later"), Some("ery\":\"foo\"}"))]);
+        assert_eq!(
+            agg.get(&0),
+            Some(&AggToolCall {
+                id: "call_1".into(),
+                name: "search_notes".into(),
+                arguments: "{\"query\":\"foo\"}".into(),
+            })
+        );
+    }
+
+    /// 聚合：多个 index 交错到达，各自独立拼接；finalize 按 index 排序。
+    #[test]
+    fn tool_call_aggregation_interleaved_indices() {
+        let mut agg = BTreeMap::new();
+        merge_tool_call_deltas(&mut agg, &[
+            tc_delta(Some(1), Some("call_2"), Some("read_note"), Some("{\"path\":\"a.md\"}")),
+        ]);
+        merge_tool_call_deltas(&mut agg, &[
+            tc_delta(Some(0), Some("call_1"), Some("search_notes"), Some("{\"q")),
+        ]);
+        merge_tool_call_deltas(&mut agg, &[
+            tc_delta(Some(0), None, None, Some("uery\":\"x\"}")),
+            tc_delta(Some(1), None, None, None), // 空片（无增量）
+        ]);
+        let out = finalize_tool_calls(&agg);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0]["id"], "call_1");
+        assert_eq!(out[0]["function"]["name"], "search_notes");
+        assert_eq!(out[0]["function"]["arguments"], "{\"query\":\"x\"}");
+        assert_eq!(out[1]["id"], "call_2");
+        assert_eq!(out[1]["function"]["arguments"], "{\"path\":\"a.md\"}");
+        assert_eq!(out[0]["type"], "function");
+    }
+
+    /// 聚合：index 缺失时用数组下标兜底（个别兼容实现的简化输出）。
+    #[test]
+    fn tool_call_aggregation_missing_index_falls_back_to_position() {
+        let mut agg = BTreeMap::new();
+        merge_tool_call_deltas(&mut agg, &[tc_delta(None, Some("call_a"), Some("t1"), Some("{}"))]);
+        merge_tool_call_deltas(&mut agg, &[tc_delta(None, None, None, Some("+"))]);
+        assert_eq!(agg.get(&0).unwrap().arguments, "{}+");
+        assert_eq!(agg.len(), 1);
+    }
+
+    /// 线格式样例（附录）逐帧回放：三片 arguments + finish_reason。
+    #[test]
+    fn tool_call_aggregation_wire_example() {
+        let mut agg = BTreeMap::new();
+        for data in [
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"search_notes","arguments":""}}]}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"qu"}}]}}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ery\":\"foo\"}"}}]}}]}"#,
+        ] {
+            #[derive(Deserialize)]
+            struct Wire {
+                choices: Vec<WireChoice>,
+            }
+            #[derive(Deserialize)]
+            struct WireChoice {
+                delta: WireDelta,
+            }
+            #[derive(Deserialize, Default)]
+            struct WireDelta {
+                #[serde(default)]
+                tool_calls: Option<Vec<ToolCallDelta>>,
+            }
+            let w: Wire = serde_json::from_str(data).unwrap();
+            let tcs = w.choices.into_iter().next().unwrap().delta.tool_calls.unwrap();
+            merge_tool_call_deltas(&mut agg, &tcs);
+        }
+        let out = finalize_tool_calls(&agg);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["function"]["name"], "search_notes");
+        assert_eq!(out[0]["function"]["arguments"], "{\"query\":\"foo\"}");
+    }
+
+    /// 请求体：tools: None 不出现 tools 键（普通对话零影响）；Some 时透传。
+    #[test]
+    fn build_request_body_tools_passthrough() {
+        let msgs = [plain_msg("user", "hi")];
+        let no_tools = build_request_body("m", &msgs, None, None, None, false, None, None);
+        assert!(no_tools.get("tools").is_none());
+
+        let tools = serde_json::json!([{
+            "type": "function",
+            "function": {
+                "name": "search_notes",
+                "description": "检索",
+                "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] },
+            }
+        }]);
+        let with_tools = build_request_body("m", &msgs, None, None, None, true, None, Some(&tools));
+        assert_eq!(with_tools["tools"], tools);
+
+        // 带 tool_calls/tool_call_id 的消息原样进入 messages（Agent 循环回传）。
+        let tool_msg = ChatMessage {
+            role: "tool".into(),
+            content: "{\"ok\":true}".into(),
+            tool_calls: None,
+            tool_call_id: Some("call_9".into()),
+        };
+        let body = build_request_body("m", &[tool_msg], None, None, None, false, None, None);
+        assert_eq!(body["messages"][0]["tool_call_id"], "call_9");
+    }
+
+    /// 空聚合表 finalize 为空数组（finish_reason=="stop" 路径不会发射事件）。
+    #[test]
+    fn finalize_empty_aggregation_is_empty() {
+        let agg: BTreeMap<u64, AggToolCall> = BTreeMap::new();
+        assert!(finalize_tool_calls(&agg).is_empty());
     }
 }
