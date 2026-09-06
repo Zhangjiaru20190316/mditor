@@ -1,8 +1,27 @@
 # Changelog
 
+## 4.10.0-beta.2 (2026-09-06)（现网日志根修：表格视图整批重建 / 文档切换交叉淡化）
+
+以两份现网诊断日志（正式版 + 开发版，截至 09-02）为输入的全量异常分诊：9 个异常码中 6 个确认已在 4.6.2 根修（视图残留 / DOM 增长 / watch 命令 / 未捕获异常等），唯一存活根因为 MD-1011 残余——修复它即同时消解下游 MD-1002/1001/1003/9001。分诊与定罪报告见 docs/overhaul/5-tableview.md。
+
+### 修复
+
+- **表格视图整批重建（MD-1011 残余，性能根因）**：`@milkdown/components` 7.22.1 的 `TableNodeView.update()` 语义反转——ProseMirror 契约里返回 `false` = 「销毁重建视图」，而它在新旧节点**完全相同**时返回 false。触发链：内容相同本可零成本复用，但装饰（cvMemory 学习尺寸/预热区间）一变即落入位置回退调用 `spec.update` → 上游返回 false → `recreateWrapper` 把子 DOM 移植进新壳、旧壳留空（线上 `<div.milkdown-table-block ×0>` 空壳指纹），每个新壳重挂一个 Vue app：单批最高 -199/+199 顶层替换、~3 秒 20 波，并级联视口位移（MD-1002）、ghost 滚动（MD-1001）、主线程阻塞（MD-1003）。patch-package 补丁改为保留视图、装饰原位补在同一包装器；双重回归守卫：`tableBlockPatch.test.ts` 源锚点 ×3（防 npm ci 丢补丁 / 升级冲突静默回退）+ `md1011-regression.test.ts` F6 行为级用例（装饰开关复现触发路径，红腿指纹与生产一致）
+- 全量核对同库其余组件（code-block / diff / image / link / list-item）：`update()` 语义均正确，table-block 是唯一反转者
+
+### 新增
+
+- **文档切换交叉淡化**：切换期间编辑区内容随加载条「退场-到达」——旧内容 160ms ease-in 退暗至 0.5（与侧栏退暗同一视觉语言），内容替换发生在暗态下（无跳变可感），新内容 220ms ease-out 复亮。纯 CSS 类切换零 JS 工作；只过渡 opacity（合成器驱动，大文档重解析阻塞期照常播放）；「无」档与 prefers-reduced-motion 双保险豁免（保持 opacity 1 并撤 transition，避免一帧闪暗）
+
+### 工程纪律
+
+- 分诊报告 docs/overhaul/5-tableview.md（异常码 × 版本 × 最后复发时刻的存活判定矩阵、五步定罪链、A/B 红绿数据、复测路径）
+- vitest 578 → 582（源锚点 ×3 + 行为级 F6 ×1）；build ✓ / eslint ✓；零新增依赖
+
 ## 4.10.0-beta.1 (2026-09-06)（美学升级：令牌体系 / 原子化 / 动效范式）
 
 系统性视觉层重构，行为零变化（无 TSX/TS 改动、无交互流程变化、动效三档设置原样）：所有视觉属性收敛到唯一令牌来源，重复样式收敛到原子层，动效按「安静地精致」四范式统一。审计与落地报告见 docs/aesthetic-audit.md、docs/aesthetic-report.md。
+
 
 ### 令牌层（阶段 1）
 
