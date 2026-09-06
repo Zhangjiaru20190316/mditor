@@ -1,5 +1,35 @@
 # Changelog
 
+## 4.10.0-beta.1 (2026-09-06)（美学升级：令牌体系 / 原子化 / 动效范式）
+
+系统性视觉层重构，行为零变化（无 TSX/TS 改动、无交互流程变化、动效三档设置原样）：所有视觉属性收敛到唯一令牌来源，重复样式收敛到原子层，动效按「安静地精致」四范式统一。审计与落地报告见 docs/aesthetic-audit.md、docs/aesthetic-report.md。
+
+### 令牌层（阶段 1）
+
+- 动效四档时长：`--dur-fast` 120ms（悬停/按下/弹层）、`--dur-base` 220ms（面板/模态）、`--dur-exit` 160ms（退场 = 进入的 70-80%）、`--dur-slow` 340ms（主题切换）；缓动三曲线 `--ease-out/--ease-in/--ease-spring`；102 处散落时长、5 种曲线全部收敛
+- 间距阶梯 `--space-1..4`（4/8/12/16px）；阴影补中档 `--shadow-md`（五主题各自定义，深色更深）；z-index 19 档语义阶梯（值不变只命名，消除互相压盖隐患）
+- global.css 头部令牌速查表重写（圆角收敛映射 / 同心原则 / 字号特例 / 层级阶梯）
+
+### 原子化（阶段 2）
+
+- 「Atoms / Molecules」区块：`.popover`（8 弹层容器）、`.input`（19 输入框 + 9 处重复 focus 规则删除）、`.btn-solid`（10 主按钮 + 8 处重复规则删除）、`.menu-item`、`.chevron` 去重；B13 焦点环组补齐 11 个缺失键盘焦点的交互件
+- 孤儿值清零：圆角 17 处、阴影 4 处、z-index 24 处、铬层字号 30 处全部改走令牌（特形保留并注释：胶囊/圆/气泡尾角/发丝线/色板 ring/vendor 200）
+- v4.7 知识功能区（快速切换器/双链/引用/闪卡/RAG）整体并入令牌体系——深色主题下弹层阴影从此随主题加深（原为固定黑色）
+
+### 动效（阶段 3）
+
+- 范式对号入座：Popover（右键菜单/批注/选区工具栏：scale+fade+锚点 transform-origin）、Dropdown（双链补全新增 drop-in：translateY+fade）、Modal（进 220/退 160）、Panel（侧栏/AI 面板 220，退场加速）、反馈缩放统一 fast+ease-out
+- **修复**：闪卡复习浮层 `.fc-overlay` 引用不存在的 `modal-in` keyframes（笔误），入场动画自 v4.7 从未生效 → 修复生效
+- 性能红线：`transition: all` ×2 拆白名单；resizer 悬停 height 过渡改 scaleY；fc-card 阴影过渡改 transform 抬升；`.sel-submenu` 常驻 will-change 移除（不再常占合成层）
+- 死代码：annotation.css `[data-motion="off"]` 选择器修正为实际的 `none` 档；Agent 卡片/审阅卡片的 chevron 重复规则删除
+
+### 工程纪律
+
+- `prefers-reduced-motion` 与「无」档全局 kill switch 原样保留（全部动效压至 0.001ms）
+- 基线 lint 修复：eslint ignores 补 `perf/`（性能脚本目录遗漏）、`no-unused-vars` 配 `_` 前缀豁免——存量 125 错误全在 lint 范围外文件
+- build ✓ / vitest 578 ✓ / eslint ✓；零新增依赖
+- 明确不做（防镀金）：QuickSwitcher 逐项 stagger（列表随打字重挂载会反复重放）、高亮块 transform 游移（需结构改造）、间距存量全量扫替（与阶梯同值，零收益扰动）
+
 ## 4.9.0 (2026-09-05)（AI Agent：工具调用 / 批量整理 / 改动清单审阅）
 
 AI 面板从「纯对话」升级为可选的 **Agent 架构**：面板顶部新增「对话 | Agent」分段开关（选择持久化），Agent 模式下 AI 能真正检索、读取、编辑、新建、重命名、删除笔记并支持批量整理。普通对话模式行为与改造前完全一致（请求体逐字节不变，见 Rust 单测锚点）；全部改动先暂存内存、经「改动清单」审阅后才落地。零新增 Rust / npm 依赖（trash crate 因网络不可达改用规格书备选方案：Windows PowerShell 回收站 API）。
