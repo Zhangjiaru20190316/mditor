@@ -33,6 +33,7 @@
   --diff-add-border: rgba(140, 190, 150, 0.36);
   --diff-add-mark: rgba(140, 190, 150, 0.4);
   --shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.48);
   --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.6);
   color-scheme: dark;
 }

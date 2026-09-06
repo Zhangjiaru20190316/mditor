@@ -32,6 +32,7 @@
   --diff-add-border: rgba(66, 165, 88, 0.3);
   --diff-add-mark: rgba(66, 165, 88, 0.32);
   --shadow: 0 4px 14px rgba(74, 63, 47, 0.12);
+  --shadow-md: 0 8px 24px rgba(74, 63, 47, 0.16);
   --shadow-lg: 0 12px 40px rgba(74, 63, 47, 0.2);
   color-scheme: light;
 }
