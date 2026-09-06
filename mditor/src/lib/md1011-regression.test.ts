@@ -6,6 +6,11 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { Crepe } from "@milkdown/crepe";
 import { editorViewCtx } from "@milkdown/kit/core";
 import { parserCtx } from "@milkdown/core";
+import { $prose } from "@milkdown/utils";
+import { Decoration, DecorationSet } from "@milkdown/prose/view";
+import { Plugin, PluginKey } from "@milkdown/prose/state";
+import type { EditorState } from "@milkdown/prose/state";
+import type { Node as PMNode } from "@milkdown/prose/model";
 import {
   applyParsedDoc,
   bindEditor,
@@ -53,7 +58,9 @@ function attachObserver(): void {
 
 const settle = () => new Promise<void>((r) => setTimeout(r, 20));
 
-// 仿真实文档：H4 + 段落 + 列表交替（线上触发文档同构）。
+// 仿真实文档：H4 + 段落 + 列表交替，每 5 节一张表格（线上触发文档同构）。
+// 表格让 F1-F5 的同内容路径也覆盖到自定义节点视图；表格视图的反转语义
+// 回归由下方 F6 专门守卫（装饰变化才会走到 spec.update，见 F6 注释）。
 function buildMd(nSections: number): string {
   const out: string[] = [];
   for (let i = 0; i < nSections; i++) {
@@ -64,6 +71,12 @@ function buildMd(nSections: number): string {
     out.push(`- 要点甲 ${i}`);
     out.push(`- 要点乙 ${i}`);
     out.push("");
+    if (i % 5 === 0) {
+      out.push(`| 列甲 ${i} | 列乙 ${i} |`);
+      out.push(`| --- | --- |`);
+      out.push(`| 行一 ${i} | 行二 ${i} |`);
+      out.push("");
+    }
   }
   return out.join("\n");
 }
@@ -151,6 +164,132 @@ describe("MD-1011 回归（Crepe + jsdom，盖章整篇应用）", () => {
       // 收尾：view 必须仍活着（盖章路径未破坏状态机）。
       const v = crepe.editor.ctx.get(editorViewCtx);
       expect(v.state.doc.childCount).toBeGreaterThan(90);
+      unbindEditor();
+    },
+    60000,
+  );
+
+  // MD-1011 残余（4.10.0-beta.2 根修）：@milkdown/components 的
+  // TableNodeView.update() 在新旧节点相同时错误返回 false（ProseMirror 契约
+  // = 销毁重建）。触发条件是「内容相同 + 装饰变化」：内容相同时 matchesNode
+  // 本可命中（零成本复用），但装饰（cvMemory 学习尺寸 / 预热区间的
+  // content-visibility）一变，sameOuterDeco 失败 → 落入 updateNextNode 位置
+  // 回退 → spec.update → 上游对相同内容返回 false → recreateWrapper 把子 DOM
+  // 移植进新壳、旧壳留空（线上 -197/+197 批次、空壳指纹
+  // <div.milkdown-table-block ×0> 的来源；~20 波 = 预热分批逐步扩大区间）。
+  // 本用例用装饰开关复现该路径：A/B 实证补丁缺失时两张表以
+  // -DIV,-DIV,+DIV,+DIV 重建（与生产指纹一致），补丁在位时视图原位保留、
+  // 装饰 style 补在同一个包装器上。
+  it(
+    "装饰变化 + 同内容重载不重建表格视图（TableNodeView.update 语义回归）",
+    async () => {
+      let decoOn = false;
+      const probeKey = new PluginKey<DecorationSet>("probe-table-deco");
+      // 与 cvMemory 的 buildDecos 同构的「有选择」版本：只给表格块盖
+      // Decoration.node style 装饰（模拟有学习尺寸/预热区间的块），开关翻转
+      // 等价于预热批次给区间块追加/收走 content-visibility: visible。
+      const makeDeco = (doc: PMNode): DecorationSet => {
+        if (!decoOn) return DecorationSet.empty;
+        const decos: Decoration[] = [];
+        doc.forEach((node, offset) => {
+          if (node.type.name !== "table") return;
+          decos.push(
+            Decoration.node(offset, offset + node.nodeSize, {
+              style: "contain-intrinsic-size: 10px 20px; --probe-cv: 1",
+            })
+          );
+        });
+        return DecorationSet.create(doc, decos);
+      };
+      const probeDeco = $prose(
+        () =>
+          new Plugin<DecorationSet>({
+            key: probeKey,
+            state: {
+              // init 也要接开关：applyParsedDoc 的 flush 语义是 EditorState
+              // 整体重建，插件 state 走 init 而非 apply。
+              init: (_cfg, state) => makeDeco(state.doc),
+              apply: (tr) => makeDeco(tr.doc),
+            },
+            props: {
+              decorations: (state: EditorState) => probeKey.getState(state),
+            },
+          })
+      );
+
+      // 独立 root：本文件首个用例的 .ProseMirror 仍挂在 host 里。
+      const host2 = document.createElement("div");
+      document.body.appendChild(host2);
+      const crepe = new Crepe({
+        root: host2,
+        defaultValue: "",
+        features: {
+          [Crepe.Feature.CodeMirror]: false,
+          [Crepe.Feature.Latex]: false,
+          [Crepe.Feature.TopBar]: false,
+          [Crepe.Feature.AI]: false,
+          [Crepe.Feature.Toolbar]: false,
+        },
+      });
+      crepe.editor.use(probeDeco);
+      await crepe.create();
+      bindEditor(crepe.editor.ctx);
+
+      const md = buildMd(6); // 含两张表（i=0、i=5）
+      crepe.editor.action((ctx) => {
+        applyParsedDoc(ctx, ctx.get(parserCtx)(md)!);
+      });
+      await settle();
+      const pm = host2.querySelector(".ProseMirror") as HTMLElement;
+      expect(pm.querySelectorAll(".milkdown-table-block").length).toBe(2);
+
+      // 观察本用例自己的 PM 根。
+      let removed2 = 0;
+      let added2 = 0;
+      const samples2: string[] = [];
+      const obs = new MutationObserver((records) => {
+        for (const r of records) {
+          if (r.type !== "childList") continue;
+          for (const n of r.removedNodes) {
+            removed2++;
+            samples2.push(`-${(n as Element).tagName ?? "?"}`);
+          }
+          for (const n of r.addedNodes) {
+            added2++;
+            samples2.push(`+${(n as Element).tagName ?? "?"}`);
+          }
+        }
+      });
+      obs.observe(pm, { childList: true });
+
+      // 同内容 + 装饰翻转（复现切换回文档时装饰重算的视图更新路径）。
+      decoOn = true;
+      crepe.editor.action((ctx) => {
+        applyParsedDoc(ctx, ctx.get(parserCtx)(md)!);
+      });
+      await settle();
+      obs.disconnect();
+
+      // 表格视图必须原位保留：允许至多 1 对尾段交换（与 F1 同口径），但
+      // 不得出现任何 DIV 重建（补丁缺失时为 -DIV/-DIV/+DIV/+DIV）。
+      expect(samples2.join(",")).not.toContain("DIV");
+      expect(removed2).toBeLessThanOrEqual(1);
+      expect(added2).toBeLessThanOrEqual(1);
+      // 装饰确实生效（否则上面的零替换只是没走到该路径）。
+      expect(pm.querySelectorAll(".milkdown-table-block").length).toBe(2);
+      const wrappers = Array.from(pm.querySelectorAll(".milkdown-table-block"));
+      console.log(
+        "WRAP STYLES:",
+        wrappers.map((w) => (w as HTMLElement).getAttribute("style")).join(" || ")
+      );
+      expect(
+        wrappers.some((w) =>
+          ((w as HTMLElement).getAttribute("style") ?? "").includes("--probe-cv: 1")
+        ) ||
+          pm.querySelector('[style*="probe-cv"]') != null,
+        "装饰 style 应落在表格包装器上"
+      ).toBe(true);
+
       unbindEditor();
     },
     60000,

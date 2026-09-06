@@ -72,3 +72,32 @@ index 7e1baef..fadd46b 100644
  let CodeMirrorBlock = _CodeMirrorBlock;
  function computeChange(oldVal, newVal) {
    if (oldVal === newVal) return null;
+diff --git a/node_modules/@milkdown/components/lib/table-block/index.js b/node_modules/@milkdown/components/lib/table-block/index.js
+index 5ecaaae..bd12206 100644
+--- a/node_modules/@milkdown/components/lib/table-block/index.js
++++ b/node_modules/@milkdown/components/lib/table-block/index.js
+@@ -1021,8 +1021,22 @@ class TableNodeView {
+   }
+   update(node) {
+     if (node.type !== this.node.type) return false;
+-    if (node.sameMarkup(this.node) && node.content.eq(this.node.content))
+-      return false;
++    // mditor fix (v4.10.0-beta.2, MD-1011 residual): upstream returned FALSE
++    // when the new node is IDENTICAL to the current one. Per the ProseMirror
++    // node-view contract a `false` return means "this view cannot handle the
++    // node — destroy it and create a new one", so every UNCHANGED table (each
++    // a mounted Vue app) was torn down and rebuilt on every whole-document
++    // reload with equal content (tab switch back, watcher echo, programmatic
++    // write-back). The rebuild waves showed up as MD-1011 batches of 1:1
++    // top-level replaces (logs 2026-09-01/02: -197/+197 etc., removed shells
++    // fingerprinted <div.milkdown-table-block x0>) with downstream MD-1002 /
++    // MD-1001 viewport shifts (content-visibility remembered sizes lost with
++    // the old elements) and MD-1003 long tasks. Keep the view alive when
++    // nothing changed; the changed-node path below is upstream behavior.
++    if (node.sameMarkup(this.node) && node.content.eq(this.node.content)) {
++      this.node = node;
++      return true;
++    }
+     this.node = node;
+     this.nodeRef.value = node;
+     return true;
