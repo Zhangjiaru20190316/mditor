@@ -1,12 +1,12 @@
 // ESLint 9 flat config — 前端 TS/TSX only（src-tauri 是 Rust，由 cargo fmt/clippy 管；
-// scripts/ 是 Node 构建脚本，不在前端 lint 范围；scrolltest/ 是纯浏览器
+// scripts/ / perf/ 是 Node 构建与性能脚本，不在前端 lint 范围；scrolltest/ 是纯浏览器
 // 独立验证页（.js + 内联全局），同样不在前端 lint 范围）。
 import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
 
 export default tseslint.config(
-  { ignores: ["dist", "node_modules", "src-tauri", "scripts", "scrolltest", "*.config.*"] },
+  { ignores: ["dist", "node_modules", "src-tauri", "scripts", "perf", "scrolltest", "*.config.*"] },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -26,6 +26,11 @@ export default tseslint.config(
       // 强制收紧的迁移成本大于收益。
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-non-null-assertion": "off",
+      // 解构丢弃占位（const { docKey: _drop, ...p } = ...）：约定 _ 前缀即弃用。
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { varsIgnorePattern: "^_", argsIgnorePattern: "^_", destructuredArrayIgnorePattern: "^_" },
+      ],
     },
   }
 );
