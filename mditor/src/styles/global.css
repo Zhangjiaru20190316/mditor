@@ -1643,6 +1643,40 @@ body.is-resizing .sidebar {
   }
 }
 
+/* ---------- 文档切换交叉淡化（v4.10.0-beta.2）------------------------------
+ * 切换期间编辑区内容随加载条一起「退场-到达」：beginSwitch 点亮 .is-switching
+ * 的瞬间旧内容以 exit 节奏退暗（160ms / ease-in），内容替换发生在暗态之下
+ * （无跳变可感）；finishSwitch 撤类的瞬间新内容以 base 节奏复亮（220ms /
+ * ease-out）——与 .sidebar.is-switching 的 0.55 退暗同一视觉语言，入场慢于
+ * 退场（进 > 出 70-80% 的范式）。
+ * 工程约束：
+ *   * 只过渡 opacity（合成器驱动）：大文档重解析阻塞主线程期间复亮照常
+ *     跑在合成器上；不碰 transform（滚动容器上的 transform 会牵动全文重绘
+ *     与文本模糊）；
+ *   * 纯 CSS 类切换（useSwitchFlow 既有状态），零 React/JS 新增工作；
+ *   * 小文档路径不加延迟：内容照常即刻渲染，动画只改「看见它的方式」；
+ *   * 「无」档与 prefers-reduced-motion 明确豁免（保持 opacity 1，不只压
+ *     时长——否则会有一帧可感的闪暗），与 B12 kill switch 并列双保险。 */
+.mditor-editor-host {
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.main.is-switching .mditor-editor-host {
+  opacity: 0.5;
+  transition-duration: var(--dur-exit);
+  transition-timing-function: var(--ease-in);
+}
+@media (prefers-reduced-motion: reduce) {
+  .main.is-switching .mditor-editor-host {
+    opacity: 1;
+    transition: none;
+  }
+}
+html[data-motion="none"] .main.is-switching .mditor-editor-host {
+  opacity: 1;
+  transition: none;
+}
+
+
 /* ---------- 大文档交互期视口化（阶段 3 中间态）-----------------------------
  * Editor 在 big 模式（isBigDoc）给 .mditor-editor-host 加 data-big；这里对
  * ProseMirror 的每个顶层块启用 content-visibility: auto —— 浏览器跳过视口
