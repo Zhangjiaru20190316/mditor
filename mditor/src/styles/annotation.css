@@ -32,7 +32,7 @@
   border-radius: 999px;
   cursor: pointer;
   user-select: none;
-  transition: transform 0.12s ease, background 0.12s ease;
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
   /* anchor for the ::after hit-area pad below */
   position: relative;
 }
@@ -94,17 +94,15 @@
 /* ---------- the popover ---------- */
 .anno-popover {
   position: fixed;
-  z-index: 70;
+  z-index: var(--z-anno);
   width: 380px;
   max-width: 90vw;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-l);
-  box-shadow: var(--shadow-lg);
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  animation: anno-in 0.16s cubic-bezier(0.16, 1, 0.3, 1) both;
+  /* Popover 范式：自锚点（批注徽章下方）方向弹出 */
+  transform-origin: top center;
+  animation: anno-in var(--dur-fast) var(--ease-out) both;
   /* 仅在打开期间存在，提升 transform 到合成层让入场动画更稳 */
   will-change: transform;
 }
@@ -252,10 +250,6 @@
   font-family: var(--font-prose);
   line-height: 1.55;
 }
-.anno-edit-area:focus {
-  outline: none;
-  border-color: var(--accent);
-}
 /* edit mode swaps the body for a padded textarea wrapper */
 .anno-popover.editing .anno-popover-body {
   padding: 10px 12px;
@@ -304,7 +298,7 @@
   border-radius: 999px;
   box-shadow: var(--shadow);
   pointer-events: none;
-  animation: sb-badge-pop 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: sb-badge-pop var(--dur-base) var(--ease-out) both;
 }
 @keyframes sb-badge-pop {
   from {
@@ -334,8 +328,8 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-l);
   cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.12s ease,
-    border-color 0.15s ease;
+  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
 }
 .anno-item:hover {
   transform: translateY(-1px);
@@ -384,7 +378,7 @@
   display: flex;
   gap: 4px;
   opacity: 0;
-  transition: opacity 0.1s;
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
 .anno-item:hover .anno-item-actions,
 .anno-item.editing .anno-item-actions,
@@ -445,10 +439,6 @@
   font-size: var(--font-size-s);
   font-family: var(--font-prose);
   line-height: 1.55;
-}
-.anno-item-edit:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 .anno-list-empty {
   padding: 24px 16px;
@@ -516,7 +506,7 @@ pre.anno-code-line-hl {
   position: fixed;
   right: 16px;
   bottom: 16px;
-  z-index: 90;
+  z-index: var(--z-ctx-backdrop);
   width: 460px;
   max-width: 92vw;
   max-height: 60vh;
@@ -643,7 +633,7 @@ pre.anno-code-line-hl {
   position: fixed;
   top: 44px; /* 标题栏 36px + 8px */
   right: 16px;
-  z-index: 95;
+  z-index: var(--z-menu);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -660,7 +650,7 @@ pre.anno-code-line-hl {
   box-shadow: var(--shadow-lg);
   padding: 8px 10px;
   font-size: var(--font-size-s);
-  animation: dev-alert-in 0.18s ease-out;
+  animation: dev-alert-in var(--dur-fast) var(--ease-out);
 }
 .dev-alert.error {
   border-left-color: var(--danger, #d33);
@@ -743,7 +733,7 @@ pre.anno-code-line-hl {
     transform: none;
   }
 }
-[data-motion="off"] .dev-alert {
+html[data-motion="none"] .dev-alert {
   animation: none;
 }
 @media (prefers-reduced-motion: reduce) {

@@ -4,18 +4,42 @@
  * CSS variables set by useSettings (useSettings.ts → applyToDom):
  *   --font-prose, --font-mono, --font-size, --line-height, --para-spacing
  *
- * Design tokens（v4.1 收敛、v4.2 圆润化，全局 :root、与主题无关）：
- *   * 圆角三档：--radius-s 6px（小件/菜单项/内联标记）、--radius-m 10px
- *     （按钮/输入框/行）、--radius-l 16px（卡片/弹窗/下拉/代码块/框架浮岛）；
- *     收敛映射：4/5/3→s，6→m，8/9/10/12→l；胶囊 999px、圆 50%、聊天气泡
- *     尾角等特形保留原值。
- *   * --frame-pad 8px：浮岛框架画布留白（.app padding / 卡片间距），
- *     焦点模式下归零（见 .is-focus）；v4.2.1 起最大化同样保留浮岛。
- *   * 字号阶梯（chrome 层；正文 --font-size 不动）：--font-size-xs 11px、
- *     -s 12px、-m 13px、-l 14px；收敛映射：10/10.5/11/11.5→xs，
- *     12/12.5→s，13/13.5→m，14→l；标题 16/18 与图标按钮 15 保留原值。
- *   * 语义色 --danger*/--success*/--diff-* 由各主题文件定义（深色主题
- *     各自调值，消除亮块），此处不设兜底——五主题均完整定义。
+ * Design tokens（v4.1 收敛、v4.2 圆润化、v5 美学升级全套令牌化，全局 :root、
+ * 与主题无关；主题只覆盖颜色类令牌——阴影三档在 themes/*.css 逐主题定义）：
+ *
+ *   ── 令牌速查表 ────────────────────────────────────────────────────────
+ *   圆角  --radius-s 6px（小件/菜单项/内联标记）· --radius-m 10px（按钮/
+ *         输入框/行）· --radius-l 16px（卡片/弹窗/下拉/代码块/框架浮岛）；
+ *         收敛映射：3/4/5→s，6/8/9/10/12→就近档（行级取 m、容器级取 l）；
+ *         特形保留字面值并注释声明：胶囊 999px、圆 50%、聊天气泡尾角
+ *         （16 16 4 16）、resizer 发丝线 2px、色板内圈 ring。
+ *         同心原则：嵌套圆角 ≈ 外圆角 − 内边距，按阶梯就近取档
+ *         （16−8=8 → 取 m=10，阶梯量化误差 ≤2px）。
+ *   间距  --space-1..4 = 4/8/12/16px（铬层 margin/padding/gap 阶梯；
+ *         正文排版 --para-spacing 等不在其列）。
+ *   字号  --font-size-xs 11px · -s 12px · -m 13px · -l 14px（chrome 层；
+ *         正文 --font-size 不动）。收敛映射：10/10.5/11/11.5→xs，
+ *         12/12.5→s，13/13.5→m，14→l；标题 16/18、spotlight 输入 15、
+ *         图标钮 15、闪卡正文 16 保留原值（特例注释声明）。
+ *   阴影  --shadow 低（浮岛卡片/hover 抬升）· --shadow-md 中（悬浮条）·
+ *         --shadow-lg 高（菜单/弹层/模态）；三档均在 themes/*.css 逐主题
+ *         定义（深色主题更深），:root 仅存浅色兜底。
+ *   动效  --dur-fast 120ms（悬停/按下/焦点/弹层）· --dur-base 220ms
+ *         （面板/模态/主题级）· --dur-exit 160ms（退场 = 进入的 ~70-80%）·
+ *         --dur-slow 340ms（主题切换等大面积颜色过渡；>400ms 禁用）；
+ *         loading/状态指示循环动画（打字点/呼吸/进度条）时长豁免。
+ *   缓动  --ease-out 进入（快起缓收）· --ease-in 退出（缓起快收）·
+ *         --ease-spring 弹性（轻微过冲，仅 lively 档强调性小元素）。
+ *   层级  --z-* 阶梯（值与改造前逐一同值，见 :root 内注释）：
+ *         inline 5 < search 30 < edge 35 < float 40 < focus-zone 50 <
+ *         focus-bar 51 < sel 60 < sel-pop 61 < anno 70 < chrome 85 <
+ *         ctx-backdrop 90 < ctx 91 < menu-backdrop 94 < menu 95 <
+ *         suggest 96 < modal 100 < switcher 105 < overlay 110 < drag 9999。
+ *         （CodeMirror gutter 的 200 为 vendor 内部层叠，不纳入。）
+ *   ─────────────────────────────────────────────────────────────────────
+ *
+ *   语义色 --danger*/--success*/--diff-* 由各主题文件定义（深色主题
+ *   各自调值，消除亮块），此处不设兜底——五主题均完整定义。
  */
 
 :root {
@@ -27,6 +51,49 @@
   --font-size-s: 12px;
   --font-size-m: 13px;
   --font-size-l: 14px;
+  /* 间距阶梯（chrome 层专用；正文排版变量不在其列） */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  /* 动效时长四档：fast 即时反馈 / base 常规过渡 / exit 退场（70-80% 规则）/
+     slow 主题切换等大面积颜色过渡。loading 循环动画（打字点、呼吸光晕、
+     进度条扫描）不属过渡体系，时长豁免不挂档。 */
+  --dur-fast: 120ms;
+  --dur-base: 220ms;
+  --dur-exit: 160ms;
+  --dur-slow: 340ms;
+  /* 缓动三曲线：out 进入（快起缓收）/ in 退出（缓起快收）/ spring 弹性
+     （轻微过冲，仅 lively 档强调性小元素使用）。 */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.64, 0, 0.78, 0);
+  --ease-spring: var(--ease-spring);
+  /* 阴影三档的浅色兜底（正式定义在 themes/*.css，深色主题覆盖为更深值） */
+  --shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.16);
+  /* z-index 阶梯：值与改造前完全一致（只命名，不重排）。
+     编辑器内部小件 → 贴边/浮层 → 铬层 → 菜单族 → 模态族 → 全屏/拖放。 */
+  --z-inline: 5; /* 容器内 sticky 工具栏 / resizer 沟槽 / 行内入口 */
+  --z-search: 30; /* 编辑区查找条 */
+  --z-edge: 35; /* 贴边件：侧栏展开钮 / 大文档遮罩 */
+  --z-float: 40; /* 切换加载条 / AI 悬浮钮 */
+  --z-focus-zone: 50; /* 焦点模式顶部悬停热区 */
+  --z-focus-bar: 51; /* 焦点模式浮动工具栏 */
+  --z-sel: 60; /* 选区工具栏 */
+  --z-sel-pop: 61; /* 选区工具栏二级弹层 */
+  --z-anno: 70; /* 批注弹层 */
+  --z-chrome: 85; /* 框架铬层：标题栏 / 标签栏 / 状态栏（压编辑区浮层，
+     让位全局 UI；见 .titlebar 长注释） */
+  --z-ctx-backdrop: 90; /* 右键菜单背板 */
+  --z-ctx: 91; /* 右键菜单 */
+  --z-menu-backdrop: 94; /* 菜单栏背板 */
+  --z-menu: 95; /* 菜单栏下拉 / 开发告警栈 */
+  --z-suggest: 96; /* [[ 双链补全 */
+  --z-modal: 100; /* 模态弹窗 */
+  --z-switcher: 105; /* 快速切换器（高于常规弹窗） */
+  --z-overlay: 110; /* 全屏复习浮层 */
+  --z-drag: 9999; /* 拖放 .md 全屏提示层 */
 }
 
 *,
@@ -59,7 +126,7 @@ body {
    也已禁用相关过渡，不冲突。 */
 button:not(:disabled):active {
   transform: scale(0.96);
-  transition: transform 0.08s ease;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
 .app {
@@ -103,8 +170,8 @@ button:not(:disabled):active {
      注意菜单下拉是 Portal 到 body 才真正越过本层，本层叠上下文会把内部
      子元素封顶在 85）。v3.9.4 前为 10：批注弹层(70) 随滚动平移时可整片
      盖住标题栏。 */
-  z-index: 85;
-  transition: background-color 0.3s ease, border-color 0.3s ease;
+  z-index: var(--z-chrome);
+  transition: background-color var(--dur-slow) var(--ease-out), border-color var(--dur-slow) var(--ease-out);
 }
 .titlebar-logo {
   margin-left: 10px;
@@ -160,7 +227,7 @@ button:not(:disabled):active {
   background: transparent;
   color: var(--fg-muted);
   cursor: pointer;
-  transition: background 0.1s ease, color 0.1s ease;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .tb-win-btn:hover {
   background: var(--hover);
@@ -189,7 +256,7 @@ button:not(:disabled):active {
   line-height: 1.4;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.1s ease, color 0.1s ease;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 /* Claude 式同族暖色反馈（v4.1）：菜单按钮 hover/open 用 accent 轻染底，
    与下拉菜单项（accent-soft 底 + accent 字）同一语言；color-mix 按
@@ -213,22 +280,18 @@ button:not(:disabled):active {
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 94;
+  z-index: var(--z-menu-backdrop);
 }
 .mb-dropdown {
   position: fixed;
-  z-index: 95;
+  z-index: var(--z-menu);
   min-width: 220px;
   max-width: 380px;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-l);
-  box-shadow: var(--shadow-lg);
   padding: 5px;
   display: flex;
   flex-direction: column;
   transform-origin: top left;
-  animation: mb-in 0.12s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: mb-in var(--dur-fast) var(--ease-out) both;
 }
 @keyframes mb-in {
   from {
@@ -255,10 +318,13 @@ button:not(:disabled):active {
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.1s ease, color 0.1s ease;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
+/* 菜单项 hover/键盘焦点（原子 .menu-item 的共享反馈，见文末 Atoms 区） */
 .mb-item:hover,
-.mb-item:focus-visible {
+.mb-item:focus-visible,
+.ctx-menu-item:hover:not(:disabled),
+.ctx-menu-item:focus-visible:not(:disabled) {
   background: var(--accent-soft);
   color: var(--accent);
   outline: none;
@@ -329,7 +395,7 @@ button:not(:disabled):active {
 
 /* 通用箭头旋转（树形展开钮 / 折叠区切换）：只动 transform，合成层友好 */
 .chevron {
-  transition: transform 0.15s ease;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 .chevron.open {
   transform: rotate(90deg);
@@ -353,11 +419,11 @@ button:not(:disabled):active {
      trigger layout/paint work here. layout+style are safe (no fixed children). */
   contain: layout style;
   transition:
-    width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-    transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-    background-color 0.3s ease,
-    border-color 0.3s ease;
+    width var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out),
+    background-color var(--dur-slow) var(--ease-out),
+    border-color var(--dur-slow) var(--ease-out);
 }
 .sidebar.closed {
   width: 0;
@@ -388,21 +454,23 @@ body.is-resizing .sidebar {
   cursor: col-resize;
   background: transparent;
   position: relative;
-  z-index: 5;
+  z-index: var(--z-inline);
   border-radius: var(--radius-s);
-  transition: background 0.15s ease;
+  transition: background var(--dur-fast) var(--ease-out);
 }
 .resizer::before {
   content: "";
   position: absolute;
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) scaleY(0.7);
   width: 2px;
-  height: 28px;
-  border-radius: 2px;
+  height: 40px;
+  border-radius: 2px; /* 发丝线特形：2px 圆头 */
   background: var(--border);
-  transition: background 0.15s ease, height 0.15s ease;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 .resizer:hover,
 .resizer:active {
@@ -411,7 +479,7 @@ body.is-resizing .sidebar {
 .resizer:hover::before,
 .resizer:active::before {
   background: var(--accent);
-  height: 40px;
+  transform: translate(-50%, -50%) scaleY(1);
 }
 .resizer-sidebar {
   grid-area: sbres;
@@ -434,14 +502,14 @@ body.is-resizing .sidebar {
   background: var(--card-bg);
   color: var(--fg-muted);
   cursor: pointer;
-  z-index: 35;
+  z-index: var(--z-edge);
   opacity: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: var(--font-size-xs);
   box-shadow: var(--shadow);
-  transition: opacity 0.2s ease, color 0.2s ease;
+  transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .sidebar-opener:hover {
   opacity: 1;
@@ -495,7 +563,7 @@ body.is-resizing .sidebar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .sb-tabs button:hover {
   background: var(--hover);
@@ -506,7 +574,7 @@ body.is-resizing .sidebar {
 }
 /* 激活时图标 pop：scale 0.85 → 1（纯 transform 过渡，120ms） */
 .sb-tabs button svg {
-  transition: transform 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 .sb-tabs button:not(.active) svg {
   transform: scale(0.85);
@@ -524,7 +592,7 @@ body.is-resizing .sidebar {
 }
 /* 面板切换入场：直接子级（各面板条件渲染，切换即重挂载）fade + 上移 8px */
 .sb-panel > * {
-  animation: sb-panel-in 0.16s ease both;
+  animation: sb-panel-in var(--dur-fast) var(--ease-out) both;
 }
 @keyframes sb-panel-in {
   from {
@@ -644,7 +712,7 @@ body.is-resizing .sidebar {
   color: var(--fg);
   white-space: nowrap;
   user-select: none;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .ft-row:hover {
   background: var(--hover);
@@ -748,7 +816,7 @@ body.is-resizing .sidebar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .ft-tool-btn:hover {
   background: var(--hover);
@@ -869,7 +937,7 @@ body.is-resizing .sidebar {
   justify-content: center;
   flex-shrink: 0;
   opacity: 0;
-  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+  transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
 .ft-section-head:hover .ft-section-x {
   opacity: 1;
@@ -917,18 +985,16 @@ body.is-resizing .sidebar {
 .ctx-menu-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: var(--z-ctx-backdrop);
   /* transparent but catches clicks so the menu closes on outside-click */
 }
 .ctx-menu {
   position: fixed;
-  z-index: 91;
+  z-index: var(--z-ctx);
   min-width: 160px;
   max-width: 280px;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-l);
-  box-shadow: var(--shadow-lg);
+  /* Popover 范式：从锚点（光标右下方）方向弹出 */
+  transform-origin: top left;
   padding: 4px;
   display: flex;
   flex-direction: column;
@@ -937,7 +1003,7 @@ body.is-resizing .sidebar {
   max-height: calc(100vh - 24px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  animation: ctx-menu-in 0.12s ease both;
+  animation: ctx-menu-in var(--dur-fast) var(--ease-out) both;
 }
 @keyframes ctx-menu-in {
   from {
@@ -963,11 +1029,7 @@ body.is-resizing .sidebar {
   font-size: var(--font-size-m);
   font-family: inherit;
   white-space: nowrap;
-  transition: background 0.1s ease, color 0.1s ease;
-}
-.ctx-menu-item:hover:not(:disabled) {
-  background: var(--accent-soft);
-  color: var(--accent);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .ctx-menu-item.danger {
   color: var(--danger);
@@ -1040,9 +1102,6 @@ body.is-resizing .sidebar {
   padding: 4px 8px;
   outline: none;
 }
-.ctx-input:focus {
-  border-color: var(--accent);
-}
 .ctx-input-ok {
   flex: none;
   border: none;
@@ -1054,9 +1113,6 @@ body.is-resizing .sidebar {
   width: 26px;
   height: 26px;
   line-height: 1;
-}
-.ctx-input-ok:hover {
-  opacity: 0.88;
 }
 
 /* outline */
@@ -1088,7 +1144,7 @@ body.is-resizing .sidebar {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: background 0.15s ease;
+  transition: background var(--dur-fast) var(--ease-out);
 }
 .ol-row:hover {
   background: var(--hover);
@@ -1103,7 +1159,7 @@ body.is-resizing .sidebar {
   width: 2px;
   border-radius: 999px;
   background: transparent;
-  transition: background 0.15s ease;
+  transition: background var(--dur-fast) var(--ease-out);
 }
 .ol-row:hover::after {
   background: var(--accent);
@@ -1152,7 +1208,7 @@ body.is-resizing .sidebar {
   border-radius: var(--radius-m);
   cursor: pointer;
   font-size: var(--font-size-m);
-  transition: background 0.12s ease;
+  transition: background var(--dur-fast) var(--ease-out);
 }
 .rc-row:hover {
   background: var(--hover);
@@ -1225,7 +1281,7 @@ body.is-resizing .sidebar {
 .mditor-milkdown .milkdown-toolbar {
   position: sticky;
   top: 0;
-  z-index: 5;
+  z-index: var(--z-inline);
   background: var(--toolbar-bg);
   border-bottom: 1px solid var(--border);
 }
@@ -1536,8 +1592,8 @@ body.is-resizing .sidebar {
   height: 2px;
   background: var(--accent);
   transform-origin: left center;
-  animation: md-switch-bar 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-  z-index: 40;
+  animation: md-switch-bar 0.6s var(--ease-in) forwards;
+  z-index: var(--z-float);
   pointer-events: none;
 }
 @keyframes md-switch-bar {
@@ -1573,9 +1629,9 @@ body.is-resizing .sidebar {
   letter-spacing: 0.08em;
   color: var(--fg-muted);
   background: color-mix(in srgb, var(--bg) 82%, transparent);
-  z-index: 35; /* above editor content; the top bar (z-index 40) stays visible */
+  z-index: var(--z-edge); /* above editor content; the top bar (z-index 40) stays visible */
   pointer-events: none;
-  animation: md-heavy-veil 0.3s ease-out both;
+  animation: md-heavy-veil var(--dur-base) var(--ease-out) both;
 }
 @keyframes md-heavy-veil {
   from { opacity: 0; }
@@ -1620,7 +1676,7 @@ body.is-resizing .sidebar {
   position: absolute;
   top: 10px;
   right: 16px;
-  z-index: 30;
+  z-index: var(--z-search);
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-l);
@@ -1657,15 +1713,6 @@ body.is-resizing .sidebar {
 }
 .sb-btn:hover {
   background: var(--hover);
-}
-.sb-primary {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
-}
-.sb-primary:hover {
-  filter: brightness(1.08);
-  background: var(--accent);
 }
 .sb-toggle {
   display: inline-flex;
@@ -1714,7 +1761,7 @@ body.is-resizing .sidebar {
   font-size: var(--font-size-s);
   /* 85 = chrome 层（见 .titlebar 注释）：此前 z-index:auto，被批注弹层(70)
      等编辑区 fixed 浮层盖住。焦点模式 display:none 时高度为 0，无影响。 */
-  z-index: 85;
+  z-index: var(--z-chrome);
 }
 .sb-status-name {
   overflow: hidden;
@@ -1778,7 +1825,7 @@ body.is-resizing .sidebar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .sb-icon-btn:hover {
   background: var(--hover);
@@ -1795,7 +1842,7 @@ body.is-resizing .sidebar {
   left: 0;
   right: 0;
   height: 8px;
-  z-index: 50;
+  z-index: var(--z-focus-zone);
 }
 .focus-toolbar {
   position: fixed;
@@ -1812,11 +1859,11 @@ body.is-resizing .sidebar {
   box-shadow: var(--shadow);
   opacity: 0;
   transition:
-    transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-    opacity 0.3s ease;
+    transform var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
   /* 鼠标移开后立即收起 */
   transition-delay: 0s;
-  z-index: 51;
+  z-index: var(--z-focus-bar);
 }
 /* 进入悬停区：延迟 0.3s 浮出（避免误触） */
 .focus-hover-zone:hover .focus-toolbar {
@@ -1852,7 +1899,7 @@ body.is-resizing .sidebar {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  z-index: var(--z-modal);
 }
 .modal-card {
   background: var(--card-bg);
@@ -1964,14 +2011,6 @@ body.is-resizing .sidebar {
   background: transparent;
   color: var(--fg);
 }
-.btn-primary {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
-}
-.btn-primary:hover {
-  filter: brightness(1.08);
-}
 
 /* ---------- 设置弹窗：左导航双栏（v4.1） ---------- */
 /* 弹窗加宽承载双栏（保留 max-width 92vw 兜底窄窗口）；左列固定导航 +
@@ -2010,7 +2049,7 @@ body.is-resizing .sidebar {
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color 0.13s ease, color 0.13s ease;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .settings-nav-btn:hover {
   background: var(--hover);
@@ -2036,7 +2075,7 @@ body.is-resizing .sidebar {
   border-radius: 999px;
   background: var(--accent);
   transform: translateY(0);
-  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform var(--dur-base) var(--ease-out);
 }
 .settings-pane {
   flex: 1;
@@ -2064,7 +2103,7 @@ body.is-resizing .sidebar {
   font-family: inherit;
   padding: 5px 16px;
   cursor: pointer;
-  transition: background-color 0.13s ease, color 0.13s ease;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .seg-btn + .seg-btn {
   border-left: 1px solid var(--border);
@@ -2093,7 +2132,7 @@ body.is-resizing .sidebar {
   overflow: hidden;
   /* contain: isolate the AI panel's rendering from the rest of the layout. */
   contain: layout style;
-  transition: background-color 0.3s ease, border-color 0.3s ease;
+  transition: background-color var(--dur-slow) var(--ease-out), border-color var(--dur-slow) var(--ease-out);
 }
 /* 拖拽分隔条时禁用宽度过渡，保证跟手；提升 width 到合成层更顺滑 */
 body.is-resizing .ai-panel {
@@ -2134,7 +2173,7 @@ body.is-resizing .ai-panel {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 0.13s ease, color 0.13s ease, opacity 0.13s ease;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
 }
 .ai-clear-btn:hover:not(:disabled) {
   background: var(--hover);
@@ -2158,7 +2197,7 @@ body.is-resizing .ai-panel {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .ai-close-btn:hover {
   background: var(--hover);
@@ -2175,7 +2214,7 @@ body.is-resizing .ai-panel {
   padding: 2px 4px;
   max-width: 150px;
   cursor: pointer;
-  transition: border-color 0.13s ease, background-color 0.13s ease;
+  transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
 }
 .ai-model-select:hover,
 .ai-thinking-select:hover {
@@ -2254,11 +2293,11 @@ body.is-resizing .ai-panel {
   font-family: inherit;
   box-shadow: var(--shadow);
   transition:
-    background-color 0.13s ease,
-    border-color 0.13s ease,
-    color 0.13s ease,
-    transform 0.15s cubic-bezier(0.16, 1, 0.3, 1),
-    opacity 0.13s ease;
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
 }
 .ai-quick-btn:hover:not(:disabled) {
   background: var(--accent-soft);
@@ -2323,7 +2362,7 @@ body.is-resizing .ai-panel {
   align-self: flex-end;
   background: var(--accent);
   color: #fff;
-  border-radius: 16px 16px 4px 16px;
+  border-radius: 16px 16px 4px 16px; /* 聊天气泡尾角特形 */
   padding: 8px 12px;
   font-size: var(--font-size-m);
   white-space: pre-wrap;
@@ -2332,7 +2371,7 @@ body.is-resizing .ai-panel {
 .ai-msg-assistant .ai-msg-content {
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 16px 16px 16px 4px;
+  border-radius: 16px 16px 16px 4px; /* 聊天气泡尾角特形 */
   padding: 10px 12px;
   font-size: var(--font-size-m);
   line-height: 1.6;
@@ -2427,7 +2466,7 @@ body.is-resizing .ai-panel {
   cursor: pointer;
   font-size: var(--font-size-xs);
   font-family: inherit;
-  transition: background-color 0.13s ease, border-color 0.13s ease, color 0.13s ease;
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .ai-actions button:hover {
   background: var(--hover);
@@ -2481,7 +2520,7 @@ body.is-resizing .ai-panel {
   font-size: var(--font-size-s);
   padding: 4px 18px;
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .ai-mode-switch button:hover {
   color: var(--fg);
@@ -2522,7 +2561,7 @@ body.is-resizing .ai-panel {
   padding: 5px 8px;
   cursor: pointer;
   text-align: left;
-  transition: background-color 0.13s ease;
+  transition: background-color var(--dur-fast) var(--ease-out);
 }
 .agent-card-head:hover {
   background: var(--hover);
@@ -2564,12 +2603,6 @@ body.is-resizing .ai-panel {
   color: var(--fg-muted);
   flex: 0 0 auto;
   display: inline-flex;
-}
-.agent-card-caret .chevron {
-  transition: transform 0.15s ease;
-}
-.agent-card-caret .chevron.open {
-  transform: rotate(90deg);
 }
 .agent-card-result {
   margin: 0;
@@ -2707,12 +2740,6 @@ body.is-resizing .ai-panel {
   color: var(--fg-muted);
   display: inline-flex;
 }
-.apr-op-caret .chevron {
-  transition: transform 0.15s ease;
-}
-.apr-op-caret .chevron.open {
-  transform: rotate(90deg);
-}
 .apr-diff {
   border-top: 1px dashed var(--border);
   padding: 6px 10px;
@@ -2795,9 +2822,6 @@ body.is-resizing .ai-panel {
   color: var(--fg);
   outline: none;
 }
-.ai-followup-input:focus {
-  border-color: var(--accent);
-}
 .ai-followup-actions {
   display: flex;
   gap: 6px;
@@ -2812,7 +2836,7 @@ body.is-resizing .ai-panel {
   cursor: pointer;
   font-size: var(--font-size-xs);
   font-family: inherit;
-  transition: background-color 0.13s ease, border-color 0.13s ease, color 0.13s ease;
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .ai-followup-actions button:hover:not(:disabled) {
   background: var(--hover);
@@ -2821,10 +2845,6 @@ body.is-resizing .ai-panel {
 .ai-followup-actions .ai-followup-send {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
-}
-.ai-followup-actions .ai-followup-send:hover:not(:disabled) {
-  filter: brightness(1.08);
   color: #fff;
 }
 .ai-followup-actions button:disabled {
@@ -3071,9 +3091,6 @@ body.is-resizing .ai-panel {
   font-size: var(--font-size-s);
   font-weight: 600;
 }
-.diff-apply:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
 .diff-apply:disabled {
   opacity: 0.5;
   cursor: default;
@@ -3114,7 +3131,7 @@ body.is-resizing .ai-panel {
 /* 划选追问浮动入口：出现在选区下缘，轻量不遮挡操作按钮。 */
 .ai-sel-followup {
   position: absolute;
-  z-index: 5;
+  z-index: var(--z-inline);
 }
 .ai-sel-followup button {
   font-size: var(--font-size-s);
@@ -3282,10 +3299,6 @@ body.is-resizing .ai-panel {
   font-family: var(--font-prose);
   line-height: 1.5;
 }
-.ai-input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
 .ai-send {
   align-self: stretch;
   background: var(--accent);
@@ -3296,14 +3309,11 @@ body.is-resizing .ai-panel {
   cursor: pointer;
   font-size: var(--font-size-m);
   font-family: inherit;
-  transition: filter 0.13s ease, opacity 0.13s ease;
+  transition: filter var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
 }
 .ai-send:disabled {
   opacity: 0.5;
   cursor: default;
-}
-.ai-send:not(:disabled):hover {
-  filter: brightness(1.08);
 }
 
 /* floating AI toggle button */
@@ -3320,11 +3330,11 @@ body.is-resizing .ai-panel {
   font-size: 20px;
   cursor: pointer;
   box-shadow: var(--shadow);
-  z-index: 40;
+  z-index: var(--z-float);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 .ai-fab:hover {
   transform: scale(1.08) rotate(-3deg);
@@ -3401,7 +3411,7 @@ body.is-resizing .ai-panel {
 /* ---------- selection toolbar (floating, above a text selection) ---------- */
 .sel-toolbar {
   position: fixed;
-  z-index: 60;
+  z-index: var(--z-sel);
   display: flex;
   align-items: center;
   gap: 2px;
@@ -3437,9 +3447,6 @@ body.is-resizing .ai-panel {
   background: var(--accent);
   color: #fff;
 }
-.sel-btn.primary:hover {
-  filter: brightness(1.08);
-}
 .sel-sep {
   width: 1px;
   height: 16px;
@@ -3456,11 +3463,7 @@ body.is-resizing .ai-panel {
   gap: 6px;
   width: 320px;
   max-width: 80vw;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-l);
   padding: 6px;
-  box-shadow: var(--shadow-lg);
 }
 /* When the toolbar flipped below the selection, its popouts open above it. */
 .sel-toolbar.flip-down .sel-popout {
@@ -3480,12 +3483,8 @@ body.is-resizing .ai-panel {
   font-size: var(--font-size-s);
   font-family: var(--font-prose);
 }
-.sel-input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
 
-/* ---------- selection toolbar: 二级菜单（色板 / AI 动作） ----------
+/* ---------- selection toolbar: 二级菜单（色板 / AI 动作） ---------- */
    常驻 DOM + `.open` class 切换，让 CSS 在进/出两个方向都能平滑过渡
    （条件挂载只能做入场动画）。缓动与时长与 .sel-toolbar 的 sel-in 一致。 */
 .sel-caret {
@@ -3500,22 +3499,19 @@ body.is-resizing .ai-panel {
   top: 100%;
   left: 0;
   margin-top: 4px;
-  z-index: 61;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-l);
-  box-shadow: var(--shadow-lg);
+  z-index: var(--z-sel-pop);
   /* closed state */
   opacity: 0;
   transform: translateY(-4px) scale(0.98);
   transform-origin: top left;
   visibility: hidden;
   pointer-events: none;
-  will-change: transform, opacity;
+  /* 不设常驻 will-change：元素常驻 DOM，提升合成层会常占显存；
+     120ms 的 transform/opacity 过渡无需预提升。 */
   transition:
-    opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1),
-    transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
-    visibility 0s linear 0.18s;
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out),
+    visibility 0s linear var(--dur-fast);
 }
 .sel-submenu.open {
   opacity: 1;
@@ -3523,8 +3519,8 @@ body.is-resizing .ai-panel {
   visibility: visible;
   pointer-events: auto;
   transition:
-    opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1),
-    transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out),
     visibility 0s;
 }
 /* When the toolbar flipped below the selection, its submenus open above it
@@ -3559,8 +3555,8 @@ body.is-resizing .ai-panel {
   border-radius: 50%;
   cursor: pointer;
   background: var(--hover);
-  transition: transform 0.12s ease;
-  /* subtle inner ring so light swatches stay visible on light cards */
+  transition: transform var(--dur-fast) var(--ease-out);
+  /* 特形：色板内圈 ring（保证浅色块在浅色卡上可见），非层级阴影 */
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
 }
 .sel-swatch:hover {
@@ -3630,7 +3626,7 @@ body.is-resizing .ai-panel {
 
 /* 入场动画统一应用到输入弹出层（改写/问AI/批注），与工具栏质感一致 */
 .sel-popout {
-  animation: sel-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: sel-in var(--dur-fast) var(--ease-out) both;
 }
 
 /* ---------- settings: AI advanced / prompt / quick-action editor ---------- */
@@ -3659,10 +3655,6 @@ body.is-resizing .ai-panel {
   font-size: var(--font-size-s);
   line-height: 1.5;
   resize: vertical;
-}
-.ai-prompt-area:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 .qa-editor {
   display: flex;
@@ -3856,25 +3848,25 @@ body.is-resizing .ai-panel {
 
 /* =====================================================================
    动效区块（生动优美）
-   原则：时长 0.15~0.35s；优先 cubic-bezier(0.16,1,0.3,1) / (0.4,0,0.2,1)；
+   原则：时长 0.15~0.35s；优先 var(--ease-out) / (0.4,0,0.2,1)；
    不干扰编辑器正文区；末尾统一用 prefers-reduced-motion 兜底。
    ===================================================================== */
 
 /* B9. 主题切换过渡：body + 关键容器颜色平滑变化 */
 body {
-  transition: background-color 0.3s ease, color 0.3s ease;
+  transition: background-color var(--dur-slow) var(--ease-out), color var(--dur-slow) var(--ease-out);
 }
 .main,
 .sb-status {
-  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+  transition: background-color var(--dur-slow) var(--ease-out), color var(--dur-slow) var(--ease-out), border-color var(--dur-slow) var(--ease-out);
 }
 .modal-card {
-  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+  transition: background-color var(--dur-slow) var(--ease-out), color var(--dur-slow) var(--ease-out), border-color var(--dur-slow) var(--ease-out);
 }
 
 /* B2. AI 面板从右侧滑入（mount 时触发） */
 .ai-panel {
-  animation: ai-panel-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: ai-panel-in var(--dur-base) var(--ease-out) both;
 }
 @keyframes ai-panel-in {
   from {
@@ -3888,7 +3880,7 @@ body {
 }
 /* 面板打开时内部区块依次淡入（stagger，每项延迟约 30ms） */
 .ai-panel > * {
-  animation: ai-fade-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: ai-fade-in var(--dur-base) var(--ease-out) both;
 }
 .ai-panel > *:nth-child(1) {
   animation-delay: 30ms;
@@ -3921,10 +3913,10 @@ body {
 
 /* B3. AI 消息气泡：用户从下淡入，助手从上淡入（新消息 mount 时触发） */
 .ai-msg-user {
-  animation: ai-msg-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: ai-msg-up var(--dur-base) var(--ease-out) both;
 }
 .ai-msg-assistant {
-  animation: ai-msg-down 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: ai-msg-down var(--dur-base) var(--ease-out) both;
 }
 @keyframes ai-msg-up {
   from {
@@ -3962,10 +3954,10 @@ body {
 
 /* B4. 模态框：背景淡入 + 卡片缩放上浮 */
 .modal-backdrop {
-  animation: modal-bg-in 0.2s ease both;
+  animation: modal-bg-in var(--dur-base) var(--ease-out) both;
 }
 .modal-card {
-  animation: modal-card-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: modal-card-in var(--dur-base) var(--ease-out) both;
   /* 仅在打开期间存在，提升入场缩放/位移到合成层 */
   will-change: transform, opacity;
 }
@@ -3993,11 +3985,11 @@ body {
    播完退场再卸载；退场期间 .closing 禁指针防误触。「无」档 / 系统减少动态
    效果下被全局 kill switch 压成瞬时（元素即刻透明），仅剩卸载时序。 */
 .modal-backdrop.closing {
-  animation: modal-bg-out 0.2s cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation: modal-bg-out var(--dur-exit) var(--ease-in) both;
   pointer-events: none;
 }
 .modal-backdrop.closing .modal-card {
-  animation: modal-card-out 0.22s cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation: modal-card-out var(--dur-exit) var(--ease-in) both;
 }
 @keyframes modal-bg-out {
   from {
@@ -4019,7 +4011,7 @@ body {
 }
 /* AI 面板退场：向右淡出收回（与入场滑入镜像） */
 .ai-panel.closing {
-  animation: ai-panel-out 0.22s cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation: ai-panel-out var(--dur-exit) var(--ease-in) both;
   pointer-events: none;
 }
 @keyframes ai-panel-out {
@@ -4064,7 +4056,7 @@ body {
 .model-del,
 .model-add,
 .field-collapsible {
-  transition: background-color 0.13s ease, color 0.13s ease, border-color 0.13s ease;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 /* 输入类控件：focus 边框瞬变 → 同曲线过渡 */
 .field-control input[type="text"],
@@ -4088,11 +4080,21 @@ body {
 .model-baseurl,
 .model-key,
 .model-name-id {
-  transition: border-color 0.13s ease, background-color 0.13s ease;
+  transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
 }
 /* 高频交互件 focus-visible 描绘环（accent 色 2px、offset 1px）——键盘
    导航可见性对齐 .mb-item / .sb-status-mode 既有写法 */
 .mb-btn:focus-visible,
+.qs-x:focus-visible,
+.ft-tool-btn:focus-visible,
+.sb-tabs button:focus-visible,
+.sb-icon-btn:focus-visible,
+.ctx-input-ok:focus-visible,
+.diff-apply:focus-visible,
+.anno-btn:focus-visible,
+.anno-item-btn:focus-visible,
+.ai-rag-toggle:focus-visible,
+.fc-grade:focus-visible,
 .sel-btn:focus-visible,
 .sb-btn:focus-visible,
 .sb-close:focus-visible,
@@ -4128,9 +4130,9 @@ body {
   opacity: 0;
   margin-top: -12px;
   transition:
-    max-height 0.3s ease,
-    opacity 0.3s ease,
-    margin-top 0.3s ease;
+    max-height var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out),
+    margin-top var(--dur-base) var(--ease-out);
 }
 .field-collapse.open {
   max-height: 1000px;
@@ -4141,7 +4143,7 @@ body {
 /* B6. 选择工具栏出现：缩放 + 淡入（mount 时触发） */
 .sel-toolbar {
   transform-origin: top center;
-  animation: sel-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: sel-in var(--dur-fast) var(--ease-out) both;
   /* 仅在选区可见时挂载，提升入场缩放到合成层 */
   will-change: transform;
 }
@@ -4166,7 +4168,7 @@ body {
 .sb-status-auto {
   opacity: 0;
   transform: translateY(-4px);
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
 }
 .sb-status-auto.show {
   opacity: 1;
@@ -4175,7 +4177,7 @@ body {
 
 /* B11. 搜索栏出现：上滑 + 淡入（mount 时触发） */
 .sb-root {
-  animation: search-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: search-in var(--dur-base) var(--ease-out) both;
 }
 @keyframes search-in {
   from {
@@ -4229,10 +4231,10 @@ body {
 
 /* Tab 增删：新标签挂载淡入微扩；关闭标签由 TabsBar 的 180ms 残影播淡出缩收 */
 .tabbar-tab {
-  animation: tab-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: tab-in var(--dur-fast) var(--ease-out) both;
 }
 .tabbar-tab.closing {
-  animation: tab-out 0.16s cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation: tab-out var(--dur-fast) var(--ease-in) both;
   pointer-events: none;
 }
 @keyframes tab-in {
@@ -4260,7 +4262,7 @@ body {
    只对宿主直接子级生效——内容更新（setValue/输入）不重挂载，不会重放。 */
 .mditor-milkdown > *,
 .mditor-sv > * {
-  animation: editor-surface-in 0.2s ease both;
+  animation: editor-surface-in var(--dur-base) var(--ease-out) both;
 }
 @keyframes editor-surface-in {
   from {
@@ -4274,7 +4276,7 @@ body {
 /* 设置分区切换（SettingsModal 右列 key 重挂载）：淡入 + 上移 6px（参照
    .sb-panel-in） */
 .settings-pane {
-  animation: settings-pane-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: settings-pane-in var(--dur-base) var(--ease-out) both;
 }
 @keyframes settings-pane-in {
   from {
@@ -4294,8 +4296,8 @@ body {
 
 /* 级联入场：侧栏面板（直接子级数量天然有界） */
 html[data-motion="lively"] .sb-panel > * {
-  animation-duration: 0.2s;
-  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation-duration: var(--dur-base);
+  animation-timing-function: var(--ease-out);
 }
 html[data-motion="lively"] .sb-panel > *:nth-child(2) {
   animation-delay: 25ms;
@@ -4313,7 +4315,7 @@ html[data-motion="lively"] .settings-pane {
   animation: none;
 }
 html[data-motion="lively"] .settings-pane > * {
-  animation: settings-field-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: settings-field-in var(--dur-base) var(--ease-out) both;
 }
 html[data-motion="lively"] .settings-pane > *:nth-child(2) {
   animation-delay: 25ms;
@@ -4342,10 +4344,10 @@ html[data-motion="lively"] .settings-pane > *:nth-child(n + 5) {
    注意退场优先：spring 入场的特异性与 .modal-backdrop.closing .modal-card
    打平且源顺序靠后，这里显式补一条更高特异性的退场规则防止盖过淡出。 */
 html[data-motion="lively"] .modal-card {
-  animation: modal-card-in-spring 0.32s cubic-bezier(0.34, 1.4, 0.5, 1) both;
+  animation: modal-card-in-spring 0.32s var(--ease-spring) both; /* 过冲收敛期（lively 档特调，<400ms） */
 }
 html[data-motion="lively"] .modal-backdrop.closing .modal-card {
-  animation: modal-card-out 0.22s cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation: modal-card-out var(--dur-exit) var(--ease-in) both;
 }
 @keyframes modal-card-in-spring {
   from {
@@ -4359,8 +4361,8 @@ html[data-motion="lively"] .modal-backdrop.closing .modal-card {
 }
 html[data-motion="lively"] .mb-dropdown {
   animation-name: mb-in-spring;
-  animation-duration: 0.18s;
-  animation-timing-function: cubic-bezier(0.34, 1.4, 0.5, 1);
+  animation-duration: var(--dur-fast);
+  animation-timing-function: var(--ease-spring);
 }
 @keyframes mb-in-spring {
   from {
@@ -4373,7 +4375,7 @@ html[data-motion="lively"] .mb-dropdown {
   }
 }
 html[data-motion="lively"] .ctx-menu {
-  animation-timing-function: cubic-bezier(0.34, 1.4, 0.5, 1);
+  animation-timing-function: var(--ease-spring);
 }
 
 /* hover 抬升增强：卡片类 translateY(-2px) + 阴影加深（阴影为静态值直换，
@@ -4384,10 +4386,10 @@ html[data-motion="lively"] .ai-quick-btn:hover:not(:disabled) {
 }
 html[data-motion="lively"] .template-item {
   transition:
-    transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
-    background-color 0.13s ease,
-    border-color 0.13s ease,
-    color 0.13s ease;
+    transform var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 html[data-motion="lively"] .template-item:hover,
 html[data-motion="lively"] .template-item:focus-visible {
@@ -4401,11 +4403,11 @@ html[data-motion="lively"] .anno-item:hover {
 
 /* AI FAB 交互反馈更弹：按下快压、松手带回弹（纯事件驱动一次性，无循环） */
 html[data-motion="lively"] .ai-fab {
-  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.35s var(--ease-spring); /* 弹簧回弹收敛期（lively 档特调，<400ms） */
 }
 html[data-motion="lively"] .ai-fab:active {
   transform: scale(0.88) rotate(-3deg);
-  transition: transform 0.1s ease;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
 /* B12. 尊重系统「减少动态效果」设置：统一近乎禁用所有动效。
@@ -4476,6 +4478,117 @@ html[data-motion="none"] *::after {
   flex: 0 0 auto;
   padding: 2px 10px;
   font-size: var(--font-size-s);
+}
+
+/* ===========================================================================
+   Atoms / Molecules（原子与分子层，v5 原子化收敛）
+   ---------------------------------------------------------------------------
+   原子 = 单一职责元素类；本区块是这些样式的「唯一实现处」。既有组件类
+   通过「同组选择器」共享声明（等价于引用原子），组件规则只保留尺寸、
+   位置等专属微调——新增 UI 一律优先挂原子类，禁止再复制属性块。
+
+   API 速查：
+   * .popover     弹层容器：card-bg + border + radius-l + shadow-lg。
+                  适用：右键菜单 / 下拉卡 / 补全层 / 诊断面板。
+                  例外：更轻的贴光标层可自带 --shadow-md 盖过（见 .wls-pop）。
+   * .input       标准输入框：--bg 底 + 1px border + focus 变 accent 边。
+                  不适用：无边框 spotlight 输入（.qs-input）、accent 边的
+                  重命名态输入（.ft-rename-input）。
+   * .btn-solid   主按钮：accent 底白字 + hover 提亮；变体沿用既有语义类
+                  .btn-ghost / .btn-primary 等（均在本组选择器内）。
+   * .menu-item   菜单项：hover/键盘焦点 → accent-soft 底 + accent 字
+                  （反馈规则见上方菜单栏区合并规则）。
+   禁止事项：不得绕过令牌写死圆角/阴影/时长/缓动/z-index；不得在本区块
+   外重复定义上述共享声明。
+   =========================================================================== */
+.popover,
+.mb-dropdown,
+.ctx-menu,
+.sel-popout,
+.sel-submenu,
+.wls-pop,
+.fc-panel,
+.anno-popover,
+.anno-diag {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-lg);
+}
+
+/* 标准输入框原子：底色/边框/聚焦反馈唯一定义（尺寸与圆角由各组件微调） */
+.input,
+.ctx-input,
+.ws-input,
+.link-input,
+.sb-input,
+.sel-input,
+.ai-input,
+.ai-followup-input,
+.ai-prompt-area,
+.anno-edit-area,
+.anno-item-edit,
+.model-name,
+.model-provider,
+.model-baseurl,
+.model-key,
+.model-name-id,
+.field-control input[type="text"],
+.field-control input[type="number"],
+.field-control select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+.input:focus,
+.ctx-input:focus,
+.ws-input:focus,
+.link-input:focus,
+.sb-input:focus,
+.sel-input:focus,
+.ai-input:focus,
+.ai-followup-input:focus,
+.ai-prompt-area:focus,
+.anno-edit-area:focus,
+.anno-item-edit:focus,
+.model-name:focus,
+.model-provider:focus,
+.model-baseurl:focus,
+.model-key:focus,
+.model-name-id:focus,
+.field-control input[type="text"]:focus,
+.field-control input[type="number"]:focus,
+.field-control select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* 主按钮原子：accent 底白字；hover 统一提亮（禁用态由各处既有规则承担） */
+.btn-solid,
+.btn-primary,
+.sb-primary,
+.ctx-input-ok,
+.sb-empty button,
+.ai-send,
+.ai-mode-switch button.on,
+.sel-btn.primary,
+.diff-apply,
+.ai-followup-actions .ai-followup-send {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.btn-solid:hover:not(:disabled),
+.btn-primary:hover:not(:disabled),
+.sb-primary:hover:not(:disabled),
+.ctx-input-ok:hover:not(:disabled),
+.sb-empty button:hover:not(:disabled),
+.ai-send:hover:not(:disabled),
+.ai-mode-switch button.on:hover:not(:disabled),
+.sel-btn.primary:hover:not(:disabled),
+.diff-apply:hover:not(:disabled),
+.ai-followup-actions .ai-followup-send:hover:not(:disabled) {
+  filter: brightness(1.08);
 }
 
 /* ===========================================================================
@@ -4701,7 +4814,7 @@ html[data-motion="none"] *::after {
   scrollbar-width: thin;
   /* grid item 无需 position 即可参与 z-index 竞争；85 = chrome 层（见
      .titlebar 注释）：此前 z-index:auto，被批注弹层(70)等编辑区浮层盖住。 */
-  z-index: 85;
+  z-index: var(--z-chrome);
 }
 .tabbar::-webkit-scrollbar {
   height: 3px;
@@ -4720,7 +4833,7 @@ html[data-motion="none"] *::after {
   cursor: pointer;
   position: relative;
   white-space: nowrap;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .tabbar-tab:hover {
   background: var(--accent-soft);
@@ -4793,7 +4906,7 @@ body.is-dragging-md::after {
   content: "释放以打开 Markdown 文件";
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  z-index: var(--z-drag);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4830,9 +4943,6 @@ body.is-dragging-md::after {
   color: var(--fg);
   font-size: var(--font-size-m);
   outline: none;
-}
-.ws-input:focus {
-  border-color: var(--accent);
 }
 .ws-toggle {
   padding: 5px 8px;
@@ -5055,9 +5165,6 @@ body.is-dragging-md::after {
   font-size: var(--font-size-m);
   outline: none;
 }
-.link-input:focus {
-  border-color: var(--accent);
-}
 
 /* ---------- 状态栏：选区字数 ---------- */
 .sb-status-sel {
@@ -5081,16 +5188,16 @@ body.is-dragging-md::after {
 .qs-overlay {
   position: fixed;
   inset: 0;
-  z-index: 105; /* 高于常规弹窗(100)，浮层语义 */
+  z-index: var(--z-switcher); /* 高于常规弹窗(100)，浮层语义 */
   background: rgba(0, 0, 0, 0.28);
   display: flex;
   justify-content: center;
   align-items: flex-start;
   padding-top: 12vh;
-  animation: modal-bg-in 0.16s ease both;
+  animation: modal-bg-in var(--dur-fast) var(--ease-out) both;
 }
 .qs-overlay.closing {
-  animation: modal-bg-out 0.16s ease both;
+  animation: modal-bg-out var(--dur-exit) var(--ease-in) both;
   pointer-events: none;
 }
 .qs-panel {
@@ -5098,15 +5205,15 @@ body.is-dragging-md::after {
   max-height: 60vh;
   display: flex;
   flex-direction: column;
-  border-radius: 10px;
+  border-radius: var(--radius-m);
   border: 1px solid var(--border);
   background: var(--card-bg, var(--bg));
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.22);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
-  animation: modal-card-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: modal-card-in var(--dur-base) var(--ease-out) both;
 }
 .qs-overlay.closing .qs-panel {
-  animation: modal-card-out 0.18s ease both;
+  animation: modal-card-out var(--dur-exit) var(--ease-in) both;
 }
 .qs-input-row {
   display: flex;
@@ -5126,6 +5233,7 @@ body.is-dragging-md::after {
   outline: none;
   background: transparent;
   color: var(--fg);
+  /* spotlight 主输入：15px 特例（同图标钮 15 保留档，不并入字号阶梯） */
   font-size: 15px;
   font-family: inherit;
 }
@@ -5135,7 +5243,7 @@ body.is-dragging-md::after {
   color: var(--fg-dim, inherit);
   cursor: pointer;
   padding: 4px;
-  border-radius: 4px;
+  border-radius: var(--radius-s);
 }
 .qs-x:hover {
   background: var(--hover, rgba(128, 128, 128, 0.15));
@@ -5151,7 +5259,7 @@ body.is-dragging-md::after {
   justify-content: space-between;
   gap: 12px;
   padding: 7px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   cursor: pointer;
 }
 .qs-item.sel {
@@ -5171,7 +5279,7 @@ body.is-dragging-md::after {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: right;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   color: var(--fg-muted);
   font-family: var(--font-mono);
 }
@@ -5180,14 +5288,14 @@ body.is-dragging-md::after {
   padding: 18px 12px;
   text-align: center;
   color: var(--fg-muted);
-  font-size: 13px;
+  font-size: var(--font-size-m);
 }
 .qs-foot {
   display: flex;
   justify-content: space-between;
   padding: 6px 12px;
   border-top: 1px solid var(--border);
-  font-size: 11.5px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 
@@ -5196,7 +5304,7 @@ body.is-dragging-md::after {
 .ProseMirror a.wikilink {
   color: var(--accent);
   background: var(--accent-soft);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   padding: 0.05em 0.3em;
   cursor: pointer;
   text-decoration: none;
@@ -5212,7 +5320,7 @@ a.wikilink {
 .wikilink-unresolved {
   color: var(--fg-muted);
   background: color-mix(in srgb, var(--fg-muted) 12%, transparent);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   padding: 0.05em 0.3em;
   border-bottom: 1px dashed var(--fg-muted);
 }
@@ -5220,16 +5328,24 @@ a.wikilink {
 /* [[ 输入补全弹层 */
 .wls-pop {
   position: fixed;
-  z-index: 96; /* 高于右键菜单(90-91)，低于弹窗(100) */
+  z-index: var(--z-suggest); /* 高于右键菜单(90-91)，低于弹窗(100) */
   width: min(380px, 80vw);
   max-height: 280px;
   overflow-y: auto;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--card-bg, var(--bg));
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-md); /* 中档：贴光标的轻量补全层（盖过 .popover 组） */
   padding: 4px;
-  animation: modal-card-in 0.14s ease both;
+  animation: drop-in var(--dur-fast) var(--ease-out) both;
+}
+/* Dropdown 范式（wls 补全 / 搜索建议）：自锚点下方 4px 淡入落定 */
+@keyframes drop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .wls-item {
   display: flex;
@@ -5237,7 +5353,7 @@ a.wikilink {
   justify-content: space-between;
   gap: 10px;
   padding: 6px 9px;
-  border-radius: 5px;
+  border-radius: var(--radius-s);
   cursor: pointer;
 }
 .wls-item.sel {
@@ -5250,7 +5366,7 @@ a.wikilink {
 }
 .wls-path {
   flex-shrink: 0;
-  font-size: 11.5px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   font-family: var(--font-mono);
 }
@@ -5265,7 +5381,7 @@ a.wikilink {
   margin-bottom: 16px;
 }
 .lp-head {
-  font-size: 12px;
+  font-size: var(--font-size-s);
   font-weight: 600;
   color: var(--fg-muted);
   text-transform: uppercase;
@@ -5278,12 +5394,12 @@ a.wikilink {
 .lp-count {
   background: var(--accent-soft);
   color: var(--accent);
-  border-radius: 8px;
-  font-size: 10.5px;
+  border-radius: var(--radius-l);
+  font-size: var(--font-size-xs);
   padding: 0 6px;
 }
 .lp-empty {
-  font-size: 12.5px;
+  font-size: var(--font-size-s);
   color: var(--fg-muted);
   padding: 6px 2px;
 }
@@ -5297,7 +5413,7 @@ a.wikilink {
 }
 .lp-item {
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-m);
   padding: 6px 8px;
   cursor: pointer;
 }
@@ -5305,7 +5421,7 @@ a.wikilink {
   background: var(--hover);
 }
 .lp-item-title {
-  font-size: 13px;
+  font-size: var(--font-size-m);
   font-weight: 500;
   margin-bottom: 3px;
   overflow: hidden;
@@ -5313,7 +5429,7 @@ a.wikilink {
   white-space: nowrap;
 }
 .lp-ctx {
-  font-size: 12px;
+  font-size: var(--font-size-s);
   color: var(--fg-muted);
   display: flex;
   flex-direction: column;
@@ -5324,7 +5440,7 @@ a.wikilink {
 .lp-ctx-hit {
   color: var(--fg);
   background: var(--accent-soft);
-  border-radius: 3px;
+  border-radius: var(--radius-s);
   padding: 0 3px;
 }
 .lp-ctx-line {
@@ -5342,8 +5458,8 @@ a.wikilink {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--fg);
-  border-radius: 12px;
-  font-size: 12px;
+  border-radius: var(--radius-l);
+  font-size: var(--font-size-s);
   padding: 2px 9px;
   cursor: pointer;
 }
@@ -5356,7 +5472,7 @@ a.wikilink {
 .lp-tag-n {
   color: var(--fg-muted);
   margin-left: 4px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 /* ---------- 学术引用（v4.7 模块 3） ---------- */
@@ -5365,7 +5481,7 @@ a.wikilink {
 span.citation {
   color: var(--accent);
   background: var(--accent-soft);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   padding: 0.05em 0.3em;
   cursor: default;
   border-bottom: 1px dotted var(--accent);
@@ -5374,20 +5490,20 @@ span.citation {
 /* 「参考文献」标题下的自动生成 widget（PM decoration，只读展示） */
 .md-refs-widget {
   border: 1px dashed var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   padding: 10px 14px;
   margin: 10px 0;
   background: color-mix(in srgb, var(--accent-soft, var(--bg)) 40%, var(--bg));
 }
 .md-refs-widget-note {
-  font-size: 11.5px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   margin-bottom: 6px;
 }
 .md-refs-widget-list {
   margin: 0;
   padding-left: 20px;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   line-height: 1.7;
 }
 .md-refs-widget-list li {
@@ -5402,23 +5518,23 @@ span.citation {
 }
 .cp-key {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--accent);
 }
 .cp-title {
-  font-size: 13px;
+  font-size: var(--font-size-m);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .cp-meta {
-  font-size: 11.5px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 .cp-warn {
   padding: 6px 12px;
   border-top: 1px solid var(--border);
-  font-size: 11.5px;
+  font-size: var(--font-size-xs);
   color: #b8860b;
 }
 /* 设置面板：文献库路径行 */
@@ -5447,7 +5563,7 @@ ol.md-references {
 .ProseMirror div.md-flashcard {
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
-  border-radius: 8px;
+  border-radius: var(--radius-l);
   padding: 10px 14px;
   margin: 10px 0;
   background: color-mix(in srgb, var(--accent-soft, transparent) 30%, var(--bg));
@@ -5467,25 +5583,21 @@ blockquote.md-flashcard {
 .fc-overlay {
   position: fixed;
   inset: 0;
-  z-index: 110;
+  z-index: var(--z-overlay);
   background: rgba(0, 0, 0, 0.45);
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: modal-in 0.16s ease both;
+  animation: modal-bg-in var(--dur-fast) var(--ease-out) both;
 }
 .fc-overlay.closing {
-  animation: modal-out 0.2s ease both;
+  animation: modal-bg-out var(--dur-exit) var(--ease-in) both;
 }
 .fc-panel {
   width: min(640px, 90vw);
   max-height: 80vh;
   overflow-y: auto;
-  background: var(--card-bg, var(--bg));
-  border: 1px solid var(--border);
-  border-radius: 12px;
   padding: 16px 20px 20px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
 }
 .fc-head {
   display: flex;
@@ -5494,12 +5606,12 @@ blockquote.md-flashcard {
   margin-bottom: 12px;
 }
 .fc-head h2 {
-  font-size: 15px;
+  font-size: var(--font-size-l);
   margin: 0;
   flex: 1;
 }
 .fc-progress {
-  font-size: 12px;
+  font-size: var(--font-size-s);
   color: var(--fg-muted);
 }
 .fc-empty {
@@ -5509,37 +5621,38 @@ blockquote.md-flashcard {
 }
 .fc-sub {
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
 }
 .fc-warn {
   margin-top: 12px;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   color: #b8860b;
 }
 .fc-card {
   position: relative;
   min-height: 180px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-m);
   background: var(--bg);
   cursor: pointer;
   margin-bottom: 10px;
-  transition: box-shadow 0.15s ease;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 .fc-card:hover {
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow);
 }
 .fc-face {
   padding: 18px 22px;
 }
 .fc-label {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   letter-spacing: 0.12em;
   color: var(--accent);
   margin-bottom: 10px;
   font-weight: 600;
 }
 .fc-text {
+  /* 闪卡正文 = 阅读层，16px 同正文基准（不挂 chrome 字号 token） */
   font-size: 16px;
   line-height: 1.7;
   white-space: pre-wrap;
@@ -5549,7 +5662,7 @@ blockquote.md-flashcard {
   position: absolute;
   bottom: 10px;
   right: 14px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 .fc-back {
@@ -5569,7 +5682,7 @@ blockquote.md-flashcard {
   border: none;
   background: none;
   color: var(--fg-muted);
-  font-size: 11.5px;
+  font-size: var(--font-size-xs);
   cursor: pointer;
   padding: 0;
   margin-bottom: 10px;
@@ -5588,12 +5701,12 @@ blockquote.md-flashcard {
 }
 .fc-grade {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-s);
   background: var(--bg);
   padding: 8px 4px;
-  font-size: 13px;
+  font-size: var(--font-size-m);
   cursor: pointer;
-  transition: all 0.12s ease;
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .fc-grade:hover {
   border-color: var(--accent);
@@ -5601,7 +5714,7 @@ blockquote.md-flashcard {
 }
 .fc-grade .fc-grade-key {
   display: block;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   margin-top: 2px;
 }
@@ -5630,13 +5743,13 @@ blockquote.md-flashcard {
 }
 .ai-rag-toggle {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-l);
   background: transparent;
   color: var(--fg-muted);
-  font-size: 11.5px;
+  font-size: var(--font-size-xs);
   padding: 2px 10px;
   cursor: pointer;
-  transition: all 0.12s ease;
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .ai-rag-toggle:not(:disabled):hover {
   border-color: var(--accent);
@@ -5653,7 +5766,7 @@ blockquote.md-flashcard {
 }
 .ai-rag-status {
   flex: 1;
-  font-size: 11.5px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5663,7 +5776,7 @@ blockquote.md-flashcard {
   border: none;
   background: none;
   color: var(--accent);
-  font-size: 11.5px;
+  font-size: var(--font-size-xs);
   cursor: pointer;
   padding: 0;
 }
@@ -5677,7 +5790,7 @@ blockquote.md-flashcard {
   padding-top: 6px;
 }
 .ai-rag-sources-head {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   margin-bottom: 4px;
 }
@@ -5690,10 +5803,10 @@ blockquote.md-flashcard {
   border: none;
   background: none;
   padding: 3px 6px;
-  border-radius: 5px;
+  border-radius: var(--radius-s);
   cursor: pointer;
   text-align: left;
-  font-size: 12px;
+  font-size: var(--font-size-s);
   color: var(--fg);
 }
 .ai-rag-src:hover {
@@ -5707,7 +5820,7 @@ blockquote.md-flashcard {
 }
 .ai-rag-src-score {
   flex-shrink: 0;
-  font-size: 10.5px;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
