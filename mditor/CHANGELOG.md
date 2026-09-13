@@ -1,5 +1,35 @@
 # Changelog
 
+## 4.12.2 (2026-09-13)（Typora $$ 块解析根修：图片被吞 + 公式红字 · 取证驱动第二轮）
+
+装 4.12.1 后用户反馈问题仍在。本轮先取证后动手：对用户真实文档（`E:/笔记/` 数学密集型笔记）跑应用自研管线，锁定第一轮未覆盖的真根因——**不是** resolveImgSrc/CSP 链路，而是 remark-math 底层的 micromark mathFlow 语法扩展不认识 Typora/Obsidian 式 `$$` 块。
+
+### 根因与修复：Typora 式 `$$` 块（一个根因，双症状）
+
+- **根因**：mathFlow 只认「`$$` 独占开/闭行」的 fence 形态。Typora 式贴邻块（`$$公式首行` 开、若干行后 `公式末行$$` 闭）会把首行内容当 fence meta **静默丢弃**、行尾 `$$` 永不闭合——块一路吞到 EOF 或下一个裸 `$$` 行，**图片/标题/正文全部进公式节点**（取证样本：信号与系统笔记 7 张图全灭、整页塌缩成一个 KaTeX 红字）。单行独立 `$$…$$` 另外落到 text tokenizer 成为**行内**公式，`\tag` 直接报红（“\tag works only in display equations”，物理实验报告 4 处）。
+- **修复**：patch `micromark-extension-math@3.1.0` 的 math-flow（`patches/micromark-extension-math+3.1.0.patch`，dev/prod 双副本）：开行 `$$` 后的内容即公式首行；闭合认「行尾 `$$`（Typora）」与「整行裸 `$$`（经典）」两形态；单行 `$$x$$` 独立成块即为 display 公式；未闭合块到 EOF 且不再丢首行；段落内 `$$…$$` 保持行内语义（零中断行为变化）。编辑器与静态管线共用同一解析器，一处修复两表面生效。
+- **已知行为变化**：① 独立成行的单行 `$$…$$` 从行内渲染升级为居中 display 渲染（Pandoc/Typora 语义，`\tag`/`\equation` 随之可用）；② 编辑器内编辑保存后 `$$` 块定界符会规范化为经典 `$$\n…\n$$` 形态（语义等价，Typora/Obsidian 均兼容）。
+- **回归锁定**：`typoraMath.test.ts` 10 例（多行贴邻/单行 display/经典 fence/段落内行内/未闭合 EOF/列表与引用内/吞图回归/缓存键）。
+
+### 修复：静态表面（AI 面板/批注弹窗）本地图片
+
+- `renderMarkdown` 新增可选 `docPath`：markdown 里的本地图片引用（含 raw HTML `<img>`）经 `resolveImgSrc` 重写为可渲染 URL——与编辑器 proxyDomURL 同一语义；批注弹窗已接线（App → AnnotationPopover → MarkdownText），AI 回复等无文档上下文表面行为不变。processor 与 HTML 缓存键纳入 docPath（同内容异文档不串缓存）。
+- `resolveImgSrc` 直通协议表补 `mditor-asset:`（鸿蒙运行时资产 URL 此前被误当本地路径拼接）；rehype-sanitize 协议白名单对齐应用 CSP（`asset`/`mditor-asset`/`data`/`blob`），本地重写结果不再被 sanitize 砍成空图。`renderMarkdownImages.test.ts` 6 例锁定。
+
+### 新增：版本号可见（取证盲区）
+
+- 设置新增「关于」分区（logo + 版本 + 简介），帮助→关于弹窗同源；`lib/appVersion.ts` 两级取值（运行时适配层优先，回退构建期内联的 tauri.conf.json version，`?raw` 引入），3 例单测。以后报障先看版本号。
+- Tauri `devtools` feature 打开：release 包也可 Ctrl+Shift+I 取证（第二轮排障时 release 无 DevTools 只能靠猜的教训）。
+
+### 取证备注（内容级，非应用 bug）
+
+- 用户 `cmc/一元积分学习题集_CMC备战.md` L2754 源文件含损坏字节 ``（`pprox` 的 `` 成 BEL）→ 该处 KaTeX 红字为文档内容问题，需手工修复源文件。
+
+### 工程纪律
+
+- vitest 720 → 739（typoraMath 10 + renderMarkdownImages 6 + appVersion 3）；tsc / eslint / build 全绿；production 与 development 两份补丁副本分别经 Node 直跑与 vitest 验证语义一致。
+
+
 ## 4.12.1 (2026-09-13)（本地图片显示与公式渲染修复）
 
 桌面版用户实测两大症状的根修：① 已有文档的本地图片不显示（裂图/空白）；② 正文金额/价格被误渲染成「公式渲染出错」红字、`\(\)` / `\[\]` 定界的公式不渲染。修复主体自 v4.10.1 起稿（未发布的 WIP），本轮补齐三个残留缺口后随本版发布。
