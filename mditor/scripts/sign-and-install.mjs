@@ -52,16 +52,17 @@ function run(args) {
 console.log("=== sign-app（调试签名）===");
 run([
   "-jar", JAR, "sign-app",
-  "-mode", "local-sign",
+  "-mode", "localSign",
   "-keyAlias", KEY_ALIAS,
   "-keyPwd", KEY_PWD,
   "-keystoreFile", join(signing, "mditor-debug.p12"),
   "-keystorePwd", KEY_PWD,
   "-signAlg", "SHA256withECDSA",
-  "-profile", join(signing, "debug.p7b"),
-  "-certPath", join(signing, "mditor-debug.cer"),
+  "-profileFile", join(signing, "debug.p7b"),
+  "-appCertFile", join(signing, "mditor-debug.cer"),
   "-profileSigned", "1",
   "-inFile", unsignedHap,
+  "-compatibleVersion", "22",
   "-outFile", signedHap,
 ]);
 
