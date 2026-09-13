@@ -1,0 +1,13 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "mditor",
+  "version": "4.10.0",
+  "description": "Mditor 鸿蒙 PC 版（ArkWeb 混合壳，与 Windows 版共享同一份 React 前端）",
+  "main": "",
+  "author": "mditor",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.21"
+  }
+}

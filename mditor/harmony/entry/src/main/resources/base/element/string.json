@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Mditor 鸿蒙 PC 版主模块（ArkWeb 混合壳）"
+    },
+    {
+      "name": "ability_desc",
+      "value": "Mditor 编辑器"
+    },
+    {
+      "name": "ability_label",
+      "value": "Mditor"
+    }
+  ]
+}

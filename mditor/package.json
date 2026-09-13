@@ -14,7 +14,9 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:harmony-web": "vite build --base ./",
+    "build:harmony": "node scripts/build-harmony.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",

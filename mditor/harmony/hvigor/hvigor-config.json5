@@ -1,0 +1,17 @@
+{
+  "modelVersion": "5.0.0",
+  "dependencies": {},
+  "execution": {
+    // "analyze": "normal",              /* 该模块代码执行分析 */
+    // "notify": ["ipc"]                 /* 该模块进度通知模式 */
+  },
+  "logging": {
+    // "level": "info"                   /* 日志级别 debug|info|warn|error */
+  },
+  "debugging": {
+    // "stacktrace": false               /* 捕获构建过程异常堆栈 */
+  },
+  "nodeOptions": {
+    // "maxOldSpaceSize": 8192           /* 单测进程内存上限 */
+  }
+}
