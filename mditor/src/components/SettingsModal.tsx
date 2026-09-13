@@ -29,6 +29,7 @@ import {
   MONO_FONT_PRESETS,
 } from "../types";
 import { testConnection } from "../lib/ai";
+import { fetchAppVersion } from "../lib/appVersion";
 import {
   SYNC_ERROR_CODES,
   SYNC_ERROR_HINTS,
@@ -38,7 +39,7 @@ import {
   syncConfigPayload,
 } from "../lib/sync/s3";
 import { useDelayedUnmount } from "../hooks/useDelayedUnmount";
-import { CloseIcon, ChevronRightIcon } from "./icons";
+import { CloseIcon, ChevronRightIcon, LogoIcon } from "./icons";
 
 /** 分区导航项（固定高度，供滑动指示条做等距 translateY 定位）。 */
 const SECTIONS = [
@@ -51,6 +52,7 @@ const SECTIONS = [
   "工作区",
   "知识功能",
   "云同步",
+  "关于",
 ] as const;
 /** 云同步分区索引（applyAll 校验失败时聚焦用）。 */
 const SYNC_SECTION_IDX = SECTIONS.indexOf("云同步");
@@ -121,6 +123,19 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
   const [showAdvanced, setShowAdvanced] = useState(false);
   // 云同步分区状态（v4.12）：连接测试反馈 + SK 明显切换 + 高级折叠。
   const [syncTesting, setSyncTesting] = useState(false);
+  // 「关于」分区（v4.12.2）：打开弹窗时拉一次版本号（适配层优先、回退
+  // tauri.conf.json 构建期值），失败显示 "—"。
+  const [aboutVersion, setAboutVersion] = useState("");
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void fetchAppVersion().then((v) => {
+      if (!cancelled) setAboutVersion(v);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
   const [syncTestMsg, setSyncTestMsg] = useState("");
   const [syncTestOk, setSyncTestOk] = useState(false);
   const [showSk, setShowSk] = useState(false);
@@ -1279,6 +1294,23 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                   )}
                 </div>
               </>
+            )}
+
+            {section === 9 && (
+              <div className="settings-about">
+                <LogoIcon size={40} className="settings-about-logo" />
+                <h2 className="settings-about-name">Mditor</h2>
+                <p className="settings-about-version">
+                  版本 <strong>{aboutVersion || "—"}</strong>
+                </p>
+                <p className="settings-about-desc">
+                  本地优先的 Markdown 编辑器（Tauri 2 + React + Milkdown）。
+                  无云端、无遥测 —— 文件始终保存在你的电脑上。
+                </p>
+                <p className="hint">
+                  反馈问题时请附此版本号，便于定位你运行的构建。
+                </p>
+              </div>
             )}
           </div>
         </section>

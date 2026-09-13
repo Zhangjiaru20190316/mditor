@@ -3,7 +3,7 @@
 // 挂载约 240ms 播退场动画（.closing）再卸载。
 
 import { useEffect, useState } from "react";
-import { getAdapter } from "../platform";
+import { fetchAppVersion } from "../lib/appVersion";
 import { useDelayedUnmount } from "../hooks/useDelayedUnmount";
 import { LogoIcon } from "./icons";
 
@@ -20,13 +20,9 @@ export function AboutModal({ open, onClose }: Props) {
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    getAdapter().app.version()
-      .then((v) => {
-        if (!cancelled) setVersion(v);
-      })
-      .catch(() => {
-        if (!cancelled) setVersion("");
-      });
+    void fetchAppVersion().then((v) => {
+      if (!cancelled) setVersion(v);
+    });
     return () => {
       cancelled = true;
     };

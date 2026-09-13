@@ -393,6 +393,35 @@ button:not(:disabled):active {
   color: var(--fg-muted);
 }
 
+/* 设置弹窗「关于」分区（v4.12.2）：与 AboutModal 同一视觉语言。 */
+.settings-about {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 40px 24px 12px;
+  text-align: center;
+}
+.settings-about-logo {
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+.settings-about-name {
+  margin: 0;
+  font-size: 18px;
+}
+.settings-about-version {
+  margin: 0;
+  font-size: var(--font-size-s);
+  color: var(--fg-muted);
+}
+.settings-about-desc {
+  margin: 10px 0 4px;
+  font-size: var(--font-size-m);
+  line-height: 1.7;
+  color: var(--fg-muted);
+}
+
 /* 通用箭头旋转（树形展开钮 / 折叠区切换）：只动 transform，合成层友好 */
 .chevron {
   transition: transform var(--dur-fast) var(--ease-out);
