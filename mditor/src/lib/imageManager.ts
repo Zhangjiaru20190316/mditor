@@ -120,6 +120,53 @@ export async function persistImage(
 }
 
 /**
+ * 把 markdown 里写下的本地图片引用清洗成「可参与文件系统定位」的路径：
+ *   * `file://` URL（其他编辑器拷贝的引用）→ 剥协议取本地路径；
+ *   * `?query` / `#fragment` → 剥离（URL 语义的分隔符，不属于文件名；对
+ *     纯文件名形态先剥再解码，`%3F`/`%23` 解码出的字面 ?/# 得以保留）；
+ *   * percent 编码 → 解码（Typora 等会把空格/中文编码后写进 markdown，
+ *     `assets/my%20pic.png` 对应磁盘上的 `my pic.png`；非法序列保留原样）。
+ * 幂等：不含这些形态时原样返回。
+ */
+export function cleanLocalRef(ref: string): string {
+  let p = ref;
+  if (/^file:\/\//i.test(p)) p = p.replace(/^file:\/\/\/?/i, "");
+  const hash = p.indexOf("#");
+  if (hash >= 0) p = p.slice(0, hash);
+  const query = p.indexOf("?");
+  if (query >= 0) p = p.slice(0, query);
+  if (p.includes("%")) {
+    try {
+      p = decodeURIComponent(p);
+    } catch {
+      /* 非法编码序列（如 `100%.png`）——保留原字面 */
+    }
+  }
+  return p;
+}
+
+/** 归一化路径里的 `.` / `..` 段（`a/./b` → `a/b`，`a/x/../b` → `a/b`），
+ *  供 asset URL 生成稳定的绝对路径（Tauri 端作用域匹配 + 缓存比对；导出
+ *  链路的 inlineLocalImages 也用同一份语义解析相对引用）。 */
+export function normalizeLocalPath(p: string): string {
+  const n = p.replace(/\\/g, "/");
+  const m = /^([a-zA-Z]:\/|\/)/.exec(n);
+  // 根：盘符 `C:/`、POSIX `/`、UNC `//server/...`（保留双斜杠语义）。
+  const root = n.startsWith("//") ? "//" : m ? m[1] : "";
+  const segs: string[] = [];
+  for (const s of n.slice(root.length).split("/")) {
+    if (s === "" || s === ".") continue;
+    if (s === "..") {
+      if (segs.length > 0 && segs[segs.length - 1] !== "..") segs.pop();
+      else if (!root) segs.push(".."); // 相对路径上跳保留（极少见：无 docPath 时）
+      continue;
+    }
+    segs.push(s);
+  }
+  return root + segs.join("/");
+}
+
+/**
  * Resolve an image src stored in the markdown into a URL the webview can render.
  *
  * The webview cannot load `file://` (CSP) and has no base URL, so a portable
@@ -127,8 +174,9 @@ export async function persistImage(
  * turned into an `asset://` URL via Tauri's `convertFileSrc`. Relative refs are
  * resolved against the document's directory. http(s)/data/blob/asset URLs and
  * empty strings pass through unchanged. Used by Milkdown's ImageBlock
- * `proxyDomURL` (keeps the markdown portable while the <img> still renders) and
- * by the static markdown renderer for AI/annotation previews.
+ * `proxyDomURL` (keeps the markdown portable while the <img> still renders), by
+ * the inline-image node view (useMilkdown), and by the static markdown renderer
+ * for AI/annotation previews.
  */
 export function resolveImgSrc(url: string, docPath: string | null): string {
   if (!url) return url;
@@ -136,17 +184,21 @@ export function resolveImgSrc(url: string, docPath: string | null): string {
     return url;
   }
   try {
+    // v4.10.1：先清洗引用（file:// 前缀 / ?# 分隔符 / percent 编码——其他
+    // 编辑器写下的引用常带这三类形态，此前直接拼接导致 convertFileSrc 双重
+    // 编码或路径带锚点，图片 404）。
+    const cleaned = cleanLocalRef(url);
     let abs: string;
     // Treat both POSIX-absolute and Windows-absolute (C:\, /…) as absolute.
-    if (/^([A-Za-z]:[\\/]|[\\/])/.test(url)) {
-      abs = url;
+    if (/^([A-Za-z]:[\\/]|[\\/])/.test(cleaned)) {
+      abs = cleaned;
     } else if (docPath) {
-      abs = joinAbs(dirOf(docPath), url);
+      abs = joinAbs(dirOf(docPath), cleaned);
     } else {
       // No doc dir to resolve against — best effort: assume already absolute.
-      abs = url;
+      abs = cleaned;
     }
-    return getAdapter().app.convertFileSrc(abs);
+    return getAdapter().app.convertFileSrc(normalizeLocalPath(abs));
   } catch {
     return url;
   }

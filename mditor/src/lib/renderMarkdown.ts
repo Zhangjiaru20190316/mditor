@@ -31,6 +31,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeStringify from "rehype-stringify";
 import { remarkMark } from "./remarkMark";
 import { remarkMathFence } from "./remarkMathFence";
+import { remarkMathGuard } from "./remarkMathGuard";
 import { remarkMathNumbering } from "./remarkMathNumbering";
 import { remarkWikiLink, type WikiLinkOptions } from "./remarkWikiLink";
 import { remarkCitation, type CitationRemarkOptions } from "./remarkCitation";
@@ -117,6 +118,7 @@ function makeProcessor(macros: Record<string, string>) {
     .use(remarkGfm) // tables, strikethrough, task lists, autolinks
     .use(remarkMark as unknown as Plugin) // ==highlight== -> mdast `mark` (rendered as <mark> below)
     .use(remarkMath) // $...$ / $$...$$ -> mdast math nodes
+    .use(remarkMathGuard as unknown as Plugin) // v4.10.1：宽松定界假公式（货币/区间）降级为字面文本
     .use(remarkMathFence as unknown as Plugin) // ```math 围栏 -> mdast math 节点（GitHub 风格）
     .use(remarkMathNumbering as unknown as Plugin) // \label 剥除 + 自动编号 \tag 注入 + \ref/\eqref 解析
     // v4.7：[[双链]] 降级（铁律 5）——静态管线无文档上下文，resolver 恒

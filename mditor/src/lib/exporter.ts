@@ -22,6 +22,7 @@
 
 import { getAdapter } from "../platform";
 import { sniffImageMime } from "./imageSniff";
+import { cleanLocalRef, normalizeLocalPath } from "./imageManager";
 // NOTE: modern-screenshot + juice + @turbodocx/html-to-docx are all imported
 // lazily inside their respective export functions so the heavyweight "export"
 // bundle only loads when the user actually exports. Importing them at the top
@@ -51,8 +52,21 @@ export async function inlineLocalImages(
 ): Promise<string> {
   if (!docPath) return html;
   const dir = docPath.replace(/[\\/][^\\/]+$/, "");
-  const toAbs = (src: string) =>
-    /^[a-zA-Z]:[\\/]/.test(src) ? src : `${dir}/${src}`.replace(/\\/g, "/");
+  // v4.10.1：与编辑器 resolveImgSrc 同一份解析语义——HTML 属性先做实体解码，
+  // 再清洗引用（file:// / ?# / percent 编码）、归一化 `.`/`..` 段。此前导出端
+  // 裸拼接，Typora 风格的 `assets/my%20pic.png`、`./assets/../x.png`、POSIX
+  // 绝对路径 `/…`（会被误拼到盘符后面）在导出产物里全部 404。
+  const toAbs = (raw: string) => {
+    const src = raw.replace(
+      /&(amp|lt|gt|quot|#39);/g,
+      (_, e: string) =>
+        ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" })[e] as string
+    );
+    const cleaned = cleanLocalRef(src);
+    return /^([A-Za-z]:[\\/]|[\\/])/.test(cleaned)
+      ? normalizeLocalPath(cleaned)
+      : normalizeLocalPath(`${dir}/${cleaned}`);
+  };
   const jobs: Array<{ src: string; abs: string }> = [];
   IMG_SRC_RE.lastIndex = 0;
   let m: RegExpExecArray | null;

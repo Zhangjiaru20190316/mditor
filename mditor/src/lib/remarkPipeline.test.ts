@@ -109,6 +109,16 @@ describe("remarkPipeline（worker 侧解析一致性）", () => {
     expect(code?.value).toBe("E=mc^2");
   });
 
+  it("withMath：货币假公式降级（v4.10.1 remarkMathGuard 复刻）", () => {
+    // `$100，优惠 $` 被 remark-math v6 误配为 inlineMath，guard 在树层面
+    // 降级回文本——worker 复刻管线与编辑器行为一致的关键面。
+    const tree = parseMarkdownTree(proc, "价格是 $100，优惠 $50 元");
+    expect(types(tree)).not.toContain("inlineMath");
+    // 合法公式不受影响
+    const ok = parseMarkdownTree(proc, "公式 $x^2$ 保持");
+    expect(types(ok)).toContain("inlineMath");
+  });
+
   it("withMath=false（大文档档位）：$$ 是普通文本，不产生 math 节点", () => {
     const tree = parseMarkdownTree(procNoMath, "$$\nE=mc^2\n$$");
     const t = types(tree);
@@ -129,12 +139,13 @@ describe("remarkPipeline（worker 侧解析一致性）", () => {
     expect((b.children?.[0] as N)?.children?.[0]?.value).toBe("B");
   });
 
-  it("哨兵常量：小文档 11 / 大文档（latex 关）8 个 remark 插件", () => {
+  it("哨兵常量：小文档 12 / 大文档（latex 关）8 个 remark 插件", () => {
     // v4.6：withMath 分支新增 ```math 围栏别名（remarkMathFenceAlias）+1。
     // v4.7：双链解析（remarkWikiLink）两档各 +1（无条件注册）。
     // v4.7 模块 3：行内引用（remarkCitation）两档各 +1（无条件注册）。
     // v4.7 模块 4：闪卡容器（remarkFlash）两档各 +1（无条件注册）。
-    expect(expectedPluginCount(true)).toBe(11);
+    // v4.10.1：withMath 分支新增公式定界降级（remarkMathGuard）+1。
+    expect(expectedPluginCount(true)).toBe(12);
     expect(expectedPluginCount(false)).toBe(8);
   });
 

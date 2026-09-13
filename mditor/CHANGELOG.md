@@ -1,5 +1,31 @@
 # Changelog
 
+## 4.12.1 (2026-09-13)（本地图片显示与公式渲染修复）
+
+桌面版用户实测两大症状的根修：① 已有文档的本地图片不显示（裂图/空白）；② 正文金额/价格被误渲染成「公式渲染出错」红字、`\(\)` / `\[\]` 定界的公式不渲染。修复主体自 v4.10.1 起稿（未发布的 WIP），本轮补齐三个残留缺口后随本版发布。
+
+### 修复：图片显示
+
+- **本地图片引用清洗（v4.10.1）**：`resolveImgSrc` 此前对引用裸拼接——其他编辑器（Typora 等）写下的 `file://` 前缀、`?query`/`#fragment` 分隔符、percent 编码（`assets/my%20pic.png`、中文编码文件名）导致 convertFileSrc 双重编码或路径带锚点，图片 404。现在先经 `cleanLocalRef` 清洗、再 `normalizeLocalPath` 归一 `.`/`..` 段；HTML 导出链路 `inlineLocalImages` 共用同一份语义（此前导出产物同样 404）。行内图片与块级图片同链路（crepe 两个 node view 共用 proxyDomURL）
+- **CSP `img-src` 放宽（v4.10.1）**：允许 `https:`/`http:` 远程图片直接显示（`connect-src` 未动，零安全面扩大）
+- **回退保底 + 测试锚定（本轮）**：`convertFileSrc` 抛异常时 `resolveImgSrc` 回退原引用；新增 resolveImgSrc 全链路单测（直通类 / 相对解析 / `..` 归一 / 反斜杠 / 中文 / `file://` / 异常回退）
+
+### 修复：公式渲染
+
+- **宽松定界假公式三层防线**：remark-math v6 会把正文里两个无关 `$`（`价格是 $100，优惠 $50`、`范围 $1-$10`）误配成行内公式，渲染出一段 KaTeX 红字报错（「公式渲染出错」的高频来源）。① `remarkMathGuard`（v4.10.1）在 mdast 层把非法形态降级回字面文本（首尾空白 / 闭 `$` 后紧跟数字，对齐 cmark-gfm dollar_math；静态渲染、worker 预解析、编辑器 $remark 三链路同注册，`expectedPluginCount` 哨兵 +1）；② crepe patch 收紧 `mathInlineInputRule` 正则（v4.10.1）——输入规则绕过 remark，键入层就必须拒绝首尾空白的公式体；③ `mathLiveGuard`（本轮）ProseMirror `appendTransaction` 实时兜底——`$1-$10` 在键入瞬间仍会成型的假公式节点，于同一事务链降级回 `$…$` 字面文本（与 remarkMathGuard 同两条规则，往返稳定）
+- **`\(\)` / `\[\]` 定界误伤防护（v4.10.1）**：LaTeX 定界符与 markdown 转义同形——`a\[1\]`（转义方括号）、`\[文字\]\(链接\)`（整对转义链接）等三类人写转义不再被改写成夹在文字里的假公式；真公式（定界符前是空白 / 行首 / 标点 / CJK）照常归一化
+- **行内公式宏支持（本轮，crepe patch）**：`katexOptions.macros` 此前只达块级公式预览，行内公式 toDOM 只传 `throwOnError: false`——使用了自定义宏的行内公式必然 KaTeX 报错（v4.6 已知限制）。patch 以模块级桥接把 create-time 配置透传给行内渲染（`throwOnError` 保持不可覆盖）
+- **AI 写回/插入定界归一化（本轮）**：整篇载入会做 `\(\)`→`$ $` 归一，但 AI 写回路径此前直接插原文——AI 面板里渲染正常的公式，插入文档后变回原始文本（AI 是 LaTeX 定界符的最大来源）。7 个写回入口（全部应用 / 选区应用 / 插入光标 / 插入选区后 / insertValue / updateValue / 流式收尾）统一先过 `normalizeMathDelimiters`（幂等；写入侧归一，baseline 不动）
+
+### 工程纪律
+
+- vitest 695 → 720（mathLiveGuard 15 + resolveImgSrc 10 新增）；tsc / eslint / build 全绿
+- 鸿蒙侧不受影响：`resolveImgSrc` 的清洗发生在 `convertFileSrc` 之前，两平台共享
+
+## 4.12.0 (2026-09-13)（自带 S3 兼容对象存储的双向云同步）
+
+按 `PROMPT-cloud-sync.md` 完成 v1 全量：设置分区（端点/桶/密钥/前缀/方向/冲突策略）、状态栏同步指示器、菜单「立即同步」；前端引擎 `src/lib/sync/`（远端清单 + 本地变更 → 4 态×5 态判定矩阵、路径忽略、触发器、状态机）+ Rust 侧 `src-tauri/src/s3.rs`（6 命令，object_store 0.13/ring，base64 上传通道）。冲突默认双侧字节比对；>50MB 超限键「冻结」不参与判定（防单侧超限误删对端，有防误删红线单测）。同步链路零 CSP 变更。
+
 ## Unreleased（鸿蒙 PC 版迁移 · ArkWeb 混合壳 · 核心 MVP）
 
 与 Windows 版共享同一份 React 前端，新增鸿蒙（HarmonyOS PC）平台：前端平台适配层 `src/platform/`（tauri/harmony/browser 三运行时）+ `harmony/` ArkTS 原生壳（JSBridge 四域：fs/dialog/store/app）。桌面版行为零回归（582 用例全绿、构建链路不变）。

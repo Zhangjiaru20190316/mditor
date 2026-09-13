@@ -33,6 +33,7 @@ import {
   markdownToSlice,
   callCommand,
   $remark,
+  $prose,
 } from "@milkdown/utils";
 import type { MilkdownPlugin } from "@milkdown/ctx";
 import { editorViewCtx, parserCtx, schemaCtx, serializerCtx } from "@milkdown/core";
@@ -63,6 +64,8 @@ import { createWikiLinkPlugins } from "../lib/wikiLinkNode";
 import { createCitationPlugins } from "../lib/citationNode";
 import { createFlashcardPlugins } from "../lib/flashcardNode";
 import { remarkMathFenceAlias } from "../lib/remarkMathFenceAlias";
+import { remarkMathGuard } from "../lib/remarkMathGuard";
+import { mathLiveGuardPlugin } from "../lib/mathLiveGuard";
 import { normalizeMathDelimiters } from "../lib/mathNormalize";
 import { mathConfigSignature, parseMathMacros } from "../lib/mathConfig";
 import { cvIntrinsicPlugin, startCvPrewarm } from "../lib/cvMemory";
@@ -480,13 +483,22 @@ const IDLE_HISTORY_TRIM_HEAP_RATIO = 0.8; // heap ≥ 80% of the guard threshold
 const REMOTE_IMG_URL_RE =
   /^https?:\/\/\S+\.(png|jpe?g|gif|webp|svg|bmp)(?:[?#]\S*)?$/i;
 
-// ```math 围栏别名（v4.6）：code(lang=math) → lang=LaTeX，让 GitHub 风格围栏
-// 公式在编辑器里渲染为公式块（保存时序列化回 $$，既定策略）。仅小文档
-// （Latex 特性开启时）注册，与 lib/remarkPipeline 的 expectedPluginCount 哨
-// 兵联动（withMath 时 +1）。纯变换见 lib/remarkMathFenceAlias.ts（worker 复
+// ```math 围栏别名 + 公式定界降级（v4.6 / v4.10.1）：与 Latex 特性同开同
+// 关——code(lang=math) → lang=LaTeX 让 GitHub 风格围栏公式渲染为公式块；
+// remarkMathGuard 把 remark-math v6 宽松单美元定界误配的行内「公式」（货
+// 币 `$100，优惠 $`、区间 `$1-$10`）降级回字面文本（GitHub/Obsidian 同规
+// 则）。仅小文档注册，与 lib/remarkPipeline 的 expectedPluginCount 哨兵联
+// 动（withMath 时 +2；mathLiveGuard 是 $prose 插件，不进 remark 哨兵计数）。
+// 纯变换见 lib/remarkMathFenceAlias.ts / lib/remarkMathGuard.ts（worker 复
 // 刻管线共用，故不 import @milkdown/*）。
+// mathLiveGuard（v4.12.1）：输入规则绕过 remark，打字瞬间仍会生成假公式
+// 节点（`$1-$10` 敲到第二个 `$` 时），guard 只在整篇解析时兜底——此插件
+// 在同一事务后实时降级，规则与 remarkMathGuard 完全一致。
+const mathLiveGuard = $prose(() => mathLiveGuardPlugin());
 const mathFencePlugins = [
   $remark("remarkMathFenceAlias", () => remarkMathFenceAlias as never),
+  $remark("remarkMathGuard", () => remarkMathGuard as never),
+  mathLiveGuard,
 ].flat() as unknown as MilkdownPlugin[];
 
 /** 整篇文档载入（flush 语义 = replaceAll(md, true)），带解析缓存快路径：
@@ -1289,10 +1301,14 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         }
       },
       insertValue: (md) => {
+        // v4.12.1：程序化插入与整篇载入同语义——AI 回复的 \( \) / \[ \] 定界
+        // 先归一化为 $ 风格。否则 AI 面板里渲染正常的公式，插入文档后变回
+        // 原始文本（下次整篇载入才被归一化）。幂等，无定界时零改写。
+        const mdNorm = normalizeMathDelimiters(md);
         if (modeRef.current === "sv") {
           const ta = sv();
           if (!ta) return;
-          insertIntoTextarea(ta, md);
+          insertIntoTextarea(ta, mdNorm);
           sourceTextRef.current = ta.value;
           contentRef.current = ta.value;
           onInputRef.current(ta.value);
@@ -1302,17 +1318,19 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         if (!crepe) return;
         suppressRef.current = true;
         try {
-          crepe.editor.action(insert(md));
+          crepe.editor.action(insert(mdNorm));
         } catch (e) {
           noteOpError("insertValue", e);
         }
         suppressRef.current = false;
       },
       updateValue: (md) => {
+        // v4.12.1：同 insertValue——选区写回（AI 改动应用等）先归一化定界符。
+        const mdNorm = normalizeMathDelimiters(md);
         if (modeRef.current === "sv") {
           const ta = sv();
           if (!ta) return;
-          replaceTextareaSelection(ta, md);
+          replaceTextareaSelection(ta, mdNorm);
           sourceTextRef.current = ta.value;
           contentRef.current = ta.value;
           onInputRef.current(ta.value);
@@ -1325,7 +1343,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           crepe.editor.action((ctx) => {
             const view = ctx.get(editorViewCtx);
             const { from, to } = view.state.selection;
-            replaceRange(md, { from, to })(ctx);
+            replaceRange(mdNorm, { from, to })(ctx);
           });
         } catch (e) {
           noteOpError("updateValue", e);
@@ -1333,11 +1351,13 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         suppressRef.current = false;
       },
       insertAfter: (md) => {
+        // v4.12.1：同 insertValue——AI「插入到选区后」先归一化定界符。
+        const mdNorm = normalizeMathDelimiters(md);
         if (modeRef.current === "sv") {
           const ta = sv();
           if (!ta) return;
           const en = ta.selectionEnd;
-          const insert = `${md}`;
+          const insert = `${mdNorm}`;
           ta.value = ta.value.slice(0, en) + insert + ta.value.slice(en);
           ta.selectionStart = ta.selectionEnd = en + insert.length;
           sourceTextRef.current = ta.value;
@@ -1354,7 +1374,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             const { to } = view.state.selection;
             // Insert parsed markdown at the end of the selection (position `to`),
             // leaving the original selection intact.
-            insertPos(md, to)(ctx);
+            insertPos(mdNorm, to)(ctx);
           });
         } catch (e) {
           noteOpError("insertAfter", e);
@@ -1600,10 +1620,13 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       },
       /* ---- AI 写回（一步撤销契约，见 MilkdownFacade 接口注释） ---- */
       aiWriteDoc: (md) => {
+        // v4.12.1：AI 写回是 \( \) 定界的最大来源，入文档前归一化（与整篇
+        // 载入同语义，幂等；contentRef 仍存调用方原文，与 setValue 惯例一致）。
+        const mdNorm = normalizeMathDelimiters(md);
         if (modeRef.current === "sv") {
           const ta = sv();
           if (!ta) return;
-          taUndoableReplace(ta, 0, ta.value.length, md);
+          taUndoableReplace(ta, 0, ta.value.length, mdNorm);
           sourceTextRef.current = ta.value;
           contentRef.current = ta.value;
           return;
@@ -1614,7 +1637,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         try {
           crepe.editor.action((ctx) => {
             const view = ctx.get(editorViewCtx);
-            const parsed = ctx.get(parserCtx)(md);
+            const parsed = ctx.get(parserCtx)(mdNorm);
             if (!parsed) return;
             // MD-1011 根修：预盖章 heading id（见 lib/headingStamp.ts）——
             // 未变化标题零替换，避免整篇改写触发顶层块批量重建。
@@ -1638,12 +1661,14 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         // 清空撤销历史，违背一步撤销契约；边界在下次文件载入时自然对齐。
       },
       aiWriteRange: (from, to, md) => {
+        // v4.12.1：同 aiWriteDoc——区间写回先归一化定界符。
+        const mdNorm = normalizeMathDelimiters(md);
         if (modeRef.current === "sv") {
           const ta = sv();
           if (!ta) return;
           const f = Math.max(0, Math.min(from, ta.value.length));
           const t = Math.max(f, Math.min(to, ta.value.length));
-          taUndoableReplace(ta, f, t, md);
+          taUndoableReplace(ta, f, t, mdNorm);
           sourceTextRef.current = ta.value;
           contentRef.current = ta.value;
           return;
@@ -1657,7 +1682,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             const size = view.state.doc.content.size;
             const f = Math.max(0, Math.min(from, size));
             const t = Math.max(f, Math.min(to, size));
-            const slice = markdownToSlice(md)(ctx);
+            const slice = markdownToSlice(mdNorm)(ctx);
             view.dispatch(closeHistory(view.state.tr.replaceRange(f, t, slice)));
           });
         } catch (e) {
@@ -1666,10 +1691,12 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         suppressRef.current = false;
       },
       aiWriteInsert: (md) => {
+        // v4.12.1：同 aiWriteDoc——光标插入先归一化定界符。
+        const mdNorm = normalizeMathDelimiters(md);
         if (modeRef.current === "sv") {
           const ta = sv();
           if (!ta) return;
-          taUndoableReplace(ta, ta.selectionStart, ta.selectionEnd, md);
+          taUndoableReplace(ta, ta.selectionStart, ta.selectionEnd, mdNorm);
           sourceTextRef.current = ta.value;
           contentRef.current = ta.value;
           return;
@@ -1680,7 +1707,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         try {
           crepe.editor.action((ctx) => {
             const view = ctx.get(editorViewCtx);
-            const slice = markdownToSlice(md)(ctx);
+            const slice = markdownToSlice(mdNorm)(ctx);
             noteScrollWrite("pm-insert");
             view.dispatch(closeHistory(view.state.tr.replaceSelection(slice).scrollIntoView()));
           });
@@ -1690,6 +1717,9 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         suppressRef.current = false;
       },
       aiWriteFinalize: (baseline, next) => {
+        // v4.12.1：只归一化写入侧 next（baseline 是文档自身内容，可能是用户
+        // 刚敲的字面 \( —— 不许动），流式收尾的整篇写回与载入同语义。
+        const nextNorm = normalizeMathDelimiters(next);
         if (modeRef.current === "sv") {
           const ta = sv();
           if (!ta) return;
@@ -1697,11 +1727,11 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             // CM 表面：重置到 baseline（清掉流式期间的撤销痕迹），再一次
             // 单事务写入 next —— 撤销一步即回到 baseline。
             svRef.current.setValueReset(baseline);
-            taUndoableReplace(ta, 0, baseline.length, next);
+            taUndoableReplace(ta, 0, baseline.length, nextNorm);
           } else {
             // 原生撤销路径：静默重置到 baseline，随后一次 execCommand 写入。
             ta.value = baseline;
-            taUndoableReplace(ta, 0, ta.value.length, next);
+            taUndoableReplace(ta, 0, ta.value.length, nextNorm);
           }
           sourceTextRef.current = ta.value;
           contentRef.current = ta.value;
@@ -1729,7 +1759,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
               restore.setMeta("addToHistory", false);
               view.dispatch(restore);
             }
-            const d1 = ctx.get(parserCtx)(next);
+            const d1 = ctx.get(parserCtx)(nextNorm);
             if (d1) {
               view.dispatch(
                 closeHistory(

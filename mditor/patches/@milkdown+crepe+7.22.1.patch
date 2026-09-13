@@ -1,8 +1,30 @@
 diff --git a/node_modules/@milkdown/crepe/lib/esm/index.js b/node_modules/@milkdown/crepe/lib/esm/index.js
-index 481d056..96c84ae 100644
+index 481d056..bd5aee5 100644
 --- a/node_modules/@milkdown/crepe/lib/esm/index.js
 +++ b/node_modules/@milkdown/crepe/lib/esm/index.js
-@@ -3205,6 +3205,34 @@ var __privateGet$3 = (obj, member, getter) => (__accessCheck$3(obj, member, "rea
+@@ -3075,6 +3075,13 @@ const blockLatexSchema = codeBlockSchema.extendSchema((prev) => {
+ 
+ const mathInlineId = "math_inline";
+ const toggleLatexCommandName = "ToggleLatex";
++// mditor fix (v4.12.1): inline math toDOM rendered with ONLY {throwOnError:
++// false} — user KaTeX macros (featureConfigs[Latex].katexOptions) reached the
++// block-math preview (renderLatex) but never inline math, so any formula using
++// a custom macro showed a raw KaTeX parse error. Module-level bridge: latex()
++// stores the create-time config; mathInlineSchema.toDOM merges it (merged per
++// render, throwOnError stays non-overridable).
++let inlineKatexOptions = void 0;
+ 
+ const mathInlineSchema = $nodeSchema(mathInlineId, () => ({
+   group: "inline",
+@@ -3103,6 +3110,7 @@ const mathInlineSchema = $nodeSchema(mathInlineId, () => ({
+     dom.dataset.type = mathInlineId;
+     dom.dataset.value = code;
+     katex.render(code, dom, {
++      ...inlineKatexOptions,
+       throwOnError: false
+     });
+     return dom;
+@@ -3205,6 +3213,34 @@ var __privateGet$3 = (obj, member, getter) => (__accessCheck$3(obj, member, "rea
  var __privateAdd$3 = (obj, member, value) => member.has(obj) ? __typeError$3("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
  var __privateSet$3 = (obj, member, value, setter) => (__accessCheck$3(obj, member, "write to private field"), member.set(obj, value), value);
  var _content$1, _provider, _dom, _innerView, _updateValue, _app$2, _onHide, _shouldShow;
@@ -37,7 +59,7 @@ index 481d056..96c84ae 100644
  class LatexInlineTooltip {
    constructor(ctx, view, config) {
      this.ctx = ctx;
-@@ -3220,6 +3248,8 @@ class LatexInlineTooltip {
+@@ -3220,6 +3256,8 @@ class LatexInlineTooltip {
          __privateGet$3(this, _innerView).value.destroy();
          __privateGet$3(this, _innerView).value = null;
        }
@@ -46,7 +68,7 @@ index 481d056..96c84ae 100644
      });
      __privateAdd$3(this, _shouldShow, (view) => {
        const shouldShow = () => {
-@@ -3230,6 +3260,16 @@ class LatexInlineTooltip {
+@@ -3230,6 +3268,16 @@ class LatexInlineTooltip {
          const node = selection.node;
          if (node.type.name !== mathInlineId) return false;
          const textFrom = selection.from;
@@ -63,7 +85,7 @@ index 481d056..96c84ae 100644
          const paragraph = schema.nodes.paragraph.create(
            null,
            schema.text(node.attrs.value)
-@@ -3237,24 +3277,7 @@ class LatexInlineTooltip {
+@@ -3237,24 +3285,7 @@ class LatexInlineTooltip {
          const innerView = new EditorView(__privateGet$3(this, _dom), {
            state: EditorState.create({
              doc: paragraph,
@@ -89,7 +111,7 @@ index 481d056..96c84ae 100644
              plugins: [
                keymap$1({
                  "Mod-z": undo,
-@@ -3268,6 +3291,8 @@ class LatexInlineTooltip {
+@@ -3268,6 +3299,8 @@ class LatexInlineTooltip {
              ]
            })
          });
@@ -98,3 +120,31 @@ index 481d056..96c84ae 100644
          __privateGet$3(this, _innerView).value = innerView;
          __privateGet$3(this, _updateValue).value = () => {
            const { tr } = view.state;
+@@ -3323,7 +3356,14 @@ _onHide = new WeakMap();
+ _shouldShow = new WeakMap();
+ 
+ const mathInlineInputRule = $inputRule(
+-  (ctx) => nodeRule(/(?:\$)([^$]+)(?:\$)$/, mathInlineSchema.type(ctx), {
++  // mditor fix (v4.10.1): the original `[^$]+` body matched ANY content, so
++  // prose like `价格是 $100，优惠 $` turned into inlineMath("100，优惠 ") the
++  // moment the second `$` was typed — a KaTeX-garbage node the remark-level
++  // remarkMathGuard can never see (input rules bypass remark). Reject bodies
++  // with leading/trailing whitespace (same rule as cmark-gfm dollar_math and
++  // our lib/remarkMathGuard.ts). Currency pairs like `$1-$10` still form a node
++  // while typing, but the guard demotes them on the next parse round-trip.
++  (ctx) => nodeRule(/(?:\$)([^\s$][^$]*[^\s$]|[^\s$])(?:\$)$/, mathInlineSchema.type(ctx), {
+     getAttr: (match) => {
+       var _a;
+       return {
+@@ -3363,6 +3403,11 @@ const remarkMathBlockPlugin = $remark(
+ );
+ 
+ const latex = (editor, config) => {
++  // mditor fix (v4.12.1): publish create-time katexOptions to the module-level
++  // bridge consumed by mathInlineSchema.toDOM (see inlineKatexOptions above).
++  // latex() runs at Crepe construction; toDOM only after create() — the bridge
++  // is always populated before first use.
++  inlineKatexOptions = config == null ? void 0 : config.katexOptions;
+   editor.config(crepeFeatureConfig(CrepeFeature.Latex)).config((ctx) => {
+     const flags = useCrepeFeatures(ctx).get();
+     const isCodeMirrorEnabled = flags.includes(CrepeFeature.CodeMirror);
