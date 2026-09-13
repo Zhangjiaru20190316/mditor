@@ -16,6 +16,7 @@ import { webview } from '@kit.ArkWeb';
 import { Bridge } from '../bridge/Bridge';
 import { registerAll, mapperInstance } from '../bridge/Registry';
 import { AssetResponder } from '../io/AssetResponder';
+import { RawfileResponder } from '../io/RawfileResponder';
 
 // 引导脚本：单引号字符串拼接（ArkTS 对超长模板字符串支持有限）。
 const BOOTSTRAP_JS: string = `
@@ -37,6 +38,7 @@ struct Index {
   controller: webview.WebviewController = new webview.WebviewController();
   private bridge: Bridge = new Bridge(this.controller);
   private responder: AssetResponder | null = null;
+  private rawResponder: RawfileResponder = new RawfileResponder();
 
   aboutToAppear(): void {
     // 全量桥方法注册（fs/dialog/store/app 四域；未注册方法返回 UNSUPPORTED）。
@@ -66,14 +68,18 @@ struct Index {
           // 引导脚本已在 document start 就绪，这里投递端口最稳。
           this.bridge.deliverPortToPage();
         })
-        // mditor-asset:// 本地图片供源（前端 convertFileSrc 生成）；其余
-        // 请求返回 null 放行默认加载。
+        // 供源链：mditor-asset:// 本地图片 → rawfile 静态资源（CORS 根修，
+        // 见 RawfileResponder 头注释）→ 其余放行默认加载。
         .onInterceptRequest((event) => {
+          const url = event.request.getRequestUrl();
           const r = this.responder;
-          if (r === null) {
-            return null;
+          if (r !== null) {
+            const asset = r.respond(url);
+            if (asset !== null) {
+              return asset;
+            }
           }
-          return r.respond(event.request.getRequestUrl());
+          return this.rawResponder.respond(url);
         })
         // 看门狗：前端 console → hilog（无 DevTools 环境的排障通道）。
         .onConsole((event) => {
