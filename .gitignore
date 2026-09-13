@@ -30,3 +30,8 @@ desktop.ini
 mditor/perf/fixtures/
 mditor/perf/results/trace-oneclick.json
 mditor/perf/results/*.cpuprofile
+
+# Computer-use / Harmony 构建工具本地状态
+.cua/
+.hvigor/
+mditor/perf/results/screen.png
