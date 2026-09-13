@@ -5,8 +5,11 @@
 // 映射与持久化全部在 ArkTS 侧（harmony/entry/src/main/ets/io/UriMapper.ets）。
 // 二进制（readFile/writeFile/fetchImage）经桥以 base64 传输。
 //
-// MVP 能力矩阵：AI / 多窗口 / watch / 回收站 / PDF / 富导出 / 图片代理 /
-// 自绘窗口控制 全部不可用（false）——UI 据此隐藏入口、降级文案。
+// 能力矩阵（v4.13 起）：富导出（PNG/DOCX/LaTeX）可用——exporter.ts 全纯
+// 前端（dialog.pickSaveFile + fs.writeFile/readFile 桥均已具备）；PDF 走
+// iframe print 通道，待真机 spike 确认 ArkWeb 支持系统打印后翻转。
+// 其余（AI / 多窗口 / watch / 回收站 / 图片代理 / 自绘窗口控制）见各
+// 阶段翻转记录——UI 据能力隐藏入口、降级文案。
 
 import type {
   ConfirmDialogOptions,
@@ -186,12 +189,12 @@ const harmonyApp: PlatformApp = {
 // ---- 能力矩阵与组装 ----------------------------------------------------------
 
 const HARMONY_CAPS: PlatformCapabilities = {
-  ai: false,
+  ai: true, // ArkTS SSE 代理（AiBridge.ets，契约对齐 ai.rs）
   multiWindow: false,
   watch: false,
   trash: false,
-  pdfExport: false,
-  richExport: false,
+  pdfExport: false, // 待真机 spike：iframe contentWindow.print() 能否唤起系统打印
+  richExport: true, // exporter.ts 纯前端（LaTeX/DOCX/PNG 桥依赖已具备）
   remoteImageProxy: false,
   windowControls: false,
 };

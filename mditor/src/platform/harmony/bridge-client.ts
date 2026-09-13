@@ -7,8 +7,8 @@
 //   响应：{ type:'rpc', id, ok:true, result } | { type:'rpc', id, ok:false,
 //          error:{code,message} }                    ArkTS → 前端
 //   事件：{ type:'event', event, payload }           ArkTS → 前端
-//   method 命名域：fs.* / dialog.* / store.* / app.*（与 platform/types 一一
-//   对应）。未注册方法返回 UNSUPPORTED。
+//   method 命名域：fs.* / dialog.* / store.* / app.* / ai.* / s3_*（与
+//   platform/types 及各桥实现域一一对应）。未注册方法返回 UNSUPPORTED。
 //
 // 握手幂等：注入代码只负责把端口挂到全局；本客户端在首个请求/订阅时才
 // 连接（懒连接），错过 document start 也能补救（轮询等端口出现）。

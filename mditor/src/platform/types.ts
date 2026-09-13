@@ -188,7 +188,8 @@ export interface PlatformApp {
 
 /** 平台能力矩阵 —— UI 据此隐藏/降级不支持的功能（MVP 不做清单的驱动源）。 */
 export interface PlatformCapabilities {
-  /** AI 代理（Rust SSE 四命令：ai_chat/stream/cancel/embed）。 */
+  /** AI 代理后端（Tauri Rust 四命令；鸿蒙 ArkTS SSE 代理——均走
+   *  app.invoke，事件 ai_stream_* 经 app.listen）。 */
   ai: boolean;
   /** 多窗口多开。 */
   multiWindow: boolean;
