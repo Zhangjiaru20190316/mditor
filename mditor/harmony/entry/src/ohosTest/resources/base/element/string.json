@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Mditor 测试模块"
+    },
+    {
+      "name": "TestAbility_desc",
+      "value": "测试宿主"
+    },
+    {
+      "name": "TestAbility_label",
+      "value": "MditorTest"
+    }
+  ]
+}

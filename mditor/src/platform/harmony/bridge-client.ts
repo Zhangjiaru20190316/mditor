@@ -168,7 +168,8 @@ export class BridgeClient {
     });
   }
 
-  /** 订阅桥事件（settings-changed / window-close-requested…）。 */
+  /** 订阅桥事件（settings-changed / window-close-requested…）。
+   *  订阅即触发懒连接——纯事件消费者（无 rpc）也要接上端口。 */
   subscribe(event: string, handler: EventHandler): () => void {
     let set = this.eventHandlers.get(event);
     if (!set) {
@@ -176,6 +177,7 @@ export class BridgeClient {
       this.eventHandlers.set(event, set);
     }
     set.add(handler);
+    void this.ensurePort().catch(() => undefined);
     return () => {
       set?.delete(handler);
     };

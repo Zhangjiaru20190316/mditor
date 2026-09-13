@@ -14,7 +14,8 @@
 
 import { webview } from '@kit.ArkWeb';
 import { Bridge } from '../bridge/Bridge';
-import { registerAll } from '../bridge/Registry';
+import { registerAll, mapperInstance } from '../bridge/Registry';
+import { AssetResponder } from '../io/AssetResponder';
 
 // 引导脚本：单引号字符串拼接（ArkTS 对超长模板字符串支持有限）。
 const BOOTSTRAP_JS: string = `
@@ -35,10 +36,12 @@ window.__MDITOR_HARMONY__ = { platform: 'harmony', shell: 'arkweb' };
 struct Index {
   controller: webview.WebviewController = new webview.WebviewController();
   private bridge: Bridge = new Bridge(this.controller);
+  private responder: AssetResponder | null = null;
 
   aboutToAppear(): void {
     // 全量桥方法注册（fs/dialog/store/app 四域；未注册方法返回 UNSUPPORTED）。
     registerAll(this.bridge);
+    this.responder = new AssetResponder(mapperInstance()!);
   }
 
   build() {
@@ -62,6 +65,15 @@ struct Index {
         .onPageEnd(() => {
           // 引导脚本已在 document start 就绪，这里投递端口最稳。
           this.bridge.deliverPortToPage();
+        })
+        // mditor-asset:// 本地图片供源（前端 convertFileSrc 生成）；其余
+        // 请求返回 null 放行默认加载。
+        .onInterceptRequest((event) => {
+          const r = this.responder;
+          if (r === null) {
+            return null;
+          }
+          return r.respond(event.request.getRequestUrl());
         })
         // 看门狗：前端 console → hilog（无 DevTools 环境的排障通道）。
         .onConsole((event) => {

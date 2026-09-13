@@ -150,7 +150,7 @@ export class Bridge {
       return;
     }
     const params: Record<string, Object> = req.params === undefined || req.params === null
-      ? {} as Record<string, Object>
+      ? ({ } as Record<string, Object>)
       : req.params;
     handler(params).then((result: Object | null) => {
       this.sendOk(req.id, result);
