@@ -1,0 +1,708 @@
+diff --git a/node_modules/micromark-extension-math/dev/lib/math-flow.js b/node_modules/micromark-extension-math/dev/lib/math-flow.js
+index d795fab..6e3ddc9 100644
+--- a/node_modules/micromark-extension-math/dev/lib/math-flow.js
++++ b/node_modules/micromark-extension-math/dev/lib/math-flow.js
+@@ -1,12 +1,55 @@
+ /**
+- * @import {Construct, State, TokenizeContext, Tokenizer} from 'micromark-util-types'
++ * @import {Options} from 'micromark-extension-math'
++ * @import {Construct, Previous, Resolver, State, Token, TokenizeContext, Tokenizer} from 'micromark-util-types'
+  */
+ 
++// To do: next major: clean spaces in HTML compiler.
++// This has to be coordinated together with `mdast-util-math`.
++
+ import {ok as assert} from 'devlop'
+ import {factorySpace} from 'micromark-factory-space'
+ import {markdownLineEnding} from 'micromark-util-character'
+ import {codes, constants, types} from 'micromark-util-symbol'
+ 
++// mditor patch (v4.12.2): Typora/Obsidian-style display math.
++//
++// Upstream mathFlow only supports the fence form, where the opening `$$` must
++// be alone on its line and the closing `$$` must be alone on its line. Every
++// other shape degrades badly:
++//
++//   $$x = 1
++//   y = 2$$
++//
++// Here the content after the opening `$$` becomes fence *meta* (dropped from
++// the value), and the trailing `$$` closer is never recognized — the block
++// swallows ALL following lines (images, prose, headings) as math content until
++// a lone `$$` line or EOF. Real-world Typora/Obsidian/AI documents use the
++// adjacent form almost exclusively, so entire documents collapsed into one
++// giant KaTeX error and "local images disappeared" (they were inside the math
++// node). Single-line standalone `$$…$$` blocks additionally parsed as
++// *inline* math (via the text tokenizer), which rejects `\tag` ("\tag works
++// only in display equations") and renders display formulas inline.
++//
++// This patch teaches mathFlow the Typora semantics while keeping the classic
++// fence form and the token stream (mathFlow / mathFlowFence /
++// mathFlowFenceSequence / mathFlowValue / lineEnding) compatible with
++// mdast-util-math:
++//
++//   1. Content on the opening `$$` line starts the formula (the old
++//      `$$asciimath` meta feature is dropped — nothing in the ecosystem
++//      produces it and it silently ate real formulas);
++//   2. A block closes at the FIRST line that ENDS with a `$$` run (Typora
++//      trailing closer, text before it is content) — including the opening
++//      line itself (`$$x$$` one-line blocks become display math);
++//   3. A line that is only `$$` (+ whitespace) still closes (classic fence);
++//   4. Unterminated blocks run to EOF (same as upstream, but the opening
++//      line's content is no longer lost);
++//   5. Paragraph interruption behavior is unchanged (no `interrupt` support),
++//      so `$$…$$` inside a running paragraph still parses as inline math.
++//
++// A `$` run of exactly one before other content (`a$b`) is plain content: the
++// closer probe below noks and the line is consumed as a whole content line.
++
+ /** @type {Construct} */
+ export const mathFlow = {
+   tokenize: tokenizeMathFenced,
+@@ -20,6 +63,16 @@ const nonLazyContinuation = {
+   partial: true
+ }
+ 
++// mditor patch: probe construct — consume `[content…][$$+][ \t]*` up to a line
++// ending / EOF. On success the line closes the math block (content becomes a
++// mathFlowValue, the dollars a closing mathFlowFence). Any other line shape
++// noks and the caller re-consumes the whole line as content.
++/** @type {Construct} */
++const typoraClosingLine = {
++  tokenize: tokenizeTyporaClosingLine,
++  partial: true
++}
++
+ /**
+  * @this {TokenizeContext}
+  * @type {Tokenizer}
+@@ -36,7 +89,7 @@ function tokenizeMathFenced(effects, ok, nok) {
+   return start
+ 
+   /**
+-   * Start of math.
++   * Start of math (flow).
+    *
+    * ```markdown
+    * > | $$
+@@ -79,88 +132,35 @@ function tokenizeMathFenced(effects, ok, nok) {
+     }
+ 
+     effects.exit('mathFlowFenceSequence')
+-    return factorySpace(effects, metaBefore, types.whitespace)(code)
++    return factorySpace(effects, afterOpenSpace, types.whitespace)(code)
+   }
+ 
+   /**
+-   * In opening fence, before meta.
++   * After the opening sequence and any spaces on the opening line.
+    *
+    * ```markdown
+-   * > | $$asciimath
+-   *       ^
+-   *   | x < y
+-   *   | $$
+-   * ```
+-   *
+-   * @type {State}
+-   */
+-
+-  function metaBefore(code) {
+-    if (code === codes.eof || markdownLineEnding(code)) {
+-      return metaAfter(code)
+-    }
+-
+-    effects.enter('mathFlowFenceMeta')
+-    effects.enter(types.chunkString, {contentType: constants.contentTypeString})
+-    return meta(code)
+-  }
+-
+-  /**
+-   * In meta.
+-   *
+-   * ```markdown
+-   * > | $$asciimath
++   * > | $$ \frac{1}{2}
+    *        ^
+-   *   | x < y
+-   *   | $$
+-   * ```
+-   *
+-   * @type {State}
+-   */
+-  function meta(code) {
+-    if (code === codes.eof || markdownLineEnding(code)) {
+-      effects.exit(types.chunkString)
+-      effects.exit('mathFlowFenceMeta')
+-      return metaAfter(code)
+-    }
+-
+-    if (code === codes.dollarSign) {
+-      return nok(code)
+-    }
+-
+-    effects.consume(code)
+-    return meta
+-  }
+-
+-  /**
+-   * After meta.
+-   *
+-   * ```markdown
+-   * > | $$
+-   *       ^
+-   *   | \frac{1}{2}
+    *   | $$
+    * ```
+    *
+    * @type {State}
+    */
+-  function metaAfter(code) {
+-    // Guaranteed to be eol/eof.
++  function afterOpenSpace(code) {
+     effects.exit('mathFlowFence')
+ 
+     if (self.interrupt) {
+       return ok(code)
+     }
+ 
+-    return effects.attempt(
+-      nonLazyContinuation,
+-      beforeNonLazyContinuation,
+-      after
+-    )(code)
++    // mditor patch: content on the opening line = Typora display math. Probe
++    // for a one-line block (`$$x$$`) first; otherwise the rest of the line is
++    // the first content line.
++    return effects.attempt(typoraClosingLine, after, contentStart)(code)
+   }
+ 
+   /**
+-   * After eol/eof in math, at a non-lazy closing fence or content.
++   * After eol/eof in math, at a non-lazy closing line or content.
+    *
+    * ```markdown
+    *   | $$
+@@ -173,15 +173,11 @@ function tokenizeMathFenced(effects, ok, nok) {
+    * @type {State}
+    */
+   function beforeNonLazyContinuation(code) {
+-    return effects.attempt(
+-      {tokenize: tokenizeClosingFence, partial: true},
+-      after,
+-      contentStart
+-    )(code)
++    return effects.attempt(typoraClosingLine, after, contentStart)(code)
+   }
+ 
+   /**
+-   * Before math content, definitely not before a closing fence.
++   * Before math content, definitely not a closing line.
+    *
+    * ```markdown
+    *   | $$
+@@ -272,96 +268,111 @@ function tokenizeMathFenced(effects, ok, nok) {
+     effects.exit('mathFlow')
+     return ok(code)
+   }
++}
++
++/**
++ * Probe one line for the Typora closing shape
++ * `[content…]$$+[ \t]*(eol|eof)`.
++ *
++ * A `$` run of exactly one before other content (`a$b`) or a run followed by
++ * more content (`a$$b`) noks — the caller then consumes the whole line as a
++ * content line.
++ *
++ * @this {TokenizeContext}
++ * @type {Tokenizer}
++ */
++function tokenizeTyporaClosingLine(effects, ok, nok) {
++  const self = this
++  let sizeClose = 0
++
++  return factorySpace(
++    effects,
++    beforeData,
++    types.linePrefix,
++    self.parser.constructs.disable.null.includes('codeIndented')
++      ? undefined
++      : constants.tabSize
++  )
+ 
+-  /** @type {Tokenizer} */
+-  function tokenizeClosingFence(effects, ok, nok) {
+-    let size = 0
+-
+-    assert(self.parser.constructs.disable.null, 'expected `disable.null`')
+-    /**
+-     * Before closing fence, at optional whitespace.
+-     *
+-     * ```markdown
+-     *   | $$
+-     *   | \frac{1}{2}
+-     * > | $$
+-     *     ^
+-     * ```
+-     */
+-    return factorySpace(
+-      effects,
+-      beforeSequenceClose,
+-      types.linePrefix,
+-      self.parser.constructs.disable.null.includes('codeIndented')
+-        ? undefined
+-        : constants.tabSize
+-    )
+-
+-    /**
+-     * In closing fence, after optional whitespace, at sequence.
+-     *
+-     * ```markdown
+-     *   | $$
+-     *   | \frac{1}{2}
+-     * > | $$
+-     *     ^
+-     * ```
+-     *
+-     * @type {State}
+-     */
+-    function beforeSequenceClose(code) {
+-      effects.enter('mathFlowFence')
+-      effects.enter('mathFlowFenceSequence')
+-      return sequenceClose(code)
++  /**
++   * At content or the closing dollars.
++   *
++   * @type {State}
++   */
++  function beforeData(code) {
++    if (code === codes.dollarSign) {
++      return dollarRun(code)
+     }
+ 
+-    /**
+-     * In closing fence sequence.
+-     *
+-     * ```markdown
+-     *   | $$
+-     *   | \frac{1}{2}
+-     * > | $$
+-     *      ^
+-     * ```
+-     *
+-     * @type {State}
+-     */
+-    function sequenceClose(code) {
+-      if (code === codes.dollarSign) {
+-        size++
+-        effects.consume(code)
+-        return sequenceClose
+-      }
+-
+-      if (size < sizeOpen) {
+-        return nok(code)
+-      }
+-
+-      effects.exit('mathFlowFenceSequence')
+-      return factorySpace(effects, afterSequenceClose, types.whitespace)(code)
++    if (code === codes.eof || markdownLineEnding(code)) {
++      // No dollars at all — not a closing line.
++      return nok(code)
+     }
+ 
+-    /**
+-     * After closing fence sequence, after optional whitespace.
+-     *
+-     * ```markdown
+-     *   | $$
+-     *   | \frac{1}{2}
+-     * > | $$
+-     *       ^
+-     * ```
+-     *
+-     * @type {State}
+-     */
+-    function afterSequenceClose(code) {
+-      if (code === codes.eof || markdownLineEnding(code)) {
+-        effects.exit('mathFlowFence')
+-        return ok(code)
+-      }
++    effects.enter('mathFlowValue')
++    return data(code)
++  }
+ 
++  /**
++   * In content of the probed line. Dollar signs are not content here: they
++   * either start the closing run or fail the probe.
++   *
++   * @type {State}
++   */
++  function data(code) {
++    if (code === codes.dollarSign) {
++      effects.exit('mathFlowValue')
++      return dollarRun(code)
++    }
++
++    if (code === codes.eof || markdownLineEnding(code)) {
++      // No trailing dollar run — plain content line.
+       return nok(code)
+     }
++
++    effects.consume(code)
++    return data
++  }
++
++  /**
++   * In the closing dollar run.
++   *
++   * @type {State}
++   */
++  function dollarRun(code) {
++    effects.enter('mathFlowFence')
++    effects.enter('mathFlowFenceSequence')
++    return sequenceClose(code)
++  }
++
++  /**
++   * In closing fence sequence.
++   *
++   * @type {State}
++   */
++  function sequenceClose(code) {
++    if (code === codes.dollarSign) {
++      effects.consume(code)
++      sizeClose++
++      return sequenceClose
++    }
++
++    effects.exit('mathFlowFenceSequence')
++    return factorySpace(effects, afterSequenceClose, types.whitespace)(code)
++  }
++
++  /**
++   * After closing fence sequence, after optional whitespace.
++   *
++   * @type {State}
++   */
++  function afterSequenceClose(code) {
++    if (sizeClose >= 2 && (code === codes.eof || markdownLineEnding(code))) {
++      effects.exit('mathFlowFence')
++      return ok(code)
++    }
++
++    return nok(code)
+   }
+ }
+ 
+diff --git a/node_modules/micromark-extension-math/lib/math-flow.js b/node_modules/micromark-extension-math/lib/math-flow.js
+index e5646a7..789c242 100644
+--- a/node_modules/micromark-extension-math/lib/math-flow.js
++++ b/node_modules/micromark-extension-math/lib/math-flow.js
+@@ -1,7 +1,13 @@
+ /**
+  * @import {Construct, State, TokenizeContext, Tokenizer} from 'micromark-util-types'
+  */
+-
++// mditor patch (v4.12.2): Typora/Obsidian-style display math — see the
++// twin implementation in dev/lib/math-flow.js for the full rationale.
++// Summary: content on the opening `$$` line starts the formula (the old
++// `$$asciimath` meta feature is dropped), a block closes at the first line
++// ending with a `$$` run (Typora trailing closer) or a lone `$$` line
++// (classic fence), one-line `$$x$$` blocks become display math, and
++// unterminated blocks run to EOF without losing the opening line.
+ import { factorySpace } from 'micromark-factory-space';
+ import { markdownLineEnding } from 'micromark-util-character';
+ /** @type {Construct} */
+@@ -17,6 +23,16 @@ const nonLazyContinuation = {
+   partial: true
+ };
+ 
++// mditor patch: probe construct — consume `[content…][$$+][ \t]*` up to a
++// line ending / EOF. On success the line closes the math block (content
++// becomes a mathFlowValue, the dollars a closing mathFlowFence); any other
++// line shape noks and the caller consumes the whole line as content.
++/** @type {Construct} */
++const typoraClosingLine = {
++  tokenize: tokenizeTyporaClosingLine,
++  partial: true
++};
++
+ /**
+  * @this {TokenizeContext}
+  * @type {Tokenizer}
+@@ -69,81 +85,33 @@ function tokenizeMathFenced(effects, ok, nok) {
+       return nok(code);
+     }
+     effects.exit('mathFlowFenceSequence');
+-    return factorySpace(effects, metaBefore, "whitespace")(code);
++    return factorySpace(effects, afterOpenSpace, "whitespace")(code);
+   }
+ 
+   /**
+-   * In opening fence, before meta.
++   * After the opening sequence and any spaces on the opening line.
+    *
+    * ```markdown
+-   * > | $$asciimath
+-   *       ^
+-   *   | x < y
+-   *   | $$
+-   * ```
+-   *
+-   * @type {State}
+-   */
+-
+-  function metaBefore(code) {
+-    if (code === null || markdownLineEnding(code)) {
+-      return metaAfter(code);
+-    }
+-    effects.enter('mathFlowFenceMeta');
+-    effects.enter("chunkString", {
+-      contentType: "string"
+-    });
+-    return meta(code);
+-  }
+-
+-  /**
+-   * In meta.
+-   *
+-   * ```markdown
+-   * > | $$asciimath
++   * > | $$ \frac{1}{2}
+    *        ^
+-   *   | x < y
+    *   | $$
+    * ```
+    *
+    * @type {State}
+    */
+-  function meta(code) {
+-    if (code === null || markdownLineEnding(code)) {
+-      effects.exit("chunkString");
+-      effects.exit('mathFlowFenceMeta');
+-      return metaAfter(code);
+-    }
+-    if (code === 36) {
+-      return nok(code);
+-    }
+-    effects.consume(code);
+-    return meta;
+-  }
+-
+-  /**
+-   * After meta.
+-   *
+-   * ```markdown
+-   * > | $$
+-   *       ^
+-   *   | \frac{1}{2}
+-   *   | $$
+-   * ```
+-   *
+-   * @type {State}
+-   */
+-  function metaAfter(code) {
+-    // Guaranteed to be eol/eof.
++  function afterOpenSpace(code) {
+     effects.exit('mathFlowFence');
+     if (self.interrupt) {
+       return ok(code);
+     }
+-    return effects.attempt(nonLazyContinuation, beforeNonLazyContinuation, after)(code);
++    // mditor patch: content on the opening line = Typora display math. Probe
++    // for a one-line block (`$$x$$`) first; otherwise the rest of the line is
++    // the first content line.
++    return effects.attempt(typoraClosingLine, after, contentStart)(code);
+   }
+ 
+   /**
+-   * After eol/eof in math, at a non-lazy closing fence or content.
++   * After eol/eof in math, at a non-lazy closing line or content.
+    *
+    * ```markdown
+    *   | $$
+@@ -156,14 +124,11 @@ function tokenizeMathFenced(effects, ok, nok) {
+    * @type {State}
+    */
+   function beforeNonLazyContinuation(code) {
+-    return effects.attempt({
+-      tokenize: tokenizeClosingFence,
+-      partial: true
+-    }, after, contentStart)(code);
++    return effects.attempt(typoraClosingLine, after, contentStart)(code);
+   }
+ 
+   /**
+-   * Before math content, definitely not before a closing fence.
++   * Before math content, definitely not a closing line.
+    *
+    * ```markdown
+    *   | $$
+@@ -238,84 +203,95 @@ function tokenizeMathFenced(effects, ok, nok) {
+     effects.exit('mathFlow');
+     return ok(code);
+   }
++}
+ 
+-  /** @type {Tokenizer} */
+-  function tokenizeClosingFence(effects, ok, nok) {
+-    let size = 0;
+-    /**
+-     * Before closing fence, at optional whitespace.
+-     *
+-     * ```markdown
+-     *   | $$
+-     *   | \frac{1}{2}
+-     * > | $$
+-     *     ^
+-     * ```
+-     */
+-    return factorySpace(effects, beforeSequenceClose, "linePrefix", self.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4);
++/**
++ * Probe one line for the Typora closing shape
++ * `[content…]$$+[ \t]*(eol|eof)`.
++ * A `$` run of exactly one before other content (`a$b`) or a run followed by
++ * more content (`a$$b`) noks — the caller then consumes the whole line as a
++ * content line.
++ * @this {TokenizeContext}
++ * @type {Tokenizer}
++ */
++function tokenizeTyporaClosingLine(effects, ok, nok) {
++  const self = this;
++  let sizeClose = 0;
++  return factorySpace(effects, beforeData, "linePrefix", self.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4);
+ 
+-    /**
+-     * In closing fence, after optional whitespace, at sequence.
+-     *
+-     * ```markdown
+-     *   | $$
+-     *   | \frac{1}{2}
+-     * > | $$
+-     *     ^
+-     * ```
+-     *
+-     * @type {State}
+-     */
+-    function beforeSequenceClose(code) {
+-      effects.enter('mathFlowFence');
+-      effects.enter('mathFlowFenceSequence');
+-      return sequenceClose(code);
++  /**
++   * At content or the closing dollars.
++   *
++   * @type {State}
++   */
++  function beforeData(code) {
++    if (code === 36) {
++      return dollarRun(code);
+     }
+-
+-    /**
+-     * In closing fence sequence.
+-     *
+-     * ```markdown
+-     *   | $$
+-     *   | \frac{1}{2}
+-     * > | $$
+-     *      ^
+-     * ```
+-     *
+-     * @type {State}
+-     */
+-    function sequenceClose(code) {
+-      if (code === 36) {
+-        size++;
+-        effects.consume(code);
+-        return sequenceClose;
+-      }
+-      if (size < sizeOpen) {
+-        return nok(code);
+-      }
+-      effects.exit('mathFlowFenceSequence');
+-      return factorySpace(effects, afterSequenceClose, "whitespace")(code);
++    if (code === null || markdownLineEnding(code)) {
++      // No dollars at all — not a closing line.
++      return nok(code);
+     }
++    effects.enter('mathFlowValue');
++    return data(code);
++  }
+ 
+-    /**
+-     * After closing fence sequence, after optional whitespace.
+-     *
+-     * ```markdown
+-     *   | $$
+-     *   | \frac{1}{2}
+-     * > | $$
+-     *       ^
+-     * ```
+-     *
+-     * @type {State}
+-     */
+-    function afterSequenceClose(code) {
+-      if (code === null || markdownLineEnding(code)) {
+-        effects.exit('mathFlowFence');
+-        return ok(code);
+-      }
++  /**
++   * In content of the probed line. Dollar signs are not content here: they
++   * either start the closing run or fail the probe.
++   *
++   * @type {State}
++   */
++  function data(code) {
++    if (code === 36) {
++      effects.exit('mathFlowValue');
++      return dollarRun(code);
++    }
++    if (code === null || markdownLineEnding(code)) {
++      // No trailing dollar run — plain content line.
+       return nok(code);
+     }
++    effects.consume(code);
++    return data;
++  }
++
++  /**
++   * In the closing dollar run.
++   *
++   * @type {State}
++   */
++  function dollarRun(code) {
++    effects.enter('mathFlowFence');
++    effects.enter('mathFlowFenceSequence');
++    return sequenceClose(code);
++  }
++
++  /**
++   * In closing fence sequence.
++   *
++   * @type {State}
++   */
++  function sequenceClose(code) {
++    if (code === 36) {
++      effects.consume(code);
++      sizeClose++;
++      return sequenceClose;
++    }
++    effects.exit('mathFlowFenceSequence');
++    return factorySpace(effects, afterSequenceClose, "whitespace")(code);
++  }
++
++  /**
++   * After closing fence sequence, after optional whitespace.
++   *
++   * @type {State}
++   */
++  function afterSequenceClose(code) {
++    if (sizeClose >= 2 && (code === null || markdownLineEnding(code))) {
++      effects.exit('mathFlowFence');
++      return ok(code);
++    }
++    return nok(code);
+   }
+ }
+ 
