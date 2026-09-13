@@ -5,14 +5,16 @@
 // 模式请求），全部被 "blocked by CORS policy" 拒绝，JS 永不执行，页面停在
 // index.html 的静态开屏页。
 //
-// 解法：onInterceptRequest 拦截 resource://rawfile/* 请求，从 rawfile 读
-// 字节自建响应——补正确 MIME 与 Access-Control-Allow-Origin: * 头，module
-// 加载即通过（origin 'null' + ACAO:* 合法，非凭据模式）。
+// 解法（二次修正，真机验证）：onInterceptRequest 拦不到 resource:// 协议
+// （内核内部处理）。因此页面改从假域名 https://mditor.local/index.html
+// 加载，本类拦截该域全部请求、从 rawfile/web/ 读字节回填——页面与资源
+// 同源，CORS 检查天然不触发。resource:// 前缀保留兼容（旧路径放行）。
 
 import { common } from '@kit.AbilityKit';
 import { resourceManager } from '@kit.LocalizationKit';
 import { HostContext } from '../bridge/HostContext';
 
+const HOST_PREFIX = 'https://mditor.local/';
 const RAW_PREFIX = 'resource://rawfile/';
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -55,13 +57,17 @@ export class RawfileResponder {
     return null;
   }
 
-  /** 拦截回调：非 resource://rawfile 返回 null（放行，如 mditor-asset:// 由
-   *  AssetResponder 先行处理）。 */
+  /** 拦截回调：https://mditor.local/<path> → rawfile/web/<path>；
+   *  其它前缀返回 null 放行（如 mditor-asset:// 由 AssetResponder 先行）。 */
   respond(url: string): WebResourceResponse | null {
-    if (!url.startsWith(RAW_PREFIX)) {
+    let rawPath: string;
+    if (url.startsWith(HOST_PREFIX)) {
+      rawPath = `web/${url.slice(HOST_PREFIX.length)}`;
+    } else if (url.startsWith(RAW_PREFIX)) {
+      rawPath = url.slice(RAW_PREFIX.length);
+    } else {
       return null;
     }
-    let rawPath = url.slice(RAW_PREFIX.length);
     // 去掉 query / fragment（vite 产物无，保险处理）。
     const cut = rawPath.search(/[?#]/);
     if (cut >= 0) {

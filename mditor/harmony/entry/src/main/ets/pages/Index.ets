@@ -1,6 +1,9 @@
 // Index.ets —— ArkWeb 壳页面（鸿蒙迁移 v4.11）。
 //
-// 加载 rawfile/web/index.html（vite 产物，构建脚本拷入）；通过
+// 页面从假域名 https://mditor.local/index.html 加载（真机实测 resource://
+// rawfile 协议 origin 为 null 且拦截器不生效，ES module 全被 CORS 拒绝）；
+// onInterceptRequest 把该域请求映射到 rawfile/web/（见 RawfileResponder）。
+// 通过
 // javaScriptOnDocumentStart 在页面 JS 运行前注入两样东西：
 //   1. window.__MDITOR_HARMONY__ —— 运行时标记（前端 detectRuntime 据此
 //      选中 harmony 适配器；不依赖 UA——ArkWeb 的 UA 含 HarmonyOS 标识但
@@ -48,7 +51,7 @@ struct Index {
 
   build() {
     Column() {
-      Web({ src: $rawfile('web/index.html'), controller: this.controller })
+      Web({ src: 'https://mditor.local/index.html', controller: this.controller })
         .width('100%')
         .height('100%')
         // 页面 JS 运行前注入运行时标记 + 端口接收器（错过即握手失败）。
@@ -68,8 +71,8 @@ struct Index {
           // 引导脚本已在 document start 就绪，这里投递端口最稳。
           this.bridge.deliverPortToPage();
         })
-        // 供源链：mditor-asset:// 本地图片 → rawfile 静态资源（CORS 根修，
-        // 见 RawfileResponder 头注释）→ 其余放行默认加载。
+        // 供源链：mditor-asset:// 本地图片 → mditor.local 域（映射
+        // rawfile/web，同源无 CORS）→ 其余放行默认加载。
         .onInterceptRequest((event) => {
           const url = event.request.getRequestUrl();
           const r = this.responder;
