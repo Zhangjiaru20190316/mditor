@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.12.3 (2026-09-13)（编辑器图片裂图根修：docPath 同步窗口）
+
+用户装 4.12.2 复验截图：公式已正常渲染（Typora $$ 块解析修复生效），但独立成段的本地图片仍裂图。取证定位到编辑器侧最后一个根因：
+
+- **根因**：`openPath`/`showDoc` 在 `setDoc`（React 异步提交）后**同步**触发 `onLoaded → setValue → loadMarkdownFull`，ProseMirror 图片节点视图当场创建并按 `docPath` 解析相对引用——此刻读到的 `fileApi.doc.path` 是**上一次提交的旧文档路径**（应用启动后首开为 null）。相对图片引用按上一篇文档的目录拼接 → asset 404；组件 bindAttrs 只在节点自身更新时重解析，于是永久裂图。前一篇文档恰好同目录时碰巧正确，即「有的文档好有的坏」。启动恢复标签路径（缓冲重放）反而不受影响。
+- **修复**：useFile 的路径赋值流（newDoc/openPath/showDoc/saveAs/updatePath）同步写 docRef；FileApi 新增 `docPathSync()`（读 ref），Editor 的 `docPath` 闭包改用它。调用点零改动，其余 `.doc` 读者均在提交后读取不受影响。
+- **取证备注**：crepe 的 imageInline 组件同样从 ImageBlock 特性配置取 `proxyDomURL`（inlineOnUpload ?? onUpload 同模式）——一处配置覆盖块级与行内两个视图，v4.12.1 的结论成立，无需新增配置。
+- **回归锁定**：useFile.docPathSync 3 例（jsdom + React act，锁死「同步 tick 内 docPathSync 已新、.doc 仍旧」窗口）。
+- vitest 739 → 742；tsc / eslint / build 全绿。
+
+
 ## 4.12.2 (2026-09-13)（Typora $$ 块解析根修：图片被吞 + 公式红字 · 取证驱动第二轮）
 
 装 4.12.1 后用户反馈问题仍在。本轮先取证后动手：对用户真实文档（`E:/笔记/` 数学密集型笔记）跑应用自研管线，锁定第一轮未覆盖的真根因——**不是** resolveImgSrc/CSP 链路，而是 remark-math 底层的 micromark mathFlow 语法扩展不认识 Typora/Obsidian 式 `$$` 块。
