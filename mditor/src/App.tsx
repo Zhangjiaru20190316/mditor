@@ -2861,6 +2861,7 @@ export default function App() {
         onUpdate={updateAnnotation}
         onDelete={deleteAnnotation}
         theme={settingsApi.settings.theme}
+        docPath={fileApi.doc.path}
       />
 
       {settingsApi.settings.annoDiagPanel && (

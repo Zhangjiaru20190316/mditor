@@ -30,6 +30,10 @@ interface Props {
   theme: Theme;
   /** Extra className for the host element. */
   className?: string;
+  /** 当前文档绝对路径（v4.12.2，可选）：提供时本地图片引用（相对路径等）
+   *  重写为可渲染 URL（与编辑器同语义）。批注弹窗等有文档上下文的表面传入；
+   *  AI 回复等无上下文表面不传。 */
+  docPath?: string | null;
 }
 
 /** Escape text for safe embedding in the placeholder HTML. */
@@ -64,6 +68,7 @@ export const MarkdownText = memo(function MarkdownText({
   content,
   theme,
   className,
+  docPath = null,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -89,7 +94,7 @@ export const MarkdownText = memo(function MarkdownText({
       return;
     }
     // 1) Synchronous cache hit → final HTML in this layout pass (zero flash).
-    const cached = peekRenderedHtml(content);
+    const cached = peekRenderedHtml(content, { docPath });
     if (cached !== undefined) {
       el.classList.remove("is-rendering");
       el.innerHTML = cached;
@@ -100,7 +105,7 @@ export const MarkdownText = memo(function MarkdownText({
     // when the pipeline resolves.
     el.classList.add("is-rendering");
     el.innerHTML = placeholderHtml(content);
-    void renderMarkdown(content)
+    void renderMarkdown(content, { docPath })
       .then((html) => {
         if (cancelled) return;
         el.classList.remove("is-rendering");
@@ -119,7 +124,7 @@ export const MarkdownText = memo(function MarkdownText({
     return () => {
       cancelled = true;
     };
-  }, [content, theme]);
+  }, [content, theme, docPath]);
 
   return <div ref={ref} className={`md-rendered${className ? ` ${className}` : ""}`} />;
 });

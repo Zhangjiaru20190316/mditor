@@ -180,7 +180,7 @@ export function normalizeLocalPath(p: string): string {
  */
 export function resolveImgSrc(url: string, docPath: string | null): string {
   if (!url) return url;
-  if (/^(https?:|data:|asset:|blob:|moz-extension:|chrome-extension:)/i.test(url)) {
+  if (/^(https?:|data:|asset:|mditor-asset:|blob:|moz-extension:|chrome-extension:)/i.test(url)) {
     return url;
   }
   try {

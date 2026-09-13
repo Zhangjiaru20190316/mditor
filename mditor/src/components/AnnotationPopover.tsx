@@ -56,6 +56,9 @@ interface Props {
   onDelete: (id: string) => void;
   /** App theme, forwarded to the Markdown renderer. */
   theme: Theme;
+  /** 当前文档绝对路径（v4.12.2，可选）：批注正文里的本地图片引用按文档
+   *  目录重写为可渲染 URL（与编辑器同语义）。 */
+  docPath?: string | null;
 }
 
 /** Document-space marker geometry: viewport left/right (unchanged by vertical
@@ -118,6 +121,7 @@ export const AnnotationPopover = memo(function AnnotationPopover({
   onUpdate,
   onDelete,
   theme,
+  docPath = null,
 }: Props) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pos, setPos] = useState<PlacePos | null>(null);
@@ -618,7 +622,7 @@ export const AnnotationPopover = memo(function AnnotationPopover({
       ) : (
         <div className="anno-popover-body">
           {active.content ? (
-            <MarkdownText content={active.content} theme={theme} />
+            <MarkdownText content={active.content} theme={theme} docPath={docPath} />
           ) : (
             <span className="anno-popover-empty">（空批注）</span>
           )}

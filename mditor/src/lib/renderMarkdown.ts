@@ -39,6 +39,7 @@ import { remarkFlash, type FlashRemarkOptions } from "./remarkFlash";
 import { remarkFigureNumbering } from "./remarkFigureNumbering";
 import { normalizeMathDelimiters } from "./mathNormalize";
 import { getMathRenderConfig, mathConfigSignature } from "./mathConfig";
+import { resolveImgSrc } from "./imageManager";
 import { bibliography } from "./bibliography";
 
 // Many LLMs emit LaTeX-style math delimiters \( ... \) (inline) and \[ ... \]
@@ -59,6 +60,13 @@ import { bibliography } from "./bibliography";
 const sanitizeSchema = {
   ...defaultSchema,
   tagNames: [...(defaultSchema.tagNames ?? []), "mark"],
+  // v4.12.2：本地图片重写（docPath）后 src 可能是 asset:（mac/linux）、
+  // mditor-asset:（harmony）、data:/blob:（编辑器既有放行形态）。协议白名单
+  // 与应用 CSP 的 img-src 对齐——sanitize 比 CSP 更紧会把合法图砍成无 src。
+  protocols: {
+    ...defaultSchema.protocols,
+    src: ["http", "https", "data", "blob", "asset", "mditor-asset"],
+  },
   attributes: {
     ...defaultSchema.attributes,
     span: [...(defaultSchema.attributes?.span ?? []), "className", "style"],
@@ -108,11 +116,33 @@ function rehypePruneStyle() {
   };
 }
 
+// v4.12.2：静态表面的本地图片解析。编辑器 <img> 走 proxyDomURL →
+// resolveImgSrc，但静态管线（AI 面板/批注弹窗）此前把 markdown 里的相对
+// 引用原样输出成 src，webview 无 base URL → 裂图。带 docPath 渲染时在
+// hast 层（rehypeRaw 之后——raw HTML 的 <img> 也已成元素）把本地形态引用
+// 重写为可渲染 URL，与编辑器同一份 resolveImgSrc 语义。
+function rehypeResolveLocalImages(docPath: string | null) {
+  return (tree: HastNode) => {
+    if (!docPath) return;
+    const walk = (node: HastNode) => {
+      if (node.type === "element" && node.tagName === "img" && node.properties) {
+        const src = node.properties.src;
+        if (typeof src === "string" && src) {
+          node.properties.src = resolveImgSrc(src, docPath);
+        }
+      }
+      for (const child of node.children ?? []) walk(child);
+    };
+    walk(tree);
+  };
+}
+
 // Build the configured pipeline; the variable's type is inferred from the
 // builder so the per-plugin type narrowing (Root/Root/string) is preserved.
 // v4.6：macros 来自数学渲染设置（mathConfig），配置变化由 getProcessor 按
 // 签名重建 processor；编号行为在 remarkMathNumbering 运行时读配置。
-function makeProcessor(macros: Record<string, string>) {
+// v4.12.2：docPath 参与 processor 缓存键（图片重写闭包进插件）。
+function makeProcessor(macros: Record<string, string>, docPath: string | null) {
   return unified()
     .use(remarkParse)
     .use(remarkGfm) // tables, strikethrough, task lists, autolinks
@@ -146,6 +176,7 @@ function makeProcessor(macros: Record<string, string>) {
       } as never,
     })
     .use(rehypeRaw) // turn raw html into real hast before transforms below
+    .use(rehypeResolveLocalImages, docPath) // v4.12.2：本地图片引用 → 可渲染 URL（需 docPath）
     .use(rehypeSanitize, sanitizeSchema) // strip scripts/event handlers/style vectors from raw html
     .use(rehypePruneStyle) // span/mark 内联 style 仅保留 color/background-color
     .use(rehypeKatex, { macros }) // math -> katex html (needs katex.css + fonts at runtime)
@@ -183,16 +214,27 @@ function stampLazyImages(node: HastNode | undefined): void {
   if (kids) for (const c of kids) stampLazyImages(c);
 }
 
-let processor: ReturnType<typeof makeProcessor> | null = null;
-let processorSig = "";
+// v4.12.2：processor 缓存从单槽改为小 LRU——键含 docPath（AI 面板无 docPath
+// 与批注弹窗带 docPath 交替渲染时，单槽会来回重建管线）。
+const PROCESSOR_CACHE_MAX = 8;
+const processorCache = new Map<
+  string,
+  ReturnType<typeof makeProcessor>
+>();
 
-function getProcessor(): ReturnType<typeof makeProcessor> {
-  const sig = `${mathConfigSignature()}|${bibliography.signature()}`;
-  if (!processor || processorSig !== sig) {
-    processor = makeProcessor(getMathRenderConfig().macros);
-    processorSig = sig;
+function getProcessor(docPath: string | null): ReturnType<typeof makeProcessor> {
+  const sig = `${mathConfigSignature()}|${bibliography.signature()}|${docPath ?? ""}`;
+  let proc = processorCache.get(sig);
+  if (!proc) {
+    proc = makeProcessor(getMathRenderConfig().macros, docPath);
+    processorCache.set(sig, proc);
+    while (processorCache.size > PROCESSOR_CACHE_MAX) {
+      const oldest = processorCache.keys().next().value;
+      if (oldest === undefined) break;
+      processorCache.delete(oldest);
+    }
   }
-  return processor;
+  return proc;
 }
 
 // ---- render-result LRU cache (T1) ---------------------------------------
@@ -265,19 +307,35 @@ export function __getHtmlCacheStatsForTests(): {
   return { size: htmlCache.size, bytes: htmlCacheBytes, keys: [...htmlCache.keys()] };
 }
 
+/** renderMarkdown 的可选行为开关（v4.12.2）。 */
+export interface RenderMarkdownOptions {
+  /** 当前文档绝对路径。提供时，markdown 里的本地图片引用（相对路径 /
+   *  绝对路径 / file:// 等）会像编辑器一样重写为可渲染 URL（resolveImgSrc）。
+   *  不提供（AI 回复等无文档上下文的表面）时行为与旧版一致：原样输出。 */
+  docPath?: string | null;
+}
+
+function cacheKey(normalized: string, docPath: string | null | undefined): string {
+  return `${mathConfigSignature()}|${bibliography.signature()}|${docPath ?? ""}${SIG_SEP}${normalized}`;
+}
+
 /** Render a markdown string to an HTML fragment (no <html>/<body> wrapper).
  *  Raw HTML in the input is sanitized (see sanitizeSchema) — the result is safe
  *  to write into innerHTML. Results are memoized in a small LRU so repeated
  *  renders of the same content (e.g. AI rows recycled by virtual scrolling)
  *  skip the unified pipeline. v4.6：缓存键含归一化 + 数学配置签名（macros /
- *  autoNumber 变化不会吃到旧渲染结果）。 */
-export async function renderMarkdown(md: string): Promise<string> {
+ *  autoNumber 变化不会吃到旧渲染结果）。v4.12.2：docPath 进缓存键（同一
+ *  内容在不同文档下的图片 URL 不同）。 */
+export async function renderMarkdown(
+  md: string,
+  opts?: RenderMarkdownOptions
+): Promise<string> {
   if (!md) return "";
   const normalized = normalizeMathDelimiters(md, { unescapeDollar: true });
-  const key = `${mathConfigSignature()}|${bibliography.signature()}${SIG_SEP}${normalized}`;
+  const key = cacheKey(normalized, opts?.docPath);
   const cached = cacheGet(key);
   if (cached !== undefined) return cached;
-  const file = await getProcessor().process(normalized);
+  const file = await getProcessor(opts?.docPath ?? null).process(normalized);
   const html = String(file);
   cacheSet(key, html);
   return html;
@@ -290,10 +348,13 @@ export async function renderMarkdown(md: string): Promise<string> {
  * blank flash); only genuine cache misses go through the async pipeline.
  * Applies the same normalization as renderMarkdown (the cache key).
  */
-export function peekRenderedHtml(md: string): string | undefined {
+export function peekRenderedHtml(
+  md: string,
+  opts?: RenderMarkdownOptions
+): string | undefined {
   if (!md) return "";
   const normalized = normalizeMathDelimiters(md, { unescapeDollar: true });
-  return cacheGet(`${mathConfigSignature()}|${bibliography.signature()}${SIG_SEP}${normalized}`);
+  return cacheGet(cacheKey(normalized, opts?.docPath));
 }
 
 // 配置签名前缀（v4.6）：LRU 键 = sig + \u0000 + 归一化后的 md。签名字符串
