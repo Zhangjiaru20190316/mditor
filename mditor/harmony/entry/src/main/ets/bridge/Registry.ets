@@ -1,11 +1,15 @@
-// Registry.ets —— 桥方法注册表（fs/dialog/store/app 四域收口）。
+// Registry.ets —— 桥方法注册表（fs/dialog/store/app/ai/net 五域收口）。
 //
 // 未注册的方法统一返回 UNSUPPORTED（前端映射 UnsupportedError）——
-// MVP 明确不做的能力不注册即是声明不支持：
-//   * AI 四命令（ai_chat/ai_chat_stream/ai_chat_cancel/ai_embed）
+// 明确不做的能力不注册即是声明不支持：
 //   * 多窗口三命令（create_doc_window/stash_tab_payload/take_tab_payload）
+//     —— P6 spike 待真机，未实施
 //   * get_pending_file（无 CLI 参数语义，前端适配器直接返回 null）
+//   * fs.watch / fs.unwatch（P4，见 io/WatchManager.ets）
+//   * s3_* 六命令（P3，见 net/S3Bridge.ets）
 // 命名与前端 platform/types.ts 一一对应，两端对表（设计书 5.3）。
+// 参数键为前端原样 camelCase（Tauri 的 snake_case 转换只发生在 Rust 侧，
+// 鸿蒙桥没有这层）。
 
 import { Bridge } from './Bridge';
 import { HostContext } from './HostContext';
@@ -15,6 +19,7 @@ import { UriMapper } from '../io/UriMapper';
 import { FileManager } from '../io/FileManager';
 import { SettingsStore } from '../store/SettingsStore';
 import { DialogBridge } from './DialogBridge';
+import { AiBridge } from '../ai/AiBridge';
 
 /** 惰性单例：Index.aboutToAppear 时初始化（HostContext.ability 已就绪）。 */
 let uriMapper: UriMapper | null = null;
@@ -78,6 +83,14 @@ export function registerAll(bridge: Bridge): void {
     const info = bundleManager.getBundleInfoForSelfSync(
       bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
     return info.versionName;
+  });
+
+  // ---- ai 域（v4.13 P2：ArkTS SSE 代理，契约对齐 src-tauri/src/ai.rs）-------
+  const aiBridge = new AiBridge(bridge);
+  aiBridge.registerAll();
+  // 页面重载：在途流全部取消（事件消费方随页面销毁，冷启动后重挂）。
+  bridge.onReload(() => {
+    aiBridge.onReload();
   });
 
   // 应用数据目录：沙箱 filesDir 的虚拟路径（UriMapper 统一映射 /AppData）。

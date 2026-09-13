@@ -11,9 +11,9 @@
 //   事件：{ type:'event', event, payload }           ArkTS → 页面
 //
 // 分发规则：所有方法必须显式注册（Map<string, Handler>）；未注册方法统一
-// 返回 UNSUPPORTED（前端映射为 UnsupportedError——AI 四命令由此自然报
-// 不支持）。handler 抛错统一转 error 响应，错误码约定：
-//   E_UNSUPPORTED / E_PERMISSION / E_IO / E_ARGS / E_INTERNAL
+// 返回 UNSUPPORTED（前端映射为 UnsupportedError——多窗口等未实施能力由此
+// 自然报不支持）。handler 抛错统一转 error 响应，错误码约定：
+//   E_UNSUPPORTED / E_PERMISSION / E_IO / E_ARGS / E_INTERNAL / E_AI（AI 域）
 
 import { webview } from '@kit.ArkWeb';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -76,6 +76,8 @@ export class Bridge {
   private webPort: webview.WebMessagePort | null = null;
   private portDelivered: boolean = false;
   private handlers: Map<string, MethodHandler> = new Map();
+  /** 页面重载清理回调（resetForReload 触发；AiBridge/WatchManager 注册）。 */
+  private reloadListeners: Array<() => void> = [];
 
   constructor(controller: webview.WebviewController) {
     this.controller = controller;
@@ -128,9 +130,24 @@ export class Bridge {
     }
   }
 
-  /** 页面重载后端口需重建（onPageBegin 调用，重置投递标记）。 */
+/** 页面重载后端口需重建（onPageBegin 调用，重置投递标记）。 */
   resetForReload(): void {
     this.portDelivered = false;
+    // 页面 JS 上下文已销毁：ArkTS 侧的推送上下文（AI 流泵 / 文件监听等）
+    // 同步清理（消费方订阅随页面消失，前端冷启动后自行重挂）。
+    const fns = this.reloadListeners.slice();
+    for (const fn of fns) {
+      try {
+        fn();
+      } catch {
+        // 单个监听失败不拖垮其余清理
+      }
+    }
+  }
+
+  /** 注册页面重载清理回调（AiBridge 停流 / WatchManager 摘监听等）。 */
+  onReload(fn: () => void): void {
+    this.reloadListeners.push(fn);
   }
 
   private dispatch(raw: string): void {
