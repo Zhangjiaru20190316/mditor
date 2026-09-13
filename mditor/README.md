@@ -2,7 +2,7 @@
 
 本地优先的 Markdown 编辑器，体验对标 Typora。基于 **Tauri 2 + React 18 + Milkdown (Crepe)** 构建 —— 无云端、无遥测，文件始终保存在你的电脑上。
 
-![platform](https://img.shields.io/badge/platform-Windows-blue) ![license](https://img.shields.io/badge/license-MIT-green) ![downloads](https://img.shields.io/github/downloads/Zhangjiaru20190316/mditor/total?label=downloads&color=success)
+![platform](https://img.shields.io/badge/platform-Windows-blue) ![platform](https://img.shields.io/badge/HarmonyOS%20PC-6.0-red) ![license](https://img.shields.io/badge/license-MIT-green) ![downloads](https://img.shields.io/github/downloads/Zhangjiaru20190316/mditor/total?label=downloads&color=success)
 
 <p align="center">
   <img src="docs/assets/mditor-promo.svg" alt="Mditor — 本地优先 · 所见即所得的 Markdown 编辑器" width="720"/>
@@ -30,6 +30,7 @@
 - [Node.js](https://nodejs.org/) ≥ 20，npm ≥ 10
 - [Rust](https://www.rust-lang.org/tools/install) stable（含 MSVC 工具链）
 - Windows 10/11（WebView2）；macOS / Linux 见下方说明
+- **鸿蒙 PC（可选）**：HarmonyOS Command Line Tools 6.0+（内嵌 API 22 SDK）+ JDK 17（仅打包/签名需要），详见 `harmony/README.md`
 
 ## 开发
 
@@ -49,6 +50,16 @@ npm run tauri dev  # 启动开发模式（热重载）
 | `npm test` | Vitest 单元测试 |
 | `npm run lint` | ESLint 检查 |
 | `npm run tauri build` | 打包发布版（NSIS 安装包） |
+
+## 鸿蒙（HarmonyOS PC）构建
+
+前端与 Windows 版同源（React 构建产物离线打进 `harmony/entry/src/main/resources/rawfile/web/`，由 ArkWeb 加载；文件/存储/弹窗经 JSBridge 走 ArkTS 原生实现）：
+
+```bash
+npm run build:harmony   # vite --base ./ → 拷贝 rawfile → ohpm → hvigor 打未签名 HAP
+```
+
+MVP 能力矩阵（AI / 多窗口 / 文件监听 / 回收站删除 / PDF 与富导出暂不可用）、签名与真机部署步骤见 [`harmony/README.md`](harmony/README.md)。
 
 ## 构建与发布
 

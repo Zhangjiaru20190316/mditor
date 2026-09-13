@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased（鸿蒙 PC 版迁移 · ArkWeb 混合壳 · 核心 MVP）
+
+与 Windows 版共享同一份 React 前端，新增鸿蒙（HarmonyOS PC）平台：前端平台适配层 `src/platform/`（tauri/harmony/browser 三运行时）+ `harmony/` ArkTS 原生壳（JSBridge 四域：fs/dialog/store/app）。桌面版行为零回归（582 用例全绿、构建链路不变）。
+
+### 新增
+
+- **平台适配层 `src/platform/`**：25 个文件的 `@tauri-apps/*` 直接调用全量收敛，业务代码零 Tauri 依赖；运行时检测（Tauri 注入标记 / 鸿蒙 document-start 注入标记），浏览器预览显示明确提示条替代静默失败
+- **鸿蒙工程 `harmony/`**：ArkWeb 壳加载 rawfile 前端；WebMessagePort JSON-RPC 桥（未注册方法统一 UNSUPPORTED）；UriMapper 虚拟路径（`/Docs/<token>` 工作区 + `/AppData` 沙箱，URI 权限 persistPermission 保活）；`mditor-asset://` 本地图片供源；设置/最近文件与桌面版同一份 `mditor.json` 格式
+- **`npm run build:harmony`**：一条命令 vite `--base ./` → 拷贝 rawfile → ohpm → hvigor 未签名 HAP（全程 commandline-tools，不依赖 DevEco Studio）
+- **MVP 不做清单的能力守卫**：AI（面板发送提示「鸿蒙版暂不支持 AI（规划中）」，配置可保存）、多窗口、文件监听（软降级）、回收站删除（永久删除 + 确认文案注明）、PDF/PNG/Word/LaTeX 导出（菜单按能力隐藏，仅保留 HTML）、自绘窗口三键（鸿蒙系统窗口管理接管）
+
+### 已知限制
+
+- 无签名证书时只能产出未签名 HAP（真机部署需 AGC 调试证书，步骤见 `harmony/README.md`）；`fs.listFile` 对授权 URI 的目录遍历、`postMessage` 端口投递等真机行为待联调清单核验
+- hypium 本地单测已编写并随 ohosTest 目标编译；CLI 无测试宿主，执行需 DevEco Studio 或真机
+
 ## 4.10.0-beta.2 (2026-09-06)（现网日志根修：表格视图整批重建 / 文档切换交叉淡化）
 
 以两份现网诊断日志（正式版 + 开发版，截至 09-02）为输入的全量异常分诊：9 个异常码中 6 个确认已在 4.6.2 根修（视图残留 / DOM 增长 / watch 命令 / 未捕获异常等），唯一存活根因为 MD-1011 残余——修复它即同时消解下游 MD-1002/1001/1003/9001。分诊与定罪报告见 docs/overhaul/5-tableview.md。

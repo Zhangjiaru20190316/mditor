@@ -33,9 +33,9 @@ class MockPortPair {
 
   /** 让 webSide.postMessage 转发到 nativeSide.onmessage（模拟对端接收）。 */
   wireWebToNative(): void {
-    const pair = this;
+    const native = this.nativeSide;
     this.webSide.postMessage = (data: string) => {
-      pair.nativeSide.onmessage?.({ data });
+      native.onmessage?.({ data });
     };
   }
 }

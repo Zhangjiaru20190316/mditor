@@ -19,6 +19,7 @@
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { getAdapter } from "../platform";
 import { CheckIcon } from "./icons";
 
 /** 单个菜单条目：自定义项（id 转发 dispatchMenu）或分隔线。 */
@@ -48,8 +49,12 @@ interface Props {
   onDispatch: (id: string) => void;
 }
 
-/** 快捷键提示只标注真实存在的全局快捷键（App keydown / 编辑器表面处理）。 */
+/** 快捷键提示只标注真实存在的全局快捷键（App keydown / 编辑器表面处理）。
+ *  平台能力探测（鸿蒙迁移 v4.11）：无对应能力的入口不显示——多窗口
+ *  （单窗口形态）、PDF/富导出（MVP 仅 HTML）；AI 入口保留（发送时错误
+ *  管道给「暂不支持」提示，设置可保存）。能力矩阵进程内恒定。 */
 function buildMenus(focusMode: boolean, theme: string, typewriter: boolean): MenuDef[] {
+  const caps = getAdapter().capabilities;
   const item = (
     id: string,
     label: string,
@@ -63,7 +68,7 @@ function buildMenus(focusMode: boolean, theme: string, typewriter: boolean): Men
       entries: [
         item("file_new", "新建", "Ctrl+N"),
         item("file_new_template", "从模板新建…"),
-        item("file_new_window", "新建窗口", "Ctrl+Shift+N"),
+        ...(caps.multiWindow ? [item("file_new_window", "新建窗口", "Ctrl+Shift+N")] : []),
         item("file_open", "打开文件…", "Ctrl+O"),
         item("file_open_folder", "打开文件夹…", "Ctrl+Shift+O"),
         item("file_add_folder", "添加文件夹到工作区…"),
@@ -72,11 +77,15 @@ function buildMenus(focusMode: boolean, theme: string, typewriter: boolean): Men
         item("file_save", "保存", "Ctrl+S"),
         item("file_save_as", "另存为…", "Ctrl+Shift+S"),
         sep(),
-        item("file_export_pdf", "导出 PDF"),
+        ...(caps.pdfExport ? [item("file_export_pdf", "导出 PDF")] : []),
         item("file_export_html", "导出 HTML"),
-        item("file_export_png", "导出图片 (PNG)"),
-        item("file_export_docx", "导出 Word (docx)"),
-        item("file_export_latex", "导出 LaTeX (.tex)"),
+        ...(caps.richExport
+          ? [
+              item("file_export_png", "导出图片 (PNG)"),
+              item("file_export_docx", "导出 Word (docx)"),
+              item("file_export_latex", "导出 LaTeX (.tex)"),
+            ]
+          : []),
         sep(),
         item("app_exit", "退出"),
       ],
