@@ -5,11 +5,14 @@
 // 脚本只认 mousedown 目标自身带该属性，按钮（菜单/窗口键）天然跳过拖拽，
 // 双击空白处原生触发 internal_toggle_maximize（最大化/还原）。
 //
+// 鸿蒙迁移 v4.11：窗口操作经平台适配层；capabilities.windowControls=false
+// 的平台（鸿蒙 PC，系统窗口管理接管）隐藏三键与拖拽区，保留菜单与标题。
+//
 // React.memo：App 每次按键都重渲染，但本组件 props（name/dirty/focusMode/
 // theme/onDispatch）只在文档切换、保存态或模式变化时才变。
 
 import { memo, useEffect, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getAdapter } from "../platform";
 import { MenuBar } from "./MenuBar";
 import {
   LogoIcon,
@@ -37,10 +40,13 @@ export const TitleBar = memo(function TitleBar({
   typewriter,
   onDispatch,
 }: Props) {
+  // 系统接管窗口控制（鸿蒙 PC）时隐藏三键：能力探测驱动，不改组件结构。
+  const showControls = getAdapter().capabilities.windowControls;
   // 最大化状态：onResized 里回查 isMaximized，驱动 □/❐ 图标切换。
   const [maximized, setMaximized] = useState(false);
   useEffect(() => {
-    const w = getCurrentWindow();
+    if (!showControls) return;
+    const w = getAdapter().app.window;
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void w.isMaximized().then((m) => {
@@ -60,7 +66,8 @@ export const TitleBar = memo(function TitleBar({
       disposed = true;
       unlisten?.();
     };
-  }, []);
+    // showControls 由运行时决定，进程内不变
+  }, [showControls]);
 
   // 最大化状态同步到 <html class="is-maximized">：v4.2.1 起最大化保留
   // 浮岛圆角，无样式消费该状态，仅作标记供未来窗口级特殊处理使用。
@@ -69,7 +76,10 @@ export const TitleBar = memo(function TitleBar({
   }, [maximized]);
 
   return (
-    <header className="titlebar" data-tauri-drag-region>
+    <header
+      className="titlebar"
+      {...(showControls ? { "data-tauri-drag-region": true } : {})}
+    >
       <LogoIcon size={18} className="titlebar-logo" />
       <span className="titlebar-app-name">Mditor</span>
       <MenuBar focusMode={focusMode} theme={theme} typewriter={typewriter} onDispatch={onDispatch} />
@@ -78,29 +88,31 @@ export const TitleBar = memo(function TitleBar({
         {dirty && <span className="titlebar-dot" />}
         <span className="titlebar-doc-name">{name}</span>
       </div>
-      <div className="titlebar-actions">
-        <button
-          className="tb-win-btn"
-          title="最小化"
-          onClick={() => void getCurrentWindow().minimize()}
-        >
-          <MinimizeIcon size={14} />
-        </button>
-        <button
-          className="tb-win-btn"
-          title={maximized ? "还原" : "最大化"}
-          onClick={() => void getCurrentWindow().toggleMaximize()}
-        >
-          {maximized ? <RestoreIcon size={14} /> : <MaximizeIcon size={14} />}
-        </button>
-        <button
-          className="tb-win-btn close"
-          title="关闭"
-          onClick={() => void getCurrentWindow().close()}
-        >
-          <CloseIcon size={14} />
-        </button>
-      </div>
+      {showControls && (
+        <div className="titlebar-actions">
+          <button
+            className="tb-win-btn"
+            title="最小化"
+            onClick={() => void getAdapter().app.window.minimize()}
+          >
+            <MinimizeIcon size={14} />
+          </button>
+          <button
+            className="tb-win-btn"
+            title={maximized ? "还原" : "最大化"}
+            onClick={() => void getAdapter().app.window.toggleMaximize()}
+          >
+            {maximized ? <RestoreIcon size={14} /> : <MaximizeIcon size={14} />}
+          </button>
+          <button
+            className="tb-win-btn close"
+            title="关闭"
+            onClick={() => void getAdapter().app.window.close()}
+          >
+            <CloseIcon size={14} />
+          </button>
+        </div>
+      )}
     </header>
   );
 });

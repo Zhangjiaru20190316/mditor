@@ -8,9 +8,12 @@
 //     只属于它）；新窗口 label 为 doc-{n}，由 Rust 分配。
 //
 // 纯函数全部可 vitest（见 multiWindow.test.ts）；invoke 封装保持薄——失败
-// 由调用方（App 的入口 UI）决定提示方式。
+// 由调用方（App 的入口 UI）决定提示方式。鸿蒙迁移 v4.11：经平台适配层
+// 分发；capabilities.multiWindow=false 的平台（鸿蒙 MVP）调用即抛
+// UnsupportedError，调用点（App 菜单等）已按能力守卫整段跳过。
 
-import { invoke } from "@tauri-apps/api/core";
+import { getAdapter } from "../platform";
+import { UnsupportedError } from "../platform/errors";
 import type { TabItem } from "../types";
 
 /** 启动参数：?path=<已编码绝对路径> 与 ?handoff=<stash id>，均可缺省。 */
@@ -56,14 +59,23 @@ export function formatWindowTitle(name: string, dirty: boolean): string {
   return `${dirty ? "• " : ""}${name} — Mditor`;
 }
 
+/** 多窗口能力守卫：不支持的平台统一抛 UnsupportedError。 */
+function requireMultiWindow(): void {
+  if (!getAdapter().capabilities.multiWindow) {
+    throw new UnsupportedError("鸿蒙版暂不支持多窗口");
+  }
+}
+
 /** 在新窗口打开一个磁盘文件（本窗标签不动）。 */
 export async function openPathInNewWindow(path: string): Promise<void> {
-  await invoke<string>("create_doc_window", { path, handoff: null });
+  requireMultiWindow();
+  await getAdapter().app.createDocWindow(path, null);
 }
 
 /** 新建一个空白窗口（Ctrl+Shift+N / 菜单「新建窗口」）。 */
 export async function openEmptyNewWindow(): Promise<void> {
-  await invoke<string>("create_doc_window", { path: null, handoff: null });
+  requireMultiWindow();
+  await getAdapter().app.createDocWindow(null, null);
 }
 
 /**
@@ -71,16 +83,17 @@ export async function openEmptyNewWindow(): Promise<void> {
  * 拿到 handoff id 再建窗。调用方随后自行关闭本窗的该标签（closeTab）。
  */
 export async function moveTabToNewWindow(tab: TabItem, scrollTop = 0): Promise<void> {
+  requireMultiWindow();
   const payload: HandoffPayload = { tab, scrollTop };
-  const id = await invoke<string>("stash_tab_payload", {
-    payload: JSON.stringify(payload),
-  });
-  await invoke<string>("create_doc_window", { path: null, handoff: id });
+  const id = await getAdapter().app.stashTabPayload(JSON.stringify(payload));
+  await getAdapter().app.createDocWindow(null, id);
 }
 
-/** 取回（即删除）handoff 载荷。id 失效 / JSON 损坏 → null（落到空白未命名）。 */
+/** 取回（即删除）handoff 载荷。id 失效 / JSON 损坏 / 平台不支持 → null
+ *  （落到空白未命名）。 */
 export async function takeHandoff(id: string): Promise<HandoffPayload | null> {
-  const raw = await invoke<string | null>("take_tab_payload", { id });
+  if (!getAdapter().capabilities.multiWindow) return null;
+  const raw = await getAdapter().app.takeTabPayload(id);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as HandoffPayload;

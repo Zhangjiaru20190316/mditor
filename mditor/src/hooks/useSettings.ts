@@ -11,8 +11,7 @@
 // a ref that gates menu/keyboard effect re-registration.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { readTextFile } from "@tauri-apps/plugin-fs";
-import { listen } from "@tauri-apps/api/event";
+import { getAdapter } from "../platform";
 import {
   loadSettings,
   saveSettings,
@@ -122,7 +121,7 @@ export function useSettings(): SettingsApi {
   // 合并——本地写仍即时生效，这里只处理「别的窗口改了」的回放。
   // 引用稳定性：监听器不依赖任何 state，本 effect 不参与返回值的 memo。
   useEffect(() => {
-    const unlistenP = listen("settings-changed", () => {
+    const unlistenP = getAdapter().app.listen("settings-changed", () => {
       void (async () => {
         try {
           const s = await loadSettings();
@@ -233,7 +232,7 @@ async function applyCustomCss(path: string) {
     return;
   }
   try {
-    const css = await readTextFile(path);
+    const css = await getAdapter().fs.readTextFile(path);
     el.textContent = css;
   } catch (e) {
     // file missing/unreadable — clear to avoid stale styles

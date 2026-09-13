@@ -13,8 +13,7 @@
 //      markdown source (so the .md is portable on disk). Rendering resolves the
 //      relative form against the document folder at display time.
 
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-import { mkdir, writeFile } from "@tauri-apps/plugin-fs";
+import { getAdapter } from "../platform";
 import { dirOf } from "./tauriFs";
 import { joinAbs, toPosix } from "./path-shim";
 
@@ -35,7 +34,7 @@ export interface PersistedImage {
 // dropped from the cache so the next paste retries.
 let appDataDirPromise: Promise<string> | null = null;
 function appDataDir(): Promise<string> {
-  appDataDirPromise ??= invoke<string>("app_data_dir").catch((e) => {
+  appDataDirPromise ??= getAdapter().app.appDataDir().catch((e) => {
     appDataDirPromise = null;
     throw e;
   });
@@ -51,7 +50,7 @@ function appDataDir(): Promise<string> {
  */
 async function ensureAssetsDir(dir: string): Promise<void> {
   try {
-    await mkdir(dir, { recursive: true });
+    await getAdapter().fs.mkdir(dir, { recursive: true });
   } catch (e) {
     if (!/exist/i.test(String(e))) throw e;
   }
@@ -109,7 +108,7 @@ export async function persistImage(
   // path passed `Array.from(bytes)` to a Rust command, boxing every byte into a
   // JS Number and bloating a 10 MB paste to >100 MB peak — a burst-OOM source
   // in its own right. `assetsDir` already exists (ensureAssetsDir).
-  await writeFile(absPath, bytes);
+  await getAdapter().fs.writeFile(absPath, bytes);
 
   const desc = file.name.replace(/[!"#$%&'()*+,/:;<=>?@[\]^`{|}~]/g, "").slice(0, 60);
   const mdRef = docPath ? `${relPrefix}/${name}` : toPosix(absPath);
@@ -147,7 +146,7 @@ export function resolveImgSrc(url: string, docPath: string | null): string {
       // No doc dir to resolve against — best effort: assume already absolute.
       abs = url;
     }
-    return convertFileSrc(abs);
+    return getAdapter().app.convertFileSrc(abs);
   } catch {
     return url;
   }
@@ -187,10 +186,7 @@ export async function persistRemoteImage(
   docPath: string | null
 ): Promise<string | null> {
   try {
-    const buf = await invoke<ArrayBuffer | Uint8Array>("fetch_image", { url });
-    // 统一复制为 ArrayBuffer 背书的 Uint8Array（invoke 的二进制返回可能是
-    // ArrayBuffer 或 Uint8Array，而 File 构造要求 ArrayBuffer-backed 视图）。
-    const bytes = new Uint8Array(buf);
+    const bytes = await getAdapter().app.fetchImage(url);
     if (bytes.byteLength === 0) return null;
     const { ext, mime } = sniffImage(bytes, url);
     const file = new File([bytes], uniqueImgName(`.${ext}`), { type: mime });

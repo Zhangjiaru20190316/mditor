@@ -8,7 +8,7 @@
 // Custom CSS: pick a .css file on disk; we read it and inject it live.
 
 import { useEffect, useState } from "react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { getAdapter } from "../platform";
 import type {
   AiModelConfig,
   AiProvider,
@@ -161,19 +161,17 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
   };
 
   const pickCss = async () => {
-    const p = await openDialog({
-      multiple: false,
-      filters: [{ name: "CSS", extensions: ["css"] }],
-    });
+    const p = await getAdapter().dialog.pickOpenFile([
+      { name: "CSS", extensions: ["css"] },
+    ]);
     if (typeof p === "string") set("customCssPath", p);
   };
 
   // v4.7 模块 3：文献库 .bib 选择（知识功能分组）。
   const pickBib = async () => {
-    const p = await openDialog({
-      multiple: false,
-      filters: [{ name: "BibTeX", extensions: ["bib", "txt"] }],
-    });
+    const p = await getAdapter().dialog.pickOpenFile([
+      { name: "BibTeX", extensions: ["bib", "txt"] },
+    ]);
     if (typeof p === "string") set("bibliographyPath", p);
   };
 

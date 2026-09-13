@@ -8,6 +8,7 @@ import { attachScrollDebugGlobal } from "./lib/scrollDebug";
 import { attachOpDebugGlobal } from "./lib/opDebug";
 import { attachSysDebugGlobal } from "./lib/sysDebug";
 import { attachDevModeGlobal } from "./lib/devMode";
+import { detectRuntime } from "./platform";
 // KaTeX + highlight.js styles power the static Markdown renderer (AI messages,
 // annotation previews, source-mode export) — rehype-katex / rehype-highlight
 // emit katex/hljs markup that needs these stylesheets to look right. (The
@@ -75,6 +76,21 @@ document.addEventListener("visibilitychange", () => {
 
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("#root not found");
+
+// 浏览器预览提示条（鸿蒙迁移 v4.11）：既非 Tauri 也非鸿蒙运行时（纯
+// `npm run dev` 浏览器访问）时文件/系统功能不可用——过去是静默失败，现在
+// 顶部给一条明确提示。DOM 级注入，不进 React 树（对 App 零干扰）。
+if (detectRuntime() === "browser") {
+  const banner = document.createElement("div");
+  banner.textContent = "浏览器预览模式：文件与系统功能不可用。请使用 npm run tauri dev 或桌面安装版。";
+  banner.setAttribute("style", [
+    "position:fixed", "top:0", "left:50%", "transform:translateX(-50%)",
+    "z-index:2147483647", "padding:6px 16px", "border-radius:0 0 8px 8px",
+    "background:#b45309", "color:#fff", "font-size:12px", "font-family:system-ui,sans-serif",
+    "pointer-events:none", "box-shadow:0 2px 8px rgba(0,0,0,.25)",
+  ].join(";"));
+  document.body.appendChild(banner);
+}
 
 // NOTE: intentionally NOT wrapped in <React.StrictMode>. StrictMode double-mounts
 // components in dev; the editor's create effect would init a Crepe instance, tear

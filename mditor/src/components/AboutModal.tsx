@@ -3,7 +3,7 @@
 // 挂载约 240ms 播退场动画（.closing）再卸载。
 
 import { useEffect, useState } from "react";
-import { getVersion } from "@tauri-apps/api/app";
+import { getAdapter } from "../platform";
 import { useDelayedUnmount } from "../hooks/useDelayedUnmount";
 import { LogoIcon } from "./icons";
 
@@ -20,7 +20,7 @@ export function AboutModal({ open, onClose }: Props) {
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    getVersion()
+    getAdapter().app.version()
       .then((v) => {
         if (!cancelled) setVersion(v);
       })

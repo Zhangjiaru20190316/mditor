@@ -7,16 +7,16 @@
 //
 // 本地优先：.bib 只在用户显式选择的路径上读取，解析结果仅存内存。
 
-import { readTextFile } from "@tauri-apps/plugin-fs";
+import { getAdapter } from "../platform";
 import { parseBibtex, type BibEntry } from "./bibtex";
 import type { CitationStyle } from "./citation";
 
-/** IO 注入面（测试 mock；生产用 @tauri-apps/plugin-fs）。 */
+/** IO 注入面（测试 mock；生产经平台适配层 platform/）。 */
 export interface BibIO {
   readTextFile(p: string): Promise<string>;
 }
 
-const tauriIO: BibIO = { readTextFile: (p) => readTextFile(p) };
+const tauriIO: BibIO = { readTextFile: (p) => getAdapter().fs.readTextFile(p) };
 
 export class BibliographyManager {
   private io: BibIO;

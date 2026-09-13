@@ -1,15 +1,10 @@
-// Filesystem helpers wrapping @tauri-apps/plugin-fs and plugin-dialog.
+// Filesystem helpers — 打开/保存/目录树的统一入口（鸿蒙迁移 v4.11 起内部
+// 转发平台适配层 platform/，函数签名与语义不变；Tauri 路径行为逐字节一致）。
 //
 // All paths are absolute. Filters default to Markdown (.md/.markdown/.mdx).
 
-import { open, save } from "@tauri-apps/plugin-dialog";
-import {
-  readTextFile,
-  writeTextFile,
-  readDir,
-  exists,
-  mkdir,
-} from "@tauri-apps/plugin-fs";
+import { getAdapter } from "../platform";
+import type { DirEntry } from "../platform/types";
 import { dirname, basename, join, extname } from "./path-shim";
 import { tracedIo } from "./ipcTrace";
 
@@ -40,12 +35,12 @@ export async function openMd(): Promise<{ path: string; content: string } | null
   const path = await tracedIo(
     "ipc:dialog",
     "openMd:打开文件对话框",
-    () => open({ multiple: false, filters: MD_FILTERS }),
+    () => getAdapter().dialog.pickOpenFile(MD_FILTERS),
     { slowMs: Infinity }
   );
   if (!path || typeof path !== "string") return null;
   const content = await tracedIo("file:read", `读取 ${basename(path)}`, () =>
-    readTextFile(path)
+    getAdapter().fs.readTextFile(path)
   );
   return { path, content };
 }
@@ -55,7 +50,7 @@ export async function pickFolder(): Promise<string | null> {
   const p = await tracedIo(
     "ipc:dialog",
     "pickFolder:选择文件夹对话框",
-    () => open({ directory: true, multiple: false }),
+    () => getAdapter().dialog.pickDirectory(),
     { slowMs: Infinity }
   );
   if (!p || typeof p !== "string") return null;
@@ -65,7 +60,7 @@ export async function pickFolder(): Promise<string | null> {
 /** Save text to an existing path. */
 export async function saveMd(path: string, content: string): Promise<void> {
   await tracedIo("file:write", `保存 ${basename(path)}`, () =>
-    writeTextFile(path, content)
+    getAdapter().fs.writeTextFile(path, content)
   );
 }
 
@@ -80,12 +75,12 @@ export async function saveMdAs(
   const path = await tracedIo(
     "ipc:dialog",
     "saveMdAs:另存为对话框",
-    () => save({ defaultPath: suggestedName, filters: MD_FILTERS }),
+    () => getAdapter().dialog.pickSaveFile(suggestedName, MD_FILTERS),
     { slowMs: Infinity }
   );
   if (!path) return null;
   await tracedIo("file:write", `另存 ${basename(path)}`, () =>
-    writeTextFile(path, content)
+    getAdapter().fs.writeTextFile(path, content)
   );
   return path;
 }
@@ -104,12 +99,12 @@ export async function readDirLevel(
   dir: string,
   exclude?: Set<string>
 ): Promise<TreeNode[]> {
-  if (!(await exists(dir))) return [];
+  if (!(await getAdapter().fs.exists(dir))) return [];
   const out: TreeNode[] = [];
-  let entries: Awaited<ReturnType<typeof readDir>>;
+  let entries: DirEntry[];
   try {
     entries = await tracedIo("file:read", `列目录 ${basename(dir)}`, () =>
-      readDir(dir)
+      getAdapter().fs.readDir(dir)
     );
   } catch {
     return out; // not a directory, or unreadable
@@ -151,17 +146,17 @@ export async function collectMdPathsFromDisk(
   // Determine whether `path` is a directory. With a hint we trust it; otherwise
   // we probe by reading it (readDir rejects on a non-directory path).
   let isDir: boolean;
-  let firstEntries: Awaited<ReturnType<typeof readDir>>;
+  let firstEntries: DirEntry[];
   if (hintIsDir !== undefined) {
     isDir = hintIsDir;
-    firstEntries = [] as unknown as Awaited<ReturnType<typeof readDir>>;
+    firstEntries = [] as DirEntry[];
   } else {
     try {
-      firstEntries = await readDir(path);
+      firstEntries = await getAdapter().fs.readDir(path);
       isDir = true;
     } catch {
       isDir = false;
-      firstEntries = [] as unknown as Awaited<ReturnType<typeof readDir>>;
+      firstEntries = [] as DirEntry[];
     }
   }
 
@@ -173,17 +168,17 @@ export async function collectMdPathsFromDisk(
   // filtering as readDirLevel, but NO excludedPaths — every md file actually
   // being deleted must be reported so App can clean up).
   const out: string[] = [];
-  const stack: Array<{ dir: string; entries?: Awaited<ReturnType<typeof readDir>> }> = [
+  const stack: Array<{ dir: string; entries?: DirEntry[] }> = [
     { dir: path, entries: firstEntries },
   ];
   while (stack.length > 0) {
     const { dir, entries } = stack.pop()!;
-    let es: Awaited<ReturnType<typeof readDir>>;
+    let es: DirEntry[];
     if (entries) {
       es = entries;
     } else {
       try {
-        es = await readDir(dir);
+        es = await getAdapter().fs.readDir(dir);
       } catch {
         continue; // unreadable subdir — skip
       }
@@ -210,5 +205,6 @@ export function baseName(path: string): string {
 
 /** Ensure a directory exists, creating it (and parents) if needed. */
 export async function ensureDir(path: string): Promise<void> {
-  if (!(await exists(path))) await tracedIo("file:mut", `建目录 ${path}`, () => mkdir(path, { recursive: true }));
+  const fs = getAdapter().fs;
+  if (!(await fs.exists(path))) await tracedIo("file:mut", `建目录 ${path}`, () => fs.mkdir(path, { recursive: true }));
 }

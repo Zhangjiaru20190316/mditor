@@ -23,7 +23,7 @@
 // the recreate is leaking — the symptom of the bug the serialized destroy→create
 // in useMilkdown.ts now prevents.
 
-import { invoke } from "@tauri-apps/api/core";
+import { getAdapter } from "../platform";
 import { joinAbs } from "./path-shim";
 import { ensureDir } from "./tauriFs";
 import { getHeapUsage, IS_DEV } from "./memory";
@@ -143,7 +143,7 @@ let logPathPromise: Promise<string> | null = null;
 async function logPath(): Promise<string> {
   if (!logPathPromise) {
     logPathPromise = (async () => {
-      const ad = await invoke<string>("app_data_dir");
+      const ad = await getAdapter().app.appDataDir();
       const dir = joinAbs(ad, "logs");
       await ensureDir(dir);
       return joinAbs(dir, LOG_FILE);
@@ -175,11 +175,11 @@ export async function logMemory(
       prosemirrorViews: s.prosemirrorViews,
     };
     if (extra) Object.assign(record, extra);
-    await invoke("append_log", {
+    await getAdapter().app.appendLog(
       path,
-      line: JSON.stringify(record) + "\n",
-      maxBytes: LOG_MAX_BYTES,
-    });
+      JSON.stringify(record) + "\n",
+      LOG_MAX_BYTES
+    );
   } catch {
     /* swallow — diagnostics must never break the editor */
   }

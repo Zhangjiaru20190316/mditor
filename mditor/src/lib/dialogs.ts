@@ -1,7 +1,8 @@
-// Tauri 原生弹窗封装：统一替换 webview 的 window.alert / window.confirm
+// 原生弹窗封装：统一替换 webview 的 window.alert / window.confirm
 // （WebView2 的原生弹窗样式不可控、与桌面应用观感割裂）。权限由 capabilities
-// 中的 dialog:allow-message / dialog:allow-confirm 授权。
-import { message, confirm as tauriConfirm } from "@tauri-apps/plugin-dialog";
+// 中的 dialog:allow-message / dialog:allow-confirm 授权。鸿蒙迁移 v4.11 起
+// 经平台适配层分发（鸿蒙侧由 ArkTS 弹系统 AlertDialog）。
+import { getAdapter } from "../platform";
 import { tracedIo } from "./ipcTrace";
 
 const APP_TITLE = "Mditor";
@@ -14,14 +15,14 @@ export async function showAlert(
 ): Promise<void> {
   // 对话框不设慢阈值：时长=用户思考时间，不是异常（只记失败）。
   await tracedIo("ipc:dialog", `showAlert:${title}`, () =>
-    message(content, { title, kind })
+    getAdapter().dialog.message(content, { title, kind })
   , { slowMs: Infinity });
 }
 
 /** 确认框（替代 window.confirm），按钮文案统一「确定 / 取消」。 */
 export function confirmDialog(content: string, title = APP_TITLE): Promise<boolean> {
   return tracedIo("ipc:dialog", `confirm:${title}`, () =>
-    tauriConfirm(content, {
+    getAdapter().dialog.confirm(content, {
       title,
       kind: "warning",
       okLabel: "确定",
@@ -38,7 +39,7 @@ export function choiceDialog(
   title = APP_TITLE
 ): Promise<boolean> {
   return tracedIo("ipc:dialog", `choice:${title}:${okLabel}`, () =>
-    tauriConfirm(content, {
+    getAdapter().dialog.confirm(content, {
       title,
       kind: "info",
       okLabel,

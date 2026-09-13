@@ -33,8 +33,7 @@ import {
   scrollToViewportAnchor,
   type ViewportAnchor,
 } from "../lib/viewportAnchor";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { readFile } from "@tauri-apps/plugin-fs";
+import { getAdapter } from "../platform";
 import { basename } from "../lib/path-shim";
 import {
   appendAnnotationDefinition,
@@ -775,10 +774,9 @@ export const Editor = memo(
   const openExternal = useCallback(async (url: string) => {
     if (!/^(https?:|mailto:)/i.test(url)) return;
     try {
-      const { open } = await import("@tauri-apps/plugin-shell");
-      await open(url);
+      await getAdapter().app.openExternal(url);
     } catch {
-      /* shell 插件不可用 — 静默忽略 */
+      /* 外链打开不可用（平台限制）— 静默忽略 */
     }
   }, []);
 
@@ -790,14 +788,11 @@ export const Editor = memo(
       const ed = handle.editor;
       if (!ed) return;
       try {
-        const picked = await openDialog({
-          multiple: false,
-          filters: [
-            { name: "图片", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"] },
-          ],
-        });
+        const picked = await getAdapter().dialog.pickOpenFile([
+          { name: "图片", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"] },
+        ]);
         if (!picked) return;
-        const bytes = await readFile(picked);
+        const bytes = await getAdapter().fs.readFile(picked);
         const file = new File([bytes], basename(String(picked)));
         const r = await persistImage(file, fileApiRef.current.doc.path);
         ed.setImageSrc(pos, r.ref);

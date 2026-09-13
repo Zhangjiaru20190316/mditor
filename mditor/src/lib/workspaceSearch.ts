@@ -9,7 +9,8 @@
 //
 // 纯函数部分（matchLine / collectHits）独立导出以便单测。
 
-import { readDir, readTextFile } from "@tauri-apps/plugin-fs";
+import { getAdapter } from "../platform";
+import type { DirEntry } from "../platform/types";
 import { join, extname, basename } from "./path-shim";
 
 export interface SearchHit {
@@ -122,9 +123,9 @@ export async function collectMdFiles(
   };
   while (stack.length > 0 && out.length < maxFiles) {
     const dir = stack.pop()!;
-    let entries: Awaited<ReturnType<typeof readDir>>;
+    let entries: DirEntry[];
     try {
-      entries = await readDir(dir);
+      entries = await getAdapter().fs.readDir(dir);
     } catch {
       continue; // 不可读目录 — 跳过
     }
@@ -201,7 +202,7 @@ export async function searchWorkspaces(
       }
       let content: string;
       try {
-        content = await readTextFile(files[i]);
+        content = await getAdapter().fs.readTextFile(files[i]);
       } catch {
         continue;
       }

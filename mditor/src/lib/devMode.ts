@@ -22,8 +22,7 @@
 // 纪律与各总线相同：诊断代码绝不影响编辑器——所有公开入口 try/catch；
 // append_log 失败只计数并报一次 MD-5003，绝不重试阻塞。
 
-import { invoke } from "@tauri-apps/api/core";
-import { open as shellOpen } from "@tauri-apps/plugin-shell";
+import { getAdapter } from "../platform";
 import { joinAbs } from "./path-shim";
 import { ensureDir } from "./tauriFs";
 import { sampleMemory, setDiagForced } from "./diagnostics";
@@ -103,7 +102,7 @@ let logsDirPromise: Promise<string> | null = null;
 function logsDir(): Promise<string> {
   if (!logsDirPromise) {
     logsDirPromise = (async () => {
-      const ad = await invoke<string>("app_data_dir");
+      const ad = await getAdapter().app.appDataDir();
       const dir = joinAbs(ad, "logs");
       await ensureDir(dir);
       return dir;
@@ -120,7 +119,7 @@ async function resolveLogPath(file: string): Promise<string> {
 function makeWriter(pathPromise: Promise<string>) {
   return async (text: string): Promise<void> => {
     const path = await pathPromise;
-    await invoke("append_log", { path, line: text, maxBytes: LOG_MAX_BYTES });
+    await getAdapter().app.appendLog(path, text, LOG_MAX_BYTES);
   };
 }
 
@@ -595,7 +594,7 @@ export async function flushDevLogs(): Promise<void> {
 export async function openLogsDir(): Promise<string | null> {
   try {
     const dir = await logsDir();
-    await shellOpen(dir);
+    await getAdapter().app.openExternal(dir);
     return dir;
   } catch {
     return null;

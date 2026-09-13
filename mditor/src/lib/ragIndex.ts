@@ -13,8 +13,7 @@
 // 保留进度，续跑从未嵌入的块继续；失败落盘保留已建部分并记录 error。
 // bigDocPerformance 开启 + 用户活跃时让路（同 vaultIndex 的 shouldYield 纪律）。
 
-import { readTextFile, writeTextFile, mkdir } from "@tauri-apps/plugin-fs";
-import { invoke } from "@tauri-apps/api/core";
+import { getAdapter } from "../platform";
 import { join } from "./path-shim";
 import { isUserActive } from "./activity";
 import type { Settings } from "../types";
@@ -69,10 +68,10 @@ export interface RagIO {
 }
 
 const tauriIO: RagIO = {
-  readTextFile: (p) => readTextFile(p),
-  writeTextFile: (p, s) => writeTextFile(p, s),
-  mkdir: (d) => mkdir(d, { recursive: true }),
-  appDataDir: () => invoke<string>("app_data_dir"),
+  readTextFile: (p) => getAdapter().fs.readTextFile(p),
+  writeTextFile: (p, s) => getAdapter().fs.writeTextFile(p, s),
+  mkdir: (d) => getAdapter().fs.mkdir(d, { recursive: true }),
+  appDataDir: () => getAdapter().app.appDataDir(),
 };
 
 export class RagIndexManager {

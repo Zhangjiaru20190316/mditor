@@ -12,7 +12,7 @@
 // 读类工具全部返回绝对路径——模型的后续调用应原样回传（相对路径按第一个
 // 工作区根解析，仅作兜底）。
 
-import { readTextFile, stat } from "@tauri-apps/plugin-fs";
+import { getAdapter } from "../../platform";
 import { basename, join } from "../path-shim";
 import { collectMdFiles, searchWorkspaces } from "../workspaceSearch";
 import { embedTexts, isEmbedConfigured } from "../ai";
@@ -131,7 +131,7 @@ async function effectiveNoteText(abs: string | null, ctx: ToolContext): Promise<
   }
   if (ctx.plan.workingCopies.has(key)) return ctx.plan.workingCopies.get(key)!;
   try {
-    return await readTextFile(abs);
+    return await getAdapter().fs.readTextFile(abs);
   } catch {
     return null;
   }
@@ -261,7 +261,7 @@ async function listNotes(args: Record<string, unknown>, ctx: ToolContext): Promi
       let size: number | null = null;
       let mtime: number | null = null;
       try {
-        const st = await stat(p);
+        const st = await getAdapter().fs.stat(p);
         size = typeof st.size === "number" ? st.size : null;
         mtime = typeof st.mtime === "number" ? st.mtime : null;
       } catch {

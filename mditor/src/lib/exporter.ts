@@ -20,8 +20,7 @@
 // Images: for portability we don't base64-inline by default (keeps HTML small);
 // the HTML path asks the user (V3.6), the DOCX path always inlines (lossless).
 
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { writeTextFile, writeFile, readFile } from "@tauri-apps/plugin-fs";
+import { getAdapter } from "../platform";
 import { sniffImageMime } from "./imageSniff";
 // NOTE: modern-screenshot + juice + @turbodocx/html-to-docx are all imported
 // lazily inside their respective export functions so the heavyweight "export"
@@ -69,7 +68,7 @@ export async function inlineLocalImages(
   for (const { abs } of jobs) {
     if (cache.has(abs)) continue;
     try {
-      const bytes = await readFile(abs);
+      const bytes = await getAdapter().fs.readFile(abs);
       if (bytes.byteLength > INLINE_IMG_MAX_BYTES) continue;
       // 魔数门（v4.6.2）：未知格式不内联——html-to-docx 的 image-size 对
       // ICNS/JXL/HEIF 有解析死循环（详见 lib/imageSniff.ts），且 octet-stream
@@ -139,7 +138,7 @@ export async function exportHtml(
   suggestedName = "untitled.html",
   options: { inlineImages?: boolean } = {}
 ): Promise<string | null> {
-  const path = await saveDialog({ defaultPath: suggestedName, filters: HTML_FILTER });
+  const path = await getAdapter().dialog.pickSaveFile(suggestedName, HTML_FILTER);
   if (!path) return null;
   const title = suggestedName.replace(/\.html?$/i, "");
   let html = ctx.html;
@@ -163,7 +162,7 @@ export async function exportHtml(
     }
   }
   const standalone = wrapHtml(html, css, title);
-  await writeTextFile(path, standalone);
+  await getAdapter().fs.writeTextFile(path, standalone);
   return path;
 }
 
@@ -176,7 +175,7 @@ export async function exportPdf(
   ctx: ExportContext,
   suggestedName = "untitled.pdf"
 ): Promise<string | null> {
-  const path = await saveDialog({ defaultPath: suggestedName, filters: PDF_FILTER });
+  const path = await getAdapter().dialog.pickSaveFile(suggestedName, PDF_FILTER);
   if (!path) return null;
   const title = suggestedName.replace(/\.pdf$/i, "");
   await printHtml(wrapHtml(ctx.html, ctx.css, title));
@@ -252,7 +251,7 @@ export async function exportPng(
   suggestedName = "untitled.png",
   backgroundColor = "#ffffff"
 ): Promise<string | null> {
-  const path = await saveDialog({ defaultPath: suggestedName, filters: PNG_FILTER });
+  const path = await getAdapter().dialog.pickSaveFile(suggestedName, PNG_FILTER);
   if (!path) return null;
   // Make sure fonts are ready so CJK / mono render correctly.
   if (document.fonts?.ready) await document.fonts.ready;
@@ -295,7 +294,7 @@ export async function exportPng(
     height: h,
   });
   const bytes = base64ToBytes(dataUrl);
-  await writeFile(path, bytes);
+  await getAdapter().fs.writeFile(path, bytes);
   return path;
 }
 
@@ -315,7 +314,7 @@ export async function exportDocx(
   ctx: ExportContext,
   suggestedName = "untitled.docx"
 ): Promise<string | null> {
-  const path = await saveDialog({ defaultPath: suggestedName, filters: DOCX_FILTER });
+  const path = await getAdapter().dialog.pickSaveFile(suggestedName, DOCX_FILTER);
   if (!path) return null;
   // V3.6：先把本地图片内联成 data URL —— 浏览器构建没有 sharp，相对引用的
   // 图片会被转换器直接丢弃（V3.5 已知问题）。失败退回原 HTML（行为同旧版）。
@@ -336,7 +335,7 @@ export async function exportDocx(
   };
   const result = await htmlToDocx(inlined, null, documentOptions);
   const bytes = toArrayBuffer(result);
-  await writeFile(path, new Uint8Array(bytes));
+  await getAdapter().fs.writeFile(path, new Uint8Array(bytes));
   return path;
 }
 
@@ -353,12 +352,12 @@ export async function exportLatexFile(
   suggestedName = "untitled.tex",
   docTitle?: string
 ): Promise<string | null> {
-  const path = await saveDialog({ defaultPath: suggestedName, filters: TEX_FILTER });
+  const path = await getAdapter().dialog.pickSaveFile(suggestedName, TEX_FILTER);
   if (!path) return null;
   const { markdownToLatex } = await import("./exportLatex");
   const { tex, warnings } = markdownToLatex(markdown, docTitle);
   if (warnings.length > 0) console.warn("[mditor] LaTeX 导出告警：", warnings.join("；"));
-  await writeTextFile(path, tex);
+  await getAdapter().fs.writeTextFile(path, tex);
   return path;
 }
 

@@ -7,7 +7,7 @@
 // 重读磁盘；保存/外部重载路径还会调用 invalidatePrefetch 主动删除条目。
 // 双保险确保缓存永远不会把旧内容写回磁盘覆盖新内容。
 
-import { readTextFile, stat } from "@tauri-apps/plugin-fs";
+import { getAdapter } from "../platform";
 import { extname } from "./path-shim";
 import { MD_EXTS } from "./tauriFs";
 
@@ -46,7 +46,7 @@ export function invalidatePrefetch(path: string): void {
 
 async function statFingerprint(path: string): Promise<{ size: number; mtime: number | null } | null> {
   try {
-    const info = await stat(path);
+    const info = await getAdapter().fs.stat(path);
     return { size: info.size, mtime: info.mtime != null ? info.mtime.getTime() : null };
   } catch {
     return null;
@@ -71,7 +71,7 @@ export async function readFresh(path: string): Promise<string> {
     // 过期（保存/外部修改）或 stat 异常：按未命中处理，重读磁盘。
     cache.delete(path);
   }
-  const content = await readTextFile(path);
+  const content = await getAdapter().fs.readTextFile(path);
   return content;
 }
 
@@ -81,13 +81,13 @@ export async function prefetchFile(path: string): Promise<void> {
   if (cache.has(path)) return;
   if (!isPrefetchable(path)) return;
   try {
-    const info = await stat(path);
+    const info = await getAdapter().fs.stat(path);
     if (info.size > MAX_BYTES) return; // 大文件不预读，留给 openPath 正常读取
     const fingerprint = {
       size: info.size,
       mtime: info.mtime != null ? info.mtime.getTime() : null,
     };
-    const content = await readTextFile(path);
+    const content = await getAdapter().fs.readTextFile(path);
     // 异步期间可能已被别处写入，再次确认后写入。
     if (!cache.has(path)) {
       cache.set(path, { content, ...fingerprint });

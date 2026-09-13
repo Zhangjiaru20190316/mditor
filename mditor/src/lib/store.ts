@@ -1,13 +1,14 @@
-// Persistent settings + recent files via @tauri-apps/plugin-store.
+// Persistent settings + recent files（持久 KV 的唯一业务入口）。
 //
 // The store file lands in the app data dir as `mditor.json`. We keep two keys:
 //   settings  -> Settings object
 //   recent    -> RecentFile[]
 //
 // All access is async. The store is lazily loaded and cached for the session.
+// 鸿蒙迁移 v4.11：底层经平台适配层（Tauri=plugin-store；鸿蒙=沙箱
+// filesDir/mditor.json，键与格式完全一致），函数签名不变。
 
-import { LazyStore } from "@tauri-apps/plugin-store";
-import { emit } from "@tauri-apps/api/event";
+import { getAdapter } from "../platform";
 import {
   DEFAULT_SETTINGS,
   type AiModelConfig,
@@ -16,12 +17,8 @@ import {
 } from "../types";
 import { normalizeStoredWorkspaces } from "./workspaces";
 
-const STORE_FILE = "mditor.json";
-
-const store = new LazyStore(STORE_FILE);
-
 export async function loadSettings(): Promise<Settings> {
-  const partial = (await store.get<Partial<Settings>>("settings")) ?? {};
+  const partial = (await getAdapter().store.get<Partial<Settings>>("settings")) ?? {};
   const merged = { ...DEFAULT_SETTINGS, ...partial };
   return migrateSettings(merged, partial);
 }
@@ -85,12 +82,13 @@ function migrateSettings(s: Settings, raw: Partial<Settings>): Settings {
 }
 
 export async function saveSettings(s: Settings): Promise<void> {
+  const store = getAdapter().store;
   await store.set("settings", s);
   await store.save();
   // v4.8 多窗口同步：落盘成功后广播。各窗 useSettings 监听后幂等重载磁盘
   // 设置（主题等即时一致；自己收到自己的回声也无害——盘上内容与内存相同）。
   // emit 失败静默：单窗口或事件层异常时维持各自现状，不影响保存本身。
-  await emit("settings-changed").catch(() => undefined);
+  await getAdapter().app.emit("settings-changed").catch(() => undefined);
 }
 
 // In-memory mirror of the `recent` list: keeps hot-path reads (every save
@@ -101,7 +99,7 @@ let recentCache: RecentFile[] | null = null;
 
 export async function loadRecent(): Promise<RecentFile[]> {
   if (recentCache) return recentCache;
-  const stored = await store.get<RecentFile[]>("recent");
+  const stored = await getAdapter().store.get<RecentFile[]>("recent");
   // mditor.json 手工编辑/写坏时 `recent` 可能不是数组；直接放行会让
   // pushRecent 的 list.filter 抛 TypeError，此后每次打开文件都报错。
   recentCache = Array.isArray(stored) ? stored : [];
@@ -117,6 +115,7 @@ export async function pushRecent(file: RecentFile): Promise<void> {
   if (list[0]?.path === file.path) return;
   const trimmed = [file, ...list.filter((r) => r.path !== file.path)].slice(0, 30);
   recentCache = trimmed;
+  const store = getAdapter().store;
   await store.set("recent", trimmed);
   await store.save();
 }
@@ -125,6 +124,7 @@ export async function clearRecentPath(path: string): Promise<void> {
   const list = await loadRecent();
   const trimmed = list.filter((r) => r.path !== path);
   recentCache = trimmed;
+  const store = getAdapter().store;
   await store.set("recent", trimmed);
   await store.save();
 }
@@ -136,6 +136,7 @@ export async function clearRecentPath(path: string): Promise<void> {
 // 再次启动直接命中新键。
 
 export async function getWorkspaces(): Promise<string[]> {
+  const store = getAdapter().store;
   const raw = await store.get<unknown>("workspaces");
   const list = normalizeStoredWorkspaces(raw);
   if (list !== null) return list;
@@ -151,6 +152,7 @@ export async function getWorkspaces(): Promise<string[]> {
 }
 
 export async function setWorkspaces(paths: string[]): Promise<void> {
+  const store = getAdapter().store;
   await store.set("workspaces", paths);
   await store.save();
 }
@@ -161,7 +163,7 @@ let recentWsCache: string[] | null = null;
 
 export async function loadRecentWorkspaces(): Promise<string[]> {
   if (recentWsCache) return recentWsCache;
-  const stored = await store.get<string[]>("recentWorkspaces");
+  const stored = await getAdapter().store.get<string[]>("recentWorkspaces");
   recentWsCache = Array.isArray(stored) ? stored : [];
   return recentWsCache;
 }
@@ -171,6 +173,7 @@ export async function pushRecentWorkspace(path: string): Promise<void> {
   if (list[0] === path) return;
   const trimmed = [path, ...list.filter((p) => p !== path)].slice(0, 8);
   recentWsCache = trimmed;
+  const store = getAdapter().store;
   await store.set("recentWorkspaces", trimmed);
   await store.save();
 }

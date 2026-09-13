@@ -5,8 +5,7 @@
 //
 // 卡片键 = `${path}\u0000${hash}`（lib/flashcards 的卡片身份）。
 
-import { readTextFile, writeTextFile, mkdir } from "@tauri-apps/plugin-fs";
-import { invoke } from "@tauri-apps/api/core";
+import { getAdapter } from "../platform";
 import { join } from "./path-shim";
 import type { CardSchedule } from "./flashcards";
 
@@ -31,10 +30,10 @@ export interface ReviewIO {
 }
 
 const tauriIO: ReviewIO = {
-  readTextFile: (p) => readTextFile(p),
-  writeTextFile: (p, s) => writeTextFile(p, s),
-  mkdir: (d) => mkdir(d, { recursive: true }),
-  appDataDir: () => invoke<string>("app_data_dir"),
+  readTextFile: (p) => getAdapter().fs.readTextFile(p),
+  writeTextFile: (p, s) => getAdapter().fs.writeTextFile(p, s),
+  mkdir: (d) => getAdapter().fs.mkdir(d, { recursive: true }),
+  appDataDir: () => getAdapter().app.appDataDir(),
 };
 
 export function cardKey(path: string, hash: string): string {

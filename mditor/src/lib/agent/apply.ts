@@ -14,8 +14,7 @@
 //
 // 返回逐 op 结果 + FS 变更报告（调用方据此刷新文件树 / 处理标签页）。
 
-import { mkdir, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
-import { invoke } from "@tauri-apps/api/core";
+import { getAdapter } from "../../platform";
 import { dirname } from "../path-shim";
 import { pathExists, renamePath } from "../fileOps";
 import { CURRENT_KEY, normPath } from "./tools";
@@ -78,7 +77,7 @@ export function applyContentOp(
 
 /** 删除单个文件到系统回收站（Rust trash_file 命令；Phase 4）。 */
 export async function trashFile(path: string): Promise<void> {
-  await invoke("trash_file", { path });
+  await getAdapter().app.trashFile(path);
 }
 
 export async function applyChangePlan(
@@ -132,7 +131,7 @@ export async function applyChangePlan(
   for (const [path, fileOps] of byFile) {
     let text: string | null;
     try {
-      text = await readTextFile(path);
+      text = await getAdapter().fs.readTextFile(path);
     } catch {
       for (const op of fileOps) {
         results.push({ opId: op.opId, ok: false, error: `读取失败（文件不存在或不可读）：${path}` });
@@ -153,7 +152,7 @@ export async function applyChangePlan(
     }
     if (changed) {
       try {
-        await writeTextFile(path, working);
+        await getAdapter().fs.writeTextFile(path, working);
       } catch (e) {
         for (const op of fileOps) {
           const hit = results.find((x) => x.opId === op.opId && x.ok);
@@ -175,8 +174,8 @@ export async function applyChangePlan(
           continue;
         }
         const parent = dirname(op.path);
-        if (parent) await mkdir(parent, { recursive: true });
-        await writeTextFile(op.path, op.content);
+        if (parent) await getAdapter().fs.mkdir(parent, { recursive: true });
+        await getAdapter().fs.writeTextFile(op.path, op.content);
         fs.created.push(op.path);
         results.push({ opId: op.opId, ok: true });
       } catch (e) {
@@ -193,7 +192,7 @@ export async function applyChangePlan(
           continue;
         }
         const parent = dirname(op.toPath);
-        if (parent) await mkdir(parent, { recursive: true });
+        if (parent) await getAdapter().fs.mkdir(parent, { recursive: true });
         await renamePath(op.fromPath, op.toPath);
         fs.renamed.push({ from: op.fromPath, to: op.toPath });
         results.push({ opId: op.opId, ok: true });

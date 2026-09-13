@@ -2,13 +2,7 @@
 // shortcuts, and the wiring between editor / file system / export / clipboard.
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { exit } from "@tauri-apps/plugin-process";
-import { readTextFile, readFile } from "@tauri-apps/plugin-fs";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { getAdapter } from "./platform";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileTree, type TreeChange } from "./components/FileTree";
 import { Outline } from "./components/Outline";
@@ -343,7 +337,7 @@ export default function App() {
         content = freshContent ?? target.content;
         if (freshContent === undefined) {
           try {
-            content = await readTextFile(target.path);
+            content = await getAdapter().fs.readTextFile(target.path);
           } catch {
             /* 文件被删？退回快照 */
           }
@@ -642,7 +636,7 @@ export default function App() {
    *  方计时器随 webview 湮灭，不会再发号施令。 */
   const forceClose = useCallback(async () => {
     destroyingRef.current = true;
-    const self = getCurrentWindow();
+    const self = getAdapter().app.window;
     void self.destroy().catch(() => {
       /* destroy 失败（窗口已不在/被吞）— 交给 250ms 后的最后一窗判定 */
     });
@@ -650,12 +644,12 @@ export default function App() {
       void (async () => {
         let count = 1;
         try {
-          count = (await WebviewWindow.getAll()).length;
+          count = await getAdapter().app.webviewWindowCount();
         } catch {
           /* getAll 失败（运行时异常）：按最后一窗处理，保留单窗旧行为 */
         }
         if (count <= 1) {
-          void exit(0).catch(() => {
+          void getAdapter().app.exitApp(0).catch(() => {
             /* exit 也失败（权限等）— 最后再试一次 destroy */
             void self.destroy().catch(() => {});
           });
@@ -676,8 +670,8 @@ export default function App() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    getCurrentWindow()
-      .onCloseRequested(async (ev) => {
+    getAdapter()
+      .app.window.onCloseRequested(async (ev) => {
         if (destroyingRef.current) return;
         if (shutdownInFlightRef.current) {
           ev.preventDefault();
@@ -729,8 +723,8 @@ export default function App() {
   // 打字期间（name/dirty 不变）零开销。
   const activeTabForTitle = tabs.find((t) => t.key === activeKey) ?? null;
   useEffect(() => {
-    void getCurrentWindow()
-      .setTitle(
+    void getAdapter()
+      .app.window.setTitle(
         formatWindowTitle(
           activeTabForTitle?.name ?? "未命名.md",
           activeTabForTitle?.dirty ?? false
@@ -899,7 +893,7 @@ export default function App() {
     // 非 main 窗口跳过开屏（铁律 1：splash / PendingFile / heal 冷启动路径
     // 只属于 main）。立即淡出，不等工作区恢复的双 rAF——新窗口要尽快落在
     // 目标文档上。
-    if (getCurrentWindow().label !== "main") dismissSplash();
+    if (getAdapter().app.window.label !== "main") dismissSplash();
 
     const snap = takeHealSnapshot();
     const boot = parseBootParams(window.location.search);
@@ -1166,7 +1160,7 @@ export default function App() {
   // macOS 保留原生菜单，其点击以 `menu` 事件转发到这里；Windows 的前端菜单栏
   // （MenuBar）经 onDispatch 走同一条路径 —— 两条入口行为完全一致。
   useEffect(() => {
-    const unlistenP = listen<string>("menu", (ev) => {
+    const unlistenP = getAdapter().app.listen<string>("menu", (ev) => {
       dispatchMenuRef.current(ev.payload);
     });
     return () => {
@@ -1179,12 +1173,12 @@ export default function App() {
   // 自己的关闭管线（onCloseRequested → shutdownSequence → forceClose）。
   // 注册一次；本窗若持有 5s 硬退兜底计时器，收到广播（协议回路通）即取消。
   useEffect(() => {
-    const unlistenP = listen("app-quit-request", () => {
+    const unlistenP = getAdapter().app.listen("app-quit-request", () => {
       if (quitFallbackTimerRef.current !== undefined) {
         window.clearTimeout(quitFallbackTimerRef.current);
         quitFallbackTimerRef.current = undefined;
       }
-      void getCurrentWindow().close();
+      void getAdapter().app.window.close();
     });
     return () => {
       unlistenP.then((fn) => fn());
@@ -1197,8 +1191,8 @@ export default function App() {
   // IO 成本），看到其它窗口打开过的文件。注册一次；仅聚焦沿生效。
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    getCurrentWindow()
-      .onFocusChanged(({ payload }) => {
+    getAdapter()
+      .app.window.onFocusChanged(({ payload }) => {
         if (payload) setRecentKey((k) => k + 1);
       })
       .then((fn) => {
@@ -1222,12 +1216,12 @@ export default function App() {
     // PendingFile 只属于 main 冷启动（铁律 1）：命令行带 .md 启动的暂存路径
     // 由 main 独占消费。实际时序上 doc 窗口总在 main 挂载之后才创建，这里
     // 显式挡住语义，防止未来启动顺序变化时 doc 窗口误领。
-    if (getCurrentWindow().label === "main") {
-      invoke<string | null>("get_pending_file").then((p) => {
+    if (getAdapter().app.window.label === "main") {
+      getAdapter().app.getPendingFile().then((p) => {
         if (p) maybeOpen(p);
       });
     }
-    const unlistenP = listen<string>("open-file", (ev) => {
+    const unlistenP = getAdapter().app.listen<string>("open-file", (ev) => {
       if (ev.payload) maybeOpen(ev.payload);
     });
     return () => {
@@ -1241,8 +1235,8 @@ export default function App() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let over = false;
-    getCurrentWindow()
-      .onDragDropEvent((event) => {
+    getAdapter()
+      .app.window.onDragDropEvent((event) => {
         const p = event.payload;
         if (p.type === "enter" || p.type === "over") {
           if (!over) {
@@ -1255,7 +1249,7 @@ export default function App() {
         } else if (p.type === "drop") {
           over = false;
           document.body.classList.remove("is-dragging-md");
-          for (const path of p.paths) {
+          for (const path of p.paths ?? []) {
             if (/\.(md|markdown|mdx|mdown)$/i.test(path)) void openPath(path);
           }
         }
@@ -1743,7 +1737,7 @@ export default function App() {
         setAiOpen((o) => !o);
         break;
       case "view_fullscreen": {
-        const w = getCurrentWindow();
+        const w = getAdapter().app.window;
         void (async () => {
           w.setFullscreen(!(await w.isFullscreen()));
         })();
@@ -1777,12 +1771,12 @@ export default function App() {
         void (async () => {
           quitFallbackTimerRef.current = window.setTimeout(() => {
             quitFallbackTimerRef.current = undefined;
-            void exit(0).catch(() => {
+            void getAdapter().app.exitApp(0).catch(() => {
               /* 兜底路径不再连环重试 */
             });
           }, 5000);
           try {
-            await emit("app-quit-request");
+            await getAdapter().app.emit("app-quit-request");
           } catch (err) {
             noteOpError("menu-exit-broadcast", err);
             if (quitFallbackTimerRef.current !== undefined) {
@@ -1834,17 +1828,11 @@ export default function App() {
       case "insert_image":
         void (async () => {
           try {
-            const picked = await openDialog({
-              multiple: false,
-              filters: [
-                {
-                  name: "图片",
-                  extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"],
-                },
-              ],
-            });
+            const picked = await getAdapter().dialog.pickOpenFile([
+              { name: "图片", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"] },
+            ]);
             if (!picked || typeof picked !== "string") return;
-            const bytes = await readFile(picked);
+            const bytes = await getAdapter().fs.readFile(picked);
             const name = picked.split(/[\\/]/).pop() ?? "image.png";
             const r = await persistImage(
               new File([bytes], name),

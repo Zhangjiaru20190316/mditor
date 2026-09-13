@@ -5,10 +5,11 @@
 // API key is never logged to the JS console. This module just shapes messages,
 // wires up the SSE-stream event listeners, and surfaces friendly errors.
 
-import { invoke } from "@tauri-apps/api/core";
+import { getAdapter } from "../platform";
+import { UnsupportedError } from "../platform/errors";
 import { sysEmit } from "./sysDebug";
 import { tracedIo } from "./ipcTrace";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { Unlisten as UnlistenFn } from "../platform/types";
 import type { AiModelConfig, AiContextStrategy, Settings } from "../types";
 import type { AgentMessage, ToolCall, ToolDefinition } from "./agent/types";
 
@@ -277,12 +278,13 @@ export async function embedTexts(
   s: Settings,
   texts: string[]
 ): Promise<number[][]> {
+  requireAi();
   if (texts.length === 0) return [];
   const result = await tracedIo<{ vectors: number[][] }>(
     "ai:embed",
     `ai_embed ${s.ragEmbedModel} ×${texts.length}`,
     () =>
-      invoke<{ vectors: number[][] }>("ai_embed", {
+      getAdapter().app.invoke<{ vectors: number[][] }>("ai_embed", {
         baseUrl: s.ragEmbedBaseUrl,
         apiKey: s.ragEmbedApiKey,
         model: s.ragEmbedModel,
@@ -466,13 +468,14 @@ export function buildFormatFixMessages(note: string): ChatMessage[] {
 
 /** Single-shot chat: returns the assistant's text reply. Used for "测试连接". */
 export async function chat({ settings, messages }: ChatOptions): Promise<string> {
+  requireAi();
   const m = resolveActiveModel(settings);
   // v4.3 诊断：请求失败→MD-8001；不设慢阈值（大模型 legitimately 慢）。
   const result = await tracedIo<{ content: string }>(
     "ai:request",
     `ai_chat ${m.model}`,
     () =>
-      invoke<{ content: string }>("ai_chat", {
+      getAdapter().app.invoke<{ content: string }>("ai_chat", {
         baseUrl: m.baseUrl,
         apiKey: m.apiKey,
         model: m.model,
@@ -494,6 +497,14 @@ export async function chat({ settings, messages }: ChatOptions): Promise<string>
     );
   }
   return result.content;
+}
+
+/** AI 能力守卫：平台不提供 AI 后端（鸿蒙 MVP）时统一抛 UnsupportedError，
+ *  message 直接可读——调用点（AI 面板/设置页测试连接）的错误管道会展示。 */
+function requireAi(): void {
+  if (!getAdapter().capabilities.ai) {
+    throw new UnsupportedError("鸿蒙版暂不支持 AI（规划中）");
+  }
 }
 
 /** A minimal "are these credentials valid" ping. Returns true on success. */
@@ -553,6 +564,12 @@ export function chatStream(
 ): StreamHandle {
   const { settings, messages, requestId, handlers } = opts;
   const m = resolveActiveModel(settings);
+  if (!getAdapter().capabilities.ai) {
+    // 平台无 AI 后端：同步走 onError（与后端拒绝同一条错误管道），handle
+    // 仍可安全 cancel（no-op）。
+    handlers.onError("鸿蒙版暂不支持 AI（规划中）");
+    return { cancel: () => undefined };
+  }
   let cancelled = false;
   let finished = false;
   // unlisten funcs arrive asynchronously (listen() resolves a Promise). We
@@ -570,7 +587,7 @@ export function chatStream(
     cleanup();
   };
 
-  listen<StreamChunkEvent>("ai_stream_chunk", (ev) => {
+  getAdapter().app.listen<StreamChunkEvent>("ai_stream_chunk", (ev) => {
     if (ev.payload.id === requestId && !cancelled) handlers.onChunk(ev.payload.delta);
   }).then((fn) => {
     if (finished) fn();
@@ -581,14 +598,14 @@ export function chatStream(
   // listener for non-reasoning flows.
   if (handlers.onReasoning) {
     const onReasoning = handlers.onReasoning;
-    listen<StreamReasoningEvent>("ai_stream_reasoning", (ev) => {
+    getAdapter().app.listen<StreamReasoningEvent>("ai_stream_reasoning", (ev) => {
       if (ev.payload.id === requestId && !cancelled) onReasoning(ev.payload.delta);
     }).then((fn) => {
       if (finished) fn();
       else unlistenFns.push(fn);
     });
   }
-  listen<StreamDoneEvent>("ai_stream_done", (ev) => {
+  getAdapter().app.listen<StreamDoneEvent>("ai_stream_done", (ev) => {
     if (ev.payload.id === requestId && !cancelled) {
       finish();
       handlers.onDone();
@@ -597,7 +614,7 @@ export function chatStream(
     if (finished) fn();
     else unlistenFns.push(fn);
   });
-  listen<StreamErrorEvent>("ai_stream_error", (ev) => {
+  getAdapter().app.listen<StreamErrorEvent>("ai_stream_error", (ev) => {
     if (ev.payload.id === requestId && !cancelled) {
       sysEmit("ai:stream-fail", `AI 流式错误：${ev.payload.error.slice(0, 160)}`, {
         level: "error",
@@ -612,7 +629,7 @@ export function chatStream(
   });
 
   // Kick off the backend. Rejection (network / HTTP error) is routed to onError.
-  invoke("ai_chat_stream", {
+  getAdapter().app.invoke("ai_chat_stream", {
     baseUrl: m.baseUrl,
     apiKey: m.apiKey,
     model: m.model,
@@ -657,7 +674,7 @@ export function chatStream(
       // v4.6.2 阶段3：通知 Rust 停拉上游流——此前只摘前端监听，上游继续
       // 跑到自然结束（计费 token 照常消耗）。fire-and-forget：旧后端无此
       // 命令时静默降级为旧行为。
-      void invoke("ai_chat_cancel", { requestId }).catch(() => {});
+      void getAdapter().app.invoke("ai_chat_cancel", { requestId }).catch(() => {});
     },
   };
 }
@@ -706,6 +723,14 @@ export function agentChatStream(opts: AgentChatStreamOptions): AgentStreamHandle
   const { settings, messages, tools, requestId, onChunk, onReasoning } = opts;
   const m = resolveActiveModel(settings);
   let cancelled = false;
+  if (!getAdapter().capabilities.ai) {
+    // Agent 循环消费 handle.promise 的 rejection——直接拒绝即可。
+    const unsupported = new UnsupportedError("鸿蒙版暂不支持 AI（规划中）");
+    return {
+      cancel: () => undefined,
+      promise: Promise.reject(unsupported),
+    };
+  }
   let settled = false;
   const unlistenFns: UnlistenFn[] = [];
 
@@ -741,7 +766,7 @@ export function agentChatStream(opts: AgentChatStreamOptions): AgentStreamHandle
     rejectP(new Error(err));
   };
 
-  listen<StreamChunkEvent>("ai_stream_chunk", (ev) => {
+  getAdapter().app.listen<StreamChunkEvent>("ai_stream_chunk", (ev) => {
     if (ev.payload.id !== requestId || settled || cancelled) return;
     if (ev.payload.delta) {
       content += ev.payload.delta;
@@ -749,7 +774,7 @@ export function agentChatStream(opts: AgentChatStreamOptions): AgentStreamHandle
     }
   }).then(detach);
   if (onReasoning) {
-    listen<StreamReasoningEvent>("ai_stream_reasoning", (ev) => {
+    getAdapter().app.listen<StreamReasoningEvent>("ai_stream_reasoning", (ev) => {
       if (ev.payload.id !== requestId || settled || cancelled) return;
       if (ev.payload.delta) {
         reasoning += ev.payload.delta;
@@ -759,15 +784,15 @@ export function agentChatStream(opts: AgentChatStreamOptions): AgentStreamHandle
   }
   // 聚合完成的工具调用（仅 finish_reason=="tool_calls" / 收尾安全网发射一次，
   // 先于 done 事件到达）：覆盖式记录——单轮至多一批。
-  listen<StreamToolCallsEvent>("ai_stream_tool_calls", (ev) => {
+  getAdapter().app.listen<StreamToolCallsEvent>("ai_stream_tool_calls", (ev) => {
     if (ev.payload.id !== requestId || settled || cancelled) return;
     toolCalls = Array.isArray(ev.payload.tool_calls) ? ev.payload.tool_calls : [];
   }).then(detach);
-  listen<StreamDoneEvent>("ai_stream_done", (ev) => {
+  getAdapter().app.listen<StreamDoneEvent>("ai_stream_done", (ev) => {
     if (ev.payload.id !== requestId || settled || cancelled) return;
     settleOk();
   }).then(detach);
-  listen<StreamErrorEvent>("ai_stream_error", (ev) => {
+  getAdapter().app.listen<StreamErrorEvent>("ai_stream_error", (ev) => {
     if (ev.payload.id !== requestId || settled || cancelled) return;
     sysEmit("ai:stream-fail", `AI 流式错误：${ev.payload.error.slice(0, 160)}`, {
       level: "error",
@@ -777,7 +802,7 @@ export function agentChatStream(opts: AgentChatStreamOptions): AgentStreamHandle
   }).then(detach);
 
   // Kick off the backend（tools 仅在有值时携带——None 时 Rust 不发送该字段）。
-  invoke("ai_chat_stream", {
+  getAdapter().app.invoke("ai_chat_stream", {
     baseUrl: m.baseUrl,
     apiKey: m.apiKey,
     model: m.model,
@@ -818,7 +843,7 @@ export function agentChatStream(opts: AgentChatStreamOptions): AgentStreamHandle
       cancelled = true;
       settleOk();
       // 同 chatStream：通知 Rust 停拉上游流（不再消耗计费 token）。
-      void invoke("ai_chat_cancel", { requestId }).catch(() => {});
+      void getAdapter().app.invoke("ai_chat_cancel", { requestId }).catch(() => {});
     },
     promise,
   };

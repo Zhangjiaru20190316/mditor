@@ -14,7 +14,8 @@
 //   * 保存事件（noteSaved）与文件监听（watch）走**单文件增量重扫**，
 //     绝不触发全量重建。
 
-import { readDir, readTextFile, stat, watch } from "@tauri-apps/plugin-fs";
+import { getAdapter } from "../platform";
+import { UnsupportedError } from "../platform/errors";
 import { basename, extname, join, toPosix } from "./path-shim";
 import { isUserActive } from "./activity";
 import { scanFlashcards, type ScannedCard } from "./flashcards";
@@ -230,7 +231,7 @@ function matchScore(q: string, field: string, base: number): number {
 
 // ---- 索引管理器（IO 编排） ---------------------------------------------------
 
-/** IO 注入面（测试用 mock；生产用 @tauri-apps/plugin-fs）。 */
+/** IO 注入面（测试用 mock；生产经平台适配层 platform/）。 */
 export interface VaultIndexIO {
   readTextFile(p: string): Promise<string>;
   readDir(d: string): Promise<Array<{ name: string; isDirectory: boolean }>>;
@@ -243,12 +244,17 @@ export interface VaultIndexIO {
 }
 
 const tauriIO: VaultIndexIO = {
-  readTextFile: (p) => readTextFile(p),
-  readDir: (d) =>
-    readDir(d) as unknown as Promise<Array<{ name: string; isDirectory: boolean }>>,
+  readTextFile: (p) => getAdapter().fs.readTextFile(p),
+  readDir: (d) => getAdapter().fs.readDir(d),
   stat: (p) =>
-    stat(p).catch(() => null) as unknown as Promise<{ mtime?: number | null } | null>,
-  watch: (d, cb, opts) => watch(d, cb as never, opts as never) as Promise<() => void>,
+    getAdapter().fs.stat(p).catch(() => null) as unknown as Promise<{ mtime?: number | null } | null>,
+  watch: (d, cb, opts) => {
+    // 无 watch 能力的平台（鸿蒙 MVP）：拒绝 → rewatch 的 catch 软失败，
+    // 索引退化为「保存事件 + 全量扫描」更新。
+    const w = getAdapter().fs.watch;
+    if (!w) return Promise.reject(new UnsupportedError("当前平台不支持文件监听"));
+    return w(d, cb, opts);
+  },
 };
 
 /** 目录黑名单与扩展名集合（与 workspaceSearch 同规则）。 */

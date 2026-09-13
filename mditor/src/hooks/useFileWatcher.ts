@@ -11,7 +11,7 @@
 // debounce rapid coalesced events (some editors write in several passes).
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { watch, readTextFile } from "@tauri-apps/plugin-fs";
+import { getAdapter } from "../platform";
 import { sysEmit } from "../lib/sysDebug";
 import { dirname, basename, toPosix } from "../lib/path-shim";
 import { confirmDialog } from "../lib/dialogs";
@@ -79,7 +79,7 @@ export function useFileWatcher(opts: Options) {
       const o = optsRef.current;
       if (o.isSavingRef.current) return; // we're mid-write
       try {
-        const disk = await readTextFile(o.path!);
+        const disk = await getAdapter().fs.readTextFile(o.path!);
         // 1) ignore our own autosave echo
         if (lastSavedSigRef.current != null && signature(disk) === lastSavedSigRef.current) {
           return;
@@ -121,18 +121,24 @@ export function useFileWatcher(opts: Options) {
       }, 250);
     };
 
-    watch(
-      dir,
-      (event) => {
-        // Only react to writes/creates/removes on our target file.
-        const t = event.type as { kind?: string };
-        const kind = t.kind ?? "any";
-        if (kind !== "modify" && kind !== "create" && kind !== "any") return;
-        const hit = event.paths.some((p) => toPosix(p) === targetPosix || basename(p) === targetBase);
-        if (!hit) return;
-        scheduleReload();
-      },
-      { recursive: false }
+    // 无 watch 能力的平台（鸿蒙 MVP）：直接不订阅——下方 .catch 同样兜底
+    // 网络盘/权限目录的监听失败，编辑器照常工作（只是无外部修改同步）。
+    const watchFn = getAdapter().fs.watch;
+    (watchFn
+      ? watchFn(
+          dir,
+          (event) => {
+            // Only react to writes/creates/removes on our target file.
+            const t = event.type as { kind?: string };
+            const kind = t.kind ?? "any";
+            if (kind !== "modify" && kind !== "create" && kind !== "any") return;
+            const hit = event.paths.some((p) => toPosix(p) === targetPosix || basename(p) === targetBase);
+            if (!hit) return;
+            scheduleReload();
+          },
+          { recursive: false }
+        )
+      : Promise.reject(new Error("watch unsupported on this platform"))
     ).then((un) => {
       if (cancelled) {
         try { un(); } catch { /* gone */ }
