@@ -89,6 +89,7 @@ import {
   pushRecentWorkspace,
 } from "./lib/store";
 import { dedupeRoots, samePathFold } from "./lib/workspaces";
+import { assembleSyncTrigger } from "./lib/sync/trigger";
 import { dismissSplash } from "./lib/splash";
 import { takeHealSnapshot } from "./lib/session";
 import {
@@ -1080,6 +1081,31 @@ export default function App() {
     vaultIndex.setRoots(workspaces, excludedSet);
   }, [workspaces, excludedSet, settingsApi.settings.vaultIndexEnabled]);
 
+  // ---- 云同步引擎装配（v4.12，§5.5 / §7.5.2）--------------------------------
+  // 仅 main 窗口装配（D8：全部自动触发与 sync-request 监听都在引擎里）；
+  // 鸿蒙零装配——assembleSyncTrigger 入口判 isSyncSupported() 直接返回 null，
+  // 不创建定时器/不注册监听（定时器/监听注册桩计数为 0 有单测锚定）。
+  // 设置变化（开关/自动/间隔/启动同步）→ 销毁重建触发器。
+  const syncTriggerRef = useRef<import("./lib/sync/trigger").SyncTrigger | null>(null);
+  const syncSettings = settingsApi.settings.sync;
+  useEffect(() => {
+    if (getAdapter().app.window.label !== "main") return;
+    if (!syncSettings.enabled) return;
+    syncTriggerRef.current = assembleSyncTrigger({
+      getSettings: () => settingsRef.current.settings,
+      getRoots: () => workspacesRef.current,
+    });
+    return () => {
+      syncTriggerRef.current?.dispose();
+      syncTriggerRef.current = null;
+    };
+  }, [
+    syncSettings.enabled,
+    syncSettings.autoSync,
+    syncSettings.autoSyncIntervalMin,
+    syncSettings.syncOnStart,
+  ]);
+
   // ---- 文献库（v4.7 模块 3「学术引用」）-------------------------------------
   // 设置变化 → 同步样式 + 异步加载 .bib（本地读取，解析结果仅存内存）。
   // 加载/样式变更 bump bibliography.version → 编辑器参考文献 widget、引用
@@ -1666,6 +1692,8 @@ export default function App() {
           fa.save(() => saved)
             .then(() => {
               if (savedPath) vaultIndex.noteSaved(savedPath, saved);
+              // v4.12 云同步：保存成功链路挂防抖触发（autoSync 关闭时 no-op）。
+              syncTriggerRef.current?.onSaved();
             })
             .catch(() => flashStatus("保存失败", 5000));
         }
@@ -1677,8 +1705,14 @@ export default function App() {
             // saveAs 成功后 doc.path 已更新为落盘路径（useFile.saveAs 语义）。
             const p = ok ? fa.doc.path : null;
             if (p) vaultIndex.noteSaved(p, saved);
+            if (ok) syncTriggerRef.current?.onSaved();
           });
         }
+        break;
+      case "file_sync_now":
+        // 手动同步统一走 sync-request 转发（D8）：doc 窗口由 main 引擎代执行；
+        // main 收到自己的 echo 由互斥挡住，不会双跑。
+        void getAdapter().app.emit("sync-request").catch(() => undefined);
         break;
       case "file_export_html":
         void doExportRef.current("html");
@@ -2415,6 +2449,8 @@ export default function App() {
     if (fa.doc.path) {
       vaultIndex.noteSaved(fa.doc.path, editorRef.current?.getValue() ?? fa.doc.content);
     }
+    // v4.12 云同步：保存链路挂防抖触发（仅 main 已装配时生效）。
+    syncTriggerRef.current?.onSaved();
   }, [flashStatus]);
   const onWatcherStatus = useCallback(
     (msg: string, kind: "sync" | "warn") => {

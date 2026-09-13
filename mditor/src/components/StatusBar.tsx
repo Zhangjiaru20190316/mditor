@@ -14,11 +14,13 @@
 // JS heap. The self-heal in useMemoryGuard recreates the editor — now that
 // destroy is awaited — and reloads the page only when that fails to reclaim.)
 
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import type { EditMode } from "../types";
+import { getAdapter } from "../platform";
 import { formatBytes, getHeapUsage, IS_DEV } from "../lib/memory";
 import { countWords } from "../lib/textStats";
-import { SidebarIcon, AiIcon, ExpandIcon } from "./icons";
+import { useSync } from "../hooks/useSync";
+import { SidebarIcon, AiIcon, ExpandIcon, CloudIcon } from "./icons";
 
 interface Props {
   name: string;
@@ -130,6 +132,28 @@ export const StatusBar = memo(function StatusBar({
     };
   }, []);
 
+  // 云同步指示（v4.12）：自包含 useSync 订阅（不穿透父组件），点击 = 手动
+  // 同步。四态渲染：idle 灰云 / syncing 旋转 / offline 云+斜杠 / error 红。
+  // 鸿蒙运行时不渲染该元素（§7.5.3——不是错误态/转圈，是彻底隐藏）。
+  const sync = useSync();
+  const syncTooltip = useMemo(() => {
+    if (!sync.last) return "云同步：点击立即同步";
+    const t = sync.last.lastSyncAt
+      ? `上次同步 ${new Date(sync.last.lastSyncAt).toLocaleTimeString()}`
+      : "";
+    const err = sync.last.error ? `\n${sync.last.error.code}: ${sync.last.error.message}` : "";
+    const note = sync.last.status === "offline" ? "\n离线中——恢复网络后自动重试" : "";
+    return `云同步：点击立即同步${t ? `\n${t}` : ""}${note}${err}`;
+  }, [sync.last]);
+  const syncLabel =
+    sync.status === "syncing"
+      ? "同步中…"
+      : sync.status === "offline"
+        ? "离线"
+        : sync.status === "error"
+          ? "同步出错"
+          : "已同步";
+
   return (
     <footer className="sb-status">
       <button
@@ -176,6 +200,26 @@ export const StatusBar = memo(function StatusBar({
       )}
       <span className="sb-status-spacer" />
       <span className={`sb-status-auto${autosaveMsg ? " show" : ""}`}>{autosaveMsg}</span>
+      {sync.supported && (
+        <button
+          className={`sb-icon-btn sb-sync-ind sb-sync-${sync.status}`}
+          title={syncTooltip}
+          aria-label={`云同步：${syncLabel}`}
+          onClick={() => {
+            // error 态点击弹错误详情（复用平台弹窗）；其余状态点击 = 手动同步。
+            if (sync.status === "error" && sync.last?.error) {
+              void getAdapter().dialog.message(
+                `${sync.last.error.code}：${sync.last.error.message}`,
+                { kind: "error", title: "云同步出错" }
+              );
+              return;
+            }
+            sync.syncNow();
+          }}
+        >
+          <CloudIcon size={15} className={sync.status === "syncing" ? "spin" : undefined} />
+        </button>
+      )}
       <span className="sb-status-sep" />
       {onSwitchMode ? (
         <label className="sb-status-mode-wrap" title="切换编辑模式（重建编辑器以释放内存）">

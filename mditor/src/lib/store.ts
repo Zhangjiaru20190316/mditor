@@ -14,6 +14,7 @@ import {
   type AiModelConfig,
   type RecentFile,
   type Settings,
+  normalizeSyncSettings,
 } from "../types";
 import { normalizeStoredWorkspaces } from "./workspaces";
 
@@ -48,6 +49,10 @@ function migrateSettings(s: Settings, raw: Partial<Settings>): Settings {
   // 这里归一非法值（手改 mditor.json 等）。
   if (s.aiPanelMode !== "agent") s.aiPanelMode = "chat";
   if (s.agentWriteMode !== "auto") s.agentWriteMode = "confirm";
+
+  // v4.12 云同步：sync 子对象幂等归一（缺失补默认 / prefix 规范化 / 非法
+  // interval 归 10）。纯数据操作，鸿蒙运行同样无副作用。
+  s.sync = normalizeSyncSettings(s.sync);
 
   // No stored model list: seed from legacy flat fields if the user configured
   // anything (non-empty baseUrl or model).

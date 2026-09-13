@@ -40,6 +40,11 @@
 //     9001 持续掉帧（心跳窗内 >50ms 帧间隔 ≥10 次）·
 //     9002 布局抖动风暴（2s 内 ≥3 次 warn 级视口位移）·
 //     9003 输入响应卡顿（心跳窗内按键→帧延迟 >100ms ≥8 次）
+//   MD-10xxx 云同步（新大类，v4.12）
+//     10001 同步请求失败（根级：凭证/桶/网络/超时，detail 含 SYNC-XXX 码）·
+//     10002 同步警告（单文件失败/超限跳过/脏文件跳过/冲突待确认）
+//     （sync:done / sync:file-warn 之外的 info 事件不产异常；同步参数进任何
+//      诊断数据前 AK/SK 必须脱敏——引擎侧只发错误码与文件名，无凭证。）
 //
 // ── 级别策略 ──────────────────────────────────────────────────────
 //   error（告警卡 + 原生弹窗）：5001 / 5002 / 5003 / 5011
@@ -311,7 +316,8 @@ export function analyzeLogWriteFailure(detail: string): DevAnomaly | null {
 /** 系统总线事件 → 异常码。kind 由 ipcTrace / 各插桩点约定：
  *  file:{read,write,mut,watch}-fail、ipc:{invoke,dialog,clipboard}-fail、
  *  *-slow、ai:{request-fail,stream-fail,stream-abnormal-end,response-fail}、
- *  res:load-fail。info 级（lifecycle:* / ai:stream-abort / 成功计数）不产异常。 */
+ *  res:load-fail、sync:{run-fail,file-warn}。info 级（lifecycle:* /
+ *  ai:stream-abort / sync:done / 成功计数）不产异常。 */
 export function analyzeSysEvent(e: SysDebugEvent): DevAnomaly | null {
   try {
     if (e.kind === "file:read-fail") {
@@ -352,6 +358,12 @@ export function analyzeSysEvent(e: SysDebugEvent): DevAnomaly | null {
     }
     if (e.kind === "res:load-fail") {
       return { code: "MD-5012", level: "warn", title: "资源加载失败", detail: e.msg, data: e.data };
+    }
+    if (e.kind === "sync:run-fail") {
+      return { code: "MD-10001", level: "warn", title: "云同步请求失败", detail: e.msg, data: e.data };
+    }
+    if (e.kind === "sync:file-warn") {
+      return { code: "MD-10002", level: "warn", title: "云同步警告（跳过/单文件失败）", detail: e.msg, data: e.data };
     }
     return null;
   } catch {

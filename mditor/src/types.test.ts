@@ -62,6 +62,7 @@ const SETTING_KEYS = [
   "ragEmbedBaseUrl",
   "ragEmbedApiKey",
   "ragEmbedModel",
+  "sync",
 ] as const;
 
 /** 重构前（v3.9.7）的标量默认值。 */
@@ -136,5 +137,55 @@ describe("settings inventory（v4.0.0 分区重构防回归锚点）", () => {
     expect(Array.isArray(DEFAULT_SETTINGS.aiModels)).toBe(true);
     expect(Array.isArray(DEFAULT_SETTINGS.aiQuickActions)).toBe(true);
     expect(Array.isArray(DEFAULT_SETTINGS.excludedPaths)).toBe(true);
+  });
+
+  it("云同步默认值全关（默认零网络行为）", () => {
+    expect(DEFAULT_SETTINGS.sync.enabled).toBe(false);
+    expect(DEFAULT_SETTINGS.sync.bucket).toBe("");
+    expect(DEFAULT_SETTINGS.sync.secretAccessKey).toBe("");
+    expect(DEFAULT_SETTINGS.sync.prefix).toBe("mditor/");
+  });
+});
+
+describe("normalizeSyncSettings（v4.12 云同步设置幂等归一）", () => {
+  it("undefined / 非对象输入补全默认值", async () => {
+    const { normalizeSyncSettings } = await import("./types");
+    const out = normalizeSyncSettings(undefined);
+    expect(out.enabled).toBe(false);
+    expect(out.provider).toBe("custom");
+    expect(out.prefix).toBe("mditor/");
+    expect(out.autoSyncIntervalMin).toBe(10);
+  });
+
+  it("prefix 规范化：去前导 /、补尾随 /、空串保留", async () => {
+    const { normalizeSyncSettings } = await import("./types");
+    expect(normalizeSyncSettings({ prefix: "/docs" }).prefix).toBe("docs/");
+    expect(normalizeSyncSettings({ prefix: "docs" }).prefix).toBe("docs/");
+    expect(normalizeSyncSettings({ prefix: "docs/" }).prefix).toBe("docs/");
+    expect(normalizeSyncSettings({ prefix: "  " }).prefix).toBe("");
+  });
+
+  it("非法 interval 归 10；0（关闭定时）与正常值保留", async () => {
+    const { normalizeSyncSettings } = await import("./types");
+    expect(normalizeSyncSettings({ autoSyncIntervalMin: -5 }).autoSyncIntervalMin).toBe(10);
+    expect(normalizeSyncSettings({ autoSyncIntervalMin: "abc" }).autoSyncIntervalMin).toBe(10);
+    expect(normalizeSyncSettings({ autoSyncIntervalMin: 0 }).autoSyncIntervalMin).toBe(0);
+    expect(normalizeSyncSettings({ autoSyncIntervalMin: 30 }).autoSyncIntervalMin).toBe(30);
+  });
+
+  it("非法 provider 归 custom；已配置字段原样保留（幂等）", async () => {
+    const { normalizeSyncSettings } = await import("./types");
+    expect(normalizeSyncSettings({ provider: "oss-xxx" }).provider).toBe("custom");
+    const once = normalizeSyncSettings({
+      enabled: true,
+      bucket: "my-bucket",
+      accessKeyId: "AK",
+      pathStyle: true,
+    });
+    expect(once.enabled).toBe(true);
+    expect(once.bucket).toBe("my-bucket");
+    expect(once.pathStyle).toBe(true);
+    // 幂等：归一结果再归一不变。
+    expect(normalizeSyncSettings(once)).toEqual(once);
   });
 });

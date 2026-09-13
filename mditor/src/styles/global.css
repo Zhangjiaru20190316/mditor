@@ -4468,6 +4468,49 @@ html[data-motion="none"] *::after {
   scroll-behavior: auto !important;
 }
 
+/* 云同步设置分区（v4.12）——沿用既有禁用/提示视觉，不新造体系。 */
+.sync-unsupported {
+  font-size: var(--font-size-s);
+  color: var(--fg-muted);
+  background: color-mix(in srgb, var(--fg-muted) 8%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: -4px 0 4px;
+}
+.sync-sk-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.sync-sk-row input {
+  flex: 1;
+}
+.sync-secret-hint {
+  color: var(--fg-muted);
+}
+
+/* 状态栏云同步指示器（v4.12）：四态着色 + syncing 旋转。 */
+.sb-sync-ind .spin {
+  animation: sb-sync-spin 1.1s linear infinite;
+}
+.sb-sync-error {
+  color: #e53935;
+}
+.sb-sync-offline {
+  opacity: 0.55;
+}
+@keyframes sb-sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* 减少动态效果（系统级或「无」档）时停转——与动效体系全局约定一致。 */
+html[data-motion="none"] .sb-sync-ind .spin,
+html[data-motion="none"] * .spin {
+  animation: none;
+}
+
 /* 已从工作区移除的项目（设置 → 已从工作区移除的项目） */
 .excluded-hint {
   font-size: var(--font-size-s);

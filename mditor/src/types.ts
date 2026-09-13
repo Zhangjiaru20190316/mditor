@@ -140,6 +140,160 @@ export const AI_PROVIDER_BY_ID: Record<string, AiProviderPreset> = Object.fromEn
   AI_PROVIDERS.map((p) => [p.id, p])
 );
 
+/* -------------------------------------------------------------------------- */
+/* 云同步（v4.12）：用户自带 S3 兼容对象存储（BYO storage）                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * S3 服务商预设。仅用于「预填」endpoint / region / 寻址风格——预填后用户仍可
+ * 改（各家控制台信息为准）；不引入任何厂商绑定，前端不出现 SDK 概念。
+ */
+export interface S3ProviderPreset {
+  id: "qiniu" | "aliyun-oss" | "cloudflare-r2" | "minio" | "aws" | "custom";
+  name: string;
+  /** 含 {region}/{account} 占位的 endpoint 模板；undefined = 完整手填。 */
+  endpointTemplate?: string;
+  /** region 占位提示，如 "cn-east-1（以控制台为准）"。 */
+  regionHint?: string;
+  /** path-style 寻址的默认值（预填用）。 */
+  pathStyleDefault: boolean;
+}
+
+/** 内置 S3 兼容服务商预设（v4.12 云同步；均以各厂商控制台实际信息为准）。 */
+export const SYNC_PROVIDERS: S3ProviderPreset[] = [
+  {
+    id: "qiniu",
+    name: "七牛云 Kodo",
+    endpointTemplate: "https://s3.{region}.qiniucs.com",
+    regionHint: "cn-east-1（以控制台为准）",
+    pathStyleDefault: false,
+  },
+  {
+    id: "aliyun-oss",
+    name: "阿里云 OSS",
+    endpointTemplate: "https://oss-{region}.aliyuncs.com",
+    regionHint: "cn-hangzhou",
+    pathStyleDefault: false,
+  },
+  {
+    id: "cloudflare-r2",
+    name: "Cloudflare R2",
+    endpointTemplate: "https://{accountId}.r2.cloudflarestorage.com",
+    regionHint: "auto（固定）",
+    pathStyleDefault: true,
+  },
+  {
+    id: "minio",
+    name: "MinIO / 自建",
+    regionHint: "us-east-1（任意）",
+    pathStyleDefault: true,
+  },
+  {
+    id: "aws",
+    name: "AWS S3",
+    // endpoint 留空 = 使用 AWS 默认端点（按 region 自动构造）。
+    regionHint: "us-east-1",
+    pathStyleDefault: false,
+  },
+  {
+    id: "custom",
+    name: "自定义",
+    pathStyleDefault: false,
+  },
+];
+
+/** 合法 provider id 集合（string 宽类型——归一入口要校验未知字符串）。 */
+export const SYNC_PROVIDER_IDS: ReadonlySet<string> = new Set<string>(
+  SYNC_PROVIDERS.map((p) => p.id as string)
+);
+
+/**
+ * 云同步设置（v4.12）。默认全关——本地优先红线：不开启就零网络、零行为
+ * 变化。密钥按 D4 明文随 mditor.json 存本机（与 aiApiKey 同一惯例），UI
+ * 必须明示并建议最小权限子账号。
+ */
+export interface SyncSettings {
+  /** 总开关，默认 false。 */
+  enabled: boolean;
+  /** preset id（SYNC_PROVIDERS），默认 "custom"。 */
+  provider: string;
+  /** 空串 + provider=aws = AWS 默认端点。 */
+  endpoint: string;
+  /** 默认 "us-east-1"；R2 固定 "auto"。 */
+  region: string;
+  bucket: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  /** 可选 STS 临时令牌。 */
+  sessionToken?: string;
+  /** path-style 寻址（MinIO/R2 推荐）。 */
+  pathStyle: boolean;
+  /** 桶内统一前缀；规范化：非空时不以 / 开头、以 / 结尾。默认 "mditor/"。 */
+  prefix: string;
+  /** enabled 时默认 true。 */
+  autoSync: boolean;
+  /** 定时间隔（分钟）；0 = 关闭定时。非法值迁移归 10。 */
+  autoSyncIntervalMin: number;
+  /** 启动后自动同步一次，默认 true。 */
+  syncOnStart: boolean;
+}
+
+/** 云同步默认值：全关、无凭证——默认零网络行为。 */
+export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
+  enabled: false,
+  provider: "custom",
+  endpoint: "",
+  region: "us-east-1",
+  bucket: "",
+  accessKeyId: "",
+  secretAccessKey: "",
+  sessionToken: "",
+  pathStyle: false,
+  prefix: "mditor/",
+  autoSync: true,
+  autoSyncIntervalMin: 10,
+  syncOnStart: true,
+};
+
+/**
+ * sync 设置的幂等归一（migrateSettings 每次加载都会跑）：缺失补默认、
+ * prefix 规范化（非空时以 / 结尾且不以 / 开头）、非法 interval 归 10、
+ * 非法 provider 归 custom。纯数据操作，鸿蒙运行同样无副作用。
+ */
+export function normalizeSyncSettings(raw: unknown): SyncSettings {
+  const d = DEFAULT_SYNC_SETTINGS;
+  const s = (raw && typeof raw === "object" ? raw : {}) as Partial<SyncSettings>;
+  const str = (v: unknown, fallback: string): string =>
+    typeof v === "string" ? v : fallback;
+  const bool = (v: unknown, fallback: boolean): boolean =>
+    typeof v === "boolean" ? v : fallback;
+
+  // prefix：去空白 → 去前导 / → 非空补尾随 /（空串 = 无前缀，合法）。
+  let prefix = str(s.prefix, d.prefix).trim().replace(/^\/+/, "");
+  if (prefix !== "" && !prefix.endsWith("/")) prefix += "/";
+
+  const interval = Number(s.autoSyncIntervalMin);
+  return {
+    enabled: bool(s.enabled, d.enabled),
+    provider:
+      typeof s.provider === "string" && SYNC_PROVIDER_IDS.has(s.provider)
+        ? s.provider
+        : d.provider,
+    endpoint: str(s.endpoint, d.endpoint),
+    region: str(s.region, d.region),
+    bucket: str(s.bucket, d.bucket),
+    accessKeyId: str(s.accessKeyId, d.accessKeyId),
+    secretAccessKey: str(s.secretAccessKey, d.secretAccessKey),
+    sessionToken: str(s.sessionToken, d.sessionToken ?? ""),
+    pathStyle: bool(s.pathStyle, d.pathStyle),
+    prefix,
+    autoSync: bool(s.autoSync, d.autoSync),
+    autoSyncIntervalMin:
+      Number.isFinite(interval) && interval >= 0 ? Math.floor(interval) : d.autoSyncIntervalMin,
+    syncOnStart: bool(s.syncOnStart, d.syncOnStart),
+  };
+}
+
 /**
  * Generate a fresh AiModelConfig, optionally seeded from a provider preset
  * (prefills baseUrl + a default model). The id is unique enough for React keys.
@@ -371,6 +525,12 @@ export interface Settings {
   ragEmbedApiKey: string;
   /** 嵌入模型名（如 text-embedding-3-small；换模型自动全量重建索引）。 */
   ragEmbedModel: string;
+  /**
+   * 云同步（v4.12）：可选的「自带 S3 兼容对象存储」双向同步。默认关闭
+   * （enabled=false）——不开启即零网络行为，维持本地优先红线。迁移归一见
+   * normalizeSyncSettings；密钥明文本机存储（D4，与 aiApiKey 同惯例）。
+   */
+  sync: SyncSettings;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -468,6 +628,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ragEmbedBaseUrl: "",
   ragEmbedApiKey: "",
   ragEmbedModel: "",
+  sync: { ...DEFAULT_SYNC_SETTINGS },
 };
 
 /* -------------------------------------------------------------------------- */

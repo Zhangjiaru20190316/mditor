@@ -11,6 +11,7 @@
 
 mod commands;
 mod ai;
+mod s3;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -167,6 +168,12 @@ pub fn run() {
             ai::ai_chat_stream,
             ai::ai_chat_cancel,
             ai::ai_embed,
+            s3::s3_test_connection,
+            s3::s3_list,
+            s3::s3_get,
+            s3::s3_put,
+            s3::s3_delete,
+            s3::s3_head,
         ])
         .setup(|app| {
             // Windows 使用自绘无边框标题栏内的前端菜单栏（MenuBar.tsx），原生

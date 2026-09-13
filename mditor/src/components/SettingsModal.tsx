@@ -16,11 +16,27 @@ import type {
   QuickAction,
   QuickActionScope,
   Settings,
+  SyncSettings,
   Theme,
   ThinkingStrength,
 } from "../types";
-import { AI_PROVIDERS, AI_PROVIDER_BY_ID, emptyAiModel, FONT_PRESETS, MONO_FONT_PRESETS } from "../types";
+import {
+  AI_PROVIDERS,
+  AI_PROVIDER_BY_ID,
+  SYNC_PROVIDERS,
+  emptyAiModel,
+  FONT_PRESETS,
+  MONO_FONT_PRESETS,
+} from "../types";
 import { testConnection } from "../lib/ai";
+import {
+  SYNC_ERROR_CODES,
+  SYNC_ERROR_HINTS,
+  isSyncSupported,
+  parseSyncError,
+  s3TestConnection,
+  syncConfigPayload,
+} from "../lib/sync/s3";
 import { useDelayedUnmount } from "../hooks/useDelayedUnmount";
 import { CloseIcon, ChevronRightIcon } from "./icons";
 
@@ -34,7 +50,10 @@ const SECTIONS = [
   "快捷操作",
   "工作区",
   "知识功能",
+  "云同步",
 ] as const;
+/** 云同步分区索引（applyAll 校验失败时聚焦用）。 */
+const SYNC_SECTION_IDX = SECTIONS.indexOf("云同步");
 /** 导航项高度 + 相邻间距（px）——指示条 translateY 的步长。 */
 const NAV_ITEM_H = 34;
 const NAV_STEP = NAV_ITEM_H + 4;
@@ -47,6 +66,24 @@ const MOTION_LEVELS: Array<{ value: MotionLevel; label: string }> = [
 
 /** 关闭时的退场动画时长（useDelayedUnmount，与 CSS .closing 动画对齐）。 */
 const EXIT_MS = 240;
+
+/** endpoint 是否 localhost HTTP（MinIO 本地调试豁免；与 Rust 侧判定同源）。 */
+function isLocalhostEndpoint(endpoint: string): boolean {
+  const rest = endpoint.trim().toLowerCase().replace(/^http:\/\//, "");
+  if (rest === endpoint.trim().toLowerCase()) return false; // 无 http:// 前缀
+  const host = rest.split(/[:/]/)[0] ?? "";
+  return host === "localhost" || host === "127.0.0.1";
+}
+
+/** 启用同步还缺哪些必填项（AWS 预设可留空 endpoint 走默认端点）。 */
+function isSyncIncomplete(s: SyncSettings): boolean {
+  return (
+    s.bucket.trim() === "" ||
+    s.accessKeyId.trim() === "" ||
+    s.secretAccessKey === "" ||
+    (s.provider !== "aws" && s.endpoint.trim() === "")
+  );
+}
 
 interface Props {
   open: boolean;
@@ -82,6 +119,12 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
   const [testMsg, setTestMsg] = useState("");
   const [testOk, setTestOk] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // 云同步分区状态（v4.12）：连接测试反馈 + SK 明显切换 + 高级折叠。
+  const [syncTesting, setSyncTesting] = useState(false);
+  const [syncTestMsg, setSyncTestMsg] = useState("");
+  const [syncTestOk, setSyncTestOk] = useState(false);
+  const [showSk, setShowSk] = useState(false);
+  const [showSyncAdvanced, setShowSyncAdvanced] = useState(false);
   // v4.1 退场动效：关闭后保持挂载 240ms 播 .closing 动画再卸载。
   const mounted = useDelayedUnmount(open, EXIT_MS);
 
@@ -176,6 +219,23 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
   };
 
   const applyAll = async () => {
+    // 云同步保存校验（v4.12）：非 localhost 的 HTTP endpoint 一律阻断；
+    // enabled 但信息不全时聚焦本分区提示补全（不关闭弹窗）。
+    const sync = draft.sync;
+    if (sync.enabled) {
+      if (/^http:\/\//i.test(sync.endpoint.trim()) && !isLocalhostEndpoint(sync.endpoint)) {
+        setSection(SYNC_SECTION_IDX);
+        setSyncTestOk(false);
+        setSyncTestMsg("仅允许 HTTPS endpoint（HTTP 仅限 localhost/127.0.0.1 本地调试）");
+        return;
+      }
+      if (isSyncIncomplete(sync)) {
+        setSection(SYNC_SECTION_IDX);
+        setSyncTestOk(false);
+        setSyncTestMsg("信息不全：请补全桶名、AccessKey / SecretKey（AWS 预设可留空 endpoint）");
+        return;
+      }
+    }
     await onChange(draft);
     onClose();
   };
@@ -196,6 +256,48 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
       setTestMsg(String(e));
     } finally {
       setTesting(false);
+    }
+  };
+
+  // ---- 云同步（v4.12）----------------------------------------------------
+
+  const syncSupported = isSyncSupported();
+  const setSync = (patch: Partial<SyncSettings>) =>
+    setDraft((d) => ({ ...d, sync: { ...d.sync, ...patch } }));
+
+  /** 预设切换：endpoint/region 仅空值预填（不粗暴覆盖已填值）；寻址风格
+   *  属预设语义本身，随预设切换（高级折叠里可再改）。 */
+  const pickSyncProvider = (id: string) => {
+    const preset = SYNC_PROVIDERS.find((p) => p.id === id);
+    if (!preset) return;
+    setDraft((d) => ({
+      ...d,
+      sync: {
+        ...d.sync,
+        provider: id,
+        endpoint: d.sync.endpoint.trim() === "" ? (preset.endpointTemplate ?? "") : d.sync.endpoint,
+        region:
+          d.sync.region.trim() === "" && id === "cloudflare-r2" ? "auto" : d.sync.region,
+        pathStyle: preset.pathStyleDefault,
+      },
+    }));
+  };
+
+  /** 测试连接基于 draft（与 AI 测试连接同一先例：不落盘、不代保存）。 */
+  const runSyncTest = async () => {
+    if (!syncSupported) return;
+    setSyncTesting(true);
+    setSyncTestMsg("");
+    try {
+      const info = await s3TestConnection(syncConfigPayload(draft.sync));
+      setSyncTestOk(true);
+      setSyncTestMsg(`连接成功：${info.bucket}（${info.region}）`);
+    } catch (e) {
+      const { code, message } = parseSyncError(e);
+      setSyncTestOk(false);
+      setSyncTestMsg(`${SYNC_ERROR_HINTS[code] ?? SYNC_ERROR_HINTS[SYNC_ERROR_CODES.UNKNOWN]}（${message}）`);
+    } finally {
+      setSyncTesting(false);
     }
   };
 
@@ -964,6 +1066,218 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                     </Field>
                   </>
                 )}
+              </>
+            )}
+
+            {section === SYNC_SECTION_IDX && (
+              <>
+                {/* 鸿蒙运行时：整分区禁用 + 固定提示条（§7.5.3，不渲染成错误态）。 */}
+                {!syncSupported && (
+                  <div className="sync-unsupported">云同步当前仅支持桌面版</div>
+                )}
+                <span className="hint" style={{ marginTop: syncSupported ? -4 : 0 }}>
+                  可选的「自带存储」云同步：把工作区目录双向同步到你自己的 S3 兼容
+                  对象存储（七牛 / 阿里 OSS / R2 / MinIO / AWS 等）。默认关闭、不开
+                  即零网络；不引入任何厂商绑定或中转服务。
+                </span>
+
+                <Field label="启用云同步">
+                  <input
+                    type="checkbox"
+                    disabled={!syncSupported}
+                    checked={draft.sync.enabled}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      setSync({ enabled: on });
+                      // 信息不全时开启：留在本分区并提示补全（不阻断开关本身，
+                      // 应用时 applyAll 会再次校验）。
+                      if (on && isSyncIncomplete(draft.sync)) {
+                        setSyncTestOk(false);
+                        setSyncTestMsg("信息不全：请补全服务商、桶名与访问凭证后再应用");
+                      }
+                    }}
+                  />
+                  <span className="hint">
+                    开启后仅在你手动/自动触发同步时访问你配置的单桶单前缀。
+                  </span>
+                </Field>
+
+                <Field label="服务商">
+                  <select
+                    disabled={!syncSupported}
+                    value={draft.sync.provider}
+                    onChange={(e) => pickSyncProvider(e.target.value)}
+                  >
+                    {SYNC_PROVIDERS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="hint">
+                    预设只负责预填 endpoint / region / 寻址风格，均以各厂商控制台
+                    实际信息为准，可随时手改。
+                  </span>
+                </Field>
+
+                <Field label="Endpoint">
+                  <input
+                    type="text"
+                    className="mono"
+                    disabled={!syncSupported}
+                    placeholder={
+                      draft.sync.provider === "aws"
+                        ? "可留空 = AWS 默认端点"
+                        : "https://…（模板中的 {region}/{accountId} 请替换为实际值）"
+                    }
+                    value={draft.sync.endpoint}
+                    onChange={(e) => setSync({ endpoint: e.target.value })}
+                  />
+                </Field>
+
+                <Field label="Region">
+                  <input
+                    type="text"
+                    className="mono"
+                    disabled={!syncSupported}
+                    placeholder={
+                      SYNC_PROVIDERS.find((p) => p.id === draft.sync.provider)?.regionHint ??
+                      "us-east-1"
+                    }
+                    value={draft.sync.region}
+                    onChange={(e) => setSync({ region: e.target.value })}
+                  />
+                </Field>
+
+                <Field label="Bucket（桶名）">
+                  <input
+                    type="text"
+                    className="mono"
+                    disabled={!syncSupported}
+                    placeholder="my-notes"
+                    value={draft.sync.bucket}
+                    onChange={(e) => setSync({ bucket: e.target.value })}
+                  />
+                </Field>
+
+                <Field label="AccessKey ID">
+                  <input
+                    type="text"
+                    className="mono"
+                    disabled={!syncSupported}
+                    placeholder="仅限该桶的最小权限子账号"
+                    value={draft.sync.accessKeyId}
+                    onChange={(e) => setSync({ accessKeyId: e.target.value })}
+                  />
+                </Field>
+
+                <Field label="Secret Access Key">
+                  <span className="sync-sk-row">
+                    <input
+                      type={showSk ? "text" : "password"}
+                      className="mono"
+                      disabled={!syncSupported}
+                      value={draft.sync.secretAccessKey}
+                      onChange={(e) => setSync({ secretAccessKey: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      disabled={!syncSupported}
+                      onClick={() => setShowSk((v) => !v)}
+                    >
+                      {showSk ? "隐藏" : "显示"}
+                    </button>
+                  </span>
+                  <span className="hint sync-secret-hint">
+                    密钥以明文保存在本机 mditor.json，建议使用仅限该桶的最小权限
+                    子账号；远端删除不可恢复，建议为该桶开启版本控制。
+                  </span>
+                </Field>
+
+                <Field label="同步前缀">
+                  <input
+                    type="text"
+                    className="mono"
+                    disabled={!syncSupported}
+                    placeholder="mditor/"
+                    value={draft.sync.prefix}
+                    onChange={(e) => setSync({ prefix: e.target.value })}
+                  />
+                  <span className="hint">
+                    每个工作区根同步到「前缀/根目录名/」下；留空则直接位于根目录名
+                    下。保存时自动规范化（不以 / 开头、以 / 结尾）。
+                  </span>
+                </Field>
+
+                <button
+                  type="button"
+                  className="field-collapsible"
+                  disabled={!syncSupported}
+                  onClick={() => setShowSyncAdvanced((s) => !s)}
+                  aria-expanded={showSyncAdvanced}
+                >
+                  <ChevronRightIcon size={11} className={`chevron${showSyncAdvanced ? " open" : ""}`} /> 高级选项
+                </button>
+                <div className={`field-collapse${showSyncAdvanced ? " open" : ""}`}>
+                  <Field label="Path-style 寻址">
+                    <input
+                      type="checkbox"
+                      disabled={!syncSupported}
+                      checked={draft.sync.pathStyle}
+                      onChange={(e) => setSync({ pathStyle: e.target.checked })}
+                    />
+                    <span className="hint">
+                      MinIO / Cloudflare R2 推荐开启；七牛 / 阿里 / AWS 默认关闭
+                      （virtual-hosted 风格）。
+                    </span>
+                  </Field>
+                  <Field label="自动同步">
+                    <input
+                      type="checkbox"
+                      disabled={!syncSupported}
+                      checked={draft.sync.autoSync}
+                      onChange={(e) => setSync({ autoSync: e.target.checked })}
+                    />
+                    <span className="hint">保存后 5 秒防抖触发 + 按下述间隔定时。</span>
+                  </Field>
+                  <Field label="定时间隔（分钟，0=关闭）">
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      disabled={!syncSupported}
+                      value={draft.sync.autoSyncIntervalMin}
+                      onChange={(e) =>
+                        setSync({ autoSyncIntervalMin: Math.max(0, Number(e.target.value) || 0) })
+                      }
+                    />
+                  </Field>
+                  <Field label="启动时同步">
+                    <input
+                      type="checkbox"
+                      disabled={!syncSupported}
+                      checked={draft.sync.syncOnStart}
+                      onChange={(e) => setSync({ syncOnStart: e.target.checked })}
+                    />
+                    <span className="hint">应用启动 15 秒后自动同步一次（避开启动竞争）。</span>
+                  </Field>
+                </div>
+
+                <div className="ai-test-row">
+                  <button
+                    className="btn-ghost"
+                    onClick={runSyncTest}
+                    disabled={!syncSupported || syncTesting}
+                  >
+                    {syncTesting ? "测试中…" : "测试连接"}
+                  </button>
+                  {syncTestMsg && (
+                    <span className={syncTestOk ? "ai-test-ok" : "ai-test-err"}>
+                      {syncTestMsg}
+                    </span>
+                  )}
+                </div>
               </>
             )}
           </div>

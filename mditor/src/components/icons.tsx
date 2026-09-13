@@ -333,3 +333,16 @@ export function SearchIcon({ size, className }: IconProps) {
     </Svg>
   );
 }
+
+/* ---------------- 云同步（v4.12 状态栏指示器） ---------------- */
+
+/** 云朵：状态栏同步指示（idle/syncing/error/offline 四态共用形，颜色与
+ *  角标由调用方按状态区分）。 */
+export function CloudIcon({ size, className }: IconProps) {
+  return (
+    <Svg size={size} className={className}>
+      <path d="M17.5 18a4.5 4.5 0 0 0 .4-8.98A6 6 0 0 0 6.36 10.15 3.5 3.5 0 0 0 7 18h10.5z" />
+    </Svg>
+  );
+}
+

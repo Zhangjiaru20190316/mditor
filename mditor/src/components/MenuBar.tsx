@@ -20,6 +20,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getAdapter } from "../platform";
+import { isSyncSupported } from "../lib/sync/s3";
 import { CheckIcon } from "./icons";
 
 /** 单个菜单条目：自定义项（id 转发 dispatchMenu）或分隔线。 */
@@ -76,6 +77,9 @@ function buildMenus(focusMode: boolean, theme: string, typewriter: boolean): Men
         sep(),
         item("file_save", "保存", "Ctrl+S"),
         item("file_save_as", "另存为…", "Ctrl+Shift+S"),
+        // v4.12 云同步：手动触发（无快捷键——避免与现有键位冲突）。
+        // 鸿蒙运行时不渲染（§7.5.3）。
+        ...(isSyncSupported() ? [item("file_sync_now", "立即同步")] : []),
         sep(),
         ...(caps.pdfExport ? [item("file_export_pdf", "导出 PDF")] : []),
         item("file_export_html", "导出 HTML"),

@@ -1,6 +1,6 @@
 # Mditor
 
-本地优先的 Markdown 编辑器，体验对标 Typora。基于 **Tauri 2 + React 18 + Milkdown (Crepe)** 构建 —— 无云端、无遥测，文件始终保存在你的电脑上。
+本地优先的 Markdown 编辑器，体验对标 Typora。基于 **Tauri 2 + React 18 + Milkdown (Crepe)** 构建 —— 默认无云端、无遥测，文件始终保存在你的电脑上；如需多设备同步，可选用你自己的 S3 兼容对象存储（见「云同步」）。
 
 ![platform](https://img.shields.io/badge/platform-Windows-blue) ![platform](https://img.shields.io/badge/HarmonyOS%20PC-6.0-red) ![license](https://img.shields.io/badge/license-MIT-green) ![downloads](https://img.shields.io/github/downloads/Zhangjiaru20190316/mditor/total?label=downloads&color=success)
 
@@ -24,6 +24,7 @@
 - **专注模式**、主题（浅色 / 深色 / 护眼 / Claude 双色）、字体字号行距可调、拼写检查开关
 - **大文档性能模式**：超过阈值自动关闭代码高亮与公式渲染；内置内存守护（软重建 / 会话快照自愈）
 - **本地化持久化**：设置与最近文件存于应用数据目录（`mditor.json`），无任何网络上报
+- **云同步（v4.12，可选）**：自带存储（BYO storage）双向同步工作区目录到你自己的 S3 兼容对象存储（七牛云 Kodo / 阿里云 OSS / Cloudflare R2 / MinIO 自建 / AWS S3 / 任意自定义端点）。默认关闭、不开即零网络；文件级 3-way 合并，冲突自动产生 `.冲突-时间戳` 副本双端可见，本地删除进应用内回收站；支持保存后防抖 / 定时 / 启动自动同步与断网自动恢复；状态栏四态指示器，多窗口状态一致。鸿蒙端暂不可用（设置分区禁用提示）
 
 ## 环境要求
 
@@ -86,6 +87,13 @@ CI（`.github/workflows/release.yml`）在推送 `v*` 标签时自动构建并�
 - **权限面（capabilities）**：仅授予实际使用的 fs/dialog/store/shell-open 权限（含 `fs:allow-watch` 供外部修改监听）；`fs` 与 asset 协议的 `**` 通配是"任意目录可打开"这一产品能力的必然结果——本应用的定位即本地文件编辑器
 - **无 updater / 无 shell 执行**：不存在执行外部进程的权限
 - **Agent 写入安全边界（v4.9）**：AI 工具的写类操作路径必须解析后落在已打开的工作区根目录内（拒绝 `..` 穿越与越界绝对路径，当前笔记除外）；循环期间改动只暂存内存「工作副本」，应用前对磁盘/编辑器实际内容二次校验 `old_text`；文件系统级操作（新建/重命名/删除）无论设置如何都需用户逐条确认；删除唯一出口是 Rust `trash_file` 命令（系统回收站），全代码库无不可恢复删除调用
+
+### 云同步信任边界（v4.12）
+
+- **默认关闭**：不开启即零网络请求、零行为变化；开启后也只访问你配置的单桶单前缀，无任何遥测
+- **你的桶、你的密钥**：连接信息与 AccessKey/SecretKey 明文保存在本机 `mditor.json`（与 AI API Key 同惯例），建议使用仅限该桶的最小权限子账号与私有桶；对象存储提供方可以看到同步内容——端到端加密不在 v1 范围
+- **渲染层不直连**：所有 S3 请求经 Rust 侧代理（CSP 的 `connect-src` 不变）；键名双向校验（Rust 命令入口 + 前端写盘前）拒绝 `..` 穿越，下载内容只落盘到工作区内目标路径或应用内回收站
+- **删除可恢复性不对称**：本地删除进应用内回收站（`<app-data>/sync/trash/`），远端删除不可恢复——建议为同步桶开启版本控制
 
 ## 项目结构
 
