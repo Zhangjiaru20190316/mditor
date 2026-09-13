@@ -4,6 +4,10 @@
 
 ![platform](https://img.shields.io/badge/platform-Windows-blue) ![license](https://img.shields.io/badge/license-MIT-green) ![downloads](https://img.shields.io/github/downloads/Zhangjiaru20190316/mditor/total?label=downloads&color=success)
 
+<p align="center">
+  <img src="docs/assets/mditor-promo.svg" alt="Mditor — 本地优先 · 所见即所得的 Markdown 编辑器" width="720"/>
+</p>
+
 > 🌐 官网与下载：<https://Zhangjiaru20190316.github.io/mditor/>（GitHub Pages）
 
 ## 功能特性

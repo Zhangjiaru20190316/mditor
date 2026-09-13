@@ -1,0 +1,692 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <style>
+      /* Mditor 宣传动画 —— 由 build_promo_svg.py 生成，主循环 30s，勿手改百分比 */
+      .m-logo-pop { opacity:0; animation: m-logo-pop 30s cubic-bezier(.2,1.4,.4,1) infinite both; transform-box: fill-box; transform-origin: center; }
+      .m-logo-draw { stroke-dasharray:320; stroke-dashoffset:320;; animation: m-logo-draw 30s ease-in-out infinite both; transform-box: fill-box; }
+      .m-hero-txt { opacity:0; animation: m-hero-txt 30s ease infinite both; transform-box: fill-box; }
+      .m-hero { opacity:1; animation: m-hero 30s ease infinite both; transform-box: fill-box; }
+      .m-win { opacity:0; animation: m-win 30s ease infinite both; transform-box: fill-box; transform-origin: center; }
+      .m-s2 { opacity:0; animation: m-s2 30s ease infinite both; transform-box: fill-box; }
+      .m-s3 { opacity:0; animation: m-s3 30s ease infinite both; transform-box: fill-box; }
+      .m-s4 { opacity:0; animation: m-s4 30s ease infinite both; transform-box: fill-box; }
+      .m-s5 { opacity:0; animation: m-s5 30s ease infinite both; transform-box: fill-box; }
+      .m-src { opacity:1; animation: m-src 30s ease infinite both; transform-box: fill-box; }
+      .m-render { opacity:0; animation: m-render 30s ease infinite both; transform-box: fill-box; transform-origin: left center; }
+      .m-check { stroke-dasharray:40; stroke-dashoffset:40;; animation: m-check 30s ease infinite both; transform-box: fill-box; }
+      .m-fsrc { opacity:1; animation: m-fsrc 30s ease infinite both; transform-box: fill-box; }
+      .m-frender { opacity:0; animation: m-frender 30s ease infinite both; transform-box: fill-box; }
+      .m-bsrc { opacity:1; animation: m-bsrc 30s ease infinite both; transform-box: fill-box; }
+      .m-bdrop { opacity:0; animation: m-bdrop 30s ease infinite both; transform-box: fill-box; transform-origin: top left; }
+      .m-bfinal { opacity:0; animation: m-bfinal 30s ease infinite both; transform-box: fill-box; }
+      .m-bpanel { opacity:0; animation: m-bpanel 30s ease infinite both; transform-box: fill-box; }
+      .m-sel { opacity:0; animation: m-sel 30s ease infinite both; transform-box: fill-box; }
+      .m-aipanel { opacity:0; animation: m-aipanel 30s ease infinite both; transform-box: fill-box; }
+      .m-aiprompt { opacity:0; animation: m-aiprompt 30s ease infinite both; transform-box: fill-box; }
+      .m-aidone { opacity:0; animation: m-aidone 30s ease infinite both; transform-box: fill-box; }
+      .m-s6 { opacity:0; animation: m-s6 30s ease infinite both; transform-box: fill-box; }
+      .m-wleft { opacity:0; animation: m-wleft 30s ease infinite both; transform-box: fill-box; transform-origin: center; }
+      .m-wright { opacity:0; animation: m-wright 30s ease infinite both; transform-box: fill-box; transform-origin: center; }
+      .m-whint { opacity:0; animation: m-whint 30s ease infinite both; transform-box: fill-box; }
+      .m-end { opacity:0; animation: m-end 30s ease infinite both; transform-box: fill-box; transform-origin: center; }
+      .m-endlogo { opacity:0; animation: m-endlogo 30s ease infinite both; transform-box: fill-box; transform-origin: center; }
+      .m-endtitle { opacity:0; animation: m-endtitle 30s ease infinite both; transform-box: fill-box; }
+      .m-endtag { opacity:0; animation: m-endtag 30s ease infinite both; transform-box: fill-box; }
+      .m-endurl { opacity:0; animation: m-endurl 30s ease infinite both; transform-box: fill-box; }
+      .m-endchips { opacity:0; animation: m-endchips 30s ease infinite both; transform-box: fill-box; }
+      .m-sweep { opacity:0; animation: m-sweep 30s ease infinite both; transform-box: fill-box; }
+      .m-caret { opacity:1; animation: m-caret 1s steps(1,end) infinite both; transform-box: fill-box; }
+      .m-glow { opacity:.35; animation: m-glow 7.5s ease-in-out infinite both; transform-box: fill-box; }
+      .m-shine { opacity:1; animation: m-shine 3.75s linear infinite both; transform-box: fill-box; }
+      .m-char { opacity:0; animation: m-char 30s steps(1,end) infinite both; transform-box: fill-box; }
+      .m-pill2 { opacity:0; animation: m-pill2 30s ease infinite both; transform-box: fill-box; }
+      .m-pill3 { opacity:0; animation: m-pill3 30s ease infinite both; transform-box: fill-box; }
+      .m-pill4 { opacity:0; animation: m-pill4 30s ease infinite both; transform-box: fill-box; }
+      .m-pill5 { opacity:0; animation: m-pill5 30s ease infinite both; transform-box: fill-box; }
+      .m-cs2 { opacity:1; animation: m-cs2 30s steps(1,end) infinite both; transform-box: fill-box; }
+      .m-cs3 { opacity:1; animation: m-cs3 30s steps(1,end) infinite both; transform-box: fill-box; }
+      .m-cs4 { opacity:1; animation: m-cs4 30s steps(1,end) infinite both; transform-box: fill-box; }
+      .m-cs5 { opacity:1; animation: m-cs5 30s steps(1,end) infinite both; transform-box: fill-box; }
+      .m-doc1 { opacity:0; animation: m-doc1 30s ease infinite both; transform-box: fill-box; }
+      .m-doc2 { opacity:0; animation: m-doc2 30s ease infinite both; transform-box: fill-box; }
+      @keyframes m-logo-pop {
+        0.0% { opacity:0; transform:scale(.3); }
+        3.0% { opacity:1; transform:scale(1); }
+        3.833% { transform:scale(1.06); }
+        4.833% { transform:scale(1); }
+        100.0% { opacity:1; transform:scale(1); }
+      }
+      @keyframes m-logo-draw {
+        1.0% { stroke-dashoffset:320; }
+        6.0% { stroke-dashoffset:0; }
+        100.0% { stroke-dashoffset:0; }
+      }
+      @keyframes m-hero-txt {
+        0.0% { opacity:0; transform:translateY(18px); }
+        0.833% { opacity:0; transform:translateY(18px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        3.333% { opacity:1; transform:translateY(0); }
+        100.0% { opacity:1; transform:translateY(0); }
+      }
+      @keyframes m-hero {
+        0.0% { opacity:1; }
+        10.5% { opacity:1; transform:translateY(0); animation-timing-function: cubic-bezier(.55,0,.8,.4); }
+        12.667% { opacity:0; transform:translateY(-22px) scale(.99); }
+        100.0% { opacity:0; transform:translateY(-22px) scale(.99); }
+      }
+      @keyframes m-win {
+        0.0% { opacity:0; transform:translateY(26px) scale(.97); }
+        10.167% { opacity:0; transform:translateY(26px) scale(.97); animation-timing-function: cubic-bezier(.2,1,.3,1); }
+        13.167% { opacity:1; transform:translateY(0) scale(1); animation-timing-function: cubic-bezier(.55,0,.8,.4); }
+        77.833% { opacity:1; transform:translateY(0) scale(1); animation-timing-function: cubic-bezier(.6,.05,.8,.4); }
+        79.167% { opacity:0; transform:translateY(-10px) scale(.985); }
+        100.0% { opacity:0; transform:translateY(-10px) scale(.985); }
+      }
+      @keyframes m-s2 {
+        0.0% { opacity:0; transform:translate(26px,6px); }
+        12.667% { opacity:0; transform:translate(26px,6px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        14.0% { opacity:1; transform:translate(0,0); animation-timing-function: cubic-bezier(.55,0,.8,.4); }
+        31.167% { opacity:1; transform:translate(0,0); animation-timing-function: cubic-bezier(.6,.05,.8,.4); }
+        32.333% { opacity:0; transform:translate(-26px,-6px); }
+        100.0% { opacity:0; transform:translate(-26px,-6px); }
+      }
+      @keyframes m-s3 {
+        0.0% { opacity:0; transform:translate(26px,6px); }
+        31.167% { opacity:0; transform:translate(26px,6px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        32.5% { opacity:1; transform:translate(0,0); animation-timing-function: cubic-bezier(.55,0,.8,.4); }
+        44.167% { opacity:1; transform:translate(0,0); animation-timing-function: cubic-bezier(.6,.05,.8,.4); }
+        45.333% { opacity:0; transform:translate(-26px,-6px); }
+        100.0% { opacity:0; transform:translate(-26px,-6px); }
+      }
+      @keyframes m-s4 {
+        0.0% { opacity:0; transform:translate(26px,6px); }
+        44.167% { opacity:0; transform:translate(26px,6px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        45.5% { opacity:1; transform:translate(0,0); animation-timing-function: cubic-bezier(.55,0,.8,.4); }
+        60.5% { opacity:1; transform:translate(0,0); animation-timing-function: cubic-bezier(.6,.05,.8,.4); }
+        61.667% { opacity:0; transform:translate(-26px,-6px); }
+        100.0% { opacity:0; transform:translate(-26px,-6px); }
+      }
+      @keyframes m-s5 {
+        0.0% { opacity:0; transform:translate(26px,6px); }
+        60.5% { opacity:0; transform:translate(26px,6px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        61.833% { opacity:1; transform:translate(0,0); animation-timing-function: cubic-bezier(.55,0,.8,.4); }
+        77.167% { opacity:1; transform:translate(0,0); animation-timing-function: cubic-bezier(.6,.05,.8,.4); }
+        78.333% { opacity:0; transform:translate(-26px,-6px); }
+        100.0% { opacity:0; transform:translate(-26px,-6px); }
+      }
+      @keyframes m-src {
+        0.0% { opacity:1; }
+        24.833% { opacity:1; transform:translateX(0); animation-timing-function: cubic-bezier(.55,0,.8,.4); }
+        26.0% { opacity:0; transform:translateX(-16px); }
+        100.0% { opacity:0; transform:translateX(-16px); }
+      }
+      @keyframes m-render {
+        0.0% { opacity:0; transform:scale(.96); }
+        25.5% { opacity:0; transform:scale(.96); animation-timing-function: cubic-bezier(.2,1,.3,1); }
+        27.333% { opacity:1; transform:scale(1); }
+        100.0% { opacity:1; transform:scale(1); }
+      }
+      @keyframes m-check {
+        0.0% { stroke-dashoffset:40; }
+        26.667% { stroke-dashoffset:40; }
+        28.333% { stroke-dashoffset:0; }
+        100.0% { stroke-dashoffset:0; }
+      }
+      @keyframes m-fsrc {
+        0.0% { opacity:1; }
+        37.167% { opacity:1; transform:translateX(0); animation-timing-function: cubic-bezier(.55,0,.8,.4); }
+        38.167% { opacity:0; transform:translateX(-16px); }
+        100.0% { opacity:0; transform:translateX(-16px); }
+      }
+      @keyframes m-frender {
+        0.0% { opacity:0; transform:translateY(10px); }
+        37.833% { opacity:0; transform:translateY(10px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        39.833% { opacity:1; transform:translateY(0); }
+        100.0% { opacity:1; transform:translateY(0); }
+      }
+      @keyframes m-bsrc {
+        0.0% { opacity:1; }
+        53.5% { opacity:1; transform:translateX(0); animation-timing-function: cubic-bezier(.55,0,.8,.4); }
+        54.5% { opacity:0; transform:translateX(-16px); }
+        100.0% { opacity:0; transform:translateX(-16px); }
+      }
+      @keyframes m-bdrop {
+        0.0% { opacity:0; transform:scale(.92); }
+        50.667% { opacity:0; transform:scale(.92); animation-timing-function: cubic-bezier(.2,1.4,.4,1); }
+        51.833% { opacity:1; transform:scale(1); animation-timing-function: cubic-bezier(.55,0,.8,.4); }
+        53.5% { opacity:1; transform:scale(1); }
+        54.5% { opacity:0; }
+        100.0% { opacity:0; }
+      }
+      @keyframes m-bfinal {
+        0.0% { opacity:0; transform:translateX(10px); }
+        54.167% { opacity:0; transform:translateX(10px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        55.167% { opacity:1; transform:translateX(0); }
+        100.0% { opacity:1; transform:translateX(0); }
+      }
+      @keyframes m-bpanel {
+        0.0% { opacity:0; transform:translateX(24px); }
+        55.333% { opacity:0; transform:translateX(24px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        57.167% { opacity:1; transform:translateX(0); }
+        100.0% { opacity:1; transform:translateX(0); }
+      }
+      @keyframes m-sel {
+        0.0% { opacity:0; }
+        64.0% { opacity:0; }
+        65.0% { opacity:1; }
+        100.0% { opacity:1; }
+      }
+      @keyframes m-aipanel {
+        0.0% { opacity:0; transform:translateX(24px); }
+        65.333% { opacity:0; transform:translateX(24px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        67.167% { opacity:1; transform:translateX(0); }
+        100.0% { opacity:1; transform:translateX(0); }
+      }
+      @keyframes m-aiprompt {
+        0.0% { opacity:0; }
+        67.667% { opacity:0; }
+        68.667% { opacity:1; }
+        100.0% { opacity:1; }
+      }
+      @keyframes m-aidone {
+        0.0% { opacity:0; }
+        75.0% { opacity:0; }
+        76.0% { opacity:1; }
+        100.0% { opacity:1; }
+      }
+      @keyframes m-s6 {
+        0.0% { opacity:0; }
+        78.5% { opacity:0; }
+        79.333% { opacity:1; }
+        88.5% { opacity:1; }
+        90.0% { opacity:0; }
+        100.0% { opacity:0; }
+      }
+      @keyframes m-wleft {
+        0.0% { opacity:0; transform:translate(-46px,10px) scale(.97); }
+        78.667% { opacity:0; transform:translate(-46px,10px) scale(.97); animation-timing-function: cubic-bezier(.2,1,.3,1); }
+        80.667% { opacity:1; transform:translate(0,0) scale(1); animation-timing-function: cubic-bezier(.6,.05,.8,.4); }
+        88.667% { opacity:1; transform:translate(0,0) scale(1); animation-timing-function: cubic-bezier(.55,0,.85,.4); }
+        90.0% { opacity:0; transform:translate(-64px,-6px) scale(.98); }
+        100.0% { opacity:0; transform:translate(-64px,-6px) scale(.98); }
+      }
+      @keyframes m-wright {
+        0.0% { opacity:0; transform:translate(46px,10px) scale(.97); }
+        80.0% { opacity:0; transform:translate(46px,10px) scale(.97); animation-timing-function: cubic-bezier(.2,1,.3,1); }
+        82.0% { opacity:1; transform:translate(0,0) scale(1); animation-timing-function: cubic-bezier(.6,.05,.8,.4); }
+        88.667% { opacity:1; transform:translate(0,0) scale(1); animation-timing-function: cubic-bezier(.55,0,.85,.4); }
+        90.0% { opacity:0; transform:translate(64px,-6px) scale(.98); }
+        100.0% { opacity:0; transform:translate(64px,-6px) scale(.98); }
+      }
+      @keyframes m-whint {
+        0.0% { opacity:0; }
+        84.0% { opacity:0; }
+        85.333% { opacity:1; }
+        100.0% { opacity:1; }
+      }
+      @keyframes m-end {
+        0.0% { opacity:0; transform:scale(.965); }
+        89.667% { opacity:0; transform:scale(.965); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        92.167% { opacity:1; transform:scale(1); animation-timing-function: cubic-bezier(.55,0,.8,.4); }
+        97.833% { opacity:1; transform:scale(1); }
+        99.167% { opacity:0; }
+        100.0% { opacity:0; }
+      }
+      @keyframes m-endlogo {
+        0.0% { opacity:0; transform:scale(.6); }
+        90.167% { opacity:0; transform:scale(.6); animation-timing-function: cubic-bezier(.2,1.4,.4,1); }
+        92.5% { opacity:1; transform:scale(1); }
+        100.0% { opacity:1; transform:scale(1); }
+      }
+      @keyframes m-endtitle {
+        0.0% { opacity:0; transform:translateY(18px); }
+        91.0% { opacity:0; transform:translateY(18px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        93.0% { opacity:1; transform:translateY(0); }
+        100.0% { opacity:1; transform:translateY(0); }
+      }
+      @keyframes m-endtag {
+        0.0% { opacity:0; transform:translateY(18px); }
+        91.667% { opacity:0; transform:translateY(18px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        93.667% { opacity:1; transform:translateY(0); }
+        100.0% { opacity:1; transform:translateY(0); }
+      }
+      @keyframes m-endurl {
+        0.0% { opacity:0; transform:translateY(18px); }
+        92.333% { opacity:0; transform:translateY(18px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        94.333% { opacity:1; transform:translateY(0); }
+        100.0% { opacity:1; transform:translateY(0); }
+      }
+      @keyframes m-endchips {
+        0.0% { opacity:0; transform:translateY(18px); }
+        93.0% { opacity:0; transform:translateY(18px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        95.0% { opacity:1; transform:translateY(0); }
+        100.0% { opacity:1; transform:translateY(0); }
+      }
+      @keyframes m-sweep {
+        0.0% { opacity:0; transform:translateX(-820px); }
+        31.1% { opacity:0; transform:translateX(-820px); }
+        31.433% { opacity:.5; transform:translateX(-560px); animation-timing-function: linear; }
+        32.067% { opacity:.5; transform:translateX(0px); animation-timing-function: linear; }
+        32.833% { opacity:0; transform:translateX(820px); }
+        44.1% { opacity:0; transform:translateX(-820px); }
+        44.433% { opacity:.5; transform:translateX(-560px); animation-timing-function: linear; }
+        45.067% { opacity:.5; transform:translateX(0px); animation-timing-function: linear; }
+        45.833% { opacity:0; transform:translateX(820px); }
+        60.433% { opacity:0; transform:translateX(-820px); }
+        60.767% { opacity:.5; transform:translateX(-560px); animation-timing-function: linear; }
+        61.4% { opacity:.5; transform:translateX(0px); animation-timing-function: linear; }
+        62.167% { opacity:0; transform:translateX(820px); }
+        77.1% { opacity:0; transform:translateX(-820px); }
+        77.433% { opacity:.5; transform:translateX(-560px); animation-timing-function: linear; }
+        78.067% { opacity:.5; transform:translateX(0px); animation-timing-function: linear; }
+        78.833% { opacity:0; transform:translateX(820px); }
+        100.0% { opacity:0; transform:translateX(820px); }
+      }
+      @keyframes m-caret {
+        0.0% { opacity:1; }
+        1.667% { opacity:0; }
+        3.333% { opacity:1; }
+      }
+      @keyframes m-glow {
+        0.0% { opacity:.35; transform:scale(1); }
+        12.5% { opacity:.6; transform:scale(1.12); }
+        25.0% { opacity:.35; transform:scale(1); }
+      }
+      @keyframes m-shine {
+        0.0% { transform:translateX(-260px); }
+        100.0% { transform:translateX(260px); }
+      }
+      @keyframes m-char {
+        0.0% { opacity:0; }
+        0.113% { opacity:1; }
+        100.0% { opacity:1; }
+      }
+      @keyframes m-pill2 {
+        0.0% { opacity:0; transform:translateX(18px); }
+        14.5% { opacity:0; transform:translateX(18px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        16.0% { opacity:1; transform:translateX(0); animation-timing-function: cubic-bezier(.5,0,.8,.5); }
+        30.333% { opacity:1; transform:translateX(0); animation-timing-function: cubic-bezier(.5,0,.8,.5); }
+        31.333% { opacity:0; transform:translateX(-12px); }
+        100.0% { opacity:0; transform:translateX(-12px); }
+      }
+      @keyframes m-pill3 {
+        0.0% { opacity:0; transform:translateX(18px); }
+        33.0% { opacity:0; transform:translateX(18px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        34.5% { opacity:1; transform:translateX(0); animation-timing-function: cubic-bezier(.5,0,.8,.5); }
+        43.333% { opacity:1; transform:translateX(0); animation-timing-function: cubic-bezier(.5,0,.8,.5); }
+        44.333% { opacity:0; transform:translateX(-12px); }
+        100.0% { opacity:0; transform:translateX(-12px); }
+      }
+      @keyframes m-pill4 {
+        0.0% { opacity:0; transform:translateX(18px); }
+        46.0% { opacity:0; transform:translateX(18px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        47.5% { opacity:1; transform:translateX(0); animation-timing-function: cubic-bezier(.5,0,.8,.5); }
+        59.667% { opacity:1; transform:translateX(0); animation-timing-function: cubic-bezier(.5,0,.8,.5); }
+        60.667% { opacity:0; transform:translateX(-12px); }
+        100.0% { opacity:0; transform:translateX(-12px); }
+      }
+      @keyframes m-pill5 {
+        0.0% { opacity:0; transform:translateX(18px); }
+        62.333% { opacity:0; transform:translateX(18px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        63.833% { opacity:1; transform:translateX(0); animation-timing-function: cubic-bezier(.5,0,.8,.5); }
+        76.333% { opacity:1; transform:translateX(0); animation-timing-function: cubic-bezier(.5,0,.8,.5); }
+        77.333% { opacity:0; transform:translateX(-12px); }
+        100.0% { opacity:0; transform:translateX(-12px); }
+      }
+      @keyframes m-cs2 {
+        14.0% { transform:translate(0.0px,0.0px); }
+        14.0% { transform:translate(12.6px,0.0px); }
+        14.276% { transform:translate(25.2px,0.0px); }
+        14.507% { transform:translate(46.2px,0.0px); }
+        14.828% { transform:translate(67.2px,0.0px); }
+        15.145% { transform:translate(88.2px,0.0px); }
+        15.408% { transform:translate(100.8px,0.0px); }
+        15.693% { transform:translate(113.4px,0.0px); }
+        15.927% { transform:translate(126.0px,0.0px); }
+        16.161% { transform:translate(138.6px,0.0px); }
+        16.402% { transform:translate(151.2px,0.0px); }
+        16.692% { transform:translate(163.8px,0.0px); }
+        17.667% { transform:translate(0.0px,56.0px); }
+        17.667% { transform:translate(12.6px,56.0px); }
+        17.903% { transform:translate(25.2px,56.0px); }
+        18.09% { transform:translate(46.2px,56.0px); }
+        18.268% { transform:translate(67.2px,56.0px); }
+        18.472% { transform:translate(88.2px,56.0px); }
+        18.714% { transform:translate(109.2px,56.0px); }
+        18.912% { transform:translate(121.8px,56.0px); }
+        19.165% { transform:translate(134.4px,56.0px); }
+        19.392% { transform:translate(155.4px,56.0px); }
+        19.61% { transform:translate(176.4px,56.0px); }
+        19.837% { transform:translate(197.4px,56.0px); }
+        20.06% { transform:translate(218.4px,56.0px); }
+        20.278% { transform:translate(239.4px,56.0px); }
+        20.525% { transform:translate(260.4px,56.0px); }
+        20.759% { transform:translate(281.4px,56.0px); }
+        20.977% { transform:translate(302.4px,56.0px); }
+        21.667% { transform:translate(0.0px,112.0px); }
+        21.667% { transform:translate(12.6px,112.0px); }
+        21.864% { transform:translate(25.2px,112.0px); }
+        22.057% { transform:translate(37.8px,112.0px); }
+        22.247% { transform:translate(50.4px,112.0px); }
+        22.429% { transform:translate(63.0px,112.0px); }
+        22.639% { transform:translate(75.6px,112.0px); }
+        22.791% { transform:translate(96.6px,112.0px); }
+        22.957% { transform:translate(117.6px,112.0px); }
+        23.148% { transform:translate(138.6px,112.0px); }
+        23.303% { transform:translate(159.6px,112.0px); }
+        23.498% { transform:translate(180.6px,112.0px); }
+        23.67% { transform:translate(201.6px,112.0px); }
+        100.0% { transform:translate(201.6px,112.0px); }
+      }
+      @keyframes m-cs3 {
+        32.833% { transform:translate(0.0px,0.0px); }
+        32.833% { transform:translate(21.0px,0.0px); }
+        33.112% { transform:translate(42.0px,0.0px); }
+        33.378% { transform:translate(63.0px,0.0px); }
+        33.618% { transform:translate(84.0px,0.0px); }
+        33.835% { transform:translate(96.6px,0.0px); }
+        34.105% { transform:translate(109.2px,0.0px); }
+        34.406% { transform:translate(121.8px,0.0px); }
+        34.648% { transform:translate(134.4px,0.0px); }
+        34.937% { transform:translate(147.0px,0.0px); }
+        35.136% { transform:translate(159.6px,0.0px); }
+        35.389% { transform:translate(172.2px,0.0px); }
+        35.606% { transform:translate(184.8px,0.0px); }
+        35.855% { transform:translate(197.4px,0.0px); }
+        100.0% { transform:translate(197.4px,0.0px); }
+      }
+      @keyframes m-cs4 {
+        45.833% { transform:translate(0.0px,0.0px); }
+        45.833% { transform:translate(21.0px,0.0px); }
+        46.058% { transform:translate(42.0px,0.0px); }
+        46.4% { transform:translate(63.0px,0.0px); }
+        46.645% { transform:translate(84.0px,0.0px); }
+        46.99% { transform:translate(105.0px,0.0px); }
+        47.329% { transform:translate(126.0px,0.0px); }
+        47.583% { transform:translate(138.6px,0.0px); }
+        47.868% { transform:translate(151.2px,0.0px); }
+        48.139% { transform:translate(163.8px,0.0px); }
+        48.411% { transform:translate(184.8px,0.0px); }
+        48.73% { transform:translate(205.8px,0.0px); }
+        100.0% { transform:translate(205.8px,0.0px); }
+      }
+      @keyframes m-cs5 {
+        69.0% { transform:translate(0.0px,0.0px); }
+        69.0% { transform:translate(14.0px,0.0px); }
+        69.115% { transform:translate(22.4px,0.0px); }
+        69.249% { transform:translate(36.4px,0.0px); }
+        69.358% { transform:translate(50.4px,0.0px); }
+        69.473% { transform:translate(64.4px,0.0px); }
+        69.619% { transform:translate(78.4px,0.0px); }
+        69.749% { transform:translate(86.8px,0.0px); }
+        69.882% { transform:translate(100.8px,0.0px); }
+        69.998% { transform:translate(114.8px,0.0px); }
+        70.161% { transform:translate(128.8px,0.0px); }
+        70.312% { transform:translate(142.8px,0.0px); }
+        70.45% { transform:translate(156.8px,0.0px); }
+        70.592% { transform:translate(170.8px,0.0px); }
+        70.713% { transform:translate(184.8px,0.0px); }
+        71.0% { transform:translate(0.0px,28.0px); }
+        71.0% { transform:translate(14.0px,28.0px); }
+        71.15% { transform:translate(28.0px,28.0px); }
+        71.296% { transform:translate(42.0px,28.0px); }
+        71.459% { transform:translate(56.0px,28.0px); }
+        71.599% { transform:translate(70.0px,28.0px); }
+        71.738% { transform:translate(84.0px,28.0px); }
+        71.867% { transform:translate(98.0px,28.0px); }
+        72.029% { transform:translate(112.0px,28.0px); }
+        72.166% { transform:translate(126.0px,28.0px); }
+        72.312% { transform:translate(140.0px,28.0px); }
+        72.444% { transform:translate(154.0px,28.0px); }
+        72.561% { transform:translate(168.0px,28.0px); }
+        72.728% { transform:translate(182.0px,28.0px); }
+        73.0% { transform:translate(0.0px,56.0px); }
+        73.0% { transform:translate(14.0px,56.0px); }
+        73.122% { transform:translate(28.0px,56.0px); }
+        73.267% { transform:translate(42.0px,56.0px); }
+        73.429% { transform:translate(56.0px,56.0px); }
+        73.584% { transform:translate(70.0px,56.0px); }
+        73.711% { transform:translate(84.0px,56.0px); }
+        73.856% { transform:translate(98.0px,56.0px); }
+        73.969% { transform:translate(112.0px,56.0px); }
+        74.078% { transform:translate(126.0px,56.0px); }
+        74.211% { transform:translate(140.0px,56.0px); }
+        74.334% { transform:translate(154.0px,56.0px); }
+        74.447% { transform:translate(168.0px,56.0px); }
+        100.0% { transform:translate(168.0px,56.0px); }
+      }
+      @keyframes m-doc1 {
+        0.0% { opacity:0; transform:translateY(8px); }
+        61.0% { opacity:0; transform:translateY(8px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        62.4% { opacity:1; transform:translateY(0); }
+        100.0% { opacity:1; transform:translateY(0); }
+      }
+      @keyframes m-doc2 {
+        0.0% { opacity:0; transform:translateY(8px); }
+        61.5% { opacity:0; transform:translateY(8px); animation-timing-function: cubic-bezier(.22,.9,.3,1); }
+        62.9% { opacity:1; transform:translateY(0); }
+        100.0% { opacity:1; transform:translateY(0); }
+      }
+    </style>
+
+    <linearGradient id="mBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#16223f"/>
+    </linearGradient>
+    <linearGradient id="mBrand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#4da3ff"/>
+    </linearGradient>
+    <linearGradient id="mShine" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset=".5" stop-color="#ffffff" stop-opacity=".14"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="mSweep" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8b5cf6" stop-opacity="0"/>
+      <stop offset=".38" stop-color="#8b5cf6" stop-opacity=".20"/>
+      <stop offset=".62" stop-color="#4da3ff" stop-opacity=".14"/>
+      <stop offset="1" stop-color="#4da3ff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="mHalo" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#8b5cf6" stop-opacity=".45"/>
+      <stop offset="1" stop-color="#8b5cf6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ================= 背景 ================= -->
+  <rect width="1280" height="720" fill="url(#mBg)"/>
+  <g fill="#4da3ff" opacity=".12">
+    <circle cx="80" cy="90" r="2"/><circle cx="200" cy="40" r="1.6"/><circle cx="340" cy="130" r="2"/>
+    <circle cx="520" cy="70" r="1.6"/><circle cx="700" cy="110" r="2"/><circle cx="900" cy="50" r="1.6"/>
+    <circle cx="1080" cy="120" r="2"/><circle cx="1200" cy="60" r="1.6"/><circle cx="120" cy="620" r="2"/>
+    <circle cx="300" cy="670" r="1.6"/><circle cx="980" cy="650" r="2"/><circle cx="1160" cy="680" r="1.6"/>
+  </g>
+  <ellipse class="m-glow" cx="640" cy="330" rx="520" ry="300" fill="url(#mHalo)"/>
+
+  <!-- ================= S1 开场 ================= -->
+  <g class="m-hero">
+    <g class="m-logo-pop">
+      <rect x="120" y="258" width="96" height="96" rx="22" fill="url(#mBrand)"/>
+      <g clip-path="url(#mLogoClip)"><rect class="m-shine" x="40" y="258" width="70" height="96" fill="url(#mShine)"/></g>
+    </g>
+    <clipPath id="mLogoClip"><rect x="120" y="258" width="96" height="96" rx="22"/></clipPath>
+    <path class="m-logo-draw" d="M144 330 V262 L168 286 L192 262 V330" fill="none" stroke="#ffffff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <g class="m-hero-txt">
+      <text x="238" y="322" font-size="72" font-weight="700" fill="#ffffff">Mditor</text>
+      <text x="122" y="392" font-size="26" fill="#8fa3c8">本地优先 · 所见即所得的 Markdown 编辑器</text>
+      <text x="122" y="428" font-size="17" fill="#5f7194">无云端 · 无遥测 · 文件始终留在你的电脑上</text>
+    </g>
+  </g>
+
+  <!-- ================= 场景编号胶囊 ================= -->
+  <g class="m-pill2"><rect x="910" y="136" width="130" height="28" rx="14" fill="#1e2c4f" stroke="#8b5cf6" stroke-opacity=".55"/><text x="1027" y="155" font-size="13" fill="#c4b5fd" text-anchor="end">01 · 所见即所得</text></g><g class="m-pill3"><rect x="923" y="136" width="117" height="28" rx="14" fill="#1e2c4f" stroke="#4da3ff" stroke-opacity=".55"/><text x="1027" y="155" font-size="13" fill="#93c5fd" text-anchor="end">02 · 数学公式</text></g><g class="m-pill4"><rect x="923" y="136" width="117" height="28" rx="14" fill="#1e2c4f" stroke="#8b5cf6" stroke-opacity=".55"/><text x="1027" y="155" font-size="13" fill="#c4b5fd" text-anchor="end">03 · 双向链接</text></g><g class="m-pill5"><rect x="926" y="136" width="114" height="28" rx="14" fill="#1e2c4f" stroke="#4da3ff" stroke-opacity=".55"/><text x="1027" y="155" font-size="13" fill="#93c5fd" text-anchor="end">04 · AI 助手</text></g>
+
+  <!-- ================= 编辑器窗口 chrome（S2–S5 常驻） ================= -->
+  <g class="m-win">
+    <rect x="240" y="180" width="800" height="480" rx="16" fill="#f8fafc"/>
+    <rect x="240" y="180" width="800" height="480" rx="16" fill="none" stroke="#8b5cf6" stroke-opacity=".35" stroke-width="1.5"/>
+    <rect x="240" y="180" width="800" height="46" rx="16" fill="#eef2f7"/>
+    <rect x="240" y="210" width="800" height="16" fill="#eef2f7"/>
+    <circle cx="272" cy="203" r="7" fill="#f87171"/><circle cx="296" cy="203" r="7" fill="#fbbf24"/><circle cx="320" cy="203" r="7" fill="#34d399"/>
+    <rect x="530" y="194" width="220" height="18" rx="9" fill="#ffffff"/>
+    <text x="640" y="208" font-size="12" fill="#64748b" text-anchor="middle">笔记.md — Mditor</text>
+    <g font-size="12" fill="#64748b">
+      <rect x="290" y="580" width="86" height="26" rx="13" fill="#eef2f7"/>
+      <text x="333" y="598" text-anchor="middle">所见即所得</text>
+      <rect x="388" y="580" width="52" height="26" rx="13" fill="#ede9fe"/>
+      <text x="414" y="598" text-anchor="middle" fill="#7c3aed">GFM</text>
+      <rect x="452" y="580" width="70" height="26" rx="13" fill="#dbeafe"/>
+      <text x="487" y="598" text-anchor="middle" fill="#2563eb">KaTeX</text>
+    </g>
+    <clipPath id="mWinClip"><rect x="240" y="226" width="800" height="354" rx="10"/></clipPath>
+  </g>
+
+  <!-- ================= S2 打字 → 渲染 ================= -->
+  <g class="m-s2">
+    <g class="m-src">
+      <text x="290" y="266" font-size="21" font-family="Consolas,'Microsoft YaHei',monospace" ><tspan x="290.0" class="m-char" style="animation-delay:4.200s" fill="#8b5cf6" font-weight="600">#</tspan><tspan x="315.2" class="m-char" style="animation-delay:4.352s" fill="#334155">你</tspan><tspan x="336.2" class="m-char" style="animation-delay:4.448s" fill="#334155">好</tspan><tspan x="357.2" class="m-char" style="animation-delay:4.543s" fill="#334155">，</tspan><tspan x="378.2" class="m-char" style="animation-delay:4.622s" fill="#334155">M</tspan><tspan x="390.8" class="m-char" style="animation-delay:4.708s" fill="#334155">d</tspan><tspan x="403.4" class="m-char" style="animation-delay:4.778s" fill="#334155">i</tspan><tspan x="416.0" class="m-char" style="animation-delay:4.848s" fill="#334155">t</tspan><tspan x="428.6" class="m-char" style="animation-delay:4.921s" fill="#334155">o</tspan><tspan x="441.2" class="m-char" style="animation-delay:5.007s" fill="#334155">r</tspan></text><text x="290" y="322" font-size="21" font-family="Consolas,'Microsoft YaHei',monospace" ><tspan x="290.0" class="m-char" style="animation-delay:5.300s" fill="#8b5cf6" font-weight="600">*</tspan><tspan x="302.6" class="m-char" style="animation-delay:5.371s" fill="#8b5cf6" font-weight="600">*</tspan><tspan x="315.2" class="m-char" style="animation-delay:5.427s" fill="#8b5cf6" font-weight="600">本</tspan><tspan x="336.2" class="m-char" style="animation-delay:5.480s" fill="#8b5cf6" font-weight="600">地</tspan><tspan x="357.2" class="m-char" style="animation-delay:5.542s" fill="#8b5cf6" font-weight="600">优</tspan><tspan x="378.2" class="m-char" style="animation-delay:5.614s" fill="#8b5cf6" font-weight="600">先</tspan><tspan x="399.2" class="m-char" style="animation-delay:5.674s" fill="#8b5cf6" font-weight="600">*</tspan><tspan x="411.8" class="m-char" style="animation-delay:5.750s" fill="#8b5cf6" font-weight="600">*</tspan><tspan x="424.4" class="m-char" style="animation-delay:5.818s" fill="#334155">，</tspan><tspan x="445.4" class="m-char" style="animation-delay:5.883s" fill="#334155">数</tspan><tspan x="466.4" class="m-char" style="animation-delay:5.951s" fill="#334155">据</tspan><tspan x="487.4" class="m-char" style="animation-delay:6.018s" fill="#334155">在</tspan><tspan x="508.4" class="m-char" style="animation-delay:6.084s" fill="#334155">自</tspan><tspan x="529.4" class="m-char" style="animation-delay:6.157s" fill="#334155">己</tspan><tspan x="550.4" class="m-char" style="animation-delay:6.228s" fill="#334155">手</tspan><tspan x="571.4" class="m-char" style="animation-delay:6.293s" fill="#334155">里</tspan></text><text x="290" y="378" font-size="21" font-family="Consolas,'Microsoft YaHei',monospace" ><tspan x="290.0" class="m-char" style="animation-delay:6.500s" fill="#334155">-</tspan><tspan x="315.2" class="m-char" style="animation-delay:6.617s" fill="#334155">[</tspan><tspan x="327.8" class="m-char" style="animation-delay:6.674s" fill="#334155">x</tspan><tspan x="340.4" class="m-char" style="animation-delay:6.729s" fill="#334155">]</tspan><tspan x="365.6" class="m-char" style="animation-delay:6.837s" fill="#334155">写</tspan><tspan x="386.6" class="m-char" style="animation-delay:6.887s" fill="#334155">完</tspan><tspan x="407.6" class="m-char" style="animation-delay:6.944s" fill="#334155">发</tspan><tspan x="428.6" class="m-char" style="animation-delay:6.991s" fill="#334155">布</tspan><tspan x="449.6" class="m-char" style="animation-delay:7.049s" fill="#334155">文</tspan><tspan x="470.6" class="m-char" style="animation-delay:7.101s" fill="#334155">案</tspan></text>
+      <g class="m-caret"><rect class="m-cs2" x="290.0" y="248.8" width="2.6" height="24.0" rx="1.2" fill="#8b5cf6"/></g>
+    </g>
+    <g class="m-render" font-size="21">
+      <text x="290" y="272" font-size="30" font-weight="700" fill="#0f172a">你好，Mditor</text>
+      <rect x="290" y="284" width="212" height="4" rx="2" fill="url(#mBrand)"/>
+      <text x="290" y="330" fill="#334155"><tspan font-weight="700" fill="#8b5cf6">本地优先</tspan>，数据在自己手里</text>
+      <rect x="290" y="360" width="22" height="22" rx="6" fill="url(#mBrand)"/>
+      <path class="m-check" d="M295 371 l5 6 l11 -13" fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="324" y="378" fill="#334155">写完发布文案</text>
+      <rect class="m-caret" x="324" y="392" width="2.5" height="24" fill="#8b5cf6"/>
+    </g>
+  </g>
+
+  <!-- ================= S3 数学公式 ================= -->
+  <g class="m-s3">
+    <g class="m-fsrc">
+      <text x="290" y="266" font-size="21" font-family="Consolas,'Microsoft YaHei',monospace" ><tspan x="290.0" class="m-char" style="animation-delay:9.850s" fill="#334155">质</tspan><tspan x="311.0" class="m-char" style="animation-delay:9.934s" fill="#334155">能</tspan><tspan x="332.0" class="m-char" style="animation-delay:10.013s" fill="#334155">方</tspan><tspan x="353.0" class="m-char" style="animation-delay:10.085s" fill="#334155">程</tspan><tspan x="386.6" class="m-char" style="animation-delay:10.231s" fill="#8b5cf6">$</tspan><tspan x="399.2" class="m-char" style="animation-delay:10.322s" fill="#8b5cf6">E</tspan><tspan x="411.8" class="m-char" style="animation-delay:10.394s" fill="#8b5cf6">=</tspan><tspan x="424.4" class="m-char" style="animation-delay:10.481s" fill="#8b5cf6">m</tspan><tspan x="437.0" class="m-char" style="animation-delay:10.541s" fill="#8b5cf6">c</tspan><tspan x="449.6" class="m-char" style="animation-delay:10.617s" fill="#8b5cf6">^</tspan><tspan x="462.2" class="m-char" style="animation-delay:10.682s" fill="#8b5cf6">2</tspan><tspan x="474.8" class="m-char" style="animation-delay:10.757s" fill="#8b5cf6">$</tspan></text>
+      <g class="m-caret"><rect class="m-cs3" x="290.0" y="248.8" width="2.6" height="24.0" rx="1.2" fill="#8b5cf6"/></g>
+    </g>
+    <g class="m-frender">
+      <text x="290" y="272" font-size="22" fill="#334155">质能方程 <tspan font-family="Georgia,'Times New Roman',serif" font-style="italic" font-size="24" fill="#0f172a">E = mc</tspan><tspan font-family="Georgia,'Times New Roman',serif" font-style="italic" font-size="15" fill="#0f172a" dy="-9">2</tspan></text>
+      <text x="580" y="380" font-size="34" fill="#0f172a" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-style="italic">∫ x<tspan font-size="20" dy="-12">2</tspan><tspan font-size="34" dy="12"> dx = x</tspan><tspan font-size="20" dy="-12">3</tspan><tspan font-size="34" dy="12">/3 + C</tspan></text>
+      <rect x="452" y="410" width="256" height="3" rx="1.5" fill="url(#mBrand)" opacity=".55"/>
+    </g>
+  </g>
+
+  <!-- ================= S4 双链 + 反链 ================= -->
+  <g class="m-s4">
+    <g class="m-bsrc">
+      <text x="290" y="266" font-size="21" font-family="Consolas,'Microsoft YaHei',monospace" ><tspan x="290.0" class="m-char" style="animation-delay:13.750s" fill="#334155">参</tspan><tspan x="311.0" class="m-char" style="animation-delay:13.817s" fill="#334155">考</tspan><tspan x="332.0" class="m-char" style="animation-delay:13.920s" fill="#334155">文</tspan><tspan x="353.0" class="m-char" style="animation-delay:13.994s" fill="#334155">献</tspan><tspan x="374.0" class="m-char" style="animation-delay:14.097s" fill="#334155">梳</tspan><tspan x="395.0" class="m-char" style="animation-delay:14.199s" fill="#334155">理</tspan><tspan x="428.6" class="m-char" style="animation-delay:14.360s" fill="#8b5cf6">[</tspan><tspan x="441.2" class="m-char" style="animation-delay:14.442s" fill="#8b5cf6">[</tspan><tspan x="453.8" class="m-char" style="animation-delay:14.523s" fill="#8b5cf6">发</tspan><tspan x="474.8" class="m-char" style="animation-delay:14.619s" fill="#8b5cf6">布</tspan></text>
+      <g class="m-caret"><rect class="m-cs4" x="290.0" y="248.8" width="2.6" height="24.0" rx="1.2" fill="#8b5cf6"/></g>
+    </g>
+    <g class="m-bdrop">
+      <rect x="462" y="282" width="220" height="80" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+      <rect x="468" y="288" width="208" height="34" rx="7" fill="#ede9fe"/>
+      <text x="482" y="311" font-size="15" fill="#7c3aed">发布检查清单</text>
+      <text x="482" y="348" font-size="15" fill="#334155">发布周计划</text>
+    </g>
+    <g class="m-bfinal">
+      <text x="290" y="266" font-size="21" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" fill="#334155">参考文献梳理</text>
+      <rect x="422" y="244" width="164" height="30" rx="8" fill="#ede9fe"/>
+      <text x="434" y="266" font-size="18" font-family="Consolas,monospace" fill="#7c3aed">[[发布检查清单]]</text>
+      <rect class="m-caret" x="596" y="242" width="2.5" height="24" fill="#8b5cf6"/>
+    </g>
+    <g class="m-bpanel">
+      <rect x="800" y="248" width="222" height="286" rx="12" fill="#ffffff" stroke="#e5e7eb"/>
+      <text x="816" y="280" font-size="14" font-weight="700" fill="#334155">反向链接</text>
+      <rect x="884" y="264" width="26" height="20" rx="10" fill="#ede9fe"/>
+      <text x="897" y="279" font-size="12" fill="#7c3aed" text-anchor="middle">1</text>
+      <line x1="816" y1="294" x2="1006" y2="294" stroke="#eef2f7" stroke-width="2"/>
+      <rect x="812" y="308" width="198" height="96" rx="8" fill="#f8fafc" stroke="#eef2f7"/>
+      <text x="824" y="332" font-size="14" font-weight="600" fill="#8b5cf6">会议记录</text>
+      <text x="824" y="354" font-size="12" fill="#64748b">……详见 发布检查清单</text>
+      <text x="824" y="372" font-size="12" fill="#64748b">的第 3 节……</text>
+      <rect x="812" y="420" width="64" height="26" rx="13" fill="#eef2f7"/>
+      <text x="844" y="438" font-size="12" fill="#64748b" text-anchor="middle">#计划</text>
+      <rect x="886" y="420" width="64" height="26" rx="13" fill="#eef2f7"/>
+      <text x="918" y="438" font-size="12" fill="#64748b" text-anchor="middle">#周会</text>
+      <text x="816" y="506" font-size="11" fill="#94a3b8">全库双链 · 点击即达</text>
+    </g>
+  </g>
+
+  <!-- ================= S5 AI 助手流式 ================= -->
+  <g class="m-s5">
+    <text x="290" y="266" font-size="21" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" fill="#334155" class="m-doc1">本地优先意味着数据永远在你手里。</text>
+    <text x="290" y="322" font-size="21" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" fill="#334155" class="m-doc2">无论走到哪台电脑，笔记都原样跟着你。</text>
+    <rect class="m-sel" x="284" y="246" width="348" height="28" rx="4" fill="#8b5cf6" fill-opacity=".22"/>
+    <g class="m-aipanel">
+      <rect x="700" y="248" width="312" height="268" rx="12" fill="#ffffff" stroke="#e5e7eb"/>
+      <circle cx="726" cy="277" r="8" fill="url(#mBrand)"/>
+      <text x="742" y="283" font-size="14" font-weight="700" fill="#334155">AI 助手</text>
+      <rect x="918" y="264" width="80" height="22" rx="11" fill="#eef2f7"/>
+      <text x="958" y="279" font-size="11" fill="#64748b" text-anchor="middle">自定义模型</text>
+      <g class="m-aiprompt">
+        <rect x="716" y="300" width="152" height="28" rx="14" fill="#ede9fe"/>
+        <text x="792" y="319" font-size="13" fill="#7c3aed" text-anchor="middle">✨ 润色选中段落</text>
+      </g>
+      <line x1="716" y1="342" x2="996" y2="342" stroke="#eef2f7" stroke-width="2"/>
+      <text x="716" y="372" font-size="14" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" ><tspan x="716.0" class="m-char" style="animation-delay:20.700s" fill="#334155">把</tspan><tspan x="730.0" class="m-char" style="animation-delay:20.734s" fill="#334155">“</tspan><tspan x="738.4" class="m-char" style="animation-delay:20.775s" fill="#334155">本</tspan><tspan x="752.4" class="m-char" style="animation-delay:20.807s" fill="#334155">地</tspan><tspan x="766.4" class="m-char" style="animation-delay:20.842s" fill="#334155">优</tspan><tspan x="780.4" class="m-char" style="animation-delay:20.886s" fill="#334155">先</tspan><tspan x="794.4" class="m-char" style="animation-delay:20.925s" fill="#334155">”</tspan><tspan x="802.8" class="m-char" style="animation-delay:20.965s" fill="#334155">改</tspan><tspan x="816.8" class="m-char" style="animation-delay:20.999s" fill="#334155">为</tspan><tspan x="830.8" class="m-char" style="animation-delay:21.048s" fill="#334155">先</tspan><tspan x="844.8" class="m-char" style="animation-delay:21.093s" fill="#334155">声</tspan><tspan x="858.8" class="m-char" style="animation-delay:21.135s" fill="#334155">夺</tspan><tspan x="872.8" class="m-char" style="animation-delay:21.178s" fill="#334155">人</tspan><tspan x="886.8" class="m-char" style="animation-delay:21.214s" fill="#334155">：</tspan></text><text x="716" y="400" font-size="14" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" ><tspan x="716.0" class="m-char" style="animation-delay:21.300s" font-weight="600" fill="#334155">你</tspan><tspan x="730.0" class="m-char" style="animation-delay:21.345s" font-weight="600" fill="#334155">的</tspan><tspan x="744.0" class="m-char" style="animation-delay:21.389s" font-weight="600" fill="#334155">笔</tspan><tspan x="758.0" class="m-char" style="animation-delay:21.438s" font-weight="600" fill="#334155">记</tspan><tspan x="772.0" class="m-char" style="animation-delay:21.480s" font-weight="600" fill="#334155">，</tspan><tspan x="786.0" class="m-char" style="animation-delay:21.521s" font-weight="600" fill="#334155">只</tspan><tspan x="800.0" class="m-char" style="animation-delay:21.560s" font-weight="600" fill="#334155">属</tspan><tspan x="814.0" class="m-char" style="animation-delay:21.609s" font-weight="600" fill="#334155">于</tspan><tspan x="828.0" class="m-char" style="animation-delay:21.650s" font-weight="600" fill="#334155">你</tspan><tspan x="842.0" class="m-char" style="animation-delay:21.693s" font-weight="600" fill="#334155">的</tspan><tspan x="856.0" class="m-char" style="animation-delay:21.733s" font-weight="600" fill="#334155">电</tspan><tspan x="870.0" class="m-char" style="animation-delay:21.768s" font-weight="600" fill="#334155">脑</tspan><tspan x="884.0" class="m-char" style="animation-delay:21.818s" font-weight="600" fill="#334155">。</tspan></text><text x="716" y="428" font-size="14" font-family="'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" ><tspan x="716.0" class="m-char" style="animation-delay:21.900s" font-weight="600" fill="#334155">无</tspan><tspan x="730.0" class="m-char" style="animation-delay:21.937s" font-weight="600" fill="#334155">云</tspan><tspan x="744.0" class="m-char" style="animation-delay:21.980s" font-weight="600" fill="#334155">端</tspan><tspan x="758.0" class="m-char" style="animation-delay:22.029s" font-weight="600" fill="#334155">、</tspan><tspan x="772.0" class="m-char" style="animation-delay:22.075s" font-weight="600" fill="#334155">无</tspan><tspan x="786.0" class="m-char" style="animation-delay:22.113s" font-weight="600" fill="#334155">遥</tspan><tspan x="800.0" class="m-char" style="animation-delay:22.157s" font-weight="600" fill="#334155">测</tspan><tspan x="814.0" class="m-char" style="animation-delay:22.191s" font-weight="600" fill="#334155">、</tspan><tspan x="828.0" class="m-char" style="animation-delay:22.223s" font-weight="600" fill="#334155">零</tspan><tspan x="842.0" class="m-char" style="animation-delay:22.263s" font-weight="600" fill="#334155">妥</tspan><tspan x="856.0" class="m-char" style="animation-delay:22.300s" font-weight="600" fill="#334155">协</tspan><tspan x="870.0" class="m-char" style="animation-delay:22.334s" font-weight="600" fill="#334155">。</tspan></text>
+      <g class="m-caret"><rect class="m-cs5" x="716.0" y="360.5" width="2.6" height="16.0" rx="1.2" fill="#8b5cf6"/></g>
+      <g class="m-aidone">
+        <text x="716" y="478" font-size="13" fill="#34d399">✓ 改写完成</text>
+        <text x="800" y="478" font-size="13" fill="#94a3b8">插入 · 复制 · 重试</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- ================= 光带扫过（内容切换时，盖在内容层之上） ================= -->
+  <g clip-path="url(#mWinClip)"><rect class="m-sweep" x="240" y="226" width="800" height="354" fill="url(#mSweep)"/></g>
+
+  <!-- ================= S6 多窗口分屏 ================= -->
+  <g class="m-s6">
+    <g class="m-wleft">
+      <rect x="150" y="200" width="480" height="360" rx="14" fill="#f8fafc" stroke="#8b5cf6" stroke-opacity=".3"/>
+      <rect x="150" y="200" width="480" height="38" rx="14" fill="#eef2f7"/>
+      <rect x="150" y="224" width="480" height="14" fill="#eef2f7"/>
+      <circle cx="172" cy="219" r="5" fill="#f87171"/><circle cx="190" cy="219" r="5" fill="#fbbf24"/><circle cx="208" cy="219" r="5" fill="#34d399"/>
+      <text x="390" y="224" font-size="11" fill="#64748b" text-anchor="middle">笔记.md — Mditor</text>
+      <text x="180" y="282" font-size="20" font-weight="700" fill="#0f172a">本地优先</text>
+      <rect x="180" y="296" width="290" height="8" rx="4" fill="#e2e8f0"/>
+      <rect x="180" y="314" width="250" height="8" rx="4" fill="#e2e8f0"/>
+      <rect x="180" y="332" width="310" height="8" rx="4" fill="#e2e8f0"/>
+      <rect x="180" y="362" width="180" height="8" rx="4" fill="#ede9fe"/>
+    </g>
+    <g class="m-wright">
+      <rect x="650" y="200" width="480" height="360" rx="14" fill="#f8fafc" stroke="#4da3ff" stroke-opacity=".35"/>
+      <rect x="650" y="200" width="480" height="38" rx="14" fill="#eef2f7"/>
+      <rect x="650" y="224" width="480" height="14" fill="#eef2f7"/>
+      <circle cx="672" cy="219" r="5" fill="#f87171"/><circle cx="690" cy="219" r="5" fill="#fbbf24"/><circle cx="708" cy="219" r="5" fill="#34d399"/>
+      <text x="890" y="224" font-size="11" fill="#64748b" text-anchor="middle">周计划.md — Mditor</text>
+      <rect x="680" y="266" width="18" height="18" rx="5" fill="url(#mBrand)"/>
+      <path d="M684 275 l4 5 l9 -11" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="708" y="281" font-size="16" fill="#334155">发布 v4.8 多窗口</text>
+      <rect x="680" y="300" width="270" height="8" rx="4" fill="#e2e8f0"/>
+      <rect x="680" y="318" width="230" height="8" rx="4" fill="#e2e8f0"/>
+      <rect x="680" y="348" width="160" height="8" rx="4" fill="#dbeafe"/>
+    </g>
+    <g class="m-whint">
+      <rect x="452" y="596" width="376" height="36" rx="18" fill="#1e2c4f" stroke="#8b5cf6" stroke-opacity=".5"/>
+      <text x="640" y="620" font-size="14" fill="#e2e8f0" text-anchor="middle">Win + ← / → 分屏 · Alt + Tab 切换窗口</text>
+    </g>
+  </g>
+
+  <!-- ================= S7 结尾卡 ================= -->
+  <g class="m-end">
+    <rect width="1280" height="720" fill="url(#mBg)"/>
+    <ellipse class="m-glow" cx="640" cy="360" rx="520" ry="300" fill="url(#mHalo)"/>
+    <g class="m-endlogo">
+      <rect x="592" y="180" width="96" height="96" rx="22" fill="url(#mBrand)"/>
+      <path d="M616 252 V184 L640 208 L664 184 V252" fill="none" stroke="#ffffff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <text class="m-endtitle" x="640" y="356" font-size="56" font-weight="700" fill="#ffffff" text-anchor="middle">Mditor</text>
+    <text class="m-endtag" x="640" y="404" font-size="24" fill="#8fa3c8" text-anchor="middle">写作，回到本地</text>
+    <text class="m-endurl" x="640" y="464" font-size="19" fill="#4da3ff" text-anchor="middle">Zhangjiaru20190316.github.io/mditor</text>
+    <g class="m-endchips" font-size="15">
+      <rect x="470" y="500" width="102" height="34" rx="17" fill="#1e2c4f" stroke="#8b5cf6" stroke-opacity=".5"/>
+      <text x="521" y="522" text-anchor="middle" fill="#c4b5fd">开源 MIT</text>
+      <rect x="590" y="500" width="102" height="34" rx="17" fill="#1e2c4f" stroke="#4da3ff" stroke-opacity=".5"/>
+      <text x="641" y="522" text-anchor="middle" fill="#93c5fd">本地优先</text>
+      <rect x="710" y="500" width="102" height="34" rx="17" fill="#1e2c4f" stroke="#34d399" stroke-opacity=".5"/>
+      <text x="761" y="522" text-anchor="middle" fill="#6ee7b7">Windows</text>
+    </g>
+  </g>
+</svg>
+
