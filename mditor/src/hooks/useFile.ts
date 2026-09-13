@@ -18,6 +18,15 @@ import type { DocState } from "../types";
 
 export interface FileApi {
   doc: DocState;
+  /**
+   * Synchronous-fresh read of the current doc path (v4.12.3). `doc` is React
+   * state: within the same tick that openPath/showDoc assigns a new document,
+   * the memoised `doc` property is still the PREVIOUS commit — but the editor
+   * load (onLoaded → setValue → ProseMirror node views) runs synchronously
+   * inside that same tick and resolves relative image refs against docPath at
+   * node-view creation time. Reading it via this ref-backed getter is what
+   * makes those resolutions see the NEW path. */
+  docPathSync: () => string | null;
   // NOTE: `onLoaded` is intentionally NOT exposed here. It is a pure internal
   // callback slot (written via setOnLoaded, read via onLoadedRef by open /
   // openPath). Exposing it — and putting it in the useMemo dep array below —
@@ -96,13 +105,17 @@ export function useFile(): FileApi {
   );
 
   const newDoc = useCallback((tabKey?: string | null) => {
-    setDoc({ path: null, content: "", dirty: false });
+    const next = { path: null, content: "", dirty: false };
+    docRef.current = next; // 同步可读（见 docPathSync 注释）
+    setDoc(next);
     onLoadedRef.current?.("", tabKey ?? null);
   }, []);
 
   const openPath = useCallback(
     async (path: string, content: string, tabKey?: string | null) => {
-      setDoc({ path, content, dirty: false });
+      const next = { path, content, dirty: false };
+      docRef.current = next; // 同步可读（见 docPathSync 注释）——编辑器载入在同一 tick 内读 docPath
+      setDoc(next);
       // CRITICAL ORDERING: push the content into the editor BEFORE awaiting the
       // recent-list IPC chain. pushRecent does loadRecent + set + save (three
       // serialized IPC roundtrips); running it first used to delay the visible
@@ -127,7 +140,9 @@ export function useFile(): FileApi {
   }, [openPath]);
 
   const showDoc = useCallback((d: DocState, tabKey?: string | null) => {
-    setDoc({ path: d.path, content: d.content, dirty: d.dirty });
+    const next = { path: d.path, content: d.content, dirty: d.dirty };
+    docRef.current = next; // 同步可读（见 docPathSync 注释）
+    setDoc(next);
     onLoadedRef.current?.(d.content, tabKey ?? null);
   }, []);
 
@@ -150,7 +165,9 @@ export function useFile(): FileApi {
       // 对话框期间到达的编辑不在本次落盘内容里：保持 dirty，让自动保存/
       // Ctrl+S 把它们写入新路径，而不是被误标为已保存。
       const live = getContent();
-      setDoc((prev) => ({ ...prev, path, content: live, dirty: live !== content }));
+      const next = { ...docRef.current, path, content: live, dirty: live !== content };
+      docRef.current = next; // 同步可读（见 docPathSync 注释）
+      setDoc(next);
       await pushRecent({
         path,
         name: baseName(path),
@@ -230,7 +247,11 @@ export function useFile(): FileApi {
   }, []);
 
   const updatePath = useCallback((oldPath: string, newPath: string) => {
-    setDoc((d) => (d.path === oldPath ? { ...d, path: newPath } : d));
+    const d = docRef.current;
+    if (d.path !== oldPath) return;
+    const next = { ...d, path: newPath };
+    docRef.current = next; // 同步可读（见 docPathSync 注释）
+    setDoc(next);
   }, []);
 
   // Stable object: only changes identity when `doc` changes. setOnLoaded is a
@@ -241,6 +262,7 @@ export function useFile(): FileApi {
   return useMemo(
     () => ({
       doc,
+      docPathSync: () => docRef.current.path,
       setOnLoaded,
       newDoc,
       open,

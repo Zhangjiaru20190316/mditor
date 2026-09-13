@@ -270,7 +270,10 @@ export const Editor = memo(
     hostRef,
     sourceRef,
     svHostRef,
-    docPath: () => fileApi.doc.path,
+    // v4.12.3：doc 是 React state——openPath 同步触发 onLoaded→setValue→节点视图
+    // 创建时，提交尚未发生，.doc 还是上一篇文档。图片 src 在节点视图创建时按
+    // docPath 解析，必须读 ref 同步值，否则相对引用按旧目录拼接 → 裂图。
+    docPath: () => fileApi.docPathSync(),
     onInput: (md) => {
       fileApi.markDirty();
       // keep our content mirror in sync for save-without-editor-ready races
