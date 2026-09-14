@@ -14,6 +14,7 @@
 import type {
   ConfirmDialogOptions,
   FileFilter,
+  FsWatchEvent,
   MessageDialogOptions,
   PlatformAdapter,
   PlatformApp,
@@ -84,7 +85,26 @@ const harmonyFs: PlatformFs = {
   rename: (oldPath, newPath) => bridge.request("fs.rename", { oldPath, newPath }),
   remove: (path, options) =>
     bridge.request("fs.remove", { path, recursive: options?.recursive ?? false }),
-  // watch 无实现：capabilities.watch = false，useFileWatcher / vaultIndex 软降级。
+  // watch（v4.13 P4）：ArkTS stat 轮询（WatchManager.ets），事件
+  // fs-watch-event 按 watchId 过滤后逐事件回调；unlisten 时退订 + fs.unwatch
+  // （ArkTS 侧引用计数，最后一个退订才真正停轮询）。
+  watch: async (path, handler, options) => {
+    const recursive = options?.recursive ?? false;
+    const r = await bridge.request<{ watchId: number }>("fs.watch", { path, recursive });
+    const watchId = r.watchId;
+    const unsubscribeEvents = bridge.subscribe(
+      "fs-watch-event",
+      (payload) => {
+        const p = payload as { watchId: number; events: FsWatchEvent[] };
+        if (p.watchId !== watchId) return;
+        for (const ev of p.events) handler(ev);
+      }
+    );
+    return () => {
+      unsubscribeEvents();
+      void bridge.request("fs.unwatch", { watchId }).catch(() => undefined);
+    };
+  },
 };
 
 // ---- 弹窗域 -----------------------------------------------------------------
@@ -192,8 +212,8 @@ const harmonyApp: PlatformApp = {
 
 const HARMONY_CAPS: PlatformCapabilities = {
   ai: true, // ArkTS SSE 代理（AiBridge.ets，契约对齐 ai.rs）
-  multiWindow: false,
-  watch: false,
+  multiWindow: false, // P6 spike 待真机（无设备连接），保守不开放
+  watch: true, // ArkTS stat 轮询（WatchManager.ets）
   trash: false,
   pdfExport: false, // 待真机 spike：iframe contentWindow.print() 能否唤起系统打印
   richExport: true, // exporter.ts 纯前端（LaTeX/DOCX/PNG 桥依赖已具备）

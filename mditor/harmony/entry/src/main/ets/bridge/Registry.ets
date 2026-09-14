@@ -5,7 +5,6 @@
 //   * 多窗口三命令（create_doc_window/stash_tab_payload/take_tab_payload）
 //     —— P6 spike 待真机，未实施
 //   * get_pending_file（无 CLI 参数语义，前端适配器直接返回 null）
-//   * fs.watch / fs.unwatch（P4，见 io/WatchManager.ets）
 // 命名与前端 platform/types.ts 一一对应，两端对表（设计书 5.3）。
 // 参数键为前端原样 camelCase（Tauri 的 snake_case 转换只发生在 Rust 侧，
 // 鸿蒙桥没有这层）。
@@ -20,6 +19,7 @@ import { SettingsStore } from '../store/SettingsStore';
 import { DialogBridge } from './DialogBridge';
 import { AiBridge } from '../ai/AiBridge';
 import { S3Bridge } from '../net/S3Bridge';
+import { WatchManager } from '../io/WatchManager';
 
 /** 惰性单例：Index.aboutToAppear 时初始化（HostContext.ability 已就绪）。 */
 let uriMapper: UriMapper | null = null;
@@ -96,6 +96,14 @@ export function registerAll(bridge: Bridge): void {
   // ---- net 域（v4.13 P3：ArkTS SigV4，契约对齐 src-tauri/src/s3.rs）---------
   const s3Bridge = new S3Bridge(bridge);
   s3Bridge.registerAll();
+
+  // ---- fs.watch（v4.13 P4：stat 轮询，事件 fs-watch-event 按.watchId 过滤）--
+  const watchManager = new WatchManager(bridge, fm);
+  watchManager.registerAll();
+  // 页面重载：全部 watcher 清理（前端冷启动重挂）。
+  bridge.onReload(() => {
+    watchManager.onReload();
+  });
 
   // 应用数据目录：沙箱 filesDir 的虚拟路径（UriMapper 统一映射 /AppData）。
   bridge.register('app.appDataDir', async (): Promise<Object | null> => {

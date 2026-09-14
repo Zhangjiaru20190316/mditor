@@ -15,6 +15,10 @@ describe("HARMONY_CAPS 能力矩阵", () => {
     expect(caps.ai).toBe(true);
   });
 
+  it("外部修改监听（ArkTS stat 轮询）可用", () => {
+    expect(caps.watch).toBe(true);
+  });
+
   it("PDF 待真机 spike（iframe print），保守 false", () => {
     expect(caps.pdfExport).toBe(false);
   });

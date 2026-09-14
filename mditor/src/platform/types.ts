@@ -72,7 +72,8 @@ export interface PlatformFs {
   /** 永久删除（文件或目录，不可恢复）。回收站语义走 app.trashFile。 */
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
   /** 目录监听。可选能力——capabilities.watch 为 false 的平台没有此方法，
-   *  调用方需先探测（useFileWatcher / vaultIndex 都已按软失败降级）。 */
+   *  调用方需先探测（useFileWatcher / vaultIndex 都已按软失败降级）。
+   *  鸿蒙实现为 stat 轮询（WatchManager.ets），事件形状与 plugin-fs 对齐。 */
   watch?(
     path: string,
     handler: (event: FsWatchEvent) => void,

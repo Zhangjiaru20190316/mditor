@@ -42,6 +42,24 @@ export class FileManager {
     return this.mapper;
   }
 
+  /** statByPath / listEntryNames：WatchManager 轮询专用（v4.13 P4）。
+   *  与 readDir 的差异：不做逐条目 stat 推断 isDirectory（轮询方自己 stat
+   *  拿 mtime，减半系统调用）。 */
+  async statByPath(path: string): Promise<StatOut> {
+    return this.statOf(path);
+  }
+
+  async listEntryNames(dirPath: string): Promise<string[]> {
+    const r = this.mapper.resolve(dirPath);
+    const target = r.kind === 'sandbox' ? r.sandboxPath : r.uri;
+    const raw = fs.listFileSync(target);
+    const out: string[] = [];
+    raw.forEach((n: string) => {
+      out.push(n.startsWith('/') ? n.slice(1) : n);
+    });
+    return out;
+  }
+
   async readTextFile(params: Record<string, Object>): Promise<Object | null> {
     const path = this.pathOf(params);
     const bytes = await this.readBytes(path);
