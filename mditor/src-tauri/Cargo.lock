@@ -2114,7 +2114,7 @@ dependencies = [
 
 [[package]]
 name = "mditor"
-version = "4.12.3"
+version = "4.13.0"
 dependencies = [
  "futures-util",
  "object_store",
@@ -2129,6 +2129,7 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
  "tauri-plugin-store",
+ "tokio",
 ]
 
 [[package]]

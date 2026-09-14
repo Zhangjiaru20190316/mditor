@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.13.0 (2026-09-14)（鸿蒙端功能补全：AI / 云同步 / watch / 回收站 / 富导出）
+
+鸿蒙（ArkWeb 混合壳）自 v4.11 迁移以来五项能力处于禁用态，本版全部补齐到可用。统一接入模式：ArkTS 桥按 Tauri 命令原名注册 method → `HARMONY_CAPS` 翻 true → 前端硬门控解除 → 断言单测重写——前端业务代码（ai.ts / sync 引擎 / exporter / agent / rag）零改动或仅改门控，本地优先与零遥测不变。
+
+- **AI（P2）**：新增 `AiBridge.ets` 四命令（ai_chat / ai_chat_stream / ai_chat_cancel / ai_embed），契约逐条移植 ai.rs——SSE 增量解码（多字节安全）、tool_calls 分片聚合、reasoning 双字段名、thinking 映射、取消登记表；流事件 `ai_stream_*` 载荷与桌面逐字一致。Agent / RAG 随能力自动点亮。
+- **云同步（P3）**：新增 `S3Bridge.ets` 六命令，手写 SigV4（cryptoFramework）+ ListObjectsV2 聚焦 XML 解析；SYNC-XXX 错误格式 / validate_key / 50MB 与 10000 键上限 / HTTPS-only（localhost HTTP 例外）全量复刻。**签名实现经 AWS SDK v3 官方签名器（@smithy/signature-v4）20 向量完整 Authorization 比对核验**（`node scripts/sigv4-check.mjs`，纯函数与 ArkTS 逐行镜像）。前端 `isSyncSupported()` 解除鸿蒙门控，s3Get 适配 `{base64}` 二进制通道；同步引擎 66 单测零改动。
+- **watch（P4）**：新增 `WatchManager.ets` stat 快照 diff 轮询（文件 mtime/size 对比——目录 mtime 预筛会漏掉「外部编辑当前文档」主场景，有意全量对比；5000 条目上限、2s/5s 间隔、引用计数去重、页面重载全清）；useFileWatcher / vaultIndex 自动点亮。
+- **回收站（P5）**：`app.trashFile` 由永久删除改为应用回收站 `/AppData/trash/<epochMs>-<原名>`（跨边界 rename 失败降级复制后删原件），启动尽力清理 30 天前条目。
+- **富导出（P1）**：`richExport` 点亮（LaTeX/DOCX/PNG 纯前端，桥依赖已具备）；PDF 待真机 spike（iframe print），保守维持隐藏。
+- **多窗口（P6）**：spike 需真机，本轮设备未连接未执行——`multiWindow` 保持 false，两条候选路线与实施要点已写入 `harmony/README.md`（双败降级不算失败）。
+- **跨平台文案 bug 顺带修复**：FileTree 删除确认硬编码「永久删除不进回收站」与桌面 v4.9 起的实际行为（系统回收站）矛盾——改为按能力×运行时分支（桌面=系统回收站可恢复；鸿蒙=应用回收站 30 天；无能力=永久删除原文），Agent delete_note 说明同步动态化（`fileOps.deleteConfirmLine/trashDestinationNote`）。
+- 桥协议新增重载清理钩子（Bridge.onReload）：页面重载时在途 AI 流与全部 watcher 自洽取消。
+- vitest 742 → 758；tsc / eslint / `hvigorw assembleHap` 全绿；版本四处对齐（package.json / Cargo.toml / tauri.conf.json / app.json5 versionCode 1001300）。真机验收清单见 `harmony/README.md`（开发期间设备未连接，全部待验）。
+
 ## 4.12.3 (2026-09-13)（编辑器图片裂图根修：docPath 同步窗口）
 
 用户装 4.12.2 复验截图：公式已正常渲染（Typora $$ 块解析修复生效），但独立成段的本地图片仍裂图。取证定位到编辑器侧最后一个根因：

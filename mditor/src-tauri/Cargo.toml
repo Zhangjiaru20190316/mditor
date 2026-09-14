@@ -1,6 +1,6 @@
 [package]
 name = "mditor"
-version = "4.12.3"
+version = "4.13.0"
 description = "A local-first Markdown editor inspired by Typora"
 authors = ["Mditor"]
 edition = "2021"
@@ -35,6 +35,9 @@ serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 # StreamExt::next over the reqwest byte stream while parsing SSE chunks.
 futures-util = "0.3"
+# 云同步文件通道（v4.12.4）：s3_upload_file / s3_download_file 的异步文件
+# 读写。tokio 已在依赖树内（tauri runtime），这里只是显式声明 fs 能力。
+tokio = { version = "1", default-features = false, features = ["fs"] }
 # 云同步（v4.12）：S3 协议兼容对象存储客户端。default-features=false 只带
 # aws（SigV4 签名/ListObjectsV2 分页等久经考验的实现交给它），不拉 azure/gcp。
 # 刻意停在 0.13 而非 0.14：0.14 的 aws feature 硬依赖 aws-lc-rs（Windows 构
