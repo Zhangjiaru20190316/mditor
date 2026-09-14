@@ -6,7 +6,6 @@
 //     —— P6 spike 待真机，未实施
 //   * get_pending_file（无 CLI 参数语义，前端适配器直接返回 null）
 //   * fs.watch / fs.unwatch（P4，见 io/WatchManager.ets）
-//   * s3_* 六命令（P3，见 net/S3Bridge.ets）
 // 命名与前端 platform/types.ts 一一对应，两端对表（设计书 5.3）。
 // 参数键为前端原样 camelCase（Tauri 的 snake_case 转换只发生在 Rust 侧，
 // 鸿蒙桥没有这层）。
@@ -20,6 +19,7 @@ import { FileManager } from '../io/FileManager';
 import { SettingsStore } from '../store/SettingsStore';
 import { DialogBridge } from './DialogBridge';
 import { AiBridge } from '../ai/AiBridge';
+import { S3Bridge } from '../net/S3Bridge';
 
 /** 惰性单例：Index.aboutToAppear 时初始化（HostContext.ability 已就绪）。 */
 let uriMapper: UriMapper | null = null;
@@ -92,6 +92,10 @@ export function registerAll(bridge: Bridge): void {
   bridge.onReload(() => {
     aiBridge.onReload();
   });
+
+  // ---- net 域（v4.13 P3：ArkTS SigV4，契约对齐 src-tauri/src/s3.rs）---------
+  const s3Bridge = new S3Bridge(bridge);
+  s3Bridge.registerAll();
 
   // 应用数据目录：沙箱 filesDir 的虚拟路径（UriMapper 统一映射 /AppData）。
   bridge.register('app.appDataDir', async (): Promise<Object | null> => {

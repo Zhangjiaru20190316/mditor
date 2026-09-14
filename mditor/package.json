@@ -56,7 +56,10 @@
     "unified": "^11.0.5"
   },
   "devDependencies": {
+    "@aws-crypto/sha256-js": "^5.2.0",
     "@eslint/js": "^10.0.1",
+    "@smithy/protocol-http": "^5.6.2",
+    "@smithy/signature-v4": "^5.7.3",
     "@tauri-apps/cli": "^2.11.4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
