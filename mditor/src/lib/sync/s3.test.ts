@@ -1,7 +1,9 @@
-// 云同步 s3 原语封装的单测（§7.5.5 + §9）：
+// 云同步 s3 原语封装的单测（§7.5.5 + §9；v4.13 起鸿蒙走 ArkTS 桥正路径）：
 //   * isSyncSupported 三态判定（node 环境 detectRuntime 恒 tauri，必须显式
 //     vi.mock 覆盖——platform/index 的缓存会让真实实现先落地）；
-//   * 鸿蒙下全部原语 rejects UnsupportedError（消息含「桌面版」）；
+//   * 鸿蒙正路径：原语照常 invoke（ArkTS S3Bridge 代理）+ s3Get 的
+//     {base64} 二进制适配（D4：fromBase64 复用鸿蒙适配层实现）；
+//   * browser 预览 rejects UnsupportedError（无平台后端）；
 //   * tauri 下 invoke 的命令名/参数组装正确（含 base64 上传编码）；
 //   * parseSyncError 的「SYNC-XXX: …」解析与未知兜底。
 
@@ -44,22 +46,48 @@ beforeEach(() => {
 });
 
 describe("isSyncSupported（运行时判定）", () => {
-  it("tauri / browser 判 true", () => {
+  it("tauri 判 true", () => {
     mockRuntime = "tauri";
-    expect(isSyncSupported()).toBe(true);
-    mockRuntime = "browser";
     expect(isSyncSupported()).toBe(true);
   });
 
-  it("harmony 判 false", () => {
+  it("harmony 判 true（ArkTS 桥代理）；browser 判 false", () => {
     mockRuntime = "harmony";
+    expect(isSyncSupported()).toBe(true);
+    mockRuntime = "browser";
     expect(isSyncSupported()).toBe(false);
   });
 });
 
-describe("鸿蒙降级守卫（§7.5.5）", () => {
-  it("全部原语 rejects UnsupportedError 且消息含「桌面版」", async () => {
+describe("鸿蒙正路径（v4.13：ArkTS S3Bridge 代理）", () => {
+  it("原语照常 invoke——命令名与参数组装与 tauri 一致", async () => {
     mockRuntime = "harmony";
+    invokeMock.mockResolvedValueOnce({ bucket: "b", endpoint: "e", region: "r" });
+    await s3TestConnection(CFG);
+    expect(invokeMock).toHaveBeenCalledWith("s3_test_connection", { cfg: CFG });
+
+    invokeMock.mockResolvedValueOnce([]);
+    await s3List(CFG, "mditor/");
+    expect(invokeMock).toHaveBeenCalledWith("s3_list", { cfg: CFG, prefix: "mditor/" });
+
+    invokeMock.mockResolvedValueOnce(null);
+    await s3Head(CFG, "a.md");
+    expect(invokeMock).toHaveBeenCalledWith("s3_head", { cfg: CFG, key: "a.md" });
+  });
+
+  it("s3Get 解码 {base64} 响应（D4：fromBase64 复用鸿蒙适配层）", async () => {
+    mockRuntime = "harmony";
+    invokeMock.mockResolvedValueOnce({ base64: "aGk=" });
+    const out = await s3Get(CFG, "k");
+    expect(out instanceof Uint8Array).toBe(true);
+    expect(new TextDecoder().decode(out)).toBe("hi");
+    expect(invokeMock).toHaveBeenCalledWith("s3_get", { cfg: CFG, key: "k" });
+  });
+});
+
+describe("browser 预览守卫（无平台后端）", () => {
+  it("全部原语 rejects UnsupportedError 且零 invoke", async () => {
+    mockRuntime = "browser";
     const cases: Array<() => Promise<unknown>> = [
       () => s3TestConnection(CFG),
       () => s3List(CFG, "p/"),
@@ -69,12 +97,8 @@ describe("鸿蒙降级守卫（§7.5.5）", () => {
       () => s3Head(CFG, "k"),
     ];
     for (const fn of cases) {
-      await expect(fn()).rejects.toMatchObject({
-        name: "UnsupportedError",
-        message: expect.stringContaining("桌面版"),
-      });
+      await expect(fn()).rejects.toMatchObject({ name: "UnsupportedError" });
     }
-    // 守卫在前：一次 invoke 都不该发出。
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });

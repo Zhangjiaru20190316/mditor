@@ -1,10 +1,11 @@
-// 同步触发器与装配（§5.5，仅 main 窗口）。
+// 同步触发器与装配（§5.5，仅 main 窗口；v4.13 起鸿蒙同路径装配）。
 //
 // 职责：手动/保存后防抖/定时/启动触发、同根互斥、offline 判定与恢复补跑、
 // sync-request 转发监听（非 main 窗口的手动同步请求）。多根工作区逐根串行。
 //
-// 鸿蒙零装配（§7.5.2）：assembleSyncTrigger() 入口先判 isSyncSupported()，
-// 不支持直接返回 null——不创建定时器、不注册任何监听、不挂 onSaved 钩子。
+// 零装配（§7.5.2）：assembleSyncTrigger() 入口先判 isSyncSupported()，
+// 不支持（browser 预览）直接返回 null——不创建定时器、不注册任何监听、不挂
+// onSaved 钩子。
 // App 的装配点据此短路，与 D8 的多窗口转发逻辑互不影响（装配点只有 main
 // 一处，叠加运行时判定即可）。
 
@@ -43,7 +44,7 @@ export interface SyncTrigger {
 
 /**
  * 装配同步触发器。前置条件（App 装配点保证）：main 窗口 + sync.enabled。
- * 返回 null = 当前运行时不支持（鸿蒙）——调用方不得注册任何东西。
+ * 返回 null = 当前运行时不支持（browser 预览）——调用方不得注册任何东西。
  */
 export function assembleSyncTrigger(opts: SyncTriggerOptions): SyncTrigger | null {
   // 唯一判定入口（§7.5.1）：不支持的运行时零装配直接返回。

@@ -1,30 +1,34 @@
-// S3 原语的前端封装（v4.12 云同步）——Rust 侧 s3_* 命令的唯一调用点。
+// S3 原语的前端封装（v4.12 云同步；v4.13 起鸿蒙经 ArkTS 桥代理）——
+// s3_* 命令的唯一调用点。
 //
-// CSP 红线：渲染层不直连对象存储，全部经 Rust 代理（与 ai.ts 的
-// getAdapter().app.invoke 模式一致）；配置随调用透传（D3），Rust 侧不缓存。
+// 分层契约：渲染层不直连对象存储，全部经平台后端代理——桌面走 Rust
+// （src-tauri/src/s3.rs），鸿蒙走 ArkTS SigV4（net/S3Bridge.ets）；CSP 的
+// connect-src 论述仅适用桌面 webview（鸿蒙 ArkWeb 无 CSP 锁定，但沿用同
+// 一代理分层）。配置随调用透传（D3），后端侧不缓存。
 //
-// 鸿蒙兼容降级（§7.5）：本功能全部 Rust 命令在鸿蒙运行时天然不存在。
 //   * isSyncSupported() 是全部 UI/装配点的唯一判定入口（detectRuntime 判定，
-//     禁止各处自写运行时判断）；
-//   * 每个原语入口先守卫——不支持时抛 UnsupportedError（复用项目既有约定），
-//     即使未来某处误调，得到的也是明确错误而非 webview 层的静默失败。
+//     禁止各处自写运行时判断）——browser 预览运行时判 false；
+//   * 每个原语入口先守卫——不支持时抛 UnsupportedError（复用项目既有约定）；
+//   * 二进制差异（D4）：桌面 s3_get 走 Tauri raw IPC 返回 ArrayBuffer；
+//     鸿蒙桥统一 {base64}（fromBase64 解码复用鸿蒙适配层实现）。
 // node（vitest）环境 detectRuntime 恒按 tauri 处理，测试需显式 vi.mock。
 
 import { detectRuntime } from "../../platform";
 import { UnsupportedError } from "../../platform/errors";
 import { getAdapter } from "../../platform";
+import { fromBase64 } from "../../platform/harmony";
 import type { SyncSettings } from "../../types";
 import type { S3ConfigPayload, S3Object, S3TestInfo } from "./types";
 
-/** 云同步是否在当前运行时可用（tauri/browser=true，harmony=false）。 */
+/** 云同步是否在当前运行时可用（tauri/harmony=true，browser=false）。 */
 export function isSyncSupported(): boolean {
-  return detectRuntime() !== "harmony";
+  return detectRuntime() !== "browser";
 }
 
-/** 同步原语统一守卫：鸿蒙（纯 web 包，无 Tauri Rust 侧）明确报不支持。 */
+/** 同步原语统一守卫：browser 预览运行时（无平台后端）明确报不支持。 */
 function requireSync(): void {
   if (!isSyncSupported()) {
-    throw new UnsupportedError("云同步当前仅支持桌面版");
+    throw new UnsupportedError("云同步当前仅支持桌面版与鸿蒙版");
   }
 }
 
@@ -85,9 +89,14 @@ export async function s3List(cfg: S3ConfigPayload, prefix: string): Promise<S3Ob
   return getAdapter().app.invoke<S3Object[]>("s3_list", toArgs(cfg, { prefix }));
 }
 
-/** 下载对象（二进制；Rust 侧 ≤50MB 硬校验）。 */
+/** 下载对象（≤50MB 硬校验在后端）。 */
 export async function s3Get(cfg: S3ConfigPayload, key: string): Promise<Uint8Array> {
   requireSync();
+  if (detectRuntime() === "harmony") {
+    // 鸿蒙桥二进制通道统一 {base64}（D4），解码复用鸿蒙适配层实现。
+    const r = await getAdapter().app.invoke<{ base64: string }>("s3_get", toArgs(cfg, { key }));
+    return fromBase64(r.base64);
+  }
   const buf = await getAdapter().app.invoke<ArrayBuffer>("s3_get", toArgs(cfg, { key }));
   return new Uint8Array(buf);
 }

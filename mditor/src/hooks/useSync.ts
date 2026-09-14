@@ -1,9 +1,10 @@
-// 云同步状态订阅（v4.12，§5.6 / §7.5.2）。
+// 云同步状态订阅（v4.12，§5.6 / §7.5.2；v4.13 起鸿蒙同路径装配）。
 //
-// 所有窗口渲染同一份 sync-state（引擎在 main 广播）。鸿蒙 / 不支持运行时
-// 恒 { status: "idle", supported: false }——不注册监听（零装配红线），
-// 消费方据此隐藏指示器。手动同步统一 emit("sync-request")：非 main 窗口
-// 由 main 引擎转发执行（D8）；main 窗口收到自己的 echo 由互斥挡住重复。
+// 所有窗口渲染同一份 sync-state（引擎在 main 广播）。不支持的运行时
+// （browser 预览）恒 { status: "idle", supported: false }——不注册监听
+// （零装配红线），消费方据此隐藏指示器。手动同步统一 emit("sync-request")：
+// 非 main 窗口由 main 引擎转发执行（D8）；main 窗口收到自己的 echo 由互斥
+// 挡住重复。
 
 import { useCallback, useEffect, useState } from "react";
 import { getAdapter } from "../platform";

@@ -1083,7 +1083,7 @@ export default function App() {
 
   // ---- 云同步引擎装配（v4.12，§5.5 / §7.5.2）--------------------------------
   // 仅 main 窗口装配（D8：全部自动触发与 sync-request 监听都在引擎里）；
-  // 鸿蒙零装配——assembleSyncTrigger 入口判 isSyncSupported() 直接返回 null，
+  // browser 预览零装配——assembleSyncTrigger 入口判 isSyncSupported() 直接返回 null，
   // 不创建定时器/不注册监听（定时器/监听注册桩计数为 0 有单测锚定）。
   // 设置变化（开关/自动/间隔/启动同步）→ 销毁重建触发器。
   const syncTriggerRef = useRef<import("./lib/sync/trigger").SyncTrigger | null>(null);

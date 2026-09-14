@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-// useSync 单测（§7.5.5）：harmony 恒 {status:"idle", supported:false} 且零
-// 监听注册；tauri 订阅 sync-state 并随事件更新；syncNow 转发 sync-request。
+// useSync 单测（§7.5.5；v4.13 起鸿蒙同路径）：browser 恒 {status:"idle",
+// supported:false} 且零监听注册；harmony/tauri 订阅 sync-state 并随事件更新；
+// syncNow 转发 sync-request。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
@@ -64,9 +65,9 @@ afterEach(() => {
   vi.clearAllTimers();
 });
 
-describe("useSync：鸿蒙降级（§7.5.5）", () => {
+describe("useSync：browser 预览降级（§7.5.5）", () => {
   it("恒 idle + supported=false；不注册监听；syncNow 不发事件", () => {
-    mockRuntime = "harmony";
+    mockRuntime = "browser";
     const probe = renderProbe();
     expect(probe.get().status).toBe("idle");
     expect(probe.get().supported).toBe(false);
@@ -75,6 +76,21 @@ describe("useSync：鸿蒙降级（§7.5.5）", () => {
       probe.get().syncNow();
     });
     expect(emitMock).not.toHaveBeenCalled();
+    probe.unmount();
+  });
+});
+
+describe("useSync：harmony 同路径（v4.13：ArkTS S3Bridge 代理）", () => {
+  it("supported=true：订阅 sync-state；syncNow 转发 sync-request", () => {
+    mockRuntime = "harmony";
+    const probe = renderProbe();
+    expect(probe.get().supported).toBe(true);
+    expect(probe.get().status).toBe("idle");
+    expect(listenMock).toHaveBeenCalledWith("sync-state", expect.any(Function));
+    act(() => {
+      probe.get().syncNow();
+    });
+    expect(emitMock).toHaveBeenCalledWith("sync-request");
     probe.unmount();
   });
 });

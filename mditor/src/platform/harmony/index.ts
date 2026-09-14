@@ -29,6 +29,8 @@ import { bridge } from "./bridge-client";
 
 // ---- base64 编解码（桥的二进制通道） ----------------------------------------
 
+// 桥二进制通道的 base64 编解码。fromBase64 同时导出给 sync/s3.ts 复用
+// （s3_get 在鸿蒙返回 {base64}；D4：全项目唯一一份实现）。
 function toBase64(bytes: Uint8Array): string {
   let bin = "";
   const CHUNK = 0x8000; // fromCharCode 参数长度上限，分块防栈溢出
@@ -38,7 +40,7 @@ function toBase64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
-function fromBase64(b64: string): Uint8Array<ArrayBuffer> {
+export function fromBase64(b64: string): Uint8Array<ArrayBuffer> {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);

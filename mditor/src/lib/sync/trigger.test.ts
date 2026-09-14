@@ -1,5 +1,6 @@
-// 云同步触发器单测（§7.5.5 + §9）：鸿蒙零装配（定时器/监听注册桩计数为
-// 0）、装配/销毁、sync-request 转发、offline 判定。
+// 云同步触发器单测（§7.5.5 + §9；v4.13 起鸿蒙同路径装配）：browser 零装配
+// （定时器/监听注册桩计数为 0）、harmony/tauri 装配/销毁、sync-request 转发、
+// offline 判定。
 //
 // node 环境 detectRuntime 恒按 tauri 处理——必须显式 vi.mock 覆盖。
 
@@ -85,9 +86,9 @@ afterEach(() => {
   vi.clearAllTimers();
 });
 
-describe("鸿蒙零装配（§7.5.5）", () => {
+describe("browser 零装配（§7.5.5）", () => {
   it("assembleSyncTrigger 返回 null：零定时器、零监听注册", () => {
-    mockRuntime = "harmony";
+    mockRuntime = "browser";
     const t = assembleSyncTrigger({
       getSettings: () => settingsWith({ enabled: true }),
       getRoots: () => ["C:/ws"],
@@ -97,6 +98,22 @@ describe("鸿蒙零装配（§7.5.5）", () => {
     expect(timeoutSpy).not.toHaveBeenCalled();
     expect(listenMock).not.toHaveBeenCalled();
     expect(emitMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("harmony 同路径装配（v4.13：ArkTS S3Bridge 代理）", () => {
+  it("与 tauri 一致：挂定时器、启动延迟与 sync-request 监听", () => {
+    mockRuntime = "harmony";
+    const t = assembleSyncTrigger({
+      getSettings: () =>
+        settingsWith({ enabled: true, autoSync: true, autoSyncIntervalMin: 10, syncOnStart: true }),
+      getRoots: () => ["C:/ws"],
+    });
+    expect(t).not.toBeNull();
+    expect(intervalSpy).toHaveBeenCalled();
+    expect(timeoutSpy).toHaveBeenCalled();
+    expect(listenMock).toHaveBeenCalledWith("sync-request", expect.any(Function));
+    t?.dispose();
   });
 });
 
