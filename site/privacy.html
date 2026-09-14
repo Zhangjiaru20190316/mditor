@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mditor 隐私政策</title>
+  <meta name="description" content="Mditor 隐私政策：本地优先，无遥测，无数据收集。AI 与云同步均为用户自配服务直连。">
+  <link rel="icon" href="assets/icon.png">
+  <link rel="stylesheet" href="assets/style.css">
+  <style>
+    .policy { max-width: 780px; margin: 0 auto; padding: 48px 24px 96px; line-height: 1.8; }
+    .policy h1 { margin-bottom: 4px; }
+    .policy .meta { color: var(--text-dim, #888); font-size: 14px; margin-bottom: 40px; }
+    .policy h2 { margin: 36px 0 12px; font-size: 20px; }
+    .policy ul { padding-left: 22px; }
+    .policy li { margin: 6px 0; }
+    .policy table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+    .policy th, .policy td { border: 1px solid rgba(128,128,128,.35); padding: 8px 12px; text-align: left; }
+    .policy code { background: rgba(128,128,128,.15); padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+  </style>
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="nav-inner">
+      <a class="nav-brand" href="index.html">
+        <img src="assets/icon.png" alt="Mditor" class="nav-logo">
+        <span class="nav-name">Mditor</span>
+      </a>
+      <div class="nav-links">
+        <a href="index.html#features">功能</a>
+        <a href="index.html#faq">常见问题</a>
+        <a href="index.html#support" class="nav-support">支持本项目</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="policy">
+    <h1>Mditor 隐私政策</h1>
+    <p class="meta">生效日期：2026-09-14 · 适用版本：4.13.0 及之后（Windows / HarmonyOS）</p>
+
+    <p>Mditor（下称"本应用"）是一款<strong>本地优先</strong>的 Markdown 编辑器。我们的隐私设计可以概括为一句话：<strong>你的文件和内容只存在你自己的设备上，我们不运营任何收集用户数据的服务器。</strong></p>
+
+    <h2>一、我们不收集什么</h2>
+    <ul>
+      <li>不注册、不登录：本应用没有账号体系，不向你要任何身份信息。</li>
+      <li>无遥测：不埋点、不上传统计数据、不采集设备标识符（如 OAID/IMEI）。</li>
+      <li>无广告、无 SDK 追踪：本应用不集成任何广告或分析类第三方 SDK。</li>
+      <li>不自动检查更新，应用不会在后台发起任何我们服务器方向的请求（我们也没有这样的服务器）。</li>
+    </ul>
+
+    <h2>二、你的文件数据</h2>
+    <ul>
+      <li>所有笔记、配置、批注仅保存在<strong>你的设备本地</strong>（你选择的工作区目录内）。</li>
+      <li>应用读写文件仅发生在你明确指定或通过系统文件选择器授权的目录中。</li>
+      <li>卸载应用不会删除你的文件——它们本来就不属于我们。</li>
+    </ul>
+
+    <h2>三、联网功能的说明</h2>
+    <p>本应用申请网络权限，仅用于以下<strong>由你主动启用并自行配置</strong>的可选功能。请求由你的设备<strong>直连</strong>你配置的服务地址，本应用官方不设置任何中转服务器，不经手、不存储、不查看这些通信内容：</p>
+    <table>
+      <tr><th>功能</th><th>数据去向</th><th>说明</th></tr>
+      <tr>
+        <td>AI 助手（可选）</td>
+        <td>你自行填写的 AI 服务地址（OpenAI 兼容 API、本地 Ollama 等）</td>
+        <td>仅当你使用 AI 功能时，把选中的文本/提问发送给你配置的服务商；API 密钥保存在本地。不配置则此功能完全不活动。</td>
+      </tr>
+      <tr>
+        <td>云同步（可选）</td>
+        <td>你自行配置的 S3 兼容对象存储（如自建 MinIO、AWS S3）</td>
+        <td>笔记文件加密与否取决于你的存储桶配置；凭据仅保存在本地。不配置则全部数据只在本地。</td>
+      </tr>
+    </table>
+
+    <h2>四、权限用途（鸿蒙端）</h2>
+    <ul>
+      <li><code>ohos.permission.INTERNET</code>：支撑上述可选的 AI / 云同步网络请求。</li>
+      <li><code>ohos.permission.FILE_ACCESS_PERSIST</code>：在你授权的工作区目录中打开、保存文件，并在重启后恢复访问授权。</li>
+    </ul>
+
+    <h2>五、未成年人</h2>
+    <p>本应用面向通用办公写作场景，不面向儿童单独提供服务，也不会收集任何用户年龄信息。</p>
+
+    <h2>六、政策变更</h2>
+    <p>若未来隐私设计发生变化（例如新增功能改变数据处理方式），我们会在本页面更新并修改生效日期，并在应用内显著提示。</p>
+
+    <h2>七、联系我们</h2>
+    <p>对本政策或数据处理有任何疑问，请通过 <a href="https://github.com/Zhangjiaru20190316/mditor/issues">GitHub Issues</a> 联系我们。</p>
+
+    <h2>English Summary</h2>
+    <p>Mditor is a local-first Markdown editor. We collect nothing: no accounts, no telemetry, no ads, no tracking SDKs, and we operate no servers. Your notes stay on your device. Optional AI and cloud-sync features send data directly from your device to services <em>you</em> configure (your own AI endpoint / your own S3-compatible storage); the developer never proxies, stores, or views that traffic.</p>
+  </main>
+
+  <footer>
+    <p>Mditor © 2026 · <a href="https://github.com/Zhangjiaru20190316/mditor">GitHub</a> · <a href="https://github.com/Zhangjiaru20190316/mditor/blob/main/mditor/CHANGELOG.md">更新日志</a> · <a href="https://github.com/Zhangjiaru20190316/mditor/issues">反馈问题</a></p>
+    <p class="footnote">MIT License · Built with Tauri 2 + React + Milkdown</p>
+  </footer>
+</body>
+</html>

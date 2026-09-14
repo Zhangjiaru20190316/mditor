@@ -13,6 +13,7 @@
 - **跨平台文案 bug 顺带修复**：FileTree 删除确认硬编码「永久删除不进回收站」与桌面 v4.9 起的实际行为（系统回收站）矛盾——改为按能力×运行时分支（桌面=系统回收站可恢复；鸿蒙=应用回收站 30 天；无能力=永久删除原文），Agent delete_note 说明同步动态化（`fileOps.deleteConfirmLine/trashDestinationNote`）。
 - 桥协议新增重载清理钩子（Bridge.onReload）：页面重载时在途 AI 流与全部 watcher 自洽取消。
 - vitest 742 → 758；tsc / eslint / `hvigorw assembleHap` 全绿；版本四处对齐（package.json / Cargo.toml / tauri.conf.json / app.json5 versionCode 1001300）。真机验收清单见 `harmony/README.md`（开发期间设备未连接，全部待验）。
+- **上架与发布链（同日追加）**：新增 `npm run release:harmony`（`scripts/release-harmony.mjs`：`hvigorw assembleApp` 项目级出 unsigned .app → hap-sign-tool 发布签名，发布密码走 `MDITOR_RELEASE_KEYSTORE_PWD` 环境变量不入库；`--build-only` 实测通过，产物在 `harmony/build/outputs/default/`）；CI `release.yml` 新增 harmony job（tag 时构建 unsigned HAP 挂 Release，CLT zip 直链走 `HARMONY_CLT_URL` repo variable，未配置自动跳过；支持 workflow_dispatch 预验证）；AppGallery 上架 runbook `docs/harmony-release.md`（发布证书/Profile 申请、ICP 备案路径与兜底、提审避坑）；隐私政策页 `site/privacy.html`（上架必需材料，首页页脚挂入口）。
 
 ## 4.12.3 (2026-09-13)（编辑器图片裂图根修：docPath 同步窗口）
 

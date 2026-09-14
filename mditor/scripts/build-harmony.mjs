@@ -17,8 +17,10 @@ const dist = join(root, "dist");
 const webOut = join(root, "harmony", "entry", "src", "main", "resources", "rawfile", "web");
 const harmony = join(root, "harmony");
 
-const CLT_BIN = "C:\\Huawei\\command-line-tools\\bin";
-const OHPM_BIN = "C:\\Huawei\\command-line-tools\\ohpm\\bin";
+// CLT 位置优先读环境变量（CI 的 release.yml 注入），本机默认不变。
+const CLT = process.env.HARMONY_CLT_HOME ?? "C:\\Huawei\\command-line-tools";
+const CLT_BIN = join(CLT, "bin");
+const OHPM_BIN = join(CLT, "ohpm", "bin");
 // 打包/签名工具为 Java 实现（风险表 §8 预案）：自动探测常见 Temurin 安装。
 const JAVA_CANDIDATES = [
   process.env.JAVA_HOME,
@@ -43,7 +45,7 @@ function buildEnv() {
     ...process.env,
     // 新开 shell 可能未继承用户 PATH（AGENTS.md 已知限制），这里显式补上。
     PATH: [CLT_BIN, OHPM_BIN, process.env.PATH].join(isWin ? ";" : ":"),
-    DEVECO_SDK_HOME: process.env.DEVECO_SDK_HOME ?? "C:\\Huawei\\command-line-tools\\sdk",
+    DEVECO_SDK_HOME: process.env.DEVECO_SDK_HOME ?? join(CLT, "sdk"),
   };
   const javaHome = detectJavaHome();
   if (javaHome) {

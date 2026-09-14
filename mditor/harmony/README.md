@@ -48,16 +48,27 @@ npm run build:harmony
    - 新建**调试 Profile**（勾选调试设备——用 `hdc shell bm get --udid` 取设备
      UDID 添加）→ 下载 `.p7b`；
    - 记下密钥库文件 `.p12` 与密码。
-3. 签名（hap-sign-tool 为 Java 实现，JDK 17 已就绪）：
+3. 签名（参数以 `java -jar hap-sign-tool.jar -h` 输出为准，下例已真机验证；
+   提示词里常见的 `-mode local-sign`/`-profile`/`-certPath` 是错的，会报
+   `11011005 Param is not trusted`）：
    ```bash
-   java -jar hap-sign-tool.jar sign-app -mode local-sign \
-     -keyAlias <别名> -signAlg SHA256withECDSA \
-     -profile <profile.p7b> -certPath <certificate.cer> \
-     -inFile entry-default-unsigned.hap -keystoreFile <p12> \
-     -signCertPath <certificate.cer> -outFile mditor-signed.hap \
-     -profileSigned 1
+   java -jar hap-sign-tool.jar sign-app -mode localSign \
+     -keyAlias <别名> -keyPwd <密钥密码> -signAlg SHA256withECDSA \
+     -profileFile <profile.p7b> -appCertFile <certificate.cer> \
+     -keystoreFile <keystore.p12> -keystorePwd <密钥库密码> \
+     -profileSigned 1 -compatibleVersion 22 \
+     -inFile entry-default-unsigned.hap -outFile mditor-signed.hap
    ```
-4. 或在 `build-profile.json5` 的 `signingConfigs` 填入材料后 hvigor 直接出签名包。
+4. 或直接用一键脚本 `node scripts/sign-and-install.mjs`（签名 + `hdc install -r`
+   一步完成），或在 `build-profile.json5` 的 `signingConfigs` 填入材料后 hvigor
+   直接出签名包。
+
+### 路径 C：发布签名 + 上架 AppGallery
+
+路径 A/B 只覆盖内测（debug 证书签的包仅 UDID 白名单设备可装）。公众分发需要
+**发布证书 + 发布 Profile** 签 .app 包提交审核：材料清单、CSR/密钥生成、AGC
+提审步骤与审核避坑见 [`docs/harmony-release.md`](../docs/harmony-release.md)，
+一键出包 `npm run release:harmony`。
 
 ### 安装到设备（MateBook / Mate 平板，HarmonyOS PC 形态）
 

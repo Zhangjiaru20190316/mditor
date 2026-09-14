@@ -16,7 +16,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build:harmony-web": "vite build --base ./",
-    "build:harmony": "node scripts/build-harmony.mjs"
+    "build:harmony": "node scripts/build-harmony.mjs",
+    "release:harmony": "node scripts/release-harmony.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",
