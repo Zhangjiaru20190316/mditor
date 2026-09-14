@@ -64,6 +64,7 @@ import {
   validateName,
   withName,
   dedupNestedPaths,
+  deleteConfirmLine,
 } from "../lib/fileOps";
 import {
   NewFileIcon,
@@ -530,7 +531,7 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
         : `文件「${node.name}」`;
       if (
         !(await confirmDialog(
-          `确定删除${label}？\n此操作不可恢复（永久删除，不进回收站）。`
+          `确定删除${label}？\n${deleteConfirmLine()}`
         ))
       )
         return;
@@ -590,7 +591,7 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
     }
     if (
       !(await confirmDialog(
-        `确定删除选中的 ${nodes.length} 项（共 ${allMd.length} 个 Markdown 文件）？\n此操作不可恢复（永久删除，不进回收站）。`
+        `确定删除选中的 ${nodes.length} 项（共 ${allMd.length} 个 Markdown 文件）？\n${deleteConfirmLine()}`
       ))
     )
       return;

@@ -191,10 +191,50 @@ export class FileManager {
     return this.permanentlyRemove(this.pathOf(params));
   }
 
-  /** app.trashFile：与 remove 同实现（语义差异由 capabilities.trash=false
-   *  在前端文案层表达）。破坏性操作仍经 lib/fileOps 审计层（前端侧）。 */
+  /** app.trashFile（v4.13 P5）：移入应用回收站 /AppData/trash/<epochMs>-<原名>
+   *  （应用沙箱内，用户文件管理器不可见——前端确认文案如实注明）。跨 URI/
+   *  沙箱边界 rename 失败则复制后删原件（目录递归复制）。30 天启动清理见
+   *  cleanupTrash。破坏性操作仍经 lib/fileOps 审计层（前端侧）。 */
   async trashFile(params: Record<string, Object>): Promise<Object | null> {
-    return this.permanentlyRemove(this.pathOf(params));
+    const path = this.pathOf(params);
+    let st: StatOut;
+    try {
+      st = await this.statOf(path);
+    } catch (err) {
+      throw this.wrapFsError(err, `删除失败（目标不存在） ${path}`);
+    }
+    const trashDirVirtual = '/AppData/trash';
+    // /AppData 恒映射沙箱（UriMapper），这里直接拿真实路径建目录。
+    const trashReal = this.mapper.resolve(trashDirVirtual).sandboxPath;
+    this.ensureSandboxDir(trashReal);
+    const base = this.baseNameOf(path);
+    const now = Date.now();
+    let targetVirtual = `${trashDirVirtual}/${now}-${base}`;
+    for (let n = 1; n < 1000; n++) {
+      if (!(await this.pathExistsVirtual(targetVirtual))) {
+        break;
+      }
+      targetVirtual = `${trashDirVirtual}/${now}-${n}-${base}`;
+    }
+    const r = this.mapper.resolve(path);
+    const from = r.kind === 'sandbox' ? r.sandboxPath : r.uri;
+    const to = this.mapper.resolve(targetVirtual).sandboxPath;
+    try {
+      fs.renameSync(from, to);
+      return null;
+    } catch {
+      // 跨边界 rename 不支持：复制到回收站后删原件。
+      if (st.isDirectory) {
+        await this.copyTreeVirtual(path, targetVirtual);
+        fs.rmdirSync(from);
+      } else {
+        const bytes = await this.readBytes(path);
+        await this.withWriteHandle(this.mapper.resolve(targetVirtual),
+          (fd: number) => fs.writeSync(fd, bytes.buffer));
+        fs.unlinkSync(from);
+      }
+      return null;
+    }
   }
 
   private async permanentlyRemove(path: string): Promise<Object | null> {
@@ -330,6 +370,39 @@ export class FileManager {
     return idx <= 0 ? '' : p.slice(0, idx);
   }
 
+  private baseNameOf(p: string): string {
+    const idx = p.lastIndexOf('/');
+    return idx < 0 ? p : p.slice(idx + 1);
+  }
+
+  private async pathExistsVirtual(path: string): Promise<boolean> {
+    try {
+      await this.statOf(path);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 递归复制（虚拟路径层操作，URI/沙箱两侧都经 UriMapper 编解码）。 */
+  private async copyTreeVirtual(fromV: string, toV: string): Promise<void> {
+    const rec: Record<string, Object> = { 'path': fromV };
+    const entries = await this.readDir(rec);
+    await this.mkdir({ 'path': toV } as Record<string, Object>);
+    const list = entries as DirEntryOut[];
+    for (const e of list) {
+      const src = `${fromV}/${e.name}`;
+      const dst = `${toV}/${e.name}`;
+      if (e.isDirectory) {
+        await this.copyTreeVirtual(src, dst);
+      } else {
+        const bytes = await this.readBytes(src);
+        await this.withWriteHandle(this.mapper.resolve(dst),
+          (fd: number) => fs.writeSync(fd, bytes.buffer));
+      }
+    }
+  }
+
   private decodeUtf8(bytes: Uint8Array): string {
     const decoder = util.TextDecoder.create('utf-8');
     return decoder.decodeToString(bytes);
@@ -368,5 +441,50 @@ export class FileManager {
         `${what}：无权访问（工作区授权可能已过期，请重新选择目录）`);
     }
     return new BridgeError('E_IO', `${what}：${e.message ?? String(err)}`);
+  }
+}
+
+/** 启动清理应用回收站：删除 30 天前的条目（EntryAbility.onCreate 调用，
+ *  尽力而为——任何失败都不拖垮启动）。条目名 <epochMs>-<原名>。 */
+export function cleanupTrash(filesDir: string): void {
+  const trashDir = `${filesDir}/trash`;
+  try {
+    if (!fs.accessSync(trashDir)) {
+      return;
+    }
+  } catch {
+    return;
+  }
+  const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
+  let names: string[] = [];
+  try {
+    names = fs.listFileSync(trashDir);
+  } catch {
+    return;
+  }
+  for (const raw of names) {
+    const name = raw.startsWith('/') ? raw.slice(1) : raw;
+    if (name.length === 0) {
+      continue;
+    }
+    const m = /^(\d+)-/.exec(name);
+    if (m === null) {
+      continue;
+    }
+    const t = Number(m[1]);
+    if (Number.isNaN(t) || t >= cutoff) {
+      continue;
+    }
+    try {
+      const target = `${trashDir}/${name}`;
+      const st = fs.statSync(target);
+      if (st.isDirectory()) {
+        fs.rmdirSync(target);
+      } else {
+        fs.unlinkSync(target);
+      }
+    } catch {
+      // 单条失败跳过 — 下次启动再试
+    }
   }
 }

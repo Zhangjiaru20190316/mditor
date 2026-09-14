@@ -97,7 +97,7 @@ export function registerAll(bridge: Bridge): void {
   const s3Bridge = new S3Bridge(bridge);
   s3Bridge.registerAll();
 
-  // ---- fs.watch（v4.13 P4：stat 轮询，事件 fs-watch-event 按.watchId 过滤）--
+  // ---- fs.watch（v4.13 P4：stat 轮询，事件 fs-watch-event 按 watchId 过滤）--
   const watchManager = new WatchManager(bridge, fm);
   watchManager.registerAll();
   // 页面重载：全部 watcher 清理（前端冷启动重挂）。

@@ -8,6 +8,7 @@ import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { HostContext } from '../bridge/HostContext';
+import { cleanupTrash } from '../io/FileManager';
 
 const DOMAIN = 0x0D01; // hilog 域（Mditor 专用）
 

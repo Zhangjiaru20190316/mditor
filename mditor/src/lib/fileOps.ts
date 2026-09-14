@@ -10,7 +10,7 @@
 // 走平台适配层（Tauri=回收站；鸿蒙=永久删除，capabilities.trash=false 驱动
 // UI 文案），破坏性操作仍必须收敛在本审计层。
 
-import { getAdapter } from "../platform";
+import { detectRuntime, getAdapter } from "../platform";
 import { dirname, join } from "./path-shim";
 import { tracedIo } from "./ipcTrace";
 
@@ -39,6 +39,29 @@ export function validateName(name: string): string | null {
   if (RESERVED_NAMES.test(trimmed))
     return "名称是系统保留字（con/prn/aux/nul/com*/lpt*）";
   return null;
+}
+
+/**
+ * 删除去向的如实描述（v4.13 P5，FileTree 确认弹窗与 Agent 工具说明共用）：
+ * 按能力与运行时区分——桌面 = 系统回收站（可恢复）；鸿蒙 = 应用回收站
+ * （/AppData/trash 沙箱内，用户文件管理器不可见，保留 30 天自动清理，
+ * 文案不得声称可从文件管理器恢复）；无能力平台 = 永久删除。
+ */
+export function deleteConfirmLine(): string {
+  const caps = getAdapter().capabilities;
+  if (!caps.trash) return "此操作不可恢复（永久删除，不进回收站）。";
+  return detectRuntime() === "harmony"
+    ? "此操作将移入应用回收站（保留 30 天，到期自动清理）。"
+    : "此操作将移入系统回收站（可恢复）。";
+}
+
+/** 同上去向的短版（Agent delete_note 的 note/description 用）。 */
+export function trashDestinationNote(): string {
+  const caps = getAdapter().capabilities;
+  if (!caps.trash) return "永久删除（不可恢复，不进回收站）";
+  return detectRuntime() === "harmony"
+    ? "移入应用回收站（保留 30 天，到期自动清理）"
+    : "移入系统回收站（可恢复）";
 }
 
 /** Remove a single file — to the system recycle bin (recoverable). */

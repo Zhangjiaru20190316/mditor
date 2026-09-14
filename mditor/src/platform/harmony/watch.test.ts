@@ -7,7 +7,7 @@ import type { FsWatchEvent } from "../types";
 
 type EventHandler = (payload: unknown) => void;
 
-const requestMock = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+const requestMock = vi.fn(async (method: string, _params?: Record<string, unknown>) => {
   if (method === "fs.watch") return { watchId: 7 };
   return null;
 });

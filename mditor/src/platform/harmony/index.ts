@@ -214,7 +214,7 @@ const HARMONY_CAPS: PlatformCapabilities = {
   ai: true, // ArkTS SSE 代理（AiBridge.ets，契约对齐 ai.rs）
   multiWindow: false, // P6 spike 待真机（无设备连接），保守不开放
   watch: true, // ArkTS stat 轮询（WatchManager.ets）
-  trash: false,
+  trash: true, // 应用回收站 /AppData/trash（30 天启动清理）
   pdfExport: false, // 待真机 spike：iframe contentWindow.print() 能否唤起系统打印
   richExport: true, // exporter.ts 纯前端（LaTeX/DOCX/PNG 桥依赖已具备）
   remoteImageProxy: false,

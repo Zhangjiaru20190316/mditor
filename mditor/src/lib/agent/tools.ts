@@ -13,6 +13,7 @@
 // 工作区根解析，仅作兜底）。
 
 import { getAdapter } from "../../platform";
+import { trashDestinationNote } from "../fileOps";
 import { basename, join } from "../path-shim";
 import { collectMdFiles, searchWorkspaces } from "../workspaceSearch";
 import { embedTexts, isEmbedConfigured } from "../ai";
@@ -456,7 +457,7 @@ async function deleteNote(args: Record<string, unknown>, ctx: ToolContext): Prom
     path: normPath(r.abs),
     isCurrentNote: r.current,
     staged: ctx.plan.ops.length,
-    note: "删除已暂存：应用时移入系统回收站（可恢复），须经用户确认。",
+    note: `删除已暂存：应用时${trashDestinationNote()}，须经用户确认。`,
   });
 }
 
@@ -647,7 +648,7 @@ export const AGENT_TOOLS: AgentTool[] = [
       type: "function",
       function: {
         name: "delete_note",
-        description: "删除笔记（暂存；应用时移入系统回收站可恢复，且必须经用户确认）。",
+        description: `删除笔记（暂存；应用时${trashDestinationNote()}，且必须经用户确认）。`,
         parameters: {
           type: "object",
           properties: {

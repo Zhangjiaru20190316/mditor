@@ -19,6 +19,10 @@ describe("HARMONY_CAPS 能力矩阵", () => {
     expect(caps.watch).toBe(true);
   });
 
+  it("回收站（应用内 /AppData/trash）可用", () => {
+    expect(caps.trash).toBe(true);
+  });
+
   it("PDF 待真机 spike（iframe print），保守 false", () => {
     expect(caps.pdfExport).toBe(false);
   });
