@@ -79,15 +79,22 @@ function obj(key: string, content: string, lastModified: string, etag?: string):
   };
 }
 
-/** 内存桩：本地文件系统 + 远端对象存储 + manifest 存储。 */
+/** 内存桩：本地文件系统（含 app-data 暂存区）+ 远端对象存储 + manifest 存储。
+ *  v4.12.4：引擎走「路径」通道（s3GetFile/s3PutFile/localFilesEqual...），
+ *  字节不再经过 SyncIO 的调用参数——桩按 abs 路径在工作区 local 与暂存区
+ *  tmp 两张表之间路由。 */
 class MemIO implements SyncIO {
   local = new Map<string, { content: Uint8Array; mtimeMs: number }>();
+  tmp = new Map<string, Uint8Array>();
   remote = new Map<string, S3Object & { content: Uint8Array }>();
   manifests = new Map<string, SyncManifest>();
   trash: Array<{ root: string; relPath: string }> = [];
   renames: Array<[string, string]> = [];
   // 故障注入：key 命中时对应操作抛错（幂等重入测试用）。
   failPut: Set<string> = new Set();
+
+  /** 与 platform mock 的 appDataDir 一致（syncTempFile 的落点）。 */
+  private static readonly TMP = "C:/appdata/sync/tmp";
 
   putLocal(relPath: string, content: string, mtimeMs = 1000_000): void {
     this.local.set(relPath, { content: enc.encode(content), mtimeMs });
@@ -97,6 +104,27 @@ class MemIO implements SyncIO {
     const o = obj(key, content, lastModified);
     this.remote.set(key, { ...o, content: enc.encode(content) });
     void mtimeMs;
+  }
+
+  private relOf(abs: string): string {
+    return abs.replace(`${ROOT}/`, "");
+  }
+  private readAbs(abs: string): Uint8Array {
+    if (abs.startsWith(MemIO.TMP)) {
+      const v = this.tmp.get(abs);
+      if (!v) throw new Error(`tmp miss: ${abs}`);
+      return v;
+    }
+    const f = this.local.get(this.relOf(abs));
+    if (!f) throw new Error(`local miss: ${abs}`);
+    return f.content;
+  }
+  private writeAbs(abs: string, data: Uint8Array): void {
+    if (abs.startsWith(MemIO.TMP)) {
+      this.tmp.set(abs, data);
+      return;
+    }
+    this.local.set(this.relOf(abs), { content: data, mtimeMs: 3000_000 });
   }
 
   async listLocal(): Promise<LocalScanFile[]> {
@@ -111,13 +139,14 @@ class MemIO implements SyncIO {
       .filter(([k]) => k.startsWith(prefix))
       .map(([k, v]) => ({ key: k, size: v.size, etag: v.etag, lastModified: v.lastModified }));
   }
-  async s3Get(key: string): Promise<Uint8Array> {
+  async s3GetFile(key: string, destAbs: string): Promise<void> {
     const v = this.remote.get(key);
     if (!v) throw new Error("SYNC-999: not found");
-    return v.content;
+    this.writeAbs(destAbs, v.content);
   }
-  async s3Put(key: string, data: Uint8Array, mtimeMs?: number): Promise<S3Object> {
+  async s3PutFile(key: string, absPath: string, mtimeMs?: number): Promise<S3Object> {
     if (this.failPut.has(key)) throw new Error("SYNC-999: injected put failure");
+    const data = this.readAbs(absPath);
     const etag = obj(key, dec.decode(data), "x").etag;
     const lastModified = new Date(mtimeMs ?? 2000_000).toISOString();
     const o = { key, size: data.length, etag, lastModified };
@@ -138,23 +167,32 @@ class MemIO implements SyncIO {
     this.local.delete(relPath);
   }
   async statLocal(abs: string): Promise<{ mtimeMs: number; size: number } | null> {
-    const rel = abs.replace(`${ROOT}/`, "");
+    if (abs.startsWith(MemIO.TMP)) {
+      const v = this.tmp.get(abs);
+      return v ? { mtimeMs: 3000_000, size: v.length } : null;
+    }
+    const rel = this.relOf(abs);
     const f = this.local.get(rel);
     return f ? { mtimeMs: f.mtimeMs, size: f.content.length } : null;
   }
-  async readLocalBytes(abs: string): Promise<Uint8Array> {
-    const rel = abs.replace(`${ROOT}/`, "");
-    const f = this.local.get(rel);
-    if (!f) throw new Error(`local miss: ${rel}`);
-    return f.content;
+  async localFilesEqual(a: string, b: string): Promise<boolean> {
+    const x = this.readAbs(a);
+    const y = this.readAbs(b);
+    return x.length === y.length && x.every((v, i) => v === y[i]);
   }
-  async writeFileLocal(abs: string, data: Uint8Array): Promise<void> {
-    const rel = abs.replace(`${ROOT}/`, "");
-    this.local.set(rel, { content: data, mtimeMs: 3000_000 });
+  async copyLocal(fromAbs: string, toAbs: string): Promise<void> {
+    this.writeAbs(toAbs, this.readAbs(fromAbs));
+  }
+  async removeLocal(abs: string): Promise<void> {
+    if (abs.startsWith(MemIO.TMP)) this.tmp.delete(abs);
+    else this.local.delete(this.relOf(abs));
+  }
+  async syncTempFile(name: string): Promise<string> {
+    return `${MemIO.TMP}/${name}`;
   }
   async renameLocal(a: string, b: string): Promise<void> {
-    const ra = a.replace(`${ROOT}/`, "");
-    const rb = b.replace(`${ROOT}/`, "");
+    const ra = this.relOf(a);
+    const rb = this.relOf(b);
     const f = this.local.get(ra);
     if (!f) throw new Error(`rename miss: ${ra}`);
     this.local.delete(ra);

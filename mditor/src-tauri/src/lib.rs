@@ -14,11 +14,62 @@ mod ai;
 mod s3;
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 #[cfg(not(target_os = "windows"))]
 use tauri::menu::{MenuBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::{Emitter, Manager};
+
+/// 崩溃取证（v4.12.4）：panic 日志落点。钩子在 run() 装配时还没有
+/// AppHandle，setup() 拿到 app-data 后回填；在此之前发生的 panic 兜底写
+/// 系统临时目录。
+static PANIC_LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// v4.12.4 崩溃取证：release 是 panic="abort"，任何 Rust panic 都会无提示
+/// 秒退（Windows 事件日志表现为 0xc0000409）。panic hook 在 abort 前仍会
+/// 执行——把 panic 追加写进 <app-data>/logs/panic.log，给「打开云同步即无
+/// 痕崩溃」这类问题留证据。钩子自身绝不 panic：全部 best-effort，写失败
+/// 静默放弃。
+fn install_panic_logger() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // 保留默认行为（stderr 在 dev 构建可见）。
+        default_hook(info);
+        let path = PANIC_LOG_PATH
+            .get()
+            .cloned()
+            .unwrap_or_else(|| std::env::temp_dir().join("mditor-panic.log"));
+        let thread = std::thread::current();
+        let name = thread.name().unwrap_or("<unnamed>");
+        let loc = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "<non-string panic payload>".to_string()
+        };
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let line = format!(
+            "[panic] ts={ts} pid={} thread=`{name}` at {loc} — {msg}\n",
+            std::process::id()
+        );
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            use std::io::Write as _;
+            let _ = f.write_all(line.as_bytes());
+        }
+    }));
+}
 
 /// Shared state holding a file path passed on the command line at startup
 /// (e.g. the user double-clicked a `.md` while the app was NOT running yet).
@@ -118,6 +169,9 @@ use menu_ids::*;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 崩溃取证钩子必须在最早期装配（见 install_panic_logger）。
+    install_panic_logger();
+
     let mut builder = tauri::Builder::default();
 
     // Single-instance MUST be registered before every other plugin.
@@ -171,11 +225,20 @@ pub fn run() {
             s3::s3_test_connection,
             s3::s3_list,
             s3::s3_get,
-            s3::s3_put,
+            s3::s3_upload_file,
+            s3::s3_download_file,
             s3::s3_delete,
             s3::s3_head,
+            commands::local_files_equal,
+            commands::local_copy_file,
         ])
         .setup(|app| {
+            // 崩溃取证：拿到 app-data 后回填 panic 日志真实落点（此前发生的
+            // panic 由钩子兜底写系统临时目录）。
+            if let Ok(dir) = app.path().app_data_dir() {
+                let _ = PANIC_LOG_PATH.set(dir.join("logs").join("panic.log"));
+            }
+
             // Windows 使用自绘无边框标题栏内的前端菜单栏（MenuBar.tsx），原生
             // 菜单在 decorations:false 下会残留/出现双菜单，故仅在其他平台构建
             // （macOS 的屏幕菜单栏是平台惯例，必须保留）。

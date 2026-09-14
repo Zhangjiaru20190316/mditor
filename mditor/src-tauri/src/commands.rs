@@ -373,6 +373,75 @@ pub async fn create_doc_window(
     Ok(win.label().to_string())
 }
 
+// ---- 云同步本地文件原语（v4.12.4）-------------------------------------------
+//
+// 与 s3.rs 的 s3_upload_file / s3_download_file 配套：冲突比对与副本落位
+// 也把字节留在 Rust 侧（前端零大内存），不再经 JS 读整文件。
+
+/// 两个本地文件字节等值（云同步冲突内容比对）。大小不同直接短路；其余
+/// 分块流式比对（256KB，零大内存），读盘放到阻塞线程池避免卡 async
+/// runtime（对齐 append_log 先例）。任一文件不可读 → Err。
+#[command]
+pub async fn local_files_equal(a: String, b: String) -> Result<bool, String> {
+    let ma = fs::metadata(&a).map_err(|e| format!("读取文件信息失败：{e}"))?;
+    let mb = fs::metadata(&b).map_err(|e| format!("读取文件信息失败：{e}"))?;
+    if !ma.is_file() || !mb.is_file() {
+        return Err("比较对象不是常规文件".into());
+    }
+    if ma.len() != mb.len() {
+        return Ok(false);
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        /// 读满 buf 或到 EOF，返回实际字节数（fs::read 只保证一次 read 的量）。
+        fn read_fill(f: &mut fs::File, buf: &mut [u8]) -> std::io::Result<usize> {
+            use std::io::Read;
+            let mut n = 0;
+            while n < buf.len() {
+                match f.read(&mut buf[n..])? {
+                    0 => break,
+                    k => n += k,
+                }
+            }
+            Ok(n)
+        }
+        let mut fa = fs::File::open(&a).map_err(|e| format!("读取文件失败：{e}"))?;
+        let mut fb = fs::File::open(&b).map_err(|e| format!("读取文件失败：{e}"))?;
+        let mut ba = vec![0u8; 256 * 1024];
+        let mut bb = vec![0u8; 256 * 1024];
+        loop {
+            let na = read_fill(&mut fa, &mut ba).map_err(|e| format!("读取文件失败：{e}"))?;
+            let nb = read_fill(&mut fb, &mut bb).map_err(|e| format!("读取文件失败：{e}"))?;
+            if na != nb {
+                return Ok(false); // EOF 位置不同 → 尾部不等
+            }
+            if na == 0 {
+                return Ok(true);
+            }
+            if ba[..na] != bb[..nb] {
+                return Ok(false);
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("内部错误：{e}"))?
+}
+
+/// 复制本地文件（云同步冲突副本从暂存区落位；字节不经 IPC）。目标父目录
+/// 自动创建。
+#[command]
+pub async fn local_copy_file(from: String, to: String) -> Result<(), String> {
+    if from.trim().is_empty() || to.trim().is_empty() {
+        return Err("复制路径为空".into());
+    }
+    if let Some(parent) = Path::new(&to).parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
+        }
+    }
+    fs::copy(&from, &to).map_err(|e| format!("复制文件失败：{e}"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

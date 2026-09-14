@@ -12,13 +12,19 @@
 // 冲突，其余含 absent 的不可达格一律按规格走冲突兜底——不 panic、不静默丢弃。
 //
 // 内容比对说明：规格用「本地 md5 vs 远端内容型 ETag」判同；WebCrypto 的
-// subtleCrypto 不提供 MD5（只有 SHA 系），故本实现改为冲突发生时直接字节
-// 比对——语义严格强于 md5 等值（冲突低频，双侧字节本来就要读）。manifest
-// 的 md5 字段保留于 schema（恒记 null），兼容清单格式。
+// subtleCrypto 不提供 MD5（只有 SHA 系），故本实现改为冲突发生时流式比对
+// 双侧文件（io.localFilesEqual，Rust 侧 256KB 分块读盘）——语义严格强于
+// md5 等值（冲突低频，且字节全程不经前端）。manifest 的 md5 字段保留于
+// schema（恒记 null），兼容清单格式。
+//
+// 文件通道说明（v4.12.4 崩溃修复）：上传/下载/冲突暂存全部走「路径」而非
+// 「字节」——io.s3PutFile/s3GetFile 由 Rust 直读直写本地文件，文件字节不
+// 经 IPC。旧实现把 ≤50MB 文件 base64 后整包 JSON IPC（~4.3x 内存放大 ×并
+// 发叠加），是「启用云同步后首同步崩溃」的头号元凶。
 
 import { getAdapter } from "../../platform";
 import { basename, extname, joinAbs, toPosix } from "../path-shim";
-import { s3Delete, s3Get, s3List, s3Put } from "./s3";
+import { s3Delete, s3GetFile, s3List, s3PutFile } from "./s3";
 import { readManifest, writeManifest, type SyncManifest } from "./manifest";
 import type { S3ConfigPayload, S3Object, SyncManifestFile, SyncSummary } from "./types";
 import { EMPTY_SYNC_SUMMARY } from "./types";
@@ -39,8 +45,10 @@ export interface SyncIO {
   /** 递归扫描（应用名称/深度/符号链接忽略；大小过滤由引擎统一做——双侧一致）。 */
   listLocal(root: string): Promise<LocalScanFile[]>;
   s3List(prefix: string): Promise<S3Object[]>;
-  s3Get(key: string): Promise<Uint8Array>;
-  s3Put(key: string, data: Uint8Array, mtimeMs?: number): Promise<S3Object>;
+  /** 下载远端对象到本地文件（实现保证父目录存在；字节不经 JS）。 */
+  s3GetFile(key: string, destAbs: string): Promise<void>;
+  /** 上传本地文件（实现直读 absPath；字节不经 JS）。 */
+  s3PutFile(key: string, absPath: string, mtimeMs?: number): Promise<S3Object>;
   s3Delete(key: string): Promise<void>;
   readManifest(root: string): Promise<SyncManifest | null>;
   writeManifest(root: string, m: SyncManifest): Promise<void>;
@@ -48,8 +56,14 @@ export interface SyncIO {
   trashMove(root: string, relPath: string): Promise<void>;
   /** 下载前重 stat：返回 null = 文件已不存在；mtime 比扫描时新 → 脏文件跳过。 */
   statLocal(absPath: string): Promise<{ mtimeMs: number; size: number } | null>;
-  readLocalBytes(absPath: string): Promise<Uint8Array>;
-  writeFileLocal(absPath: string, data: Uint8Array): Promise<void>;
+  /** 两个本地文件字节等值（冲突内容比对；流式实现，零大内存）。 */
+  localFilesEqual(a: string, b: string): Promise<boolean>;
+  /** 复制本地文件（冲突副本从暂存区落位），父目录自动创建。 */
+  copyLocal(fromAbs: string, toAbs: string): Promise<void>;
+  /** 删除本地文件（best-effort 场景由调用方自行 catch）。 */
+  removeLocal(absPath: string): Promise<void>;
+  /** 引擎暂存文件路径（app-data sync/tmp 下；实现保证目录存在）。 */
+  syncTempFile(name: string): Promise<string>;
   renameLocal(oldAbs: string, newAbs: string): Promise<void>;
 }
 
@@ -214,8 +228,9 @@ function absOf(root: string, relPath: string): string {
   return joinAbs(root, ...relPath.split("/"));
 }
 
-/** 上传 / 下载并发上限（D6：≤3）。 */
-const TRANSFER_CONCURRENCY = 3;
+/** 上传 / 下载并发上限（D6：≤3；v4.12.4 降为 2——四根全量首传时给
+ *  WebView/Rust 双侧留内存余量，避免多份传输缓冲瞬时叠加）。 */
+const TRANSFER_CONCURRENCY = 2;
 
 /** 分批并发执行（单任务失败收集不中断）。 */
 async function runBatch<T>(
@@ -382,12 +397,11 @@ export async function syncWorkspace(
       summary.skipped++;
       return false;
     }
-    const bytes = await io.s3Get(remote.key);
-    await io.writeFileLocal(abs, bytes);
+    await io.s3GetFile(remote.key, abs);
     // 记录真实落盘后的 mtime/size，避免下次扫描误判 changed。
     const st = (await io.statLocal(abs).catch(() => null)) ?? {
       mtimeMs: Date.now(),
-      size: bytes.length,
+      size: remote.size,
     };
     setRecord(key, {
       local: { mtimeMs: st.mtimeMs, size: st.size, md5: null },
@@ -398,8 +412,7 @@ export async function syncWorkspace(
 
   /** 上传本地文件（普通上传与冲突后上传共用）。 */
   const doUpload = async (key: string, local: LocalScanFile): Promise<void> => {
-    const bytes = await io.readLocalBytes(absOf(root, key));
-    const put = await io.s3Put(`${fullPrefix}${key}`, bytes, local.mtimeMs);
+    const put = await io.s3PutFile(`${fullPrefix}${key}`, absOf(root, key), local.mtimeMs);
     setRecord(key, {
       local: { mtimeMs: local.mtimeMs, size: local.size, md5: null },
       remote: { etag: put.etag ?? "", size: put.size, lastModified: put.lastModified },
@@ -511,10 +524,13 @@ interface ConflictCtx {
 
 /**
  * 冲突三分支：
- *  1. 内容相同（字节等值）→ 无副本，新者覆盖另一侧；
+ *  1. 内容相同（流式字节比对）→ 无副本，新者覆盖另一侧；
  *  2. 内容不同 → 新者胜（本地 mtime vs 远端 lastModified），败者存
  *     `.冲突-时间戳` 副本（同目录）且双端可见；
  *  3. 时钟不可信（无法比出新者）→ 远端胜执行第 2 步 + 摘要 note 人工确认。
+ *
+ * v4.12.4：远端版本先由 Rust 暂存到 app-data 临时文件再流式比对——冲突
+ * 低频串行，一次额外 GET 换取字节全程不经前端。
  */
 async function resolveConflict(op: PlannedOp, ctx: ConflictCtx): Promise<void> {
   const { io, root, fullPrefix, files, localMap, remoteMap, summary } = ctx;
@@ -538,86 +554,95 @@ async function resolveConflict(op: PlannedOp, ctx: ConflictCtx): Promise<void> {
     return;
   }
 
-  // 双侧字节本来都要读（胜者上传 / 败者副本），顺带完成内容比对。
-  const localBytes = await io.readLocalBytes(absOf(root, key));
-  const remoteBytes = await io.s3Get(remote.key);
+  const staged = await io.syncTempFile(`conflict-${Date.now()}-${basename(key)}`);
+  try {
+    await io.s3GetFile(remote.key, staged);
+    const same = await io.localFilesEqual(absOf(root, key), staged);
 
-  // 分支 1：内容相同 → 无副本，新者覆盖另一侧。
-  if (bytesEqual(localBytes, remoteBytes)) {
-    if (remoteEpochMs(remote.lastModified) > local.mtimeMs) {
-      await downloadAs(key, remote, ctx, remoteBytes);
-      summary.downloaded++;
-    } else {
-      // 本地新（或相等）→ 上传本地（mtime-only 变化触发一次无害覆盖，已知行为）。
-      await uploadAs(key, local, ctx, localBytes);
-      summary.uploaded++;
+    // 分支 1：内容相同 → 无副本，新者覆盖另一侧。
+    if (same) {
+      if (remoteEpochMs(remote.lastModified) > local.mtimeMs) {
+        await downloadAs(key, remote, ctx, staged);
+        summary.downloaded++;
+      } else {
+        // 本地新（或相等）→ 上传本地（mtime-only 变化触发一次无害覆盖，已知行为）。
+        await uploadAs(key, local, ctx);
+        summary.uploaded++;
+      }
+      return;
     }
-    return;
-  }
 
-  // 分支 2/3：新者胜，败者保副本。
-  const lTime = local.mtimeMs;
-  const rTime = remoteEpochMs(remote.lastModified);
-  let localWins: boolean;
-  if (Number.isNaN(rTime)) {
-    localWins = false;
-    summary.notes.push(`冲突时钟不可信（远端 lastModified 无法解析），已按远端为准，请人工确认：${key}`);
-  } else if (lTime > rTime + 1000) {
-    localWins = true;
-  } else if (rTime > lTime + 1000) {
-    localWins = false;
-  } else {
-    // 时间接近无法判定 → 远端胜 + 提示人工确认（§5.3 第 3 条）。
-    localWins = false;
-    summary.notes.push(`冲突双方时间接近无法判定新旧，已按远端为准，请人工确认冲突副本：${key}`);
-  }
+    // 分支 2/3：新者胜，败者保副本。
+    const lTime = local.mtimeMs;
+    const rTime = remoteEpochMs(remote.lastModified);
+    let localWins: boolean;
+    if (Number.isNaN(rTime)) {
+      localWins = false;
+      summary.notes.push(`冲突时钟不可信（远端 lastModified 无法解析），已按远端为准，请人工确认：${key}`);
+    } else if (lTime > rTime + 1000) {
+      localWins = true;
+    } else if (rTime > lTime + 1000) {
+      localWins = false;
+    } else {
+      // 时间接近无法判定 → 远端胜 + 提示人工确认（§5.3 第 3 条）。
+      localWins = false;
+      summary.notes.push(`冲突双方时间接近无法判定新旧，已按远端为准，请人工确认冲突副本：${key}`);
+    }
 
-  const copyRel = conflictCopyName(key);
-  const copyAbs = absOf(root, copyRel);
+    const copyRel = conflictCopyName(key);
+    const copyAbs = absOf(root, copyRel);
 
-  if (localWins) {
-    // 本地胜：远端旧内容存为冲突副本（本地 + 上传）；本地内容上传为正主。
-    await io.writeFileLocal(copyAbs, remoteBytes);
-    const copyStat = (await io.statLocal(copyAbs).catch(() => null)) ?? {
-      mtimeMs: Date.now(),
-      size: remoteBytes.length,
-    };
-    const putCopy = await io.s3Put(`${fullPrefix}${copyRel}`, remoteBytes, copyStat.mtimeMs);
-    files[copyRel] = {
-      local: { mtimeMs: copyStat.mtimeMs, size: copyStat.size, md5: null },
-      remote: { etag: putCopy.etag ?? "", size: putCopy.size, lastModified: putCopy.lastModified },
-    };
-    await uploadAs(key, local, ctx, localBytes);
-  } else {
-    // 远端胜：本地旧内容改名为冲突副本并上传；远端内容落为正主。
-    await io.renameLocal(absOf(root, key), copyAbs);
-    const copyStat = (await io.statLocal(copyAbs).catch(() => null)) ?? {
-      mtimeMs: Date.now(),
-      size: localBytes.length,
-    };
-    const putCopy = await io.s3Put(`${fullPrefix}${copyRel}`, localBytes, copyStat.mtimeMs);
-    files[copyRel] = {
-      local: { mtimeMs: copyStat.mtimeMs, size: copyStat.size, md5: null },
-      remote: { etag: putCopy.etag ?? "", size: putCopy.size, lastModified: putCopy.lastModified },
-    };
-    await downloadAs(key, remote, ctx, remoteBytes);
+    if (localWins) {
+      // 本地胜：远端旧内容（暂存）存为冲突副本（本地 + 上传）；本地内容上传为正主。
+      await io.copyLocal(staged, copyAbs);
+      const copyStat = (await io.statLocal(copyAbs).catch(() => null)) ?? {
+        mtimeMs: Date.now(),
+        size: remote.size,
+      };
+      const putCopy = await io.s3PutFile(`${fullPrefix}${copyRel}`, copyAbs, copyStat.mtimeMs);
+      files[copyRel] = {
+        local: { mtimeMs: copyStat.mtimeMs, size: copyStat.size, md5: null },
+        remote: { etag: putCopy.etag ?? "", size: putCopy.size, lastModified: putCopy.lastModified },
+      };
+      await uploadAs(key, local, ctx);
+    } else {
+      // 远端胜：本地旧内容改名为冲突副本并上传；远端内容（暂存）落为正主。
+      await io.renameLocal(absOf(root, key), copyAbs);
+      const copyStat = (await io.statLocal(copyAbs).catch(() => null)) ?? {
+        mtimeMs: Date.now(),
+        size: local.size,
+      };
+      const putCopy = await io.s3PutFile(`${fullPrefix}${copyRel}`, copyAbs, copyStat.mtimeMs);
+      files[copyRel] = {
+        local: { mtimeMs: copyStat.mtimeMs, size: copyStat.size, md5: null },
+        remote: { etag: putCopy.etag ?? "", size: putCopy.size, lastModified: putCopy.lastModified },
+      };
+      await downloadAs(key, remote, ctx, staged);
+    }
+  } finally {
+    // 暂存清理（downloadAs 落位后已自行删过；此处兜底收尾，双重删除无害）。
+    await io.removeLocal(staged).catch(() => {});
   }
 }
 
-/** 冲突内部复用：下载远端为正主并记录两侧快照（bytes 已读则直传免二次 GET）。 */
+/** 冲突内部复用：下载远端为正主并记录两侧快照（staged 暂存存在则复制落位，免二次下载）。 */
 async function downloadAs(
   key: string,
   remote: S3Object,
   ctx: ConflictCtx,
-  preloaded?: Uint8Array
+  staged?: string
 ): Promise<void> {
   const { io, root, files } = ctx;
-  const bytes = preloaded ?? (await io.s3Get(remote.key));
   const abs = absOf(root, key);
-  await io.writeFileLocal(abs, bytes);
+  if (staged) {
+    await io.copyLocal(staged, abs);
+    await io.removeLocal(staged).catch(() => {});
+  } else {
+    await io.s3GetFile(remote.key, abs);
+  }
   const st = (await io.statLocal(abs).catch(() => null)) ?? {
     mtimeMs: Date.now(),
-    size: bytes.length,
+    size: remote.size,
   };
   files[key] = {
     local: { mtimeMs: st.mtimeMs, size: st.size, md5: null },
@@ -625,16 +650,14 @@ async function downloadAs(
   };
 }
 
-/** 冲突内部复用：上传本地为正主并记录两侧快照（bytes 已读则直传免二次读盘）。 */
+/** 冲突内部复用：上传本地为正主并记录两侧快照（路径直传，免二次读盘）。 */
 async function uploadAs(
   key: string,
   local: LocalScanFile,
-  ctx: ConflictCtx,
-  preloaded?: Uint8Array
+  ctx: ConflictCtx
 ): Promise<void> {
   const { io, root, fullPrefix, files } = ctx;
-  const bytes = preloaded ?? (await io.readLocalBytes(absOf(root, key)));
-  const put = await io.s3Put(`${fullPrefix}${key}`, bytes, local.mtimeMs);
+  const put = await io.s3PutFile(`${fullPrefix}${key}`, absOf(root, key), local.mtimeMs);
   files[key] = {
     local: { mtimeMs: local.mtimeMs, size: local.size, md5: null },
     remote: { etag: put.etag ?? "", size: put.size, lastModified: put.lastModified },
@@ -690,8 +713,8 @@ export function createDefaultSyncIO(cfg: S3ConfigPayload): SyncIO {
       return out;
     },
     s3List: (prefix) => s3List(cfg, prefix),
-    s3Get: (key) => s3Get(cfg, key),
-    s3Put: (key, data, mtimeMs) => s3Put(cfg, key, data, mtimeMs),
+    s3GetFile: (key, destAbs) => s3GetFile(cfg, key, destAbs),
+    s3PutFile: (key, absPath, mtimeMs) => s3PutFile(cfg, key, absPath, mtimeMs),
     s3Delete: (key) => s3Delete(cfg, key),
     readManifest: (root) => readManifest(root),
     writeManifest: (root, m) => writeManifest(root, m),
@@ -717,11 +740,18 @@ export function createDefaultSyncIO(cfg: S3ConfigPayload): SyncIO {
         return null;
       }
     },
-    readLocalBytes: (abs) => fs().readFile(abs),
-    async writeFileLocal(abs, data) {
-      const dir = abs.slice(0, abs.lastIndexOf("/"));
+    // 冲突比对与副本落位：字节全程留在 Rust 侧（v4.12.4）。
+    localFilesEqual: (a, b) =>
+      getAdapter().app.invoke<boolean>("local_files_equal", { a, b }),
+    copyLocal: (from, to) =>
+      getAdapter().app.invoke<void>("local_copy_file", { from, to }),
+    removeLocal: (abs) => fs().remove(abs),
+    async syncTempFile(name) {
+      // 暂存目录：与回收站同区的 <app-data>/sync/tmp。
+      const appData = await getAdapter().app.appDataDir();
+      const dir = `${toPosix(appData)}/sync/tmp`;
       if (!(await fs().exists(dir))) await fs().mkdir(dir, { recursive: true });
-      await fs().writeFile(abs, data);
+      return `${dir}/${name}`;
     },
     renameLocal: (a, b) => fs().rename(a, b),
   };

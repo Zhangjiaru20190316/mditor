@@ -9,8 +9,9 @@
 //   * isSyncSupported() 是全部 UI/装配点的唯一判定入口（detectRuntime 判定，
 //     禁止各处自写运行时判断）——browser 预览运行时判 false；
 //   * 每个原语入口先守卫——不支持时抛 UnsupportedError（复用项目既有约定）；
-//   * 二进制差异（D4）：桌面 s3_get 走 Tauri raw IPC 返回 ArrayBuffer；
-//     鸿蒙桥统一 {base64}（fromBase64 解码复用鸿蒙适配层实现）。
+//   * 文件通道（v4.12.4）：桌面 s3GetFile/s3PutFile 走 Rust 直读直写本地
+//     文件，文件字节不经 IPC（修复 WebView 大 base64 载荷崩溃）；鸿蒙桥
+//     统一 {base64}（fromBase64 解码复用鸿蒙适配层实现）。
 // node（vitest）环境 detectRuntime 恒按 tauri 处理，测试需显式 vi.mock。
 
 import { detectRuntime } from "../../platform";
@@ -89,7 +90,8 @@ export async function s3List(cfg: S3ConfigPayload, prefix: string): Promise<S3Ob
   return getAdapter().app.invoke<S3Object[]>("s3_list", toArgs(cfg, { prefix }));
 }
 
-/** 下载对象（≤50MB 硬校验在后端）。 */
+/** 下载对象字节（≤50MB 硬校验在后端）。桌面侧仅鸿蒙分支使用（文件通道
+ *  s3GetFile 的底层）；保留导出供测试与潜在小对象读取。 */
 export async function s3Get(cfg: S3ConfigPayload, key: string): Promise<Uint8Array> {
   requireSync();
   if (detectRuntime() === "harmony") {
@@ -102,28 +104,76 @@ export async function s3Get(cfg: S3ConfigPayload, key: string): Promise<Uint8Arr
 }
 
 /**
- * 上传对象。data 为 base64（Tauri JSON IPC 无二进制参数通道，md 文件以
- * 文本为主、上限 50MB，base64 开销可接受；SYNC-TODO: 若未来大文件成为
- * 主流可改 raw IPC body）。mtimeMs 尽力写入 x-amz-meta-mtime。
- * 返回上传后的对象元数据（内部 HEAD 取回，供 manifest 记录 etag/lastModified）。
+ * 下载对象到本地文件（v4.12.4 崩溃修复：桌面 Rust 直写落盘，字节不经
+ * JS——旧通道把整文件读进 WebView 是首同步崩溃嫌疑之一）。鸿蒙桥暂无
+ * 文件直写通道：经 base64 字节通道读出后由适配层落盘（50MB 上限内）。
  */
-export async function s3Put(
+export async function s3GetFile(
+  cfg: S3ConfigPayload,
+  key: string,
+  destAbs: string
+): Promise<void> {
+  requireSync();
+  if (detectRuntime() === "harmony") {
+    const bytes = await s3Get(cfg, key);
+    await writeFileEnsuringDir(destAbs, bytes);
+    return;
+  }
+  await getAdapter().app.invoke<void>(
+    "s3_download_file",
+    toArgs(cfg, { key, destPath: destAbs })
+  );
+}
+
+/**
+ * 上传本地文件（v4.12.4 崩溃修复：桌面 Rust 直读文件，字节不经 JS。旧
+ * s3Put 的 base64 JSON 通道对 50MB 文件有 ~4.3x 内存放大，且 WebView2 超
+ * 大自定义协议请求体是崩溃高发点——「启用云同步后首同步崩溃」的头号嫌
+ * 疑）。mtimeMs 尽力写入 x-amz-meta-mtime；返回上传后的对象元数据（内部
+ * HEAD 取回，供 manifest 记录 etag/lastModified）。鸿蒙无 Rust 侧：读字节
+ * 走 base64 通道（ArkTS S3Bridge 语义不变）。
+ */
+export async function s3PutFile(
+  cfg: S3ConfigPayload,
+  key: string,
+  absPath: string,
+  mtimeMs?: number
+): Promise<S3Object> {
+  requireSync();
+  if (detectRuntime() === "harmony") {
+    const bytes = await getAdapter().fs.readFile(absPath);
+    return putBytesViaBase64(cfg, key, bytes, mtimeMs);
+  }
+  return getAdapter().app.invoke<S3Object>(
+    "s3_upload_file",
+    toArgs(cfg, { key, localPath: absPath, mtimeMs })
+  );
+}
+
+/** 鸿蒙 base64 上传通道（ArkTS S3Bridge 的 s3_put 语义；桌面不再使用）。 */
+async function putBytesViaBase64(
   cfg: S3ConfigPayload,
   key: string,
   data: Uint8Array,
   mtimeMs?: number
 ): Promise<S3Object> {
-  requireSync();
   let binary = "";
   const CHUNK = 0x8000;
   for (let i = 0; i < data.length; i += CHUNK) {
     binary += String.fromCharCode(...data.subarray(i, i + CHUNK));
   }
-  const payload = btoa(binary);
   return getAdapter().app.invoke<S3Object>(
     "s3_put",
-    toArgs(cfg, { key, data: payload, mtimeMs })
+    toArgs(cfg, { key, data: btoa(binary), mtimeMs })
   );
+}
+
+/** 适配层落盘（父目录自动创建）——鸿蒙 base64 通道专用。 */
+async function writeFileEnsuringDir(abs: string, data: Uint8Array): Promise<void> {
+  const fs = getAdapter().fs;
+  const dir = abs.slice(0, abs.lastIndexOf("/"));
+  if (dir && !(await fs.exists(dir))) await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(abs, data);
 }
 
 /** 删除远端对象（不可恢复——设置界面建议开启桶版本控制）。 */
@@ -138,15 +188,17 @@ export async function s3Head(cfg: S3ConfigPayload, key: string): Promise<S3Objec
   return getAdapter().app.invoke<S3Object | null>("s3_head", toArgs(cfg, { key }));
 }
 
-/** SyncSettings → 每次调用透传的连接载荷（D3；region 空值兜底 us-east-1）。 */
+/** SyncSettings → 每次调用透传的连接载荷（D3；region 空值兜底 us-east-1）。
+ *  v4.12.4：secretAccessKey / sessionToken 一并 trim——真实案例里粘贴的 SK
+ *  带了尾随空格，SigV4 签名必败且极难排查。 */
 export function syncConfigPayload(s: SyncSettings): S3ConfigPayload {
   return {
     endpoint: s.endpoint.trim(),
     region: s.region.trim() || "us-east-1",
     bucket: s.bucket.trim(),
     accessKeyId: s.accessKeyId.trim(),
-    secretAccessKey: s.secretAccessKey,
-    sessionToken: s.sessionToken || undefined,
+    secretAccessKey: s.secretAccessKey.trim(),
+    sessionToken: (s.sessionToken || "").trim() || undefined,
     pathStyle: s.pathStyle,
   };
 }

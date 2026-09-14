@@ -272,27 +272,13 @@ pub async fn s3_get(cfg: S3Config, key: String) -> Result<tauri::ipc::Response, 
     Ok(tauri::ipc::Response::new(bytes.to_vec()))
 }
 
-/// 上传对象（base64 载荷——Tauri JSON IPC 无二进制参数通道；50MB 上限同
-/// 步作用于解码前）。尽力写入 x-amz-meta-mtime 供冲突判定参考。上传后
-/// HEAD 取回规范元数据（etag/lastModified 与后续 List 一致）供 manifest。
-#[command]
-pub async fn s3_put(
-    cfg: S3Config,
-    key: String,
-    data: String,
+/// put + 上传后 HEAD 回读（etag/lastModified 供 manifest 记录）。
+async fn put_bytes(
+    store: &object_store::aws::AmazonS3,
+    path: &StorePath,
+    bytes: Vec<u8>,
     mtime_ms: Option<f64>,
 ) -> Result<S3Object, String> {
-    validate_key(&key)?;
-    let bytes = base64_decode(&data)?;
-    if bytes.len() > MAX_OBJECT_BYTES {
-        return Err(err(
-            "005",
-            format!("文件过大（{} 字节，上限 {}）", bytes.len(), MAX_OBJECT_BYTES),
-        ));
-    }
-    let store = build_store(&cfg)?;
-    let path = StorePath::from(key.as_str());
-
     let mut options = PutOptions::default();
     if let Some(ms) = mtime_ms {
         if ms.is_finite() && ms >= 0.0 {
@@ -308,15 +294,121 @@ pub async fn s3_put(
     options.mode = PutMode::Overwrite;
 
     store
-        .put_opts(&path, bytes.into(), options)
+        .put_opts(path, bytes.into(), options)
         .await
         .map_err(|e| map_store_error("上传失败", &e))?;
 
     let meta = store
-        .head(&path)
+        .head(path)
         .await
         .map_err(|e| map_store_error("上传后校验失败", &e))?;
     Ok(to_s3_object(&meta))
+}
+
+/// 上传本地文件到对象（v4.12.4 崩溃修复：文件字节不再经 IPC。旧 s3_put 的
+/// base64 JSON 通道对 50MB 文件有 ~4.3x 内存放大（Uint8Array + UTF-16 二进
+/// 制串 + base64 串叠加），且 WebView2 超大自定义协议请求体是已知崩溃高发
+/// 点——事件日志 4 次 0xc0000409 均落在首同步批量上传时段）。Rust 直读文
+/// 件后走同一 put 路径；mtimeMs 尽力写入 x-amz-meta-mtime；上传后 HEAD 取
+/// 回规范元数据供 manifest。
+#[command]
+pub async fn s3_upload_file(
+    cfg: S3Config,
+    key: String,
+    local_path: String,
+    mtime_ms: Option<f64>,
+) -> Result<S3Object, String> {
+    validate_key(&key)?;
+    if local_path.trim().is_empty() {
+        return Err(err("006", "本地文件路径为空"));
+    }
+    // 先 stat 校验大小再读（避免把超限大文件整个读进内存）。
+    let meta = tokio::fs::metadata(&local_path)
+        .await
+        .map_err(|e| err("006", format!("读取本地文件失败：{e}")))?;
+    if meta.len() > MAX_OBJECT_BYTES as u64 {
+        return Err(err(
+            "005",
+            format!("文件过大（{} 字节，上限 {}）", meta.len(), MAX_OBJECT_BYTES),
+        ));
+    }
+    let bytes = tokio::fs::read(&local_path)
+        .await
+        .map_err(|e| err("006", format!("读取本地文件失败：{e}")))?;
+    let store = build_store(&cfg)?;
+    let path = StorePath::from(key.as_str());
+    put_bytes(&store, &path, bytes, mtime_ms).await
+}
+
+/// 下载对象到本地文件（v4.12.4：字节不经 IPC，Rust 直写落盘。先写同目录
+/// `.mditor-tmp` 临时文件再改名，避免半写状态；父目录自动创建；Windows 上
+/// rename 目标已存在会失败 → 先删旧文件再改名）。返回 HEAD 元数据，调用方
+/// 可免二次请求。
+#[command]
+pub async fn s3_download_file(
+    cfg: S3Config,
+    key: String,
+    dest_path: String,
+) -> Result<S3Object, String> {
+    validate_key(&key)?;
+    if dest_path.trim().is_empty() {
+        return Err(err("006", "目标文件路径为空"));
+    }
+    let store = build_store(&cfg)?;
+    let path = StorePath::from(key.as_str());
+    let meta = store
+        .head(&path)
+        .await
+        .map_err(|e| map_store_error("下载失败（对象不存在或无权限）", &e))?;
+    if meta.size as usize > MAX_OBJECT_BYTES {
+        return Err(err(
+            "005",
+            format!("对象过大（{} 字节，上限 {}）", meta.size, MAX_OBJECT_BYTES),
+        ));
+    }
+    let result = store
+        .get(&path)
+        .await
+        .map_err(|e| map_store_error("下载失败", &e))?;
+    let bytes = result
+        .bytes()
+        .await
+        .map_err(|e| map_store_error("下载失败", &e))?;
+    if bytes.len() > MAX_OBJECT_BYTES {
+        return Err(err(
+            "005",
+            format!("对象过大（{} 字节，上限 {}）", bytes.len(), MAX_OBJECT_BYTES),
+        ));
+    }
+
+    let dest = std::path::Path::new(&dest_path);
+    if let Some(parent) = dest.parent() {
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| err("006", format!("创建目标目录失败：{e}")))?;
+        }
+    }
+    let tmp = format!("{}.mditor-tmp", dest_path);
+    let landed = async {
+        tokio::fs::write(&tmp, &bytes)
+            .await
+            .map_err(|e| err("006", format!("写入临时文件失败：{e}")))?;
+        if tokio::fs::rename(&tmp, dest).await.is_err() {
+            let _ = tokio::fs::remove_file(dest).await;
+            tokio::fs::rename(&tmp, dest)
+                .await
+                .map_err(|e| err("006", format!("落盘失败：{e}")))?;
+        }
+        Ok::<(), String>(())
+    };
+    match landed.await {
+        Ok(()) => Ok(to_s3_object(&meta)),
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&tmp).await; // best-effort 清理
+            Err(e)
+        }
+    }
 }
 
 /// 删除远端对象（幂等：不存在时 object_store 返回 Ok）。
@@ -343,38 +435,6 @@ pub async fn s3_head(cfg: S3Config, key: String) -> Result<Option<S3Object>, Str
         Err(object_store::Error::NotFound { .. }) => Ok(None),
         Err(e) => Err(map_store_error("查询对象失败", &e)),
     }
-}
-
-/// 标准 base64 解码（无第三方依赖：reqwest 树里虽带 base64，但为避免直接
-/// 依赖传递 crate，这里手写解码——只此一处、可单测）。
-fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
-    fn b64_val(b: u8) -> Option<u8> {
-        match b {
-            b'A'..=b'Z' => Some(b - b'A'),
-            b'a'..=b'z' => Some(b - b'a' + 26),
-            b'0'..=b'9' => Some(b - b'0' + 52),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            _ => None,
-        }
-    }
-    let mut out = Vec::with_capacity(input.len() / 4 * 3);
-    let mut acc: u32 = 0;
-    let mut nbits: u32 = 0;
-    for &b in input.as_bytes() {
-        // padding 与空白（btoa 不产生换行，防御性处理）直接跳过。
-        if b == b'=' || b == b'\n' || b == b'\r' || b == b' ' {
-            continue;
-        }
-        let v = b64_val(b).ok_or_else(|| err("999", "上传数据 base64 解码失败"))?;
-        acc = (acc << 6) | v as u32;
-        nbits += 6;
-        if nbits >= 8 {
-            nbits -= 8;
-            out.push((acc >> nbits) as u8);
-        }
-    }
-    Ok(out)
 }
 
 #[cfg(test)]
@@ -412,42 +472,6 @@ mod tests {
         assert!(validate_key(&long).is_err());
         // 边界：1024 恰好放行。
         assert!(validate_key(&"a".repeat(1024)).is_ok());
-    }
-
-    // ---- base64_decode（上传通道）-------------------------------------------
-
-    #[test]
-    fn base64_roundtrip() {
-        assert_eq!(base64_decode("").unwrap(), b"");
-        assert_eq!(base64_decode("aGk=").unwrap(), b"hi");
-        assert_eq!(base64_decode("aGVsbG8=").unwrap(), b"hello");
-        // 二进制全值域（0..255）——校验表正确性。
-        let all: Vec<u8> = (0..=255u8).collect();
-        let b64: String = {
-            // 与前端 btoa 等价的标准 base64 编码（测试 oracle）。
-            const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-            let mut s = String::new();
-            for chunk in all.chunks(3) {
-                let b = [
-                    chunk[0],
-                    *chunk.get(1).unwrap_or(&0),
-                    *chunk.get(2).unwrap_or(&0),
-                ];
-                let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
-                s.push(CHARS[(n >> 18) as usize & 63] as char);
-                s.push(CHARS[(n >> 12) as usize & 63] as char);
-                s.push(if chunk.len() > 1 { CHARS[(n >> 6) as usize & 63] as char } else { '=' });
-                s.push(if chunk.len() > 2 { CHARS[n as usize & 63] as char } else { '=' });
-            }
-            s
-        };
-        assert_eq!(base64_decode(&b64).unwrap(), all);
-    }
-
-    #[test]
-    fn base64_rejects_garbage() {
-        assert!(base64_decode("!!!").is_err());
-        assert!(base64_decode("ab*d").is_err());
     }
 
     // ---- http_endpoint_allowed（D6 传输约束）-------------------------------

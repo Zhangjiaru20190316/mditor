@@ -77,6 +77,13 @@ function isLocalhostEndpoint(endpoint: string): boolean {
   return host === "localhost" || host === "127.0.0.1";
 }
 
+/** endpoint 是否仍是未替换的预设模板（{region}/{account} 占位符）。
+ *  v4.12.4：真实案例里 `https://oss-{region}.aliyuncs.com` 被原样保存——
+ *  占位符进 host 后解析/签名全线失败，必须在保存与测试连接时阻断。 */
+function hasEndpointPlaceholder(endpoint: string): boolean {
+  return /[{}]/.test(endpoint.trim());
+}
+
 /** 启用同步还缺哪些必填项（AWS 预设可留空 endpoint 走默认端点）。 */
 function isSyncIncomplete(s: SyncSettings): boolean {
   return (
@@ -244,6 +251,14 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
         setSyncTestMsg("仅允许 HTTPS endpoint（HTTP 仅限 localhost/127.0.0.1 本地调试）");
         return;
       }
+      if (hasEndpointPlaceholder(sync.endpoint)) {
+        setSection(SYNC_SECTION_IDX);
+        setSyncTestOk(false);
+        setSyncTestMsg(
+          "endpoint 仍是未替换的模板（含 {region} 占位符）：请填入真实地址，例如 https://oss-cn-beijing.aliyuncs.com"
+        );
+        return;
+      }
       if (isSyncIncomplete(sync)) {
         setSection(SYNC_SECTION_IDX);
         setSyncTestOk(false);
@@ -301,6 +316,11 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
   /** 测试连接基于 draft（与 AI 测试连接同一先例：不落盘、不代保存）。 */
   const runSyncTest = async () => {
     if (!syncSupported) return;
+    if (hasEndpointPlaceholder(draft.sync.endpoint)) {
+      setSyncTestOk(false);
+      setSyncTestMsg("endpoint 仍是未替换的模板（含 {region}）：请先填入真实地址再测试");
+      return;
+    }
     setSyncTesting(true);
     setSyncTestMsg("");
     try {
