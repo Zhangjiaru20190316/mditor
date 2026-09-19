@@ -30,9 +30,12 @@ export const RecentList = memo(function RecentList({ onOpen, refreshKey, onOpenN
 
   useEffect(() => {
     let cancelled = false;
-    loadRecent().then((r) => {
-      if (!cancelled) setItems(r);
-    });
+    loadRecent()
+      .then((r) => {
+        if (!cancelled) setItems(r);
+      })
+      // 加载失败视为无最近列表（与 QuickSwitcher 的处理一致）。
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };

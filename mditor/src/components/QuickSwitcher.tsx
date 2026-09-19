@@ -185,12 +185,12 @@ export const QuickSwitcher = memo(function QuickSwitcher({ open, onClose, onOpen
   );
 });
 
-/** 显示路径去掉工作区根前缀（保持原样当无法判断时）。 */
-function trimRoot(path: string): string {
+/**
+ * 显示路径：超过两层只保留尾部两层并加 … 前缀，两层以内原样显示。
+ * （与 WikiLinkSuggest 的 shortPath 语义一致；导出以便单测回归。）
+ */
+export function trimRoot(path: string): string {
   const posix = toPosix(path);
-  const i = posix.lastIndexOf("/");
-  // 只留两层以内的尾部路径，避免过长。
   const parts = posix.split("/");
-  const tail = parts.slice(Math.max(i - 1, 0)).join("/");
-  return tail.length < posix.length ? "…" + tail : tail;
+  return parts.length > 2 ? "…" + parts.slice(-2).join("/") : posix;
 }

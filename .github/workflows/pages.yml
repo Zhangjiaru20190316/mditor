@@ -21,16 +21,65 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # N7：上线前强制过 CI 质量门禁（复用 ci.yml，范式同 release.yml 的 check
+  # job）。此前 push main 直接部署，坏链/坏代码照样上线。
+  check:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: [check]
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      # S9：所有 action 固定到 40 位 commit SHA（tag 可变，被劫持即以仓库
+      # 权限运行）；升级时人工换 SHA 并核对 diff。
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # actions/checkout v4.2.2（与 ci.yml/release.yml 同一 SHA）
+
+      # N30：下载链接/徽章/What's New 的版本号此前硬编码在 site/index.html
+      # （如 Mditor_4.12.3_x64-setup.exe），发新版忘改即 404。这里在打包上传
+      # 前把最新 Release 的 tag 注入进去：
+      #   * 下载链接文件名（不带 v）：Mditor_<旧版>_x64-setup.exe → Mditor_<新版>_x64-setup.exe
+      #   * 首页徽章 span.hb-new 与 What's New 首条 span.wn-ver（带 v）：v<旧版> → v<新版>
+      # 只碰"当前版本"标记。历史内容（旧 wn-ver 条目、FAQ 里的 v3.5.0/v4.1.1、
+      # 正文与演示文案中的 v4.12.x）与日期（2026-09-13 等）不匹配上述锚定
+      # 模式，保持原样——盲目替换 v<主.次.修> 会篡改历史语义。
+      - name: 注入最新版本号到 site/index.html（N30）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VER="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          FROM_RELEASE=0
+          if [ -n "$VER" ]; then FROM_RELEASE=1; fi
+          if [ "$FROM_RELEASE" = "0" ]; then
+            # fallback：尚无已发布 Release 时退回本地最新 tag（checkout 默认
+            # 浅克隆，先补拉 tags；仍取不到则跳过注入并告警）。
+            git fetch --tags --quiet || true
+            VER="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          fi
+          if [ -z "$VER" ]; then
+            echo "::warning::取不到最新版本号（无 Release 且无 tag），跳过 N30 版本注入，index.html 保持硬编码版本。"
+            exit 0
+          fi
+          VER_NOV="${VER#v}"   # 资产文件名不带 v：Mditor_4.14.0_x64-setup.exe
+          echo "N30：注入版本 ${VER}（文件名形态 ${VER_NOV}）"
+          # VER 已带 v 前缀（如 v4.14.0）：徽章/wn-ver 替换串直接用 ${VER}，
+          # 文件名用去掉 v 的 ${VER_NOV}——两种形态勿混。
+          sed -i -E \
+            -e "s/Mditor_[0-9][0-9.]*_x64-setup\.exe/Mditor_${VER_NOV}_x64-setup.exe/g" \
+            -e "s/(<span class=\"hb-new\"><i><\/i>)v[0-9][0-9.]*/\1${VER}/" \
+            -e "0,/<span class=\"wn-ver\">/s/(<span class=\"wn-ver\">)v[0-9][0-9.]*/\1${VER}/" \
+            site/index.html
+          # 软校验：最新 Release 缺少对应安装包资产时告警（不阻断部署，
+          # 提示去 Releases 核对产物命名；fallback 路径不查）。
+          if [ "$FROM_RELEASE" = "1" ] && ! gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.assets[].name' 2>/dev/null | grep -qx "Mditor_${VER_NOV}_x64-setup.exe"; then
+            echo "::warning::最新 Release ${VER} 中没有资产 Mditor_${VER_NOV}_x64-setup.exe，下载链接可能 404，请核对发布产物命名。"
+          fi
+
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # actions/configure-pages v5
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # actions/upload-pages-artifact v3
         with:
           path: site
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # actions/deploy-pages v4

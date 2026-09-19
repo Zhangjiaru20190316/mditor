@@ -16,7 +16,7 @@
 // 零渲染开销（App 条件挂载）；事件总线常驻（环形缓冲 300 条，永远可以
 // 打开面板回看最近发生了什么）。
 
-import { memo, useCallback, useEffect, useReducer, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import {
   annoCounters,
   annoDebugClear,
@@ -70,13 +70,41 @@ function fmtTime(ts: number): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
+/** 合并后的事件（渲染/导出共用；data 等渲染用不到的字段不随拷贝）。 */
+interface MergedDiagEvent {
+  ts: number;
+  level: string;
+  kind: string;
+  msg: string;
+  src: string;
+}
+
+/**
+ * 合并三条事件总线快照，按时间降序取前 limit 条。纯函数：三个 bus 的
+ * events() 返回的是模块内部数组引用，这里先 map 出新对象再排序，绝不
+ * 就地改动总线。渲染（useMemo 按 bump 计数缓存）与复制报告共用。
+ */
+function mergeEvents(
+  limit: number,
+  labels: { anno: string; scroll: string; sys: string }
+): MergedDiagEvent[] {
+  const merged: MergedDiagEvent[] = [
+    ...annoEvents().map((e) => ({ ts: e.ts, level: e.level, kind: e.kind, msg: e.msg, src: labels.anno })),
+    ...scrollEvents().map((e) => ({ ts: e.ts, level: e.level, kind: e.kind, msg: e.msg, src: labels.scroll })),
+    ...sysEvents().map((e) => ({ ts: e.ts, level: e.level, kind: e.kind, msg: e.msg, src: labels.sys })),
+  ];
+  merged.sort((a, b) => b.ts - a.ts);
+  return merged.slice(0, limit);
+}
+
 export const AnnoDiagnostics = memo(function AnnoDiagnostics({
   getMarkdown,
   onClose,
 }: Props) {
   // 事件到达即重渲染（订阅推送；计数器/事件都从总线快照读取）。异常累计
-  // 跟着告警放行流一起 bump（开发者模式开着时）。
-  const [, bump] = useReducer((x: number) => x + 1, 0);
+  // 跟着告警放行流一起 bump（开发者模式开着时）。tick 是三条总线的共享
+  // 「版本信号」：任何总线来新事件 tick+1，下方 events 的 useMemo 随之重算。
+  const [tick, bump] = useReducer((x: number) => x + 1, 0);
   useEffect(() => {
     const un1 = annoSubscribe(bump);
     const un2 = scrollSubscribe(bump);
@@ -155,13 +183,7 @@ v${env.ver} ${env.platform} ${env.win ? `${env.win.w}x${env.win.h}@${env.dpr}x `
       }
     }
     lines.push("## 最近事件（批注+滚动合并，新在上）");
-    const merged = [
-      ...annoEvents().map((e) => ({ ...e, src: "anno" })),
-      ...scrollEvents().map((e) => ({ ...e, src: "scroll" })),
-      ...sysEvents().map((e) => ({ ...e, src: "sys" })),
-    ]
-      .sort((a, b) => b.ts - a.ts)
-      .slice(0, 100);
+    const merged = mergeEvents(100, { anno: "anno", scroll: "scroll", sys: "sys" });
     for (const e of merged) {
       lines.push(`- ${fmtTime(e.ts)} [${e.src}/${e.level}] ${e.kind}: ${e.msg}`);
     }
@@ -178,13 +200,15 @@ v${env.ver} ${env.platform} ${env.win ? `${env.win.w}x${env.win.h}@${env.dpr}x `
     ...Object.entries(sysCnts),
   ];
   const ghost = scrollWatchStats().lastGhost;
-  const events = [
-    ...annoEvents().map((e) => ({ ...e, src: "批注" })),
-    ...scrollEvents().map((e) => ({ ...e, src: "滚动" })),
-    ...sysEvents().map((e) => ({ ...e, src: "系统" })),
-  ]
-    .sort((a, b) => b.ts - a.ts)
-    .slice(0, 60);
+  // 每条事件都触发本组件重渲（订阅推送），合并重排缓存在 useMemo 里按
+  // tick 失效——重渲但无新事件（如体检 setState、dev 告警）不再对最多
+  // 900 条环形缓冲做全量 map+sort。tick 是三条总线（subscribe→bump）的
+  // 版本信号，mergeEvents 读的是模块级实时数据，lint 看不出这层依赖。
+  const events = useMemo(
+    () => mergeEvents(60, { anno: "批注", scroll: "滚动", sys: "系统" }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- tick 是事件总线的版本信号（见上），刻意列入依赖
+    [tick]
+  );
 
   return (
     <div className="anno-diag" role="dialog" aria-label="批注与滚动诊断面板">

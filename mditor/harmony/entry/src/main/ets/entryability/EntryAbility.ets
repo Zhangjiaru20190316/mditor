@@ -16,7 +16,7 @@ export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     // 宿主上下文先行挂载：Bridge 各域实现经它访问 filesDir / terminateSelf。
     HostContext.ability = this;
-    hilog.info(0x0000, 'mditor', 'EntryAbility onCreate');
+    hilog.info(DOMAIN, 'mditor', 'EntryAbility onCreate');
     // E7：启动尽力清理 30 天前回收站条目（CHANGELOG 4.13.0 与 FileManager
     // 文档均宣称此行为，此前 import 了却从未调用）。延迟 3s 避开启动关键
     // 路径；cleanupTrash 自吞异常，这里再兜一层。
@@ -24,22 +24,22 @@ export default class EntryAbility extends UIAbility {
       try {
         cleanupTrash(this.context.filesDir);
       } catch (err) {
-        hilog.warn(0x0D01, 'mditor', 'cleanupTrash 失败（忽略）: %{public}s', String(err));
+        hilog.warn(DOMAIN, 'mditor', 'cleanupTrash 失败（忽略）: %{public}s', String(err));
       }
     }, 3000);
   }
 
   onDestroy(): void {
-    hilog.info(0x0000, 'mditor', 'EntryAbility onDestroy');
+    hilog.info(DOMAIN, 'mditor', 'EntryAbility onDestroy');
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
-        hilog.error(0x0000, 'mditor', 'loadContent 失败: %{public}s', JSON.stringify(err));
+        hilog.error(DOMAIN, 'mditor', 'loadContent 失败: %{public}s', JSON.stringify(err));
         return;
       }
-      hilog.info(0x0000, 'mditor', 'loadContent 成功（ArkWeb 壳就绪）');
+      hilog.info(DOMAIN, 'mditor', 'loadContent 成功（ArkWeb 壳就绪）');
     });
   }
 

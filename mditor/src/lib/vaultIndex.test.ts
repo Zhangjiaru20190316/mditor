@@ -294,6 +294,60 @@ describe("VaultIndexManager", () => {
     expect(idx.entry("C:/v/secret/s.md")).toBeNull();
   });
 
+  it("excluded 扩大后已索引的被排除文件被剔除（N18）", async () => {
+    const files = new Map<string, string>([
+      ["C:/v/a.md", "# A"],
+      ["C:/v/secret/s.md", "# S"],
+    ]);
+    const { io } = makeIO(files);
+    const idx = new VaultIndexManager(io);
+    await idx.setRootsAndWait(["C:/v"]);
+    expect(idx.entry("C:/v/secret/s.md")).not.toBeNull();
+    await idx.setRootsAndWait(["C:/v"], new Set(["C:/v/secret"]));
+    expect(idx.entry("C:/v/secret/s.md")).toBeNull();
+    expect(idx.entries().length).toBe(1);
+  });
+
+  it("仅 excluded 变化时 watch 不重挂；roots 变化时重挂（N18）", async () => {
+    const files = new Map<string, string>([
+      ["C:/v/a.md", "# A"],
+      ["C:/v/secret/s.md", "# S"],
+      ["C:/w/b.md", "# B"],
+    ]);
+    const { io } = makeIO(files);
+    const baseWatch = io.watch;
+    let watchCalls = 0;
+    io.watch = async (d, cb, opts) => {
+      watchCalls++;
+      return baseWatch(d, cb, opts);
+    };
+    const idx = new VaultIndexManager(io);
+    await idx.setRootsAndWait(["C:/v"]);
+    expect(watchCalls).toBe(1);
+    // roots 不变、仅 excluded 变：watch 不重建（防 churn），但索引会剔除。
+    await idx.setRootsAndWait(["C:/v"], new Set(["C:/v/secret"]));
+    expect(watchCalls).toBe(1);
+    expect(idx.entry("C:/v/secret/s.md")).toBeNull();
+    // roots 变化：watch 重建（防回归）。
+    await idx.setRootsAndWait(["C:/w"]);
+    expect(watchCalls).toBe(2);
+    expect(idx.entries().length).toBe(1);
+  });
+
+  it("entries() 返回缓存只读快照：bump 前同一实例，bump 后失效重建（N9）", async () => {
+    const files = new Map<string, string>([["C:/v/a.md", "# A"]]);
+    const { io } = makeIO(files);
+    const idx = new VaultIndexManager(io);
+    await idx.setRootsAndWait(["C:/v"]);
+    const e1 = idx.entries();
+    expect(Object.isFrozen(e1)).toBe(true);
+    expect(idx.entries()).toBe(e1); // 同一实例——订阅重渲不再全表拷贝
+    idx.noteSaved("C:/v/a.md", "# 改");
+    const e2 = idx.entries();
+    expect(e2).not.toBe(e1); // bump 后缓存失效
+    expect(e2[0]?.title).toBe("改");
+  });
+
   it("订阅：索引变更通知订阅方", async () => {
     const files = new Map<string, string>([["C:/v/a.md", "# A"]]);
     const { io } = makeIO(files);

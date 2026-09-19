@@ -9,7 +9,7 @@
 // 参数键为前端原样 camelCase（Tauri 的 snake_case 转换只发生在 Rust 侧，
 // 鸿蒙桥没有这层）。
 
-import { Bridge } from './Bridge';
+import { Bridge, BridgeError } from './Bridge';
 import { HostContext } from './HostContext';
 import { bundleManager } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
@@ -134,10 +134,18 @@ export function registerAll(bridge: Bridge): void {
   });
 
   // 用系统浏览器打开链接（UIAbilityContext.openLink，API 12+）。
+  // N6：scheme 白名单对齐桌面端（mditor/src/components/Editor.tsx:785 的
+  // openExternal 口径：仅 http/https/mailto，无 tel）。appLinkingOnly=false
+  // 时 openLink 对任意深链/file:// 都会直达处理器，必须在桥侧源头拦下；
+  // 不匹配按本桥 E_ARGS 约定抛 BridgeError（Bridge.ets 统一转 error 响应）。
+  const OPEN_EXTERNAL_SCHEME = /^(https?:|mailto:)/i;
   bridge.register('app.openExternal', async (params: Record<string, Object>): Promise<Object | null> => {
     const target = params.target as string;
+    if (typeof target !== 'string' || target.length === 0 || !OPEN_EXTERNAL_SCHEME.test(target)) {
+      throw new BridgeError('E_ARGS', 'app.openExternal：目标链接缺失或 scheme 不在白名单（仅允许 http/https/mailto）');
+    }
     const a = HostContext.ability;
-    if (a !== null && a.context !== null && typeof target === 'string' && target.length > 0) {
+    if (a !== null && a.context !== null) {
       await a.context.openLink(target, { appLinkingOnly: false });
     }
     return null;
@@ -153,11 +161,24 @@ export function registerAll(bridge: Bridge): void {
     return null;
   });
 
+  // N24：真双向切换。@ohos.window（SDK API 22 d.ts）语义：undo-maximize
+  // 是 recover()（从最大化/全屏/分屏恢复到进入前的大小位置），而不是
+  // restore()——restore 是「从最小化恢复到前台」，语义不符。状态用桥内
+  // 布尔标记：SDK 22 的 WindowProperties 类型不含 windowStatusType（实时
+  // 查询在 arkts 编译期不可用），已知限制——用户双击标题栏/拖动窗口时
+  // 标记可能失步，届时再按该次状态对齐即可，不产生数据风险。
+  let windowMaximized = false;
   bridge.register('app.windowToggleMaximize', async (): Promise<Object | null> => {
     const a = HostContext.ability;
     if (a !== null && a.context !== null) {
       const win = await window.getLastWindow(a.context);
-      await win.maximize();
+      if (windowMaximized) {
+        await win.recover();
+        windowMaximized = false;
+      } else {
+        await win.maximize();
+        windowMaximized = true;
+      }
     }
     return null;
   });

@@ -106,7 +106,7 @@ import { countWords } from "./lib/textStats";
 import { isBigDoc } from "./lib/memory";
 import { motionEnabled } from "./lib/motion";
 import type { FlatHeading, OutlineNode, Settings, TabItem } from "./types";
-import { EMPTY_MARKS } from "./types";
+import { EMPTY_MARKS, isDarkTheme } from "./types";
 import type { EditorSettings } from "./types";
 
 type SidebarTab = "tree" | "outline" | "recent" | "annotations" | "search" | "links";
@@ -1743,11 +1743,8 @@ export default function App() {
             );
             return;
           }
-          const isDarkTheme =
-            settingsApi.settings.theme === "dark" ||
-            settingsApi.settings.theme === "claude-dark" ||
-            settingsApi.settings.theme === "ios-dark";
-          const bg = isDarkTheme ? "#1e1e1e" : "#ffffff";
+          // 深色底判定走 types.isDarkTheme 单一事实源（原三连枚举收编）。
+          const bg = isDarkTheme(settingsApi.settings.theme) ? "#1e1e1e" : "#ffffff";
           flashStatus("正在导出…", 60_000);
           await exportPng(el, `${name}.png`, bg);
         }
@@ -1863,7 +1860,9 @@ export default function App() {
             const p = ok ? fa.doc.path : null;
             if (p) vaultIndex.noteSaved(p, saved);
             if (ok) syncTriggerRef.current?.onSaved();
-          });
+          })
+          // 失败反馈对齐上方 file_save 分支的 .catch 风格。
+          .catch(() => flashStatus("另存为失败", 5000));
         }
         break;
       case "file_sync_now":

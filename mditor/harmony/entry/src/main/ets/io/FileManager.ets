@@ -214,9 +214,32 @@ export class FileManager {
     }
   }
 
-  /** 永久删除（鸿蒙无公共回收站 API；前端确认弹窗已注明不可恢复）。 */
+  /** 永久删除（鸿蒙无公共回收站 API；前端确认弹窗已注明不可恢复）。
+   *  N2：读取 params.recursive（缺省 false，与前端 platform/harmony
+   *  传参对齐）——fs.rmdirSync 单参不递归，非空目录直删必抛；目录 +
+   *  recursive=true 改走 removeTreeVirtual 后序整棵删除，对齐桌面端
+   *  plugin-fs 的递归删除语义。文件目标与 recursive=false 行为不变。 */
   async remove(params: Record<string, Object>): Promise<Object | null> {
-    return this.permanentlyRemove(this.pathOf(params));
+    const path = this.pathOf(params);
+    const rv = params['recursive'];
+    let recursive = false;
+    if (typeof rv === 'boolean') {
+      recursive = rv;
+    }
+    if (!recursive) {
+      return this.permanentlyRemove(path);
+    }
+    let st: StatOut;
+    try {
+      st = await this.statOf(path);
+    } catch (err) {
+      throw this.wrapFsError(err, `删除失败（目标不存在） ${path}`);
+    }
+    if (!st.isDirectory) {
+      return this.permanentlyRemove(path);
+    }
+    await this.removeTreeVirtual(path);
+    return null;
   }
 
   /** app.trashFile（v4.13 P5）：移入应用回收站 /AppData/trash/<epochMs>-<原名>
@@ -251,15 +274,29 @@ export class FileManager {
       fs.renameSync(from, to);
       return null;
     } catch {
-      // 跨边界 rename 不支持：复制到回收站后删原件。
-      if (st.isDirectory) {
-        await this.copyTreeVirtual(path, targetVirtual);
-        fs.rmdirSync(from);
-      } else {
-        const bytes = await this.readBytes(path);
-        await this.withWriteHandle(this.mapper.resolve(targetVirtual),
-          (fd: number) => fs.writeSync(fd, bytes.buffer));
-        fs.unlinkSync(from);
+      // 跨边界 rename 不支持：复制到回收站后删原件。N13：整段纳入
+      // try/catch（原裸 fs.rmdirSync/unlinkSync 抛 BusinessError，会被
+      // Bridge.ets 归一为 E_INTERNAL 掩盖真相）；原件删除失败时先清理
+      // 已复制的回收站副本，避免"原件 + 副本"双份中间态。
+      try {
+        if (st.isDirectory) {
+          await this.copyTreeVirtual(path, targetVirtual);
+          // 原件目录整棵递归删（fs.rmdirSync 不递归，非空目录直删必抛——
+          // 同 N2；单删仅对空目录成立）。
+          await this.removeTreeVirtual(path);
+        } else {
+          const bytes = await this.readBytes(path);
+          await this.withWriteHandle(this.mapper.resolve(targetVirtual),
+            (fd: number) => fs.writeSync(fd, bytes.buffer));
+          fs.unlinkSync(from);
+        }
+      } catch (err) {
+        // 清理失败吞掉（残留条目 30 天后由 cleanupTrash 兜底），原错误继续抛。
+        await this.cleanupTrashArtifact(targetVirtual);
+        if (err instanceof BridgeError) {
+          throw err; // 已带语义（E_IO/E_PERMISSION）——不二次包装以免丢码
+        }
+        throw this.wrapFsError(err, `移入回收站失败 ${path}`);
       }
       return null;
     }
@@ -299,7 +336,10 @@ export class FileManager {
     const target = r.kind === 'sandbox' ? r.sandboxPath : r.uri;
     try {
       const st = fs.statSync(target);
-      if (st.size + line.length > maxBytes) {
+      // N27：按 UTF-8 字节数对比——st.size 是字节而 line.length 是 UTF-16
+      // 码元数（中文 1 码元实占 3 字节），直接对比会让轮转系统性偏早触发；
+      // 对齐桌面版 Rust append_log 的字节轮转语义。
+      if (st.size + this.utf8ByteLen(line) > maxBytes) {
         try {
           fs.renameSync(target, `${target}.1`);
         } catch {
@@ -325,20 +365,19 @@ export class FileManager {
     const r = this.mapper.resolve(path);
     const target = r.kind === 'sandbox' ? r.sandboxPath : r.uri;
     try {
-      const file = fs.openSync(target, fs.OpenMode.READ_ONLY);
-      try {
-        const st = fs.statSync(file.fd);
-        const out: StatOut = {
-          isFile: st.isFile(),
-          isDirectory: st.isDirectory(),
-          size: st.size,
-          // fs.Stat.mtime 即 epoch 毫秒（number），与桥协议 mtimeMs 对齐。
-          mtimeMs: st.mtime,
-        };
-        return out;
-      } finally {
-        fs.closeSync(file);
-      }
+      // N8（最小版）：path/URI 直调一次系统调用（原 open→stat(fd)→close
+      // 三连；stat 的重载支持沙箱路径与 file:// URI）——WatchManager 每
+      // 2-5s 对 ≤5000 条目逐条轮询，成本直接降为 1/3。遗留：全部 fs.*Sync
+      // 迁 TaskPool 不在本项范围（optimization_report2 6.1 后续批）。
+      const st = fs.statSync(target);
+      const out: StatOut = {
+        isFile: st.isFile(),
+        isDirectory: st.isDirectory(),
+        size: st.size,
+        // fs.Stat.mtime 即 epoch 毫秒（number），与桥协议 mtimeMs 对齐。
+        mtimeMs: st.mtime,
+      };
+      return out;
     } catch (err) {
       throw this.wrapFsError(err, `stat 失败 ${path}`);
     }
@@ -431,9 +470,65 @@ export class FileManager {
     }
   }
 
+  /** 递归整棵删除（虚拟路径层操作，URI/沙箱两侧都经 UriMapper 编解码）：
+   *  后序遍历——readDir → 子目录递归 / 文件 unlinkSync → 出口 rmdirSync
+   *  目录自身，遍历骨架与 copyTreeVirtual 同构。N2：fs.rmdirSync 单参
+   *  不递归（非空目录直删必抛），recursive 删除必须自管理遍历。仅对
+   *  目录调用；文件目标走 permanentlyRemove 单删。 */
+  private async removeTreeVirtual(virtualPath: string): Promise<void> {
+    const rec: Record<string, Object> = { 'path': virtualPath };
+    const entries = await this.readDir(rec);
+    const list = entries as DirEntryOut[];
+    for (const e of list) {
+      const child = `${virtualPath}/${e.name}`;
+      if (e.isDirectory) {
+        await this.removeTreeVirtual(child);
+      } else {
+        const cr = this.mapper.resolve(child);
+        try {
+          fs.unlinkSync(cr.kind === 'sandbox' ? cr.sandboxPath : cr.uri);
+        } catch (err) {
+          throw this.wrapFsError(err, `删除失败 ${child}`);
+        }
+      }
+    }
+    const r = this.mapper.resolve(virtualPath);
+    try {
+      fs.rmdirSync(r.kind === 'sandbox' ? r.sandboxPath : r.uri);
+    } catch (err) {
+      throw this.wrapFsError(err, `删除失败 ${virtualPath}`);
+    }
+  }
+
+  /** N13：移入回收站失败时清理已复制的半成品（文件或目录均可）。尽力
+   *  而为——任何清理失败都吞掉（残留条目 30 天后由 cleanupTrash 兜底），
+   *  绝不掩盖调用方要上抛的原始错误。 */
+  private async cleanupTrashArtifact(virtualPath: string): Promise<void> {
+    try {
+      const st = await this.statOf(virtualPath);
+      if (st.isDirectory) {
+        await this.removeTreeVirtual(virtualPath);
+      } else {
+        const r = this.mapper.resolve(virtualPath);
+        fs.unlinkSync(r.kind === 'sandbox' ? r.sandboxPath : r.uri);
+      }
+    } catch {
+      // 清理失败尽力而为，不影响原错误上抛。
+    }
+  }
+
   private decodeUtf8(bytes: Uint8Array): string {
     const decoder = util.TextDecoder.create('utf-8');
     return decoder.decodeToString(bytes);
+  }
+
+  /** N27：行文本的 UTF-8 字节数。轮转上限 maxBytes 按字节计（st.size），
+   *  对齐桌面版 Rust append_log 的字节语义；沿用仓内 TextEncoder 方案
+   *  （同 S3Bridge.utf8Bytes），代理对（emoji 等）由编码器按 code point
+   *  正确展开为 4 字节。 */
+  private utf8ByteLen(line: string): number {
+    const encoder = util.TextEncoder.create('utf-8');
+    return encoder.encodeInto(line).length;
   }
 
   private pathOf(params: Record<string, Object>): string {

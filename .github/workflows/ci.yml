@@ -1,13 +1,18 @@
-# CI 质量门禁（优化报告 T1 + S9）。
+# CI 质量门禁（优化报告 T1 + S9 + 第三批 N29/N31）。
 #
 # 在此之前仓库没有任何 CI 跑测试/lint/类型检查——约 767 条 vitest 断言、
 # 21 个 Rust 测试、eslint、SigV4 oracle 全部靠自觉执行，release 从 tag
 # 直接出包（测试红了照样发版）。本 workflow 把这些资产变成强制门禁：
 #   * push / PR：跑 check（前端 + Rust + SigV4 oracle）；
-#   * workflow_call：供 release.yml 以 needs 复用（发版前必须过同一道门）。
+#   * workflow_call：供 release.yml / pages.yml 以 needs 复用（发版/上线前
+#     必须过同一道门）；
+#   * check-windows：Rust 在 Windows 上编译 + 测试——Windows 是唯一发行
+#     平台，secrets.rs 的 Credential Manager 代码此前在 CI 从未被编译。
 #
 # S9：所有 action 固定到 40 位 commit SHA（tag 可变，被劫持即以仓库权限
 # 运行）；升级时人工换 SHA 并核对 diff。
+# N29：workflow 级最小权限（只读）；发布产物写入权限由 release.yml 自持，
+# 不因 workflow_call 继承放大。
 
 name: CI
 
@@ -16,6 +21,9 @@ on:
     branches: ["**"]
   pull_request:
   workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   check:
@@ -47,13 +55,19 @@ jobs:
         run: npm ci
         working-directory: mditor
 
-      - name: 前端门禁（类型 + lint + 全量测试 + SigV4 oracle）
+      - name: 前端门禁（类型 + lint + 全量测试 + SigV4 oracle + 镜像守卫 + 生产构建）
         working-directory: mditor
         run: |
           npx tsc --noEmit
           npm run lint
           npm test
           node scripts/sigv4-check.mjs
+          # N23：SigV4 双侧镜像守卫——S3Bridge.ets 与 sigv4-check.mjs 纯函数
+          # 单侧改动即 FAIL，防"逐行镜像"纪律失守。
+          node scripts/mirror-check.mjs
+          # N31：npm run build = tsc --noEmit && vite build——生产构建回归
+          # 此前要等发版出包才暴露，现在进门禁。
+          npm run build
 
       - name: Rust 门禁（fmt + clippy -D warnings + 测试）
         working-directory: mditor/src-tauri
@@ -61,3 +75,23 @@ jobs:
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
           cargo test
+
+  check-windows:
+    # N29：Windows 是唯一发行平台，secrets.rs（Credential Manager FFI）等
+    # 平台门控代码只在 windows runner 上才被编译验证；ubuntu 矩阵对它视而不见。
+    name: Rust on Windows（平台门控代码编译 + 测试）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # actions/checkout v4.2.2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # dtolnay/rust-toolchain stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # Swatinem/rust-cache v2.7.8
+        with:
+          workspaces: mditor/src-tauri
+
+      - name: Windows Rust 门禁（编译 + 测试，含 secrets.rs 凭据库代码路径）
+        working-directory: mditor/src-tauri
+        run: cargo test

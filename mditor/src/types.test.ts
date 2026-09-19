@@ -7,7 +7,7 @@
 // 形态，完整结构由 types 定义与 store 迁移逻辑约束。
 
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SETTINGS } from "./types";
+import { DEFAULT_SETTINGS, isDarkTheme, type Theme } from "./types";
 
 /** 重构前（v3.9.7）的 Settings 字段全集 + v4.1 motionLevel + v4.2 devMode + v4.4.1 bigDocPerformance + v4.6 mathAutoNumber/mathMacros + v4.6.1 bigDocViewport + v4.7 vaultIndexEnabled/wikiLinksEnabled + v4.7 模块 3 bibliographyPath/citationStyle + v4.9 Agent aiPanelMode/agentWriteMode。 */
 const SETTING_KEYS = [
@@ -187,5 +187,30 @@ describe("normalizeSyncSettings（v4.12 云同步设置幂等归一）", () => {
     expect(once.pathStyle).toBe(true);
     // 幂等：归一结果再归一不变。
     expect(normalizeSyncSettings(once)).toEqual(once);
+  });
+});
+
+describe("isDarkTheme（深色主题单一事实源）", () => {
+  // 全部 7 个主题值的期望深浅。Record<Theme, …> 让 tsc 强制本表覆盖 Theme
+  // 联合类型的每个成员——新增主题而漏改谓词时，这里编译期就会变红。
+  const EXPECTED_DARK: Record<Theme, boolean> = {
+    light: false,
+    dark: true,
+    sepia: false,
+    claude: false,
+    "claude-dark": true,
+    ios: false,
+    "ios-dark": true,
+  };
+
+  it("每个主题值的深浅判定符合预期（全量覆盖 Theme）", () => {
+    for (const [theme, expected] of Object.entries(EXPECTED_DARK)) {
+      expect(isDarkTheme(theme as Theme)).toBe(expected);
+    }
+  });
+
+  it("恰好 3 个深色主题：dark / claude-dark / ios-dark", () => {
+    const darks = (Object.keys(EXPECTED_DARK) as Theme[]).filter((t) => isDarkTheme(t));
+    expect(darks).toEqual(["dark", "claude-dark", "ios-dark"]);
   });
 });

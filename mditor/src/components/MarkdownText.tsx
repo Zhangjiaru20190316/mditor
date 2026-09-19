@@ -23,7 +23,7 @@
 import { memo, useEffect, useLayoutEffect, useRef } from "react";
 import { peekRenderedHtml, renderMarkdown } from "../lib/renderMarkdown";
 import { attachScopedCopyTex } from "../lib/copyTex";
-import type { Theme } from "../types";
+import { isDarkTheme, type Theme } from "../types";
 
 interface Props {
   content: string;
@@ -84,12 +84,8 @@ export const MarkdownText = memo(function MarkdownText({
     const el = ref.current;
     if (!el) return;
     let cancelled = false;
-    el.setAttribute(
-      "data-md-theme",
-      theme === "dark" || theme === "claude-dark" || theme === "ios-dark"
-        ? "dark"
-        : "light"
-    );
+    // 深浅判定走 types.isDarkTheme 单一事实源（原三连枚举收编）。
+    el.setAttribute("data-md-theme", isDarkTheme(theme) ? "dark" : "light");
     if (!content) {
       el.classList.remove("is-rendering");
       el.innerHTML = "";

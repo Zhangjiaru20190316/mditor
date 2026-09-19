@@ -205,6 +205,13 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
     }, 4000);
   }, []);
 
+  // 卸载清闪现消息定时器，杜绝卸载后 4s 内 setState（对齐 TabsBar 残影定时器清理）。
+  useEffect(() => {
+    return () => {
+      if (noticeTimerRef.current !== undefined) window.clearTimeout(noticeTimerRef.current);
+    };
+  }, []);
+
   // ---- (re)load one level into the centralized map ------------------------
   const reloadDir = useCallback(async (dir: string) => {
     try {

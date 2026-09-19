@@ -42,6 +42,10 @@ export const WikiLinkSuggest = memo(function WikiLinkSuggest({
   // 键盘拦截窗：弹层激活时吃掉 ↑↓/Enter/Esc（capture，避免编辑器先处理）。
   const stRef = useRef<SuggestState | null>(null);
   stRef.current = st;
+  // pick 经 ref 调用：keydown effect 只在弹层开/关时挂卸，若直接捕获 pick，
+  // 拿到的是 effect 运行那一帧的闭包（连带捕获当时的 insertWikiLinkAt 等
+  // props）——编辑器重建、props 换引用后会过期。ref 保证每帧最新。
+  const pickRef = useRef<(s: SuggestState, i: number) => void>(() => undefined);
 
   const close = useCallback(() => setSt(null), []);
 
@@ -74,12 +78,15 @@ export const WikiLinkSuggest = memo(function WikiLinkSuggest({
       }
     }
     setSt((prev) => {
-      // 同一上下文的 query 没变 & 条目一致 → 保持既有状态（防抖动闪烁）。
+      // 同一上下文（from/query 未变）且候选集完全一致 → 保持既有状态（防
+      // 抖动闪烁）。条目按 path 逐一比对：仅比数量会把「同数量不同条目」
+      // （索引更新/候选重排）误判为未变，弹层显示过期候选。
       if (
         prev &&
         prev.from === ctx.from &&
         prev.query === ctx.query &&
-        prev.items.length === items.length
+        prev.items.length === items.length &&
+        prev.items.every((x, i) => x.path === items[i].path)
       ) {
         return prev;
       }
@@ -94,9 +101,11 @@ export const WikiLinkSuggest = memo(function WikiLinkSuggest({
     return () => document.removeEventListener("selectionchange", onSel);
   }, [enabled, refresh]);
 
-  // 键盘：capture 阶段拦截，避免编辑器 keymap 先消费。
+  // 键盘：capture 阶段拦截，避免编辑器 keymap 先消费。effect 只依赖
+  // 「弹层是否打开」；状态经 stRef、选中经 pickRef 读取，无过期闭包。
+  const open = st != null;
   useEffect(() => {
-    if (!st) return;
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       const s = stRef.current;
       if (!s) return;
@@ -111,7 +120,7 @@ export const WikiLinkSuggest = memo(function WikiLinkSuggest({
       } else if (e.key === "Enter") {
         e.preventDefault();
         e.stopPropagation();
-        pick(s, s.sel);
+        pickRef.current(s, s.sel);
       } else if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -120,8 +129,7 @@ export const WikiLinkSuggest = memo(function WikiLinkSuggest({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- pick/close 稳定引用
-  }, [st != null]);
+  }, [open, close]);
 
   const pick = (s: SuggestState, i: number) => {
     const item = s.items[i];
@@ -133,6 +141,8 @@ export const WikiLinkSuggest = memo(function WikiLinkSuggest({
     insertWikiLinkAt(`[[${stem}]]`, s.from);
     close();
   };
+  // 每 render 同步最新 pick（含其捕获的 props）——见 pickRef 处注释。
+  pickRef.current = pick;
 
   if (!st || st.items.length === 0) return null;
   return (

@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased（2026-09-19 第 3 批：鸿蒙删除/回收站语义根修 + 前端订阅正确性 + CI 补强——v4.15.0）
+
+第二批实施记录见 `docs/optimization_report2.md`（第三批 26 项，全部附证据与复核，实测报告 `docs/optimization_report3.md`）：
+
+- **N2 鸿蒙递归删除（高）**：`FileManager.remove` 此前丢弃 `recursive` 参数，删非空目录必失败（与桌面端跨端行为差异）。新增 `removeTreeVirtual` 后序递归删除（复用 copyTreeVirtual 遍历骨架 + UriMapper 编解码），`recursive=false` 与文件目标行为不变。
+- **N13 回收站跨边界回退（中）**：trashFile 复制后删原件的裸 `rmdirSync/unlinkSync`（抛裸 BusinessError 被桥层归为 E_INTERNAL 掩盖真相）改为 BridgeError 包装；失败时清理已复制的回收站副本（清理失败不掩盖原错误）。
+- **N3/N4/N14 前端正确性**：FlashcardModal 订阅-记忆化脱节修复（索引/进度变化现会重算到期清单；伴随修正评分跳卡回归——被评卡原位保留才手动前进）；QuickSwitcher trimRoot 字符下标误作数组下标修复（深层路径恢复显示）；RecentList loadRecent 补 catch。
+- **N11/N12/N15/N17 健壮性**：saveAs 失败补状态栏提示（与 save 对齐）；FileTree 通知定时器补卸载清理；WikiLinkSuggest 键盘回调过期闭包修复（ref 镜像 + dedupe 比条目内容）；`isDarkTheme()` 谓词单一事实源（types.ts，App/MarkdownText 两处三连枚举收编，7 主题断言测试）。
+- **N18/N9/N10 vaultIndex**：rewatch 仅随 roots 变化（excluded-only 变化不再全量拆重建 watch）；excluded 扩大后被排除文件剔出索引；`entries()` 缓存快照 + Object.freeze（全仓消费点核实无就地 mutate，bump 失效）；AnnoDiagnostics 事件合并 useMemo 化（3×300 环形缓冲不再每次渲染重排）。
+- **N6/N24/N25/N26/N28 鸿蒙桥**：openExternal scheme 白名单对齐桌面口径（http/https/mailto，E_ARGS 拒绝）；windowToggleMaximize 真双向（`recover()`——注意 `restore()` 语义是"从最小化恢复"，SDK 22 无 windowStatusType 实时查询，用桥内布尔）；keyOf/parseCfg 参数错误改 E_ARGS + 前置校验；hilog 域统一 0x0D01。
+- **N8/N27 鸿蒙性能/正确性**：statOf 三连系统调用（open+stat+close）改 `fs.statSync(path)` 直调（WatchManager 轮询成本降 ~3×；TaskPool 迁移遗留）；appendLog 轮转判据改 UTF-8 字节数（与 Rust 语义对齐，中文不再偏早触发）。
+- **N7/N29/N30/N31 CI/发布链**：pages.yml 四个 action 全部钉 40 位 SHA + 部署前过 ci.yml 门禁 + 最新版本号注入（下载链接不再漂移 404）；ci.yml 加 `permissions: contents: read` + windows-latest Rust job（secrets.rs 平台门控代码首次进 CI 编译）+ `npm run build` 门禁。
+- **N22/N23 鸿蒙测试与镜像守卫**：hypium 新增 9 用例（parseStreamChunk/mergeToolCallDeltas/finalizeToolCalls/validateKeyError/mapStatusError/xmlDecode/stripEtagQuotes，9/9 PASS；parseListXml 因本地单测宿主 kit stub 遗留真机）；新增 `scripts/mirror-check.mjs` SigV4 双侧镜像守卫（5 对函数指纹比对，单侧改动即 FAIL，已接进 ci.yml）。
+- **N5 签名口令**：hap-sign-tool 经反编译确认不支持口令文件/stdin（仅 argv）——保留 argv 但失败路径全通道脱敏（message/stdout/stderr/cmd→"******"）+ windowsHide；泄漏向量实测复现并验证修复。
+- 复核：3 个对抗复核（workflow-reviewer）17 项确认 / 0 驳回 / 1 真回归（N3 跳卡，已修复）。
+- 质量矩阵：vitest 797 → **806**（+9）；cargo **24**；hypium 6 → **15**（+9，9/9 实际执行 PASS）；tsc 0 错；eslint 0 错 0 警；clippy -D warnings 0；sigv4 oracle PASS；mirror-check 5 对 PASS；`hvigorw assembleHap` PASS（HAP 7825KB）；`npm run build` PASS。
+- 版本四处对齐 4.15.0（package.json / Cargo.toml / tauri.conf.json / app.json5 versionCode 1001500）。
+
 ## Unreleased（2026-09-19 第 2 批：密钥入系统凭据库 + 安全/健壮性 15 项收尾——v4.14.0）
 
 继第 1 批 24 项（见下）后的第二批实施（`docs/optimization_report.md` 未完成项），全部附回归测试与实测数据（`docs/optimization_report2.md`）：

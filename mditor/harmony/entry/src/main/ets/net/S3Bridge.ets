@@ -276,6 +276,27 @@ function parseCfg(v: Object | undefined): S3Config {
   if (cfg.bucket.trim().length === 0) {
     throw new BridgeError('E_ARGS', '参数缺失或类型错误：cfg.bucket');
   }
+  // N26：region/凭证前置校验——此前 `?? ''` 静默放行，坏配置要等到签名/
+  // 服务端才炸出误导性 SYNC-001/003。桌面端 serde 对必填字段缺失即报参数
+  // 错，这里对齐为 E_ARGS 并列全缺失字段名（错误码不用 SYNC-0xx：001 语义
+  // 是服务端凭证拒绝，配置为空属调用方参数问题）。
+  const missing: string[] = [];
+  if (cfg.region.trim().length === 0) {
+    missing.push('region');
+  }
+  if (cfg.accessKeyId.trim().length === 0) {
+    missing.push('accessKeyId');
+  }
+  if (cfg.secretAccessKey.trim().length === 0) {
+    missing.push('secretAccessKey');
+  }
+  if (missing.length > 0) {
+    const names: string[] = [];
+    for (const n of missing) {
+      names.push(`cfg.${n}`);
+    }
+    throw new BridgeError('E_ARGS', `参数缺失或类型错误：${names.join(' / ')}`);
+  }
   return cfg;
 }
 

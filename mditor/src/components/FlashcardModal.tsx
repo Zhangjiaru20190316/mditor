@@ -42,7 +42,10 @@ export const FlashcardModal = memo(function FlashcardModal({ open, onClose, onOp
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [done, setDone] = useState(0);
-  const [, setTick] = useState(0);
+  // 订阅 bump 计数器：必须可读且参与下方 memo 依赖，否则索引/进度变化
+  // 只触发重渲染、不重算到期清单（与注释意图脱节的 bug）。
+  const [tick, setTick] = useState(0);
+  const [recompute, setRecompute] = useState(0);
 
   // 到期清单：打开时 + 索引/进度变化时重算。
   const compute = () => {
@@ -65,8 +68,13 @@ export const FlashcardModal = memo(function FlashcardModal({ open, onClose, onOp
     return { due, orphans, totalCards: liveKeys.size };
   };
 
-  const snapshot = useMemo(() => (open ? compute() : { due: [], orphans: [], totalCards: 0 }), [open]);
-  const [, setRecompute] = useState(0);
+  const snapshot = useMemo(
+    () => (open ? compute() : { due: [], orphans: [], totalCards: 0 }),
+    // recompute/tick 是订阅 bump 的重渲染信号（compute 读单例实时数据），
+    // 刻意列入依赖——同 CitationPicker 的处理。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [open, recompute, tick],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -95,7 +103,14 @@ export const FlashcardModal = memo(function FlashcardModal({ open, onClose, onOp
     void reviewStore.flush();
     setFlipped(false);
     setDone((d) => d + 1);
-    setIdx((i) => i + 1);
+    // N3 伴随修正：快照现在随评分重算——被评卡离开清单（或因重排后移）
+    // 时，下一张会自然滑入 idx 位；仅当它原位保留（dueDay 不变且仍在
+    // 到期，同因稳定排序不位移）时才手动前进。否则 idx+1 与滑入叠加
+    // 会每评一张跳过一张（R2 复核发现的回归）。
+    const nextS = reviewStore.get(card.key);
+    const staysInPlace =
+      nextS !== null && isDue(nextS, now) && nextS.dueDay === prev.dueDay;
+    setIdx((i) => (staysInPlace ? i + 1 : i));
   };
 
   const onKey = (ev: React.KeyboardEvent) => {

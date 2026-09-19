@@ -40,6 +40,11 @@ check 通过才允许发版——测试红了发不出包。
   `// silent:` 前缀。
 - 密钥/凭据绝不进日志、不进仓库（本地签名口令一律走环境变量，见
   `scripts/sign-and-install.mjs`）。
+- 签名口令传递方式与局限：hap-sign-tool 不支持口令文件/stdin（实测无
+  `-keyPwdFile` 类参数，`-extCfgFile` 未接线），口令只能经 argv 传给 java
+  进程——本机进程列表瞬时可见，仅可在可信机器上签名。脚本侧已兜底失败路径：
+  `execFileSync` 抛错的 `message`/`stdout`/`stderr` 先把口令替换为 `******`
+  再输出，避免明文进控制台/CI 日志。
 
 ## patch-package 纪律
 

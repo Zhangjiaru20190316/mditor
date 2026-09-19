@@ -7,6 +7,7 @@
 
 import fs from '@ohos.file.fs';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { BridgeError } from '../bridge/Bridge';
 
 export class SettingsStore {
   private readonly file: string;
@@ -117,6 +118,9 @@ export class SettingsStore {
     if (typeof k === 'string') {
       return k;
     }
-    throw new Error('参数缺失或类型错误：key');
+    // N25：抛 BridgeError(E_ARGS) 而非裸 Error——裸 Error 会被 Bridge.ets
+    // 归一成 E_INTERNAL，语义失真（这是调用方参数问题，不是内部错误）。
+    // SettingsStore → Bridge 单向依赖，无循环。
+    throw new BridgeError('E_ARGS', '参数缺失或类型错误：key');
   }
 }

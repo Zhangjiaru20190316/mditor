@@ -55,9 +55,29 @@ if (!javaHome) {
 }
 const java = join(javaHome, "bin", "java.exe");
 
+// N5：hap-sign-tool 实测不支持口令文件/stdin 传参（java -jar ... -h 全量帮助
+// 只有 -keyPwd/-keystorePwd；反编译全 jar 无 pwdFile/getenv/extCfg 消费方），
+// 口令只能经 argv 传给 java——本机进程列表瞬时可见，仅在可信机器上签名。
+// 能兜底的是失败路径：execFileSync 抛错时 Node 会把完整命令行（含口令）拼进
+// error.message，必须脱敏后再输出，绝不进控制台/CI 日志。
 function run(args) {
-  console.log(`> java ${args.join(" ").replace(KEY_PWD, "******")}`);
-  execFileSync(java, args, { stdio: "inherit" });
+  console.log(`> java ${args.join(" ").replaceAll(KEY_PWD, "******")}`);
+  try {
+    execFileSync(java, args, { stdio: "inherit", windowsHide: true });
+  } catch (e) {
+    // stdio: inherit 下子进程输出直达终端，error 对象里主要是 message；
+    // stdout/stderr/cmd 若存在（如日后改 pipe）也一并处理，Buffer 同样覆盖。
+    for (const field of ["message", "stdout", "stderr", "cmd"]) {
+      const value = e?.[field];
+      if (typeof value === "string" && value.includes(KEY_PWD)) {
+        e[field] = value.replaceAll(KEY_PWD, "******");
+      } else if (Buffer.isBuffer(value) && value.toString("utf-8").includes(KEY_PWD)) {
+        e[field] = value.toString("utf-8").replaceAll(KEY_PWD, "******");
+      }
+    }
+    console.error(`签名失败：${e?.message ?? e}`);
+    process.exit(1);
+  }
 }
 
 console.log("=== sign-app（调试签名）===");

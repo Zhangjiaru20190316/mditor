@@ -3,6 +3,15 @@
 export type Theme = "light" | "dark" | "sepia" | "claude" | "claude-dark" | "ios" | "ios-dark";
 
 /**
+ * 深色主题判定（单一事实源）：dark / claude-dark / ios-dark 三个深色值。
+ * 此前 App（PNG 导出底色）与 MarkdownText（data-md-theme）各自手工枚举
+ * 三连判断，新增深色主题时容易漏改一处——统一走本谓词。
+ */
+export function isDarkTheme(theme: Theme): boolean {
+  return theme === "dark" || theme === "claude-dark" || theme === "ios-dark";
+}
+
+/**
  * 动效强度三档（v4.1 动效体系）：
  *   * none    — 全局禁用（等同 prefers-reduced-motion，跳转瞬时）；
  *   * balanced — 默认档，完整基础动效（本次美学升级的基线）；

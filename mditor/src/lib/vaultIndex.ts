@@ -153,6 +153,19 @@ function pathKey(p: string): string {
   return toPosix(p).toLowerCase();
 }
 
+/** 两个路径集合是否等价（pathKey 归一后比较，Windows 大小写不敏感）。 */
+function samePathSet(a: Set<string>, b: Set<string>): boolean {
+  const ka = new Set<string>();
+  for (const x of a) ka.add(pathKey(x));
+  const kb = new Set<string>();
+  for (const x of b) kb.add(pathKey(x));
+  if (ka.size !== kb.size) return false;
+  for (const k of ka) {
+    if (!kb.has(k)) return false;
+  }
+  return true;
+}
+
 /** 去扩展名的 basename（小写、分隔符归一），双链目标解析用。 */
 function stemOf(path: string): string {
   const key = pathKey(path);
@@ -283,6 +296,8 @@ export interface Backlink {
 export class VaultIndexManager {
   private io: VaultIndexIO;
   private byPath = new Map<string, VaultEntry>();
+  /** entries() 只读快照缓存（bump 失效；见 entries() 注释）。 */
+  private entriesCache: VaultEntry[] | null = null;
   private roots: string[] = [];
   private excluded = new Set<string>();
   private unwatchers: Array<() => void> = [];
@@ -311,6 +326,9 @@ export class VaultIndexManager {
 
   private bump(): void {
     this.version++;
+    // 快照失效。约定：byPath 的一切变更路径（upsert/delete）最终都会跟随
+    // 一次 bump（rebuild 为批间 bump），缓存因此不会漏失效。
+    this.entriesCache = null;
     for (const fn of this.listeners) {
       try {
         fn();
@@ -331,7 +349,13 @@ export class VaultIndexManager {
   }
 
   entries(): VaultEntry[] {
-    return [...this.byPath.values()];
+    // 只读快照（frozen）：bump 失效、未失效时返回同一实例，避免订阅方每次
+    // 重渲都全表浅拷贝（万级条目的 GC 压力）。勿修改返回值——需要排序/
+    // 过滤请先 map/filter 出新数组，就地改动在（严格模式的）dev 下直接抛错。
+    if (this.entriesCache === null) {
+      this.entriesCache = Object.freeze([...this.byPath.values()]) as VaultEntry[];
+    }
+    return this.entriesCache;
   }
 
   entry(path: string): VaultEntry | null {
@@ -343,13 +367,18 @@ export class VaultIndexManager {
 
   /** 设置工作区根（触发全量重扫 + 文件监听重挂）。 */
   setRoots(roots: string[], excluded: Set<string> = new Set()): void {
-    const changed =
+    const rootsChanged =
       roots.length !== this.roots.length ||
       roots.some((r, i) => pathKey(r) !== pathKey(this.roots[i]));
+    // excluded 变化也须重建：rebuild 的 collectMdFiles 按 this.excluded 过滤，
+    // 且以本次清单为准删除清单外旧条目——被排除文件由此从 byPath 剔除。
+    const excludedChanged = !samePathSet(this.excluded, excluded);
     this.roots = roots;
     this.excluded = excluded;
-    this.rewatch();
-    if (changed || this.byPath.size === 0) {
+    // watch 只随 roots 变化重挂：excluded 不影响监听根，重挂纯属 churn
+    // （全量拆 unwatchers 重建，且拆与挂的窗口内事件会丢失）。
+    if (rootsChanged) this.rewatch();
+    if (rootsChanged || excludedChanged || this.byPath.size === 0) {
       this.rebuildP = this.rebuild();
     }
   }
