@@ -40,6 +40,8 @@ export interface SyncStateEvent {
   /** 全部根完成后的上次同步时间（epoch ms）。 */
   lastSyncAt?: number;
   error?: { code: string; message: string };
+  /** 本轮需用户留意的提示（时钟冲突/超限跳过/中止保险等，去重后截断）。D6。 */
+  notes?: string[];
 }
 
 /** 一次同步的结果摘要（sync-state done 广播与 UI 悬浮提示共用）。 */

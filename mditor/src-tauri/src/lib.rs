@@ -5,13 +5,14 @@
 //!   * build the native menu bar (File / Edit / View / Format / Help)
 //!   * expose a couple of small Rust commands that are awkward to do from JS
 //!     (appending to the diagnostics log, converting a filesystem path to an
-//!      `asset://` URL, resolving the app data dir)
+//!     `asset://` URL, resolving the app data dir)
 //!   * forward native menu events to the React frontend via `emit_to` on the
 //!     focused window (v4.8 多窗口定向路由)
 
-mod commands;
 mod ai;
+mod commands;
 mod s3;
+mod secrets;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -64,7 +65,11 @@ fn install_panic_logger() {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
             use std::io::Write as _;
             let _ = f.write_all(line.as_bytes());
         }
@@ -87,12 +92,7 @@ pub struct LastFocused(pub Mutex<String>);
 fn focused_webview_window<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Option<tauri::WebviewWindow<R>> {
-    let label = app
-        .state::<LastFocused>()
-        .0
-        .lock()
-        .ok()
-        .map(|g| g.clone());
+    let label = app.state::<LastFocused>().0.lock().ok().map(|g| g.clone());
     match label {
         Some(l) => app
             .get_webview_window(&l)
@@ -113,9 +113,7 @@ fn find_md_arg(args: &[String]) -> Option<String> {
             return None;
         }
         let lower = a.to_lowercase();
-        let is_md = MD_EXTS
-            .iter()
-            .any(|e| lower.ends_with(&format!(".{e}")));
+        let is_md = MD_EXTS.iter().any(|e| lower.ends_with(&format!(".{e}")));
         if is_md && std::path::Path::new(a).is_file() {
             Some(a.clone())
         } else {
@@ -218,6 +216,7 @@ pub fn run() {
             commands::stash_tab_payload,
             commands::take_tab_payload,
             commands::trash_file,
+            commands::grant_fs_scope,
             ai::ai_chat,
             ai::ai_chat_stream,
             ai::ai_chat_cancel,
@@ -231,6 +230,9 @@ pub fn run() {
             s3::s3_head,
             commands::local_files_equal,
             commands::local_copy_file,
+            secrets::secret_set,
+            secrets::secret_get,
+            secrets::secret_del,
         ])
         .setup(|app| {
             // 崩溃取证：拿到 app-data 后回填 panic 日志真实落点（此前发生的
@@ -333,7 +335,10 @@ pub fn run() {
                 let args: Vec<String> = std::env::args().collect();
                 if let Some(path) = find_md_arg(&args) {
                     let state = app.state::<PendingFile>();
-                    *state.0.lock().unwrap() = Some(path);
+                    // E4：毒化取值——release 是 panic="abort"，锁中毒时 unwrap
+                    // 会直接闪退整个进程（0xc0000409 类别）。
+                    let mut st = state.0.lock().unwrap_or_else(|e| e.into_inner());
+                    *st = Some(path);
                 }
             }
 
@@ -356,12 +361,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Focused(true)) {
                 let label = window.label().to_string();
-                if let Ok(mut g) = window
-                    .app_handle()
-                    .state::<LastFocused>()
-                    .0
-                    .lock()
-                {
+                if let Ok(mut g) = window.app_handle().state::<LastFocused>().0.lock() {
                     *g = label;
                 }
             }

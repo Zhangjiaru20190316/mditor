@@ -86,7 +86,9 @@ export const MarkdownText = memo(function MarkdownText({
     let cancelled = false;
     el.setAttribute(
       "data-md-theme",
-      theme === "dark" || theme === "claude-dark" ? "dark" : "light"
+      theme === "dark" || theme === "claude-dark" || theme === "ios-dark"
+        ? "dark"
+        : "light"
     );
     if (!content) {
       el.classList.remove("is-rendering");

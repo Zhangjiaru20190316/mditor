@@ -845,6 +845,16 @@ footer .footnote { margin-top: 6px; font-size: 12px; color: var(--muted-2); }
   --d-hover: #2e2c2a; --d-code-bg: #2c2a27; --d-sidebar: #262624;
   --d-titlebar: #1f1e1d; --d-accent: #d97757; --d-mark: rgba(250, 204, 21, 0.32);
 }
+.demo-editor[data-demo-theme="ios"] {
+  --d-bg: #ffffff; --d-fg: #000000; --d-muted: rgba(60, 60, 67, 0.6); --d-border: rgba(60, 60, 67, 0.29);
+  --d-hover: rgba(60, 60, 67, 0.08); --d-code-bg: #f2f2f7; --d-sidebar: #f2f2f7;
+  --d-titlebar: #f2f2f7; --d-accent: #007aff; --d-mark: rgba(255, 214, 10, 0.42);
+}
+.demo-editor[data-demo-theme="ios-dark"] {
+  --d-bg: #000000; --d-fg: #ffffff; --d-muted: rgba(235, 235, 245, 0.6); --d-border: rgba(84, 84, 88, 0.6);
+  --d-hover: rgba(120, 120, 128, 0.24); --d-code-bg: #1c1c1e; --d-sidebar: #1c1c1e;
+  --d-titlebar: #1c1c1e; --d-accent: #0a84ff; --d-mark: rgba(255, 214, 10, 0.32);
+}
 .de-titlebar {
   display: flex;
   align-items: center;

@@ -1,13 +1,31 @@
-// ESLint 9 flat config — 前端 TS/TSX only（src-tauri 是 Rust，由 cargo fmt/clippy 管；
-// scripts/ / perf/ 是 Node 构建与性能脚本，不在前端 lint 范围；scrolltest/ 是纯浏览器
-// 独立验证页（.js + 内联全局），同样不在前端 lint 范围；harmony/ 是 ArkTS 工程，
-// 由 hvigor/codelinter 管——build 产物与拷入的前端 dist 更不可进 eslint）。
+// ESLint 9 flat config — 前端 TS/TSX + 构建脚本（src-tauri 是 Rust，由 cargo fmt/clippy 管；
+// perf/ 是一次性性能脚本、scrolltest/ 是纯浏览器独立验证页（.js + 内联全局），
+// 不在 lint 范围；harmony/ 是 ArkTS 工程，由 hvigor/codelinter 管——build 产物与
+// 拷入的前端 dist 更不可进 eslint）。
+// G3：scripts/（签名/发布/SigV4 oracle——工具链上最危险的代码）纳入 lint，
+// 配最小 Node 全局（@types/node 未安装，checkJS 暂不可行，见优化报告 G3）。
 import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
 
+const NODE_GLOBALS = {
+  process: "readonly",
+  console: "readonly",
+  Buffer: "readonly",
+  URL: "readonly",
+  URLSearchParams: "readonly",
+  fetch: "readonly",
+  setTimeout: "readonly",
+  clearTimeout: "readonly",
+  setInterval: "readonly",
+  clearInterval: "readonly",
+  queueMicrotask: "readonly",
+  structuredClone: "readonly",
+  globalThis: "readonly",
+};
+
 export default tseslint.config(
-  { ignores: ["dist", "node_modules", "src-tauri", "scripts", "perf", "scrolltest", "harmony", "*.config.*"] },
+  { ignores: ["dist", "node_modules", "src-tauri", "perf", "scrolltest", "harmony", "*.config.*"] },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -31,6 +49,19 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-vars": [
         "error",
         { varsIgnorePattern: "^_", argsIgnorePattern: "^_", destructuredArrayIgnorePattern: "^_" },
+      ],
+    },
+  },
+  {
+    // G3：Node 构建/签名/发布脚本——JS recommended + Node 全局，防未用变量、
+    // 未定义引用、误用 eval 类低级错误（S8 的密码泄漏正发生在这一层）。
+    files: ["scripts/**/*.mjs"],
+    languageOptions: { sourceType: "module", ecmaVersion: 2022, globals: NODE_GLOBALS },
+    rules: {
+      ...eslint.configs.recommended.rules,
+      "no-unused-vars": [
+        "error",
+        { varsIgnorePattern: "^_", argsIgnorePattern: "^_", caughtErrors: "none" },
       ],
     },
   }

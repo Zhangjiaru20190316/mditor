@@ -17,11 +17,108 @@ import {
   normalizeSyncSettings,
 } from "../types";
 import { normalizeStoredWorkspaces } from "./workspaces";
+import { sysEmit } from "./sysDebug";
+
+// ---- S2：密钥系统凭据存储（keychain）----------------------------------------
+//
+// Settings 内嵌的密钥字段（aiModels[].apiKey / ragEmbedApiKey /
+// sync.secretAccessKey / sync.sessionToken）不再明文进 mditor.json：
+//   * saveSettings：先把密钥写入系统凭据库（Tauri secret_set → Windows
+//     Credential Manager / DPAPI），全部成功后把 JSON 里的密钥字段替换为
+//     KEYCHAIN_MARK 再落盘；凭据库不可用（非 Windows 桌面/预览）时回退明文
+//     并留 warn 诊断——兼容优先于拒绝保存。
+//   * loadSettings：从凭据库水合密钥（凭据库优先；JSON 里残留的明文视为
+//     旧版数据，触发一次性迁移重写——迁移后磁盘不再有密钥）。
+//   * 槽位命名：ai.key.<modelId>（模型 id 稳定）/ rag.key / sync.secret /
+//     sync.token。已知残留：删除模型后其凭据槽位不主动清理（无枚举 API），
+//     槽位残留无害（仅本机 DPAPI 加密的孤立条目）。
+
+/** JSON 里的密钥引用标记（非密钥本体；水合时若凭据库无值则视为空）。 */
+const KEYCHAIN_MARK = "@keychain";
+
+type SecretSlots = Array<{ slot: string; get: () => string; set: (v: string) => void }>;
+
+/** 收集一份（可变的）settings 副本上的全部密钥槽位。 */
+function secretSlotsOf(s: Settings): SecretSlots {
+  const slots: SecretSlots = [];
+  for (const m of s.aiModels) {
+    if (!m?.id) continue;
+    slots.push({
+      slot: `ai.key.${m.id}`,
+      get: () => m.apiKey ?? "",
+      set: (v) => (m.apiKey = v),
+    });
+  }
+  slots.push({
+    slot: "rag.key",
+    get: () => s.ragEmbedApiKey ?? "",
+    set: (v) => (s.ragEmbedApiKey = v),
+  });
+  slots.push({
+    slot: "sync.secret",
+    get: () => s.sync?.secretAccessKey ?? "",
+    set: (v) => (s.sync = { ...s.sync, secretAccessKey: v }),
+  });
+  slots.push({
+    slot: "sync.token",
+    get: () => s.sync?.sessionToken ?? "",
+    set: (v) => (s.sync = { ...s.sync, sessionToken: v }),
+  });
+  return slots;
+}
 
 export async function loadSettings(): Promise<Settings> {
   const partial = (await getAdapter().store.get<Partial<Settings>>("settings")) ?? {};
   const merged = { ...DEFAULT_SETTINGS, ...partial };
-  return migrateSettings(merged, partial);
+  const migrated = await migrateSettings(merged, partial);
+  return hydrateSecrets(migrated);
+}
+
+/**
+ * S2：从系统凭据库水合密钥字段（凭据库优先）。凭据库不可用或读取失败时按
+ * 磁盘明文现状继续（不阻断启动）。检测到磁盘明文（旧版本写入）时触发一次
+ * 性迁移：把密钥转入凭据库并重写脱敏 JSON。
+ */
+async function hydrateSecrets(s: Settings): Promise<Settings> {
+  const secretGet = getAdapter().app.secretGet;
+  if (!secretGet) return s; // 平台无凭据库：明文兼容路径
+  const out: Settings = {
+    ...s,
+    aiModels: s.aiModels.map((m) => ({ ...m })),
+    sync: { ...s.sync },
+  };
+  const slots = secretSlotsOf(out);
+  let plaintextFound = false;
+  try {
+    const values = await Promise.all(
+      slots.map((x) => secretGet(x.slot).catch(() => null))
+    );
+    slots.forEach((x, i) => {
+      const fromVault = values[i];
+      if (typeof fromVault === "string" && fromVault) {
+        x.set(fromVault);
+      } else if (x.get() && x.get() !== KEYCHAIN_MARK) {
+        plaintextFound = true; // 旧版明文：留在内存，落盘时由迁移清除
+      } else if (x.get() === KEYCHAIN_MARK) {
+        x.set("");
+      }
+    });
+  } catch {
+    return s; // 凭据库整体不可读：按现状继续
+  }
+  if (plaintextFound) {
+    // 一次性迁移：写入凭据库 + 脱敏重写 mditor.json。内联 await（只发生在
+    // 升级后首启，数十 ms）；失败不致命（下次启动重试），但必须留诊断。
+    try {
+      await saveSettings(out);
+    } catch (e) {
+      sysEmit("settings:secret-migrate", `密钥迁移系统凭据库失败：${String(e).slice(0, 120)}`, {
+        level: "warn",
+        data: {},
+      });
+    }
+  }
+  return out;
 }
 
 /**
@@ -87,8 +184,39 @@ function migrateSettings(s: Settings, raw: Partial<Settings>): Settings {
 }
 
 export async function saveSettings(s: Settings): Promise<void> {
+  // S2：密钥先进系统凭据库；全部成功后 JSON 只落引用标记。任一失败 → 本轮
+  // 回退明文落盘（兼容优先），留 warn 诊断供定位。
+  let toPersist: Settings = s;
+  const { secretSet, secretDel } = getAdapter().app;
+  if (secretSet && secretDel) {
+    try {
+      for (const x of secretSlotsOf(s)) {
+        const v = x.get();
+        if (v && v !== KEYCHAIN_MARK) await secretSet(x.slot, v);
+        else await secretDel(x.slot).catch(() => undefined); // 清空输入 = 删槽位
+      }
+      toPersist = {
+        ...s,
+        aiModels: s.aiModels.map((m) =>
+          m.apiKey ? { ...m, apiKey: KEYCHAIN_MARK } : m
+        ),
+        ragEmbedApiKey: s.ragEmbedApiKey ? KEYCHAIN_MARK : s.ragEmbedApiKey,
+        sync: {
+          ...s.sync,
+          secretAccessKey: s.sync.secretAccessKey ? KEYCHAIN_MARK : s.sync.secretAccessKey,
+          sessionToken: s.sync.sessionToken ? KEYCHAIN_MARK : s.sync.sessionToken,
+        },
+      };
+    } catch (e) {
+      sysEmit(
+        "settings:secret-vault",
+        `密钥写入系统凭据库失败，本轮回退明文存储：${String(e).slice(0, 120)}`,
+        { level: "warn", data: {} }
+      );
+    }
+  }
   const store = getAdapter().store;
-  await store.set("settings", s);
+  await store.set("settings", toPersist);
   await store.save();
   // v4.8 多窗口同步：落盘成功后广播。各窗 useSettings 监听后幂等重载磁盘
   // 设置（主题等即时一致；自己收到自己的回声也无害——盘上内容与内存相同）。

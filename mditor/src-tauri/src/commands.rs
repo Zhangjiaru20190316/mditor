@@ -31,8 +31,7 @@ const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 /// 是词法比较、不解析 `..`，`<logs>/../../evil.bat` 词法上以 logs 开头、
 /// 实际却写出日志目录之外。
 fn is_log_path_confined(p: &Path, logs_dir: &Path) -> bool {
-    if p
-        .components()
+    if p.components()
         .any(|c| matches!(c, std::path::Component::ParentDir))
     {
         return false;
@@ -66,29 +65,38 @@ pub async fn append_log(
     if !is_log_path_confined(&p, &logs_dir) {
         return Err("log path must be a file inside <app-data>/logs".into());
     }
-    // Ensure parent directory exists (best-effort; app-data/logs may not yet).
-    if let Some(parent) = p.parent() {
-        if !parent.as_os_str().is_empty() {
-            let _ = fs::create_dir_all(parent);
-        }
-    }
-    // Rotate when the file exceeds the size cap (keep exactly one backup).
-    if let Some(max) = max_bytes {
-        if let Ok(meta) = fs::metadata(&p) {
-            if meta.len() > max {
-                let bak = format!("{}.1", path);
-                let _ = fs::remove_file(&bak);
-                let _ = fs::rename(&p, &bak);
+    // P5：以下是纯阻塞 I/O，原实现直接跑在 tokio worker 上。包进
+    // spawn_blocking；轮转失败从静默改为可见（eprintln），避免「日志静默
+    // 停写数天」这类事故再次无声发生（见本文件 tests 记录的历史事故）。
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        // Ensure parent directory exists (best-effort; app-data/logs may not yet).
+        if let Some(parent) = p.parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = fs::create_dir_all(parent);
             }
         }
-    }
-    let mut f = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&p)
-        .map_err(|e| e.to_string())?;
-    f.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
-    Ok(())
+        // Rotate when the file exceeds the size cap (keep exactly one backup).
+        if let Some(max) = max_bytes {
+            if let Ok(meta) = fs::metadata(&p) {
+                if meta.len() > max {
+                    let bak = format!("{}.1", path);
+                    let _ = fs::remove_file(&bak); // 旧备份让位（Windows rename 不覆盖）
+                    if let Err(e) = fs::rename(&p, &bak) {
+                        eprintln!("[append_log] 日志轮转失败（日志将继续增长）：{e}");
+                    }
+                }
+            }
+        }
+        let mut f = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&p)
+            .map_err(|e| e.to_string())?;
+        f.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("日志任务失败：{e}"))?
 }
 
 /// Return the per-user app data directory (for the settings store, recent list).
@@ -120,6 +128,9 @@ pub async fn fetch_image(url: String) -> Result<tauri::ipc::Response, String> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err("仅支持 http/https 图片地址".into());
     }
+    // S3 同源防线：响应字节回传渲染层 = 内网读取原语——拒绝环回/内网/链路
+    // 本地目标（云元数据服务、本机管理端口、LAN 服务探测）。
+    crate::ai::validate_image_url(&url)?;
     // Shared client (reuses the connection pool across calls). Its original
     // 30s total timeout is preserved per request — the shared client itself
     // deliberately carries none.
@@ -137,10 +148,7 @@ pub async fn fetch_image(url: String) -> Result<tauri::ipc::Response, String> {
             return Err(format!("图片过大（{len} 字节，上限 {MAX_IMAGE_BYTES}）"));
         }
     }
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("下载失败：{e}"))?;
+    let bytes = resp.bytes().await.map_err(|e| format!("下载失败：{e}"))?;
     if bytes.len() > MAX_IMAGE_BYTES {
         return Err(format!(
             "图片过大（{} 字节，上限 {}）",
@@ -195,7 +203,7 @@ fn urlencode(s: &str) -> String {
 /// 暂存一份标签迁移载荷，返回 handoff id（60s TTL，取即删）。
 #[command]
 pub fn stash_tab_payload(state: State<'_, TabPayloadStash>, payload: String) -> String {
-    let mut map = state.0.lock().unwrap();
+    let mut map = state.0.lock().unwrap_or_else(|e| e.into_inner());
     // 惰性清理过期条目：无需定时器，任意一次存取都顺带扫掉泄漏。
     map.retain(|_, (_, at)| at.elapsed() < TAB_STASH_TTL);
     let id = format!(
@@ -214,9 +222,44 @@ pub fn stash_tab_payload(state: State<'_, TabPayloadStash>, payload: String) -> 
 /// 前端按「无 handoff」处理（新窗口落到空白未命名标签，不阻塞启动）。
 #[command]
 pub fn take_tab_payload(state: State<'_, TabPayloadStash>, id: String) -> Option<String> {
-    let mut map = state.0.lock().unwrap();
+    let mut map = state.0.lock().unwrap_or_else(|e| e.into_inner());
     map.retain(|_, (_, at)| at.elapsed() < TAB_STASH_TTL);
     map.remove(&id).map(|(payload, _)| payload)
+}
+/// S1：把用户显式选择的路径动态加入 fs 与 asset 协议作用域。
+/// 静态 capability 只保留 $APPDATA/$DOCUMENT；一切「用户意图」路径——对话框
+/// 选择的工作区/文件/另存目标、启动恢复的工作区、双击打开、拖放——经此
+/// 运行时授权。目录按需递归（工作区根），文件单点。
+#[command]
+pub fn grant_fs_scope(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    recursive: bool,
+) -> Result<(), String> {
+    use tauri::Manager;
+    use tauri_plugin_fs::FsExt;
+    for p in &paths {
+        if p.is_empty() {
+            continue;
+        }
+        let path = std::path::PathBuf::from(p);
+        if path.is_dir() && recursive {
+            app.fs_scope()
+                .allow_directory(&path, true)
+                .map_err(|e| format!("授权目录失败：{e}"))?;
+        } else {
+            app.fs_scope()
+                .allow_file(&path)
+                .map_err(|e| format!("授权文件失败：{e}"))?;
+        }
+        // asset 协议同步放行（笔记图片走 asset:// 显示）。失败不致命——
+        // 退化为该路径下图片不可见，不影响文本功能。
+        let _ = app.asset_protocol_scope().allow_file(&path);
+        if path.is_dir() {
+            let _ = app.asset_protocol_scope().allow_directory(&path, true);
+        }
+    }
+    Ok(())
 }
 
 // ---- 回收站删除（v4.9 Agent 删除红线：trash > rm——删除必须可恢复）----------
@@ -230,21 +273,30 @@ pub fn take_tab_payload(state: State<'_, TabPayloadStash>, id: String) -> Option
 // 任何一条路径失败都返回带 stderr 的错误，绝不回落到不可恢复删除。
 
 /// 把一个文件（或目录，含内容）移入系统回收站。
+/// P4：PowerShell 冷启动实测 329–542ms（perf/trash-probe.mjs）——同步命令
+/// 在主线程等待，每次删除整个窗口 UI 冻结同等时长。改为异步命令 +
+/// spawn_blocking：等待移入独立阻塞线程池，主线程与 async worker 均不阻塞。
 #[command]
-pub fn trash_file(path: String) -> Result<(), String> {
-    let p = Path::new(&path);
+pub async fn trash_file(path: String) -> Result<(), String> {
+    let p = PathBuf::from(&path);
     if !p.exists() {
         return Err(format!("文件不存在：{path}"));
     }
     let is_dir = p.is_dir();
-    trash_on_current_os(p, is_dir)
+    tauri::async_runtime::spawn_blocking(move || trash_on_current_os(&p, is_dir))
+        .await
+        .map_err(|e| format!("删除任务失败：{e}"))?
 }
 
 #[cfg(target_os = "windows")]
 fn trash_on_current_os(p: &Path, is_dir: bool) -> Result<(), String> {
     // 路径经 env 传入 PowerShell：CreateProcessW 的 unicode 环境块原样保真，
     // 脚本里只引用 $env: 变量，不存在任何转义面。
-    let method = if is_dir { "DeleteDirectory" } else { "DeleteFile" };
+    let method = if is_dir {
+        "DeleteDirectory"
+    } else {
+        "DeleteFile"
+    };
     let script = format!(
         "Add-Type -AssemblyName Microsoft.VisualBasic; \
          [Microsoft.VisualBasic.FileIO.FileSystem]::{method}(\

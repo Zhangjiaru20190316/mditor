@@ -153,6 +153,15 @@ export interface PlatformApp {
   appDataDir(): Promise<string>;
   /** 追加一行日志文件，超出 maxBytes 滚动（Tauri append_log）。 */
   appendLog(path: string, line: string, maxBytes: number): Promise<void>;
+  /** S1：把用户显式选择的路径动态加入 fs/asset 作用域（Tauri grant_fs_scope；
+   *  鸿蒙沙箱无此概念，缺省——调用方须用 ?. 可选调用）。 */
+  grantFsScope?(paths: string[], recursive: boolean): Promise<void>;
+  /** S2：系统凭据存储（Windows Credential Manager / DPAPI）。仅 Tauri 桌面
+   *  实现；其余平台缺省——lib/store 据此走明文兼容路径并留诊断。value 为
+   *  空串 = 删除槽位；get 不存在返回 null。 */
+  secretSet?(key: string, value: string): Promise<void>;
+  secretGet?(key: string): Promise<string | null>;
+  secretDel?(key: string): Promise<void>;
   /** 应用版本号。 */
   version(): Promise<string>;
   /** 冷启动暂存文件（命令行带 .md 启动）；无此语义的平台返回 null。 */

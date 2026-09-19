@@ -17,6 +17,16 @@ export default class EntryAbility extends UIAbility {
     // 宿主上下文先行挂载：Bridge 各域实现经它访问 filesDir / terminateSelf。
     HostContext.ability = this;
     hilog.info(0x0000, 'mditor', 'EntryAbility onCreate');
+    // E7：启动尽力清理 30 天前回收站条目（CHANGELOG 4.13.0 与 FileManager
+    // 文档均宣称此行为，此前 import 了却从未调用）。延迟 3s 避开启动关键
+    // 路径；cleanupTrash 自吞异常，这里再兜一层。
+    setTimeout(() => {
+      try {
+        cleanupTrash(this.context.filesDir);
+      } catch (err) {
+        hilog.warn(0x0D01, 'mditor', 'cleanupTrash 失败（忽略）: %{public}s', String(err));
+      }
+    }, 3000);
   }
 
   onDestroy(): void {

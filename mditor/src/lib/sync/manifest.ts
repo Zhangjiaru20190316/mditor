@@ -8,7 +8,7 @@
 // 清单（崩溃恢复：下次按旧清单重算，原语幂等）。
 
 import { getAdapter } from "../../platform";
-import type { SyncManifestFile } from "./types";
+import type { S3ConfigPayload, SyncManifestFile } from "./types";
 
 /** 清单结构版本；不识别的版本按「无清单」处理（回落首同步全量重算）。 */
 export const MANIFEST_VERSION = 1;
@@ -21,6 +21,13 @@ export interface SyncManifest {
   lastSyncAt: number;
   /** key = 工作区相对路径（posix 风格）。 */
   files: Record<string, SyncManifestFile>;
+  /**
+   * D1：远端身份指纹（endpoint+bucket+prefix 的 SHA-256 前 16 hex）。
+   * 指纹与当前配置不一致 ⇒ 远端已不是清单记录的那只桶 ⇒ 按首同步重算
+   * （最多产生冲突副本），绝不拿旧清单对着新桶判「远端已删除」。
+   * 旧版清单无此字段：视为匹配（本次同步补写指纹），避免全量升级即冲突。
+   */
+  remoteFingerprint?: string;
 }
 
 /**
@@ -92,12 +99,29 @@ export function parseManifest(raw: string): SyncManifest | null {
     workspaceRoot: m.workspaceRoot,
     lastSyncAt: m.lastSyncAt,
     files,
+    ...(typeof m.remoteFingerprint === "string" ? { remoteFingerprint: m.remoteFingerprint } : {}),
   };
 }
 
 /** 序列化（幂等往返：parse(serialize(m)) 与 m 语义等价）。 */
 export function serializeManifest(m: SyncManifest): string {
   return JSON.stringify(m);
+}
+
+/**
+ * D1：远端身份指纹——endpoint+bucket+prefix 归一（小写、去尾斜杠）后
+ * SHA-256 前 16 hex。不含凭证（access key 会轮换，不应触发全量重算）。
+ */
+export async function remoteFingerprint(
+  cfg: Pick<S3ConfigPayload, "endpoint" | "bucket">,
+  prefix: string
+): Promise<string> {
+  const norm = `${cfg.endpoint.replace(/\/+$/, "").toLowerCase()}|${cfg.bucket.toLowerCase()}|${prefix.replace(/\/+$/, "")}`;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(norm));
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 16);
 }
 
 /** 新建空清单（首同步起点）。 */
@@ -123,11 +147,28 @@ export async function readManifest(root: string): Promise<SyncManifest | null> {
   }
 }
 
-/** 落盘清单（原子性：整文件覆写；目录惰性创建）。 */
+/**
+ * 落盘清单。D3：先写 <path>.tmp 再 rename 覆盖（NTFS/ext4 上 rename 对已
+ * 存在目标是原子替换）——截断式整文件覆写在崩溃/断电中途会留下半份 JSON，
+ * parseManifest 返回 null 后退化为首同步，制造整库冲突副本风暴。
+ * tmp 残留（rename 前崩溃）无害：下次写入直接复用同名 tmp 覆盖。
+ */
 export async function writeManifest(root: string, m: SyncManifest): Promise<void> {
   const path = await manifestFilePath(root);
   const fs = getAdapter().fs;
   const dir = path.slice(0, path.lastIndexOf("/"));
   if (!(await fs.exists(dir))) await fs.mkdir(dir, { recursive: true });
-  await fs.writeTextFile(path, serializeManifest(m));
+  const tmp = `${path}.tmp`;
+  await fs.writeTextFile(tmp, serializeManifest(m));
+  try {
+    await fs.rename(tmp, path);
+  } catch (e) {
+    // rename 失败时清掉 tmp，避免留一份看起来像新清单的残件。
+    try {
+      await fs.remove(tmp);
+    } catch {
+      /* 尽力清理 */
+    }
+    throw e;
+  }
 }

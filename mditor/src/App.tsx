@@ -2,12 +2,14 @@
 // shortcuts, and the wiring between editor / file system / export / clipboard.
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { getAdapter } from "./platform";
+import { useDebouncedValue } from "./hooks/useDebouncedValue";
+import { detectRuntime, getAdapter } from "./platform";
 import { Editor, type EditorHandle } from "./components/Editor";
 import { FileTree, type TreeChange } from "./components/FileTree";
 import { Outline } from "./components/Outline";
 import { RecentList } from "./components/RecentList";
 import { AiPanel, type AiPanelHandle, type ApplyChangesPayload } from "./components/AiPanel";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { SelectionToolbar } from "./components/SelectionToolbar";
 import { AnnotationPopover } from "./components/AnnotationPopover";
 import { AnnoDiagnostics } from "./components/AnnoDiagnostics";
@@ -104,6 +106,8 @@ import { countWords } from "./lib/textStats";
 import { isBigDoc } from "./lib/memory";
 import { motionEnabled } from "./lib/motion";
 import type { FlatHeading, OutlineNode, Settings, TabItem } from "./types";
+import { EMPTY_MARKS } from "./types";
+import type { EditorSettings } from "./types";
 
 type SidebarTab = "tree" | "outline" | "recent" | "annotations" | "search" | "links";
 
@@ -133,6 +137,29 @@ export default function App() {
   // read the current roots without depending on it (keeps dep arrays empty).
   const workspacesRef = useRef(workspaces);
   workspacesRef.current = workspaces;
+  // 同步键收敛（v4.13.1）：鸿蒙虚拟根 /Docs/ws-N 的 basename 是设备本地
+  // token，直接用作远端目录名会让两端键空间不相交（各自备份永不收敛）。
+  // 挂载时记录的真实文件夹名经 fs.syncName 查询后在此缓存，getRoots 以
+  // { path, remoteDir } 形态交给触发器；桌面根天然是真实路径，维持字符串。
+  const syncDirNamesRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (detectRuntime() !== "harmony") return;
+    let alive = true;
+    for (const root of workspaces) {
+      if (!root.startsWith("/Docs/") || syncDirNamesRef.current.has(root)) continue;
+      void getAdapter()
+        .app.invoke<{ name: string }>("fs.syncName", { path: root })
+        .then((r) => {
+          if (alive && r?.name) syncDirNamesRef.current.set(root, r.name);
+        })
+        .catch(() => {
+          // 查询失败（未知 token 等）→ getRoots 回退 basename，行为同旧版。
+        });
+    }
+    return () => {
+      alive = false;
+    };
+  }, [workspaces]);
   // 空态「最近工作区」列表：boot 时加载，添加/替换工作区后刷新。
   const [recentWs, setRecentWs] = useState<string[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -444,8 +471,13 @@ export default function App() {
             await saveMd(target.path, content);
           }
           dirty = false;
-        } catch {
-          /* 保存失败继续关闭（内存快照已丢弃前提示） */
+        } catch (e) {
+          // E1：保存失败绝不能静默丢数据——记录 + 让用户显式决定是否弃改关闭。
+          noteOpError("close-tab-save", e);
+          const ok = await confirmDialog(
+            `「${target.name}」保存失败（${String(e).slice(0, 80)}），关闭将丢失本次修改。确认关闭？`
+          );
+          if (!ok) return;
         }
       } else if (dirty && !target.path && !opts?.migrated) {
         const ok = await confirmDialog(
@@ -759,9 +791,70 @@ export default function App() {
   });
   const focusMode = settingsApi.settings.focusMode;
 
+  // P10：重子树设置窄切片。Editor 是 memo 过的最重子树，但整份 settings 任一
+  // 字段变化（如拖个侧栏宽度）都换新引用打穿 memo。切片按消费字段 memo——
+  // 解构出的字段同时充当依赖签名（依赖整对象等于没切）。AiPanel 复核后消费
+  // 字段过多（ai.ts/rag 运行时字段），不做切片；SettingsModal 收整份（本来
+  // 就要全量）。
+  const {
+    autosaveIntervalMs,
+    memoryGuard,
+    memoryGuardThresholdMb,
+    spellcheck,
+    typewriterMode,
+    fontFamily,
+    monoFontFamily,
+    fontSize,
+    lineHeight,
+    paragraphSpacing,
+    mathMacros,
+    bigDocPerformance,
+    bigDocViewport,
+  } = settingsApi.settings;
+  const editorSettings: EditorSettings = useMemo(
+    () => ({
+      autosaveIntervalMs,
+      memoryGuard,
+      memoryGuardThresholdMb,
+      spellcheck,
+      typewriterMode,
+      fontFamily,
+      monoFontFamily,
+      fontSize,
+      lineHeight,
+      paragraphSpacing,
+      mathMacros,
+      bigDocPerformance,
+      bigDocViewport,
+    }),
+    [
+      autosaveIntervalMs,
+      memoryGuard,
+      memoryGuardThresholdMb,
+      spellcheck,
+      typewriterMode,
+      fontFamily,
+      monoFontFamily,
+      fontSize,
+      lineHeight,
+      paragraphSpacing,
+      mathMacros,
+      bigDocPerformance,
+      bigDocViewport,
+    ]
+  );
+
   // load saved workspace(s) on boot
   useEffect(() => {
+    // S1：恢复的工作区根先递归授权，再入库（fs scope 已收窄到
+    // $APPDATA/$DOCUMENT；工作区是用户此前明确添加过的目录）。
     getWorkspaces()
+      .then((roots) => {
+        if (roots.length > 0) {
+          getAdapter().app.grantFsScope?.(roots, true)?.catch(() => undefined);
+        }
+        return roots;
+      })
       .then(setWsList)
       // 工作区恢复失败也要放行开屏，不能把用户挡在主界面外
       .catch(() => undefined)
@@ -783,6 +876,11 @@ export default function App() {
 
   const openPath = useCallback(
     async (path: string) => {
+      // S1：fs scope 收窄后，一切「用户意图」路径在读取前运行时授权
+      // （对话框选择已在 dialog adapter 授权；这里兜底覆盖 pending file、
+      // 拖放、最近文件等非对话框入口）。失败不阻塞打开——fs 读取会给出
+      // 明确错误，避免把授权问题误报成文档损坏。
+      getAdapter().app.grantFsScope?.([path], false)?.catch(() => undefined);
       // Phase 1 — INSTANT RESPONSE (<1 frame, the iOS pattern):
       //   * raise the loading bar RIGHT AWAY (beginSwitch also supersedes any
       //     in-flight switch and cancels its pending clear timer)
@@ -878,6 +976,27 @@ export default function App() {
     [activateTab, beginSwitch, updateSwitchHeavy, finishSwitch, snapshotActiveTab, isStale, scheduleFollowUpPreparse] // 均 stable —— openPath 身份保持稳定
   );
 
+  // P11：编辑器就绪通知。此前启动/自愈路径用 80×50ms 盲轮询等 ready()；现在
+  // Editor 在 ready 翻真时回调 onEditorReady，等待方挂一个 promise 即可（时序
+  // 确定性，最坏情况零延迟）。就绪后到达的等待者立即放行（多窗口重建场景）。
+  const editorReadyWaiters = useRef<Array<() => void>>([]);
+  const onEditorReady = useCallback(() => {
+    const waiters = editorReadyWaiters.current;
+    editorReadyWaiters.current = [];
+    for (const w of waiters) w();
+  }, []);
+  const whenEditorReady = useCallback(
+    () =>
+      new Promise<void>((resolve) => {
+        if (editorRef.current?.ready()) {
+          resolve();
+          return;
+        }
+        editorReadyWaiters.current.push(resolve);
+      }),
+    []
+  );
+
   // Rehydrate after a healing webview reload (see lib/session + Editor's
   // reloadForHeal). On a normal boot there is no snapshot and this no-ops. When
   // present, reopen the file — or, for an untitled buffer, reseed the captured
@@ -928,7 +1047,15 @@ export default function App() {
     };
 
     const applyHandoff = async (handoffId: string) => {
-      const payload = await takeHandoff(handoffId);
+      // E5：takeHandoff 抛错（源窗口已关/存储抖动）此前成为未处理拒绝，
+      // 迁移窗口停在空白文档且无任何提示。现记录诊断 + 状态栏提示。
+      let payload: Awaited<ReturnType<typeof takeHandoff>>;
+      try {
+        payload = await takeHandoff(handoffId);
+      } catch (e) {
+        noteOpError("handoff", e);
+        return;
+      }
       if (!payload || cancelled) return;
       const { tab, scrollTop } = payload;
       // 恢复为初始标签（含未命名脏缓冲：showDoc 直载 dirty 状态）：整表替换
@@ -966,18 +1093,13 @@ export default function App() {
         if (snap.untitledContent != null) {
           // A fresh boot already starts on an untitled empty buffer; wait for the
           // editor to be ready, then seed the captured content.
-          const trySet = (tries: number) => {
-            if (cancelled) return;
-            const ed = editorRef.current;
-            if (ed?.ready()) {
-              ed.setValue(snap.untitledContent ?? "");
-              fileApiRef.current.markDirty();
-              restoreScrollTo(snap.scrollTop, "heal-restore");
-            } else if (tries < 80) {
-              window.setTimeout(() => trySet(tries + 1), 50);
-            }
-          };
-          trySet(0);
+          // P11：就绪回调等待（原 80×50ms 轮询——大文档慢构建时 4s 上限可能
+          // 不够、小文档时又白等整数拍）。
+          await whenEditorReady();
+          if (cancelled) return;
+          editorRef.current?.setValue(snap.untitledContent ?? "");
+          fileApiRef.current.markDirty();
+          restoreScrollTo(snap.scrollTop, "heal-restore");
         }
         return;
       }
@@ -996,7 +1118,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [openPath, beginSwitch, finishSwitch]);
+  }, [openPath, beginSwitch, finishSwitch, whenEditorReady]);
 
   // React to file-tree mutations (delete / rename) coming from FileTree.
   //   * deleted: drop every tab whose file vanished (dirty tabs with a path
@@ -1093,7 +1215,11 @@ export default function App() {
     if (!syncSettings.enabled) return;
     syncTriggerRef.current = assembleSyncTrigger({
       getSettings: () => settingsRef.current.settings,
-      getRoots: () => workspacesRef.current,
+      getRoots: () =>
+        workspacesRef.current.map((p) => {
+          const name = syncDirNamesRef.current.get(p);
+          return name ? { path: p, remoteDir: name } : p;
+        }),
     });
     return () => {
       syncTriggerRef.current?.dispose();
@@ -1243,9 +1369,14 @@ export default function App() {
     // 由 main 独占消费。实际时序上 doc 窗口总在 main 挂载之后才创建，这里
     // 显式挡住语义，防止未来启动顺序变化时 doc 窗口误领。
     if (getAdapter().app.window.label === "main") {
-      getAdapter().app.getPendingFile().then((p) => {
-        if (p) maybeOpen(p);
-      });
+      // E5：用户双击 .md 启动时 PendingFile 拉取失败此前是未处理拒绝——
+      // 文件静默打不开。现记录诊断，用户至少能在诊断面板看到原因。
+      getAdapter()
+        .app.getPendingFile()
+        .then((p) => {
+          if (p) maybeOpen(p);
+        })
+        .catch((e) => noteOpError("pending-file", e));
     }
     const unlistenP = getAdapter().app.listen<string>("open-file", (ev) => {
       if (ev.payload) maybeOpen(ev.payload);
@@ -1428,6 +1559,24 @@ export default function App() {
     loadRecentWorkspaces().then(setRecentWs).catch(() => undefined);
   }, []);
 
+  /** E5：工作区持久化（调用点已先行切换 UI）——失败回滚列表 + 状态栏提示，
+   *  不再成为未处理拒绝、不再显示未持久化的工作区。 */
+  const persistWorkspaces = useCallback(
+    async (next: string[], prev: string[]): Promise<boolean> => {
+      try {
+        await setWorkspaces(next);
+      } catch (e) {
+        noteOpError("workspace-persist", e);
+        workspacesRef.current = prev;
+        setWsList(prev);
+        flashStatus("工作区保存失败，已还原列表", 5000);
+        return false;
+      }
+      return true;
+    },
+    [flashStatus]
+  );
+
   const addWorkspaceRoot = useCallback(
     async (folder: string) => {
       const cur = workspacesRef.current;
@@ -1438,14 +1587,15 @@ export default function App() {
       }
       workspacesRef.current = next;
       setWsList(next);
-      await setWorkspaces(next);
-      await pushRecentWorkspace(folder);
+      if (!(await persistWorkspaces(next, cur))) return;
+      // 最近列表属尽力而为：失败不回滚工作区（主持久化已成功）。
+      await pushRecentWorkspace(folder).catch((e) => noteOpError("recent-ws-push", e));
       refreshRecentWs();
       setSidebarOpen(true);
       setSidebarTab("tree");
       flashStatus(`已添加 ${baseName(folder)}`);
     },
-    [flashStatus, refreshRecentWs]
+    [flashStatus, persistWorkspaces, refreshRecentWs]
   );
 
   // 替换整个工作区为单个根（多根时先确认；磁盘不受影响）。
@@ -1460,26 +1610,27 @@ export default function App() {
       }
       workspacesRef.current = [folder];
       setWsList([folder]);
-      await setWorkspaces([folder]);
-      await pushRecentWorkspace(folder);
+      if (!(await persistWorkspaces([folder], cur))) return;
+      await pushRecentWorkspace(folder).catch((e) => noteOpError("recent-ws-push", e));
       refreshRecentWs();
       setSidebarOpen(true);
       setSidebarTab("tree");
     },
-    [refreshRecentWs]
+    [persistWorkspaces, refreshRecentWs]
   );
 
   // 移除一个根（文件树区头的 ×）。不确认 —— 磁盘不动，重挂即可，VS Code 同款。
   const removeWorkspaceRoot = useCallback(
     async (root: string) => {
-      const next = workspacesRef.current.filter((r) => !samePathFold(r, root));
-      if (next.length === workspacesRef.current.length) return;
+      const cur = workspacesRef.current;
+      const next = cur.filter((r) => !samePathFold(r, root));
+      if (next.length === cur.length) return;
       workspacesRef.current = next;
       setWsList(next);
-      await setWorkspaces(next);
+      if (!(await persistWorkspaces(next, cur))) return;
       flashStatus(`已移除 ${baseName(root)}（磁盘文件不受影响）`);
     },
-    [flashStatus]
+    [flashStatus, persistWorkspaces]
   );
 
   // FileTree 的 memo 依赖 props 身份 —— onRemoveRoot 走稳定引用。
@@ -1562,6 +1713,9 @@ export default function App() {
           ""
         ) || "untitled";
       try {
+        // PDF 由 OS 打印对话框产出文件，「完成」语义与其他格式不同——用
+        // 分支级文案，避免谎报「导出完成」（用户可能还没打印甚至取消）。
+        let doneMsg = "导出完成";
         if (kind === "html") {
           // V3.6：导出前选择是否把本地图片内联为 base64（单文件分发）。
           const inline = await choiceDialog(
@@ -1572,8 +1726,10 @@ export default function App() {
           flashStatus("正在导出…", 60_000);
           await exportHtml(ctx, `${name}.html`, { inlineImages: inline });
         } else if (kind === "pdf") {
-          flashStatus("正在导出…", 60_000);
+          flashStatus("正在打开打印对话框…", 60_000);
           await exportPdf(ctx, `${name}.pdf`);
+          // exportPdf 在 afterprint（对话框关闭，打印或取消均触发）后才返回。
+          doneMsg = "打印流程已结束（若未在对话框中另存为 PDF 则未导出）";
         } else if (kind === "docx") {
           flashStatus("正在导出…", 60_000);
           await exportDocx(ctx, `${name}.docx`);
@@ -1589,12 +1745,13 @@ export default function App() {
           }
           const isDarkTheme =
             settingsApi.settings.theme === "dark" ||
-            settingsApi.settings.theme === "claude-dark";
+            settingsApi.settings.theme === "claude-dark" ||
+            settingsApi.settings.theme === "ios-dark";
           const bg = isDarkTheme ? "#1e1e1e" : "#ffffff";
           flashStatus("正在导出…", 60_000);
           await exportPng(el, `${name}.png`, bg);
         }
-        flashStatus("导出完成");
+        flashStatus(doneMsg);
       } catch (e) {
         flashStatus("导出失败", 5000);
         void showAlert(`导出失败：${String(e)}`, "Mditor", "error");
@@ -1785,6 +1942,18 @@ export default function App() {
         break;
       case "theme_sepia":
         void sa.setTheme("sepia");
+        break;
+      case "theme_claude":
+        void sa.setTheme("claude");
+        break;
+      case "theme_claude_dark":
+        void sa.setTheme("claude-dark");
+        break;
+      case "theme_ios":
+        void sa.setTheme("ios");
+        break;
+      case "theme_ios_dark":
+        void sa.setTheme("ios-dark");
         break;
       case "app_settings":
         setSettingsOpen(true);
@@ -2218,15 +2387,7 @@ export default function App() {
   );
   const clearTextColor = useCallback(() => editorRef.current?.clearTextColor(), []);
   const getActiveMarks = useCallback(
-    () =>
-      editorRef.current?.getActiveMarks() ?? {
-        bold: false,
-        highlight: false,
-        italic: false,
-        strike: false,
-        code: false,
-        color: null,
-      },
+    () => editorRef.current?.getActiveMarks() ?? { ...EMPTY_MARKS },
     []
   );
   const isEditorReady = useCallback(() => editorRef.current?.ready() ?? false, []);
@@ -2574,8 +2735,33 @@ export default function App() {
 
   // Defer expensive recompute of word count so a fast typist in a large
   // document doesn't get key-input lag — React runs this at lower priority.
-  const deferredMarkdown = useDeferredValue(liveMarkdown);
+  // P2：useDeferredValue 只降优先级不降频率——1MB 文档打字时仍会以每帧节奏
+  // 全文扫描。先 150ms 防抖把连续击键合并成一次（与 useAnnotations 同法），
+  // 再 deferred 以非阻塞优先级执行这次（变稀疏的）重算。
+  const debouncedMarkdown = useDebouncedValue(liveMarkdown, 150);
+  const deferredMarkdown = useDeferredValue(debouncedMarkdown);
   const words = useMemo(() => countWords(deferredMarkdown), [deferredMarkdown]);
+
+  // P1：传给 memo 化子组件的回调保持稳定引用。内联箭头每次渲染都是新引用，
+  // React.memo 永不短路——打字期间 App 以最高 60fps 重渲染，标签栏/搜索/
+  // 链接面板/AI 面板/选区工具条每个动画帧都在无效 reconcile。
+  const onTabActivate = useCallback((k: string) => void activateTab(k), [activateTab]);
+  const onTabClose = useCallback((k: string) => void closeTab(k), [closeTab]);
+  const onTabToNewWindow = useCallback((k: string) => void moveToNewWindow(k), [moveToNewWindow]);
+  const openSearchResultStable = useCallback(
+    (p: string, hit: SearchHit) => void onOpenSearchResult(p, hit),
+    [onOpenSearchResult]
+  );
+  const openLinkedNote = useCallback(
+    (p: string, line?: number) => void openNoteAtLine(p, line),
+    [openNoteAtLine]
+  );
+  const openRagNoteStable = useCallback(
+    (p: string, heading?: string) => void onOpenRagNote(p, heading),
+    [onOpenRagNote]
+  );
+  const openCitePanel = useCallback(() => setCiteOpen(true), []);
+  const aiFlashcardStable = useCallback(() => void aiMakeFlashcard(), [aiMakeFlashcard]);
 
   const docName = fileApi.doc.path ? baseName(fileApi.doc.path) : "未命名.md";
 
@@ -2593,9 +2779,9 @@ export default function App() {
       <TabsBar
         tabs={tabs}
         activeKey={activeKey}
-        onActivate={(k) => void activateTab(k)}
-        onClose={(k) => void closeTab(k)}
-        onMoveToNewWindow={(k) => void moveToNewWindow(k)}
+        onActivate={onTabActivate}
+        onClose={onTabClose}
+        onMoveToNewWindow={onTabToNewWindow}
       />
       <aside className={`sidebar ${sidebarOpen ? "open" : "closed"}${docSwitching ? " is-switching" : ""}`}>
         <nav className="sb-tabs">
@@ -2726,7 +2912,7 @@ export default function App() {
               <WorkspaceSearch
                 workspaces={workspaces}
                 excludedPaths={excludedSet}
-                onOpenResult={(p, h) => void onOpenSearchResult(p, h)}
+                onOpenResult={openSearchResultStable}
               />
             </>
           )}
@@ -2738,7 +2924,7 @@ export default function App() {
               <LinksPanel
                 path={fileApi.doc.path}
                 enabled={settingsApi.settings.vaultIndexEnabled && settingsApi.settings.wikiLinksEnabled}
-                onOpen={(p, line) => void openNoteAtLine(p, line)}
+                onOpen={openLinkedNote}
               />
             </>
           )}
@@ -2794,7 +2980,8 @@ export default function App() {
         />
         <Editor
           ref={editorRef}
-          settings={settingsApi.settings}
+          settings={editorSettings}
+          onReady={onEditorReady}
           fileApi={fileApi}
           onInput={onInput}
           onHeadings={handleHeadings}
@@ -2814,24 +3001,28 @@ export default function App() {
         />
       )}
 
-      <AiPanel
-        ref={aiPanelRef}
-        open={aiOpen}
-        settings={settingsApi.settings}
-        getNote={getMarkdown}
-        getNotePath={getNotePath}
-        workspaces={workspaces}
-        onInsert={aiInsert}
-        onInsertAfterSelection={insertAfterSelection}
-        onApplyChanges={applyAiChanges}
-        onJumpToText={jumpToAiText}
-        onAnnotate={onAnnotateReply}
-        onOpenSettings={openSettings}
-        onOpenNote={(p, h) => void onOpenRagNote(p, h)}
-        onSettingsChange={onSettingsChange}
-        onClose={closeAi}
-        onTreeChange={onTreeChange}
-      />
+      {/* E2：面板级错误边界——AI 面板渲染崩溃只损失该面板（可关闭恢复），
+          不再顶翻根边界导致整个编辑器连同未保存缓冲被错误卡片替换。 */}
+      <ErrorBoundary label="AI 助手" onReset={closeAi}>
+        <AiPanel
+          ref={aiPanelRef}
+          open={aiOpen}
+          settings={settingsApi.settings}
+          getNote={getMarkdown}
+          getNotePath={getNotePath}
+          workspaces={workspaces}
+          onInsert={aiInsert}
+          onInsertAfterSelection={insertAfterSelection}
+          onApplyChanges={applyAiChanges}
+          onJumpToText={jumpToAiText}
+          onAnnotate={onAnnotateReply}
+          onOpenSettings={openSettings}
+          onOpenNote={openRagNoteStable}
+          onSettingsChange={onSettingsChange}
+          onClose={closeAi}
+          onTreeChange={onTreeChange}
+        />
+      </ErrorBoundary>
 
       <SelectionToolbar
         getSelection={getEditorSelection}
@@ -2847,9 +3038,9 @@ export default function App() {
         onCode={toggleInlineCode}
         onLink={setLinkOnSelection}
         onMath={toggleInlineMath}
-        onCite={() => setCiteOpen(true)}
+        onCite={openCitePanel}
         onFlashcard={makeFlashcard}
-        onAiFlashcard={() => void aiMakeFlashcard()}
+        onAiFlashcard={aiFlashcardStable}
         onSetColor={setTextColor}
         onClearColor={clearTextColor}
         getActiveMarks={getActiveMarks}
@@ -2938,13 +3129,16 @@ export default function App() {
         onSwitchMode={onSwitchMode}
       />
 
-      <SettingsModal
-        open={settingsOpen}
-        settings={settingsApi.settings}
-        workspace={workspaces[0] ?? null}
-        onClose={() => setSettingsOpen(false)}
-        onChange={settingsApi.update}
-      />
+      {/* E2：设置面板 1,300+ 行自成边界——崩溃只损失设置弹窗。 */}
+      <ErrorBoundary label="设置面板" onReset={() => setSettingsOpen(false)}>
+        <SettingsModal
+          open={settingsOpen}
+          settings={settingsApi.settings}
+          workspace={workspaces[0] ?? null}
+          onClose={() => setSettingsOpen(false)}
+          onChange={settingsApi.update}
+        />
+      </ErrorBoundary>
 
       <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
 
@@ -2995,24 +3189,33 @@ export default function App() {
         onOpenNote={onOpenNoteAtLine}
         enabled={settingsApi.settings.vaultIndexEnabled && settingsApi.settings.flashcardsEnabled}
       />
-      <FlashcardMaker
-        open={maker.open}
-        title={maker.title}
-        initial={maker.initial}
-        onClose={() => {
+      {/* E2：做卡弹层自成边界（含 AI 生成路径）。 */}
+      <ErrorBoundary
+        label="做卡弹层"
+        onReset={() => {
           setMaker((m) => ({ ...m, open: false }));
           aiRegenerateRef.current = null;
         }}
-        onInsert={insertFlashcard}
-        onRegenerate={
-          maker.isAi
-            ? () => {
-                const fn = aiRegenerateRef.current;
-                if (fn) void fn();
-              }
-            : undefined
-        }
-      />
+      >
+        <FlashcardMaker
+          open={maker.open}
+          title={maker.title}
+          initial={maker.initial}
+          onClose={() => {
+            setMaker((m) => ({ ...m, open: false }));
+            aiRegenerateRef.current = null;
+          }}
+          onInsert={insertFlashcard}
+          onRegenerate={
+            maker.isAi
+              ? () => {
+                  const fn = aiRegenerateRef.current;
+                  if (fn) void fn();
+                }
+              : undefined
+          }
+        />
+      </ErrorBoundary>
     </div>
   );
 }

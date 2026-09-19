@@ -20,7 +20,10 @@
 use futures_util::StreamExt;
 use object_store::aws::AmazonS3Builder;
 use object_store::path::Path as StorePath;
-use object_store::{Attribute, Attributes, ClientOptions, ObjectStore, ObjectStoreExt, PutMode, PutOptions};
+use object_store::{
+    Attribute, Attributes, BackoffConfig, ClientOptions, ObjectStore, ObjectStoreExt, PutMode,
+    PutOptions, RetryConfig,
+};
 use serde::Deserialize;
 use tauri::command;
 
@@ -88,6 +91,25 @@ fn validate_key(key: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// virtual-hosted 模式：把桶名插进 endpoint host 作子域名
+/// （https://a.b → https://bucket.a.b）。手写解析（与 http_endpoint_allowed
+/// 同口径，不引入 url crate）；不匹配 scheme://host[:port] 形态时原样返回，
+/// 交给 object_store 自行报错。
+fn vhost_endpoint(endpoint: &str, bucket: &str) -> String {
+    let (scheme, rest) = match endpoint.split_once("://") {
+        Some((s, r)) if s == "http" || s == "https" => (s, r),
+        _ => return endpoint.to_string(),
+    };
+    let host_part = rest.split('/').next().unwrap_or("");
+    if host_part.is_empty() || bucket.is_empty() {
+        return endpoint.to_string();
+    }
+    format!(
+        "{scheme}://{bucket}.{host_part}{}",
+        &rest[host_part.len()..]
+    )
+}
+
 /// endpoint 的明文 HTTP 放行判定：仅 localhost / 127.0.0.1（MinIO 本地调
 /// 试，D6）。其余 HTTP 一律拒绝（前端保存时也会阻断，双保险——被篡改的
 /// 前端不能把密钥经明文链路发出去）。手写解析（scheme + host 前缀）而非
@@ -111,7 +133,15 @@ fn build_store(cfg: &S3Config) -> Result<object_store::aws::AmazonS3, String> {
         .with_secret_access_key(&cfg.secret_access_key)
         // pathStyle=false → virtual-hosted 寻址；true → path-style（MinIO/R2）。
         .with_virtual_hosted_style_request(!cfg.path_style)
-        .with_client_options(ClientOptions::default().with_timeout(REQUEST_TIMEOUT));
+        .with_client_options(ClientOptions::default().with_timeout(REQUEST_TIMEOUT))
+        // E12：显式重试策略（幂等请求的瞬时 5xx/429/网络抖动）。object_store
+        // 默认 10 次/3min 对交互式同步过宽（坏 endpoint 时 UI 卡 3 分钟才报
+        // 错）；收紧到 3 次/60s——瞬时故障仍被吸收，持续故障快速反馈。
+        .with_retry(RetryConfig {
+            backoff: BackoffConfig::default(),
+            max_retries: 3,
+            retry_timeout: std::time::Duration::from_secs(60),
+        });
 
     if let Some(token) = cfg.session_token.as_deref() {
         if !token.is_empty() {
@@ -128,7 +158,16 @@ fn build_store(cfg: &S3Config) -> Result<object_store::aws::AmazonS3, String> {
                 "仅允许 HTTPS endpoint（HTTP 仅限 localhost/127.0.0.1 本地调试）",
             ));
         }
-        builder = builder.with_endpoint(endpoint);
+        // object_store 0.13 语义变更（builder.rs:1211-1215）：virtual-hosted
+        // 模式下 endpoint 原样使用，**桶名要调用方自己拼进 host**（0.11 会自动
+        // 前置）。不拼 → 请求 URL 缺桶 → S3 兼容服务 404 NoSuchBucket（List 的
+        // URL 构造不同不受影响——「测试连接通过、上传全败」的根因）。
+        let effective = if cfg.path_style {
+            endpoint
+        } else {
+            &vhost_endpoint(endpoint, &cfg.bucket)
+        };
+        builder = builder.with_endpoint(effective);
         if lower.starts_with("http://") {
             // object_store 默认拒绝 HTTP：localhost 调试显式放行。
             builder = builder.with_allow_http(true);
@@ -266,7 +305,11 @@ pub async fn s3_get(cfg: S3Config, key: String) -> Result<tauri::ipc::Response, 
     if bytes.len() > MAX_OBJECT_BYTES {
         return Err(err(
             "005",
-            format!("对象过大（{} 字节，上限 {}）", bytes.len(), MAX_OBJECT_BYTES),
+            format!(
+                "对象过大（{} 字节，上限 {}）",
+                bytes.len(),
+                MAX_OBJECT_BYTES
+            ),
         ));
     }
     Ok(tauri::ipc::Response::new(bytes.to_vec()))
@@ -377,7 +420,11 @@ pub async fn s3_download_file(
     if bytes.len() > MAX_OBJECT_BYTES {
         return Err(err(
             "005",
-            format!("对象过大（{} 字节，上限 {}）", bytes.len(), MAX_OBJECT_BYTES),
+            format!(
+                "对象过大（{} 字节，上限 {}）",
+                bytes.len(),
+                MAX_OBJECT_BYTES
+            ),
         ));
     }
 
@@ -440,6 +487,29 @@ pub async fn s3_head(cfg: S3Config, key: String) -> Result<Option<S3Object>, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- vhost_endpoint（object_store 0.13 桶名拼入 endpoint）--------------
+
+    #[test]
+    fn vhost_endpoint_inserts_bucket_into_host() {
+        assert_eq!(
+            vhost_endpoint("https://oss-cn-hangzhou.aliyuncs.com", "zhangjiarun"),
+            "https://zhangjiarun.oss-cn-hangzhou.aliyuncs.com"
+        );
+        // 带端口（IP/本地形态）：桶插在 host 段最前，端口保留。
+        assert_eq!(
+            vhost_endpoint("http://127.0.0.1:9000", "mditor-test"),
+            "http://mditor-test.127.0.0.1:9000"
+        );
+        // 带 basePath：保留在桶 host 之后。
+        assert_eq!(
+            vhost_endpoint("https://s3.example.com/v2", "b"),
+            "https://b.s3.example.com/v2"
+        );
+        // 非法/空形态：原样返回（交给 object_store 报错）。
+        assert_eq!(vhost_endpoint("notaurl", "b"), "notaurl");
+        assert_eq!(vhost_endpoint("https://host", ""), "https://host");
+    }
 
     // ---- validate_key（D7 键名安全）----------------------------------------
 

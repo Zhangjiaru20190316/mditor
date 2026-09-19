@@ -202,7 +202,14 @@ function utf8Bytes(s: string): Uint8Array {
   return encoder.encodeInto(s);
 }
 
+/** SHA-256 空串定值（NIST）。cryptoFramework Md.update 拒绝空输入（真机抛
+ * "update failed"），GET/LIST/DELETE 等空 body 请求的 payload hash 必须走此常量。 */
+const SHA256_OF_EMPTY = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+
 async function sha256Hex(data: Uint8Array): Promise<string> {
+  if (data.length === 0) {
+    return SHA256_OF_EMPTY;
+  }
   const md = cryptoFramework.createMd('SHA256');
   const blob: cryptoFramework.DataBlob = { data: data };
   await md.update(blob);
@@ -212,7 +219,9 @@ async function sha256Hex(data: Uint8Array): Promise<string> {
 
 async function hmacSha256(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
   const mac = cryptoFramework.createMac('SHA256');
-  const keyGen = cryptoFramework.createSymKeyGenerator('SHA256');
+  // 对称密钥生成器的算法名是 'HMAC'（'SHA256' 会被 HCF 拒绝：FindAbility
+  // Failed，真机 09-19 实锤）——摘要算法只在 createMac 处指定。
+  const keyGen = cryptoFramework.createSymKeyGenerator('HMAC');
   const keyBlob: cryptoFramework.DataBlob = { data: key };
   const symKey = await keyGen.convertKey(keyBlob);
   await mac.init(symKey);

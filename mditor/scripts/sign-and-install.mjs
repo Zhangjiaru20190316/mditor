@@ -4,7 +4,7 @@
 //   harmony/signing/mditor-debug.p12   本地密钥对（已生成）
 //   harmony/signing/mditor-debug.cer   AGC 调试证书（用户上传 CSR 换取）
 //   harmony/signing/debug.p7b          AGC 调试 Profile（含设备 UDID）
-// 运行：node scripts/sign-and-install.mjs
+// 运行：MDITOR_DEBUG_KEYSTORE_PWD=<口令> node scripts/sign-and-install.mjs
 //   产出 signing/mditor-signed.hap 并 hdc install。
 
 import { execFileSync } from "node:child_process";
@@ -17,9 +17,20 @@ const signing = join(root, "harmony", "signing");
 const unsignedHap = join(root, "harmony", "entry", "build", "default", "outputs", "default", "entry-default-unsigned.hap");
 const signedHap = join(signing, "mditor-signed.hap");
 
-const KEY_ALIAS = "mditor-debug";
-const KEY_PWD = "mditor-debug-2026"; // 本地调试密钥，非机密
-const JAR = "C:\\Huawei\\command-line-tools\\sdk\\default\\openharmony\\toolchains\\lib\\hap-sign-tool.jar";
+// S8：凭据与机器特定路径全部改环境变量（release-harmony.mjs / build-harmony.mjs
+// 已建立的同款纪律）。仓库内不再出现任何密钥常量；路径可被 env 覆盖，
+// 缺省回退到本机安装位置（本机零配置继续工作，其他机器设置 env 即可）。
+const KEY_ALIAS = process.env.MDITOR_DEBUG_KEY_ALIAS ?? "mditor-debug";
+const KEY_PWD = process.env.MDITOR_DEBUG_KEYSTORE_PWD ?? "";
+if (!KEY_PWD) {
+  console.error("缺少签名口令：请设置环境变量 MDITOR_DEBUG_KEYSTORE_PWD 后重试。");
+  console.error("（口令不再提交进仓库——见优化报告 S8）");
+  process.exit(1);
+}
+const HARMONY_CLT_HOME = process.env.HARMONY_CLT_HOME ?? "C:\\Huawei\\command-line-tools";
+const JAR =
+  process.env.HAP_SIGN_TOOL_JAR ??
+  join(HARMONY_CLT_HOME, "sdk", "default", "openharmony", "toolchains", "lib", "hap-sign-tool.jar");
 const JAVA_CANDIDATES = [
   process.env.JAVA_HOME,
   "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.20.101-hotspot",
@@ -70,6 +81,8 @@ const kb = Math.round(statSync(signedHap).size / 1024);
 console.log(`\n✅ 已签名：${signedHap}（${kb} KB）`);
 
 console.log("\n=== hdc install ===");
-const hdc = "C:\\Huawei\\command-line-tools\\sdk\\default\\openharmony\\toolchains\\hdc.exe";
+const hdc =
+  process.env.HDC_EXE ??
+  join(HARMONY_CLT_HOME, "sdk", "default", "openharmony", "toolchains", "hdc.exe");
 execFileSync(hdc, ["install", "-r", signedHap], { stdio: "inherit", shell: false });
 console.log("\n🎉 安装完成。在设备的桌面/启动器找「Mditor」。");

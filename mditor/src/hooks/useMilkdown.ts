@@ -79,7 +79,14 @@ import { createSvEditor } from "../lib/svCodeMirror";
 import type { SvEditorHandle, SvSurface } from "../lib/svCodeMirror";
 import "@milkdown/crepe/theme/common/style.css";
 import "@milkdown/crepe/theme/nord.css";
-import type { EditMode, Settings, BlockInfo, BlockTargetKind, FlatHeading } from "../types";
+import { EMPTY_MARKS } from "../types";
+import type {
+  EditMode,
+  EditorSettings,
+  BlockInfo,
+  BlockTargetKind,
+  FlatHeading,
+} from "../types";
 import { persistImage, persistRemoteImage, resolveImgSrc } from "../lib/imageManager";
 import { isBigDoc, isBigDocCv, getHeapUsage } from "../lib/memory";
 import { logMemory } from "../lib/diagnostics";
@@ -443,7 +450,7 @@ export interface MilkdownHandle {
   /** Destroy + rebuild the Crepe instance in place (memory-guard escape hatch). */
   recreate: () => void;
   /** Re-apply font/size/spacing vars when settings change. */
-  applyTheme: (s: Settings) => void;
+  applyTheme: (s: EditorSettings) => void;
 }
 
 interface Options {
@@ -456,7 +463,7 @@ interface Options {
   /** Live document headings (rich modes). Emitted only when the heading
    *  signature actually changes; the array ref is stable across no-op edits. */
   onHeadings?: (flat: FlatHeading[]) => void;
-  settings: Settings;
+  settings: EditorSettings; // P10：窄切片（types.ts pickEditorSettings）
 }
 
 // ---- T6: proactive history reclaim ---------------------------------------
@@ -939,8 +946,13 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     });
     // Defensive: never let an unexpected late rejection surface as unhandled.
     // The create-failure path above already logs; this only swallows surprises.
-    void build.catch(() => {
-      /* handled inside build where actionable */
+    // E9：意外 rejection 至少留一条可观测痕迹（此前 300 行 build 链上除
+    // crepe.create 外的失败全部无声消失）。
+    void build.catch((e: unknown) => {
+      sysEmit("editor:build-late-fail", `编辑器构建链意外失败：${String(e).slice(0, 120)}`, {
+        level: "warn",
+        data: {},
+      });
     });
 
     return () => {
@@ -2150,7 +2162,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         if (modeRef.current === "sv") {
           const ta = sv();
           if (!ta)
-            return { bold: false, highlight: false, italic: false, strike: false, code: false, color: null };
+            return { ...EMPTY_MARKS };
           return textareaActiveMarks(ta);
         }
         try {
@@ -2177,7 +2189,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
             };
           });
         } catch {
-          return { bold: false, highlight: false, italic: false, strike: false, code: false, color: null };
+          return { ...EMPTY_MARKS };
         }
       },
       setTextColor: (color: string) => {
@@ -2659,7 +2671,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     };
   }, [ready]);
 
-  const applyTheme = useCallback((s: Settings) => {
+  const applyTheme = useCallback((s: EditorSettings) => {
     applyProseVars(s);
   }, []);
 
@@ -2681,7 +2693,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
 
 /** Apply font/size/spacing as CSS vars on :root (the prose CSS in global.css
  *  consumes them on .ProseMirror). Mirrors the Vditor applyProseVars surface. */
-function applyProseVars(s: Settings) {
+function applyProseVars(s: EditorSettings) {
   const root = document.documentElement;
   root.style.setProperty("--font-prose", s.fontFamily);
   root.style.setProperty("--font-mono", s.monoFontFamily);

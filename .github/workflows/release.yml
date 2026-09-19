@@ -27,7 +27,13 @@ permissions:
   contents: write
 
 jobs:
+  # T1：发版前强制过 CI 质量门禁（复用 ci.yml；此前 tag 直接构建，
+  # 测试红了照样发版）。
+  check:
+    uses: ./.github/workflows/ci.yml
+
   publish:
+    needs: [check]
     if: startsWith(github.ref, 'refs/tags/')
     strategy:
       fail-fast: false
@@ -41,10 +47,10 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # actions/checkout v4.2.2
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # actions/setup-node v4.4.0
         with:
           # npm 11 (Node 24) — npm 10 mis-handles the lockfile's cross-platform
           # esbuild optional deps (vitest 4 needs esbuild 0.28), failing `npm ci`.
@@ -53,13 +59,13 @@ jobs:
           cache-dependency-path: mditor/package-lock.json
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # dtolnay/rust-toolchain stable
 
       # Cache cargo registry + target dir — the release profile (lto=true,
       # codegen-units=1) makes cold builds take 10-20 min; this keeps tags
       # after the first one fast.
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # Swatinem/rust-cache v2.7.8
         with:
           workspaces: mditor/src-tauri
 
@@ -67,7 +73,7 @@ jobs:
         run: npm ci
         working-directory: mditor
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # tauri-action v0 (2026-03-14)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -90,18 +96,21 @@ jobs:
     needs: publish
     if: always() && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # actions/checkout v4.2.2
 
       - name: Check CLT configured
+        # S9：vars 经 env 传入 shell，不做字面插值（防脚本注入）。
+        env:
+          HARMONY_CLT_URL: ${{ vars.HARMONY_CLT_URL }}
         run: |
-          if [ -z "${{ vars.HARMONY_CLT_URL }}" ]; then
+          if [ -z "$HARMONY_CLT_URL" ]; then
             echo "::warning::Repo variable HARMONY_CLT_URL is not set (HarmonyOS Command-Line Tools zip URL) — skipping the Harmony build."
             echo "CLT_SKIP=1" >> "$GITHUB_ENV"
           fi
 
       - name: Setup Node
         if: env.CLT_SKIP != '1'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # actions/setup-node v4.4.0
         with:
           node-version: 24
           cache: npm
@@ -109,15 +118,24 @@ jobs:
 
       - name: Setup JDK 17
         if: env.CLT_SKIP != '1'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # actions/setup-java v4.7.1
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Download HarmonyOS Command-Line Tools
         if: env.CLT_SKIP != '1'
+        # S9：vars 经 env 传入；仓库变量 HARMONY_CLT_SHA256 可选——设置后
+        # 严格校验下载的 zip（自托管 zip 一旦被换，构建直接失败而不是
+        # 悄悄出一个可发布的被篡改 HAP）。
+        env:
+          HARMONY_CLT_URL: ${{ vars.HARMONY_CLT_URL }}
+          HARMONY_CLT_SHA256: ${{ vars.HARMONY_CLT_SHA256 }}
         run: |
-          curl -L --fail --retry 3 -o /tmp/clt.zip "${{ vars.HARMONY_CLT_URL }}"
+          curl -L --fail --retry 3 -o /tmp/clt.zip "$HARMONY_CLT_URL"
+          if [ -n "$HARMONY_CLT_SHA256" ]; then
+            echo "$HARMONY_CLT_SHA256  /tmp/clt.zip" | sha256sum --check --strict
+          fi
           mkdir -p "$HOME/harmony-clt"
           unzip -q /tmp/clt.zip -d "$HOME/harmony-clt"
           # The zip ships a command-line-tools/ top folder; fall back to the
@@ -158,7 +176,7 @@ jobs:
             cp "/tmp/$ASSET" "$ASSET"
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # actions/upload-artifact v4.6.2
         if: env.CLT_SKIP != '1'
         with:
           name: harmony-unsigned-hap

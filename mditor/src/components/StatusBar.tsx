@@ -143,7 +143,9 @@ export const StatusBar = memo(function StatusBar({
       : "";
     const err = sync.last.error ? `\n${sync.last.error.code}: ${sync.last.error.message}` : "";
     const note = sync.last.status === "offline" ? "\n离线中——恢复网络后自动重试" : "";
-    return `云同步：点击立即同步${t ? `\n${t}` : ""}${note}${err}`;
+    // D6：本轮提示（时钟冲突/超限跳过等）直接进 tooltip——此前只沉在诊断总线。
+    const notes = (sync.last.notes ?? []).map((n) => `\n⚠ ${n}`).join("");
+    return `云同步：点击立即同步${t ? `\n${t}` : ""}${note}${err}${notes}`;
   }, [sync.last]);
   const syncLabel =
     sync.status === "syncing"

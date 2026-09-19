@@ -1,0 +1,73 @@
+/* iOS Dark 主题 — OLED 纯黑（Apple HIG systemDark），v5 新增。
+ * 当 <html data-theme="ios-dark"> 时生效。
+ * 变量名与 light/dark/sepia/claude 完全一致，可直接替换。
+ * 分层：画布 #000（OLED 纯黑）→ 浮岛卡片 #1C1C1E（secondarySystemBackground）
+ * → 浮层 #2C2C2E（tertiarySystemBackground，越浮越亮，以亮度分层制造纵深）。
+ * systemBlue #0A84FF / systemRed #FF453A / systemGreen #30D158（暗色原生值，
+ * 直接用作文字档——暗底上对比充足）。
+ */
+[data-theme="ios-dark"] {
+  --bg: #000000;
+  --fg: #ffffff;
+  --fg-muted: rgba(235, 235, 245, 0.6);
+  --border: rgba(84, 84, 88, 0.6);
+  --hover: rgba(120, 120, 128, 0.24); /* iOS dark fill */
+  --code-bg: #1c1c1e; /* 代码块底色（卡片层级） */
+  --code-border: rgba(84, 84, 88, 0.6); /* 代码块边框 */
+  --card-bg: #2c2c2e; /* 卡片/浮层用亮一档的 tertiary */
+  --sidebar-bg: #1c1c1e;
+  --tabbar-bg: #1c1c1e;
+  --titlebar-bg: #1c1c1e; /* 自绘标题栏（浮岛层级） */
+  --toolbar-bg: #1c1c1e;
+  --statusbar-bg: #1c1c1e;
+  --frame-bg: #000000; /* 画布 = OLED 纯黑 */
+  --accent: #0a84ff; /* systemBlue (dark) */
+  --accent-soft: rgba(10, 132, 255, 0.2);
+  --mark-bg: rgba(255, 214, 10, 0.32); /* ==高光== 系统黄（暗色降透明度） */
+  --danger: #ff453a;
+  --danger-soft: rgba(255, 69, 58, 0.16);
+  --danger-border: rgba(255, 69, 58, 0.4);
+  --success: #30d158;
+  --success-soft: rgba(48, 209, 88, 0.16);
+  --success-border: rgba(48, 209, 88, 0.4);
+  --diff-del-bg: rgba(255, 69, 58, 0.16);
+  --diff-del-border: rgba(255, 69, 58, 0.4);
+  --diff-del-mark: rgba(255, 69, 58, 0.42);
+  --diff-add-bg: rgba(48, 209, 88, 0.16);
+  --diff-add-border: rgba(48, 209, 88, 0.4);
+  --diff-add-mark: rgba(48, 209, 88, 0.42);
+
+  /* ── 光影纵深：暗色阴影几乎不可见，深值 + 亮度分层；
+     轮廓由 --glass-highlight 的 rim light 补足（§2.4） ── */
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.5);
+  --elev-2: 0 2px 4px rgba(0, 0, 0, 0.55), 0 8px 24px rgba(0, 0, 0, 0.55);
+  --elev-3: 0 4px 8px rgba(0, 0, 0, 0.6), 0 16px 40px rgba(0, 0, 0, 0.65);
+  --elev-4: 0 8px 16px rgba(0, 0, 0, 0.7), 0 24px 64px rgba(0, 0, 0, 0.8);
+  --shadow: var(--elev-1);
+  --shadow-md: var(--elev-3);
+  --shadow-lg: var(--elev-4);
+
+  /* ── 玻璃调参（§2.3 全档表达，暗色配方） ── */
+  --glass-tint: rgba(44, 44, 46, 0.72); /* 悬浮 overlay（tertiary 底） */
+  --glass-tint-modal: rgba(44, 44, 46, 0.8); /* 模态卡 */
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-highlight: rgba(255, 255, 255, 0.1); /* rim light 补轮廓 */
+  --glass-fallback-bg: #1c1c1e;
+  /* chrome 浮岛 tint（叠纯黑画布，仍保卡片亮度层级） */
+  --titlebar-glass: rgba(28, 28, 30, 0.88);
+  --tabbar-glass: rgba(28, 28, 30, 0.88);
+  --sidebar-glass: rgba(28, 28, 30, 0.88);
+  --statusbar-glass: rgba(28, 28, 30, 0.88);
+  --ai-glass: rgba(28, 28, 30, 0.88);
+
+  color-scheme: dark;
+}
+
+/* 纯黑正文底需要显式接管 Milkdown/源码表面（对齐 dark/claude-dark 先例） */
+[data-theme="ios-dark"] .mditor-milkdown,
+[data-theme="ios-dark"] .mditor-source {
+  background: var(--bg);
+}
+[data-theme="ios-dark"] .mditor-milkdown .milkdown-toolbar {
+  background: var(--toolbar-bg);
+}

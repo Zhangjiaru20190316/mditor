@@ -46,14 +46,26 @@ export class SettingsStore {
     this.data.forEach((value: Object, key: string) => {
       out[key] = value;
     });
+    // D5：先写 .tmp 再 rename 原子替换（截断式覆写在断电/崩溃中途会留下
+    // 半份 JSON → 下次启动静默重置全部设置）。旧文件让位为 .bak 供回退。
+    const tmp = `${this.file}.tmp`;
+    const bak = `${this.file}.bak`;
     try {
-      const file = fs.openSync(this.file,
+      const file = fs.openSync(tmp,
         fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
       try {
         fs.writeSync(file.fd, JSON.stringify(out));
       } finally {
         fs.closeSync(file);
       }
+      try {
+        if (fs.accessSync(this.file)) {
+          fs.copyFileSync(this.file, bak);
+        }
+      } catch (ign) {
+        // .bak 让位失败不阻塞主写入
+      }
+      fs.renameSync(tmp, this.file);
       return Promise.resolve(null);
     } catch (err) {
       hilog.error(0x0D01, 'mditor', 'SettingsStore: 落盘失败 %{public}s', String(err));
@@ -62,12 +74,13 @@ export class SettingsStore {
     }
   }
 
-  private load(): void {
+  /** D5：读取并装载一份设置文件；任何失败返回 false（调用方决定回退）。 */
+  private tryLoadFrom(path: string): boolean {
     try {
-      if (!fs.accessSync(this.file)) {
-        return;
+      if (!fs.accessSync(path)) {
+        return false;
       }
-      const text = fs.readTextSync(this.file);
+      const text = fs.readTextSync(path);
       const parsed = JSON.parse(text) as Record<string, Object>;
       if (parsed !== null && typeof parsed === 'object') {
         const keys = Object.keys(parsed);
@@ -77,13 +90,26 @@ export class SettingsStore {
             this.data.set(key, v);
           }
         });
+        return true;
       }
+      return false;
     } catch (err) {
-      // 写坏的手改文件：丢弃重开（与前端 loadRecent 的容错一致）。
-      hilog.warn(0x0D01, 'mditor', 'SettingsStore: mditor.json 加载失败（重置）: %{public}s',
-        String(err));
-      this.data = new Map();
+      return false;
     }
+  }
+
+  private load(): void {
+    if (this.tryLoadFrom(this.file)) {
+      return;
+    }
+    // D5：主文件损坏/缺失 → 尝试上次成功写入前的 .bak 快照，最后才重置
+    // （断电丢设置的概率从「每次写坏必丢」降到「两次连续损坏才丢」）。
+    if (this.data.size === 0 && this.tryLoadFrom(`${this.file}.bak`)) {
+      hilog.warn(0x0D01, 'mditor', 'SettingsStore: 主文件损坏，已从 .bak 恢复');
+      return;
+    }
+    hilog.warn(0x0D01, 'mditor', 'SettingsStore: mditor.json 加载失败（重置）');
+    this.data = new Map();
   }
 
   private keyOf(params: Record<string, Object>): string {

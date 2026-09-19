@@ -320,7 +320,8 @@
   flex: 1;
   min-height: 0;
 }
-/* 卡片化：圆角 + 边框 + hover 轻微上浮（只动 transform/阴影，无布局动画） */
+/* 卡片化：圆角 + 边框 + hover 轻微上浮（只动 transform；阴影为静态换档，
+   不进过渡白名单——v5 与全库「box-shadow 不参与 transition」断言对齐） */
 .anno-item {
   margin: 4px 8px;
   padding: 9px 12px;
@@ -328,7 +329,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-l);
   cursor: pointer;
-  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out),
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out);
 }
 .anno-item:hover {

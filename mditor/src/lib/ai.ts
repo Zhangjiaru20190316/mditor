@@ -315,6 +315,20 @@ const DEFAULT_SYSTEM_PROMPT = [
  * settings; "full" preserves the old behaviour) — long notes no longer go to
  * the API verbatim on every turn.
  */
+/**
+ * S5（提示注入缓解）：把注入内容里的包裹/分隔标记子串打断（插入零宽间隔
+ * U+200B），使「笔记原文含字面 </note> 即逃出上下文包裹」不可行。对模型
+ * 而言这些标记失去语法意义；对用户视觉无差异（零宽字符不渲染）。
+ */
+export function neutralizeDelimiters(text: string): string {
+  return text
+    .replaceAll("</note", "</​note")
+    .replaceAll("<note", "<​note")
+    .replaceAll("</tool", "</​tool")
+    .replaceAll("<system", "<​system")
+    .replaceAll("</system", "</​system");
+}
+
 export function buildSystemPrompt(
   note: string,
   custom?: string,
@@ -322,11 +336,14 @@ export function buildSystemPrompt(
 ): string {
   const base = custom && custom.trim() ? custom.trim() : DEFAULT_SYSTEM_PROMPT;
   const ctx = truncateNoteForContext(note, strategy);
+  // S5：中和包裹标记——原文含字面 </note> 即可逃出包裹劫持助手（见
+  // neutralizeDelimiters）。零宽间隔打断子串，视觉无差异。
+  const safeCtx = neutralizeDelimiters(ctx);
   return [
     base,
     "",
     "<note>",
-    ctx || "（当前笔记为空）",
+    safeCtx || "（当前笔记为空）",
     "</note>",
   ].join("\n");
 }
@@ -488,13 +505,17 @@ export async function chat({ settings, messages }: ChatOptions): Promise<string>
       }),
     { slowMs: Infinity }
   );
-  // v4.3 诊断：响应形态异常（content 缺失/非字符串）→MD-8004，不改行为。
+  // v4.3 诊断：响应形态异常（content 缺失/非字符串）→MD-8004。
+  // E6 修复：此前只记录后仍 `return result.content`（实为 undefined），调用方
+  // `.match()/.trim()` 远离根因处抛 TypeError。现改为抛出带 MD-8004 标记的类型化错误，
+  // 让用户看到"响应异常"而非下游崩溃。
   if (typeof result?.content !== "string") {
     sysEmit(
       "ai:response-fail",
       `AI 响应异常：content 非字符串（${String(result?.content).slice(0, 60)}）`,
       { level: "warn", data: { model: m.model, got: typeof result?.content } }
     );
+    throw new Error(`[MD-8004] AI 响应异常：content 非字符串（${typeof result?.content}）`);
   }
   return result.content;
 }
@@ -587,81 +608,81 @@ export function chatStream(
     cleanup();
   };
 
-  getAdapter().app.listen<StreamChunkEvent>("ai_stream_chunk", (ev) => {
-    if (ev.payload.id === requestId && !cancelled) handlers.onChunk(ev.payload.delta);
-  }).then((fn) => {
-    if (finished) fn();
-    else unlistenFns.push(fn);
-  });
-  // Reasoning / thinking tokens (reasoning models only). Optional handler —
-  // only registered when the caller supplied onReasoning, to avoid an idle
-  // listener for non-reasoning flows.
-  if (handlers.onReasoning) {
+  // E3：监听注册是异步的——旧实现不等注册完成就 invoke，注册前到达的
+  // chunk 丢失；快速本地服务先完成时，.then() 兜底还会把截断回复当完整
+  // 回复 onDone。改为确定性顺序：先 await 全部注册，再启动后端
+  // （agentChatStream 用 60ms 宽限窗缓解同类竞态，对话流这里用严格顺序）。
+  void (async () => {
     const onReasoning = handlers.onReasoning;
-    getAdapter().app.listen<StreamReasoningEvent>("ai_stream_reasoning", (ev) => {
-      if (ev.payload.id === requestId && !cancelled) onReasoning(ev.payload.delta);
-    }).then((fn) => {
-      if (finished) fn();
-      else unlistenFns.push(fn);
-    });
-  }
-  getAdapter().app.listen<StreamDoneEvent>("ai_stream_done", (ev) => {
-    if (ev.payload.id === requestId && !cancelled) {
-      finish();
-      handlers.onDone();
+    const noop: UnlistenFn = () => undefined;
+    const regs = await Promise.all([
+      getAdapter().app.listen<StreamChunkEvent>("ai_stream_chunk", (ev) => {
+        if (ev.payload.id === requestId && !cancelled) handlers.onChunk(ev.payload.delta);
+      }),
+      onReasoning
+        ? getAdapter().app.listen<StreamReasoningEvent>("ai_stream_reasoning", (ev) => {
+            if (ev.payload.id === requestId && !cancelled) onReasoning(ev.payload.delta);
+          })
+        : Promise.resolve(noop),
+      getAdapter().app.listen<StreamDoneEvent>("ai_stream_done", (ev) => {
+        if (ev.payload.id === requestId && !cancelled) {
+          finish();
+          handlers.onDone();
+        }
+      }),
+      getAdapter().app.listen<StreamErrorEvent>("ai_stream_error", (ev) => {
+        if (ev.payload.id === requestId && !cancelled) {
+          sysEmit("ai:stream-fail", `AI 流式错误：${ev.payload.error.slice(0, 160)}`, {
+            level: "error",
+            data: { requestId, error: ev.payload.error.slice(0, 300), model: m.model },
+          });
+          finish();
+          handlers.onError(ev.payload.error);
+        }
+      }),
+    ]);
+    // 注册期间已被取消/收尾：立即摘除，不留监听泄漏。
+    if (finished) {
+      regs.forEach((fn) => fn());
+      return;
     }
-  }).then((fn) => {
-    if (finished) fn();
-    else unlistenFns.push(fn);
-  });
-  getAdapter().app.listen<StreamErrorEvent>("ai_stream_error", (ev) => {
-    if (ev.payload.id === requestId && !cancelled) {
-      sysEmit("ai:stream-fail", `AI 流式错误：${ev.payload.error.slice(0, 160)}`, {
-        level: "error",
-        data: { requestId, error: ev.payload.error.slice(0, 300), model: m.model },
-      });
-      finish();
-      handlers.onError(ev.payload.error);
-    }
-  }).then((fn) => {
-    if (finished) fn();
-    else unlistenFns.push(fn);
-  });
+    unlistenFns.push(...regs);
 
-  // Kick off the backend. Rejection (network / HTTP error) is routed to onError.
-  getAdapter().app.invoke("ai_chat_stream", {
-    baseUrl: m.baseUrl,
-    apiKey: m.apiKey,
-    model: m.model,
-    provider: m.provider,
-    thinkingStrength: settings.aiThinkingStrength,
-    messages,
-    temperature: settings.aiTemperature,
-    maxTokens: settings.aiMaxTokens || undefined,
-    topP: settings.aiTopP,
-    requestId,
-  })
-    .then(() => {
-      // Clean completion resolves here; the done event is the canonical signal,
-      // but guard against the (rare) case where the event was missed.
-      if (!finished && !cancelled) {
-        sysEmit("ai:stream-abnormal-end", "AI 流式结束但未收到 done 事件（异常收尾）", {
-          level: "warn",
-          data: { requestId, model: m.model },
+    // Kick off the backend. Rejection (network / HTTP error) is routed to onError.
+    getAdapter().app.invoke("ai_chat_stream", {
+      baseUrl: m.baseUrl,
+      apiKey: m.apiKey,
+      model: m.model,
+      provider: m.provider,
+      thinkingStrength: settings.aiThinkingStrength,
+      messages,
+      temperature: settings.aiTemperature,
+      maxTokens: settings.aiMaxTokens || undefined,
+      topP: settings.aiTopP,
+      requestId,
+    })
+      .then(() => {
+        // Clean completion resolves here; the done event is the canonical signal,
+        // but guard against the (rare) case where the event was missed.
+        if (!finished && !cancelled) {
+          sysEmit("ai:stream-abnormal-end", "AI 流式结束但未收到 done 事件（异常收尾）", {
+            level: "warn",
+            data: { requestId, model: m.model },
+          });
+          finish();
+          handlers.onDone();
+        }
+      })
+      .catch((e) => {
+        if (cancelled || finished) return;
+        sysEmit("ai:stream-fail", `AI 流式启动/请求失败：${String(e).slice(0, 160)}`, {
+          level: "error",
+          data: { requestId, error: String(e).slice(0, 300), model: m.model },
         });
         finish();
-        handlers.onDone();
-      }
-    })
-    .catch((e) => {
-      if (cancelled || finished) return;
-      sysEmit("ai:stream-fail", `AI 流式启动/请求失败：${String(e).slice(0, 160)}`, {
-        level: "error",
-        data: { requestId, error: String(e).slice(0, 300), model: m.model },
+        handlers.onError(String(e));
       });
-      finish();
-      handlers.onError(String(e));
-    });
+  })();
 
   return {
     cancel: () => {

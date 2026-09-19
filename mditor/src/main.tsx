@@ -24,6 +24,11 @@ import "katex/contrib/mhchem";
 import "highlight.js/styles/github.css";
 import "./styles/global.css";
 import "./styles/annotation.css";
+// 材质基建层（v5）：圆角/玻璃/纵深 token 扩展 + 组件挂材质。必须在
+// themes/light.css 之前导入——material.css 的 :root 玻璃/阴影默认值与主题
+// 文件的 [data-theme] 调参同特异性，靠「主题在后」的源顺序保证主题胜出
+// （懒加载主题 chunk 运行时追加在所有急载样式之后，天然满足）。
+import "./styles/material.css";
 // Default theme is loaded eagerly so the very first paint is correct; other
 // themes are lazy-loaded on demand from useSettings (keeps the initial CSS
 // chunk small without a flash of unstyled content for the common case).

@@ -39,9 +39,20 @@
   --diff-add-bg: rgba(66, 165, 88, 0.1);
   --diff-add-border: rgba(66, 165, 88, 0.3);
   --diff-add-mark: rgba(66, 165, 88, 0.32);
-  --shadow: 0 4px 14px rgba(60, 50, 40, 0.08);
-  --shadow-md: 0 8px 24px rgba(60, 50, 40, 0.11);
-  --shadow-lg: 0 12px 40px rgba(60, 50, 40, 0.14);
+  /* v5 光影纵深阶梯（暖调：阴影基色随品牌偏暖棕） */
+  --elev-1: 0 1px 2px rgba(60, 50, 40, 0.08), 0 2px 8px rgba(60, 50, 40, 0.09);
+  --elev-2: 0 2px 4px rgba(60, 50, 40, 0.09), 0 8px 24px rgba(60, 50, 40, 0.11);
+  --elev-3: 0 4px 8px rgba(60, 50, 40, 0.11), 0 16px 40px rgba(60, 50, 40, 0.13);
+  --elev-4: 0 8px 16px rgba(60, 50, 40, 0.12), 0 24px 64px rgba(60, 50, 40, 0.16);
+  --shadow: var(--elev-1);
+  --shadow-md: var(--elev-3);
+  --shadow-lg: var(--elev-4);
+  /* v5 玻璃调参（克制档：overlay 轻玻璃，chrome 不透明） */
+  --glass-tint: rgba(255, 255, 255, 0.9);
+  --glass-tint-modal: rgba(255, 255, 255, 0.9);
+  --glass-border: rgba(60, 50, 40, 0.12);
+  --glass-highlight: rgba(255, 255, 255, 0.45);
+  --glass-fallback-bg: #ffffff;
   color-scheme: light;
 }
 

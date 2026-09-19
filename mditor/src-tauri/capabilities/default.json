@@ -27,21 +27,32 @@
 
     "process:default",
 
-    "shell:allow-open",
+    {
+      "identifier": "shell:allow-open",
+      "allow": [
+        { "url": "https://**" },
+        { "url": "http://**" },
+        { "url": "mailto:*" },
+        { "url": "tel:*" }
+      ]
+    },
 
     "fs:default",
-    { "identifier": "fs:allow-read-text-file", "allow": [{ "path": "**" }] },
-    { "identifier": "fs:allow-write-text-file", "allow": [{ "path": "**" }] },
-    { "identifier": "fs:allow-read-file", "allow": [{ "path": "**" }] },
-    { "identifier": "fs:allow-write-file", "allow": [{ "path": "**" }] },
-    { "identifier": "fs:allow-exists", "allow": [{ "path": "**" }] },
-    { "identifier": "fs:allow-stat", "allow": [{ "path": "**" }] },
-    { "identifier": "fs:allow-mkdir", "allow": [{ "path": "**" }] },
-    { "identifier": "fs:allow-remove", "allow": [{ "path": "**" }] },
-    { "identifier": "fs:allow-read-dir", "allow": [{ "path": "**" }] },
-    { "identifier": "fs:allow-rename", "allow": [{ "path": "**" }] },
-    { "identifier": "fs:allow-unwatch", "allow": [{ "path": "**" }] },
-    { "identifier": "fs:allow-watch", "allow": [{ "path": "**" }] },
-    { "identifier": "fs:scope", "allow": [{ "path": "**" }] }
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-exists",
+    "fs:allow-stat",
+    "fs:allow-mkdir",
+    "fs:allow-remove",
+    "fs:allow-read-dir",
+    "fs:allow-rename",
+    "fs:allow-unwatch",
+    "fs:allow-watch",
+    { "identifier": "fs:scope", "allow": [
+      { "path": "$APPDATA/**" },
+      { "path": "$DOCUMENT/**" }
+    ] }
   ]
 }

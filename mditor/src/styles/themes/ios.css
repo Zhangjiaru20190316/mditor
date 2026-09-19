@@ -1,0 +1,66 @@
+/* iOS 主题 — 苹果系统亮色（Apple HIG systemLight），v5 新增。
+ * 当 <html data-theme="ios"> 时生效。
+ * 变量名与 light/dark/sepia/claude 完全一致，可直接替换。
+ * 色板：systemBackground #FFF / secondarySystemBackground #F2F2F7 /
+ * label #000 / secondaryLabel rgba(60,60,67,.6) / separator
+ * rgba(60,60,67,.29) / systemBlue #007AFF。
+ */
+[data-theme="ios"] {
+  --bg: #ffffff;
+  --fg: #000000;
+  --fg-muted: rgba(60, 60, 67, 0.6);
+  --border: rgba(60, 60, 67, 0.29);
+  /* iOS fill：菜单/按钮 hover 用系统填充色而非灰阶 */
+  --hover: rgba(60, 60, 67, 0.08);
+  --code-bg: #f2f2f7; /* 代码块底色（secondarySystemBackground） */
+  --code-border: rgba(60, 60, 67, 0.16); /* 代码块边框 */
+  --card-bg: #ffffff;
+  --sidebar-bg: #f2f2f7;
+  --tabbar-bg: #f2f2f7;
+  --titlebar-bg: #f2f2f7; /* 自绘标题栏（chrome 层统一次级底色） */
+  --toolbar-bg: #f2f2f7;
+  --statusbar-bg: #f2f2f7;
+  --frame-bg: #e5e5ea; /* 浮岛画布 = systemGray5，比面板深一档 */
+  --accent: #007aff; /* systemBlue */
+  --accent-soft: rgba(0, 122, 255, 0.12);
+  --mark-bg: rgba(255, 214, 10, 0.42); /* ==高光== 系统黄 */
+  /* 语义色：文字档用 HIG 亮色模式加深变体（#D70015/#248A3D，Apple 官方
+     无障碍文本色），soft/diff 底用原生 systemRed #FF3B30 / systemGreen
+     #34C759 的透明变体。 */
+  --danger: #d70015;
+  --danger-soft: rgba(255, 59, 48, 0.1);
+  --danger-border: rgba(255, 59, 48, 0.25);
+  --success: #248a3d;
+  --success-soft: rgba(52, 199, 89, 0.12);
+  --success-border: rgba(52, 199, 89, 0.3);
+  --diff-del-bg: rgba(255, 59, 48, 0.1);
+  --diff-del-border: rgba(255, 59, 48, 0.25);
+  --diff-del-mark: rgba(255, 59, 48, 0.3);
+  --diff-add-bg: rgba(52, 199, 89, 0.12);
+  --diff-add-border: rgba(52, 199, 89, 0.3);
+  --diff-add-mark: rgba(52, 199, 89, 0.32);
+
+  /* ── 光影纵深（§2.4 亮色基值） ── */
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.05), 0 2px 8px rgba(0, 0, 0, 0.06);
+  --elev-2: 0 2px 4px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.08);
+  --elev-3: 0 4px 8px rgba(0, 0, 0, 0.08), 0 16px 40px rgba(0, 0, 0, 0.12);
+  --elev-4: 0 8px 16px rgba(0, 0, 0, 0.1), 0 24px 64px rgba(0, 0, 0, 0.16);
+  --shadow: var(--elev-1);
+  --shadow-md: var(--elev-3);
+  --shadow-lg: var(--elev-4);
+
+  /* ── 玻璃调参（§2.3 全档表达） ── */
+  --glass-tint: rgba(255, 255, 255, 0.72); /* 悬浮 overlay */
+  --glass-tint-modal: rgba(255, 255, 255, 0.8); /* 模态卡 */
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-highlight: rgba(255, 255, 255, 0.55);
+  --glass-fallback-bg: #f7f7fa;
+  /* chrome 浮岛半透明 tint（叠画布 systemGray5 上的轻玻璃质感） */
+  --titlebar-glass: rgba(242, 242, 247, 0.85);
+  --tabbar-glass: rgba(242, 242, 247, 0.85);
+  --sidebar-glass: rgba(242, 242, 247, 0.85);
+  --statusbar-glass: rgba(242, 242, 247, 0.85);
+  --ai-glass: rgba(242, 242, 247, 0.85);
+
+  color-scheme: light;
+}

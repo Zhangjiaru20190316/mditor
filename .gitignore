@@ -12,6 +12,7 @@ HeapSnapshot-*.json
 .zcode/
 .mimosa/
 .openclaw/
+.workflow/
 
 # Agent 工具运行时状态（hook 会话快照/工作区状态，非仓库内容）
 deepseek-free-api/
@@ -35,3 +36,17 @@ mditor/perf/results/*.cpuprofile
 .cua/
 .hvigor/
 mditor/perf/results/screen.png
+
+# 私人工作区文件（G1：不进公开仓库——本地文件保留，仅取消跟踪）
+memory/
+MEMORY.md
+AGENTS.md
+SOUL.md
+USER.md
+IDENTITY.md
+HEARTBEAT.md
+TOOLS.md
+
+# 游离截图（G4：防止 git add . 误提交）
+d1.jpeg
+mditor/d2.jpeg

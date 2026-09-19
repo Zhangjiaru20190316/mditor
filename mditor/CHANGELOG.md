@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased（2026-09-19 第 2 批：密钥入系统凭据库 + 安全/健壮性 15 项收尾——v4.14.0）
+
+继第 1 批 24 项（见下）后的第二批实施（`docs/optimization_report.md` 未完成项），全部附回归测试与实测数据（`docs/optimization_report2.md`）：
+
+- **S2 密钥系统凭据存储（安全）**：`aiModels[].apiKey` / `ragEmbedApiKey` / `sync.secretAccessKey|sessionToken` 不再明文写 `mditor.json`——Rust 新增 `secret_set/get/del` 三命令（Windows Credential Manager / DPAPI；`secrets.rs`，凭据永不入日志），store 保存时先入库、JSON 只留 `@keychain` 引用标记；加载时从凭据库水合（并行）；旧明文首启自动迁移并脱敏重写。非 Windows 桌面回退明文兼容路径并留 warn 诊断。实测：凭据 set+get 往返 p50 6.8ms / p95 11.1ms（200 次分布），启动水合并行 get 对打开时长无可测影响。真实凭据管理器往返回归 ×1 + 前端脱敏/水合/迁移/清空回归 ×5。
+- **S6 CSP 收紧**：`img-src` 去掉明文 `http:`（堵阅读场景 IP 探测信道）；移除 `dangerousDisableAssetCspModification`（恢复 Tauri 对注入脚本的 CSP 自动加固；index.html 无内联脚本，经 dev 实例 + 基准冒烟验证）。
+- **S10 导出二次消毒**：HTML/PDF/DOCX 三入口 + 公式栅格化容器在消费 `ctx.html` 前过零依赖 deny-list 消毒（`exportSanitize.ts`：script/iframe/object/embed/base/meta/link 元素、`on*` 事件属性、javascript:/vbscript: URL；保留 KaTeX/批注 data-*/颜色 style 等合法结构）。回归 ×7。
+- **D6/D7 同步反馈**：时钟冲突与「时间接近」警告从沉底的 summary.notes 升级为状态事件 `notes` 字段，状态栏云图标 tooltip 直接可见；手动同步在「同步中」被合并时不再静默——留 `sync:busy` 诊断并重发 syncing 状态。
+- **E2 面板级错误边界**：SettingsModal / AiPanel / FlashcardMaker 各自成界（新增「关闭面板」按钮，只损失出错面板不重载整窗），编辑区与未保存缓冲不再被顶翻。
+- **E5 浮动 Promise 收口**：handoff 迁移、PendingFile 拉取、工作区三操作（添加/替换/移除根）全部 try/catch + `noteOpError`；工作区持久化失败回滚列表 + 状态栏提示（不再显示未持久化的工作区）。
+- **E6**：`chat()` 响应形态异常改抛 `[MD-8004]` 类型化错误（此前返回 undefined，调用方 `.match()` 远离根因崩溃）。**E8**：Rust 三处 `resp.text().unwrap_or_default()` 静默空串改为映射传输错误。**E10/E11**：agent 工具成败判定由子串嗅探改结构化解析（内容含 `"ok":false` 字面量不再误报失败）；超长工具结果改字段级截断（输出保持合法 JSON），回归 ×7。
+- **E12 S3 重试显式化**：object_store 默认 10 次/3min 对交互式同步过宽（坏 endpoint 卡 3 分钟才报错）——显式 3 次/60s：瞬时故障仍吸收、持续故障快速反馈。
+- **P10 编辑器设置窄切片**：Editor（含 useMilkdown）消费字段盘点为 13 项切片 memo，无关设置变化（拖侧栏宽度等）不再打穿 memo 重渲染整棵编辑器子树；AiPanel 复核后消费字段过多不做切片（防类型洗白）。**P11**：启动/自愈等编辑器就绪由 `onReady` 回调通知，替代 80×50ms 盲轮询（时序确定性）。**E9**：`replaceImage` 失败、useMilkdown 构建链意外 rejection 补可观测痕迹；`// silent:` 约定落地（App.tsx 余 16 处裸 catch 留待第 3 批清点）。
+- **G2 tsconfig**：启用 `noImplicitReturns` + `noImplicitOverride`（4 处修正）；`noUncheckedIndexedAccess` 实测 578 处 fallout，留待专门会话。**G3**：`scripts/`（签名/发布/SigV4 oracle）纳入 eslint（最小 Node 全局），抓出并修复 make-icons 2 处未用变量；build-harmony.mjs TDZ 隐患（isWin 声明晚于 detectJavaHome 引用）顺手修复。**G4**：site 死资产（promo-v4.5.0.png/html，1.6MB）与失效脚本 md1011-correlate-prod.mjs 删除；新增 `CONTRIBUTING.md`（构建/测试/patch-package/发布纪律）与 `mditor/patches/README.md`。**R3 部分**：`EMPTY_MARKS` 常量收敛 4 处重复字面量。
+- 质量矩阵：vitest 778 → **797**（+19）；cargo 22 → **24**（+2，真实凭据管理器往返 + key 校验）；tsc 0 错；eslint 0 错 0 警；clippy -D warnings 0；sigv4 oracle PASS。运行时基准（1MB 文档 × 2 轮）：typing p95 88–96ms、open 2.9–3.5s、scroll 6/35ms、打字期长任务 0——与第 1 批后基线持平（本批为结构性收益，见报告对比表）。
+- 版本四处对齐 4.14.0（package.json / Cargo.toml / tauri.conf.json / app.json5 versionCode 1001400）。
+
+## Unreleased（2026-09-19：云同步真机首批修复——对象键跨设备收敛 + 全败可见性 + 双端出包根修）
+
+真机首批验收（MatePad Edge + 阿里云 OSS）暴露的四个问题，全部修复：
+
+- **跨设备键收敛（设计修正）**：对象键 = `<prefix>/<根目录名>/`，鸿蒙端根是虚拟 token（`/Docs/ws-N`），basename 是设备本地标识 → 两端键空间按构造不相交，「云同步」实际退化为每设备独立备份、永不收敛。新增 `resolveRemoteDir/fullPrefixOf`：平台层可覆盖远端目录名（鸿蒙经新桥命令 `fs.syncName` 取挂载时的真实文件夹名），**两端挂同名文件夹即配对互通**；remoteDir 参与 `remoteFingerprint`，换配对名 ⇒ 指纹失配 ⇒ 首同步重算（零删除动作），旧前缀对象自然成为孤儿而非误判「远端已删除」。桌面端零变化（回退 basename）。
+- **桌面 PUT 全败（object_store 0.13 语义变更）**：`with_virtual_hosted_style_request(true)` 在 0.13 起要求**调用方把桶名拼进 endpoint**（builder.rs 注释原文），库不再自动前置——实际请求 URL 缺桶名 → 阿里云 404 NoSuchBucket，且 List 的 URL 构造不同幸存 →「测试连接通过、上传全败、状态栏假 idle」。修复 `s3.rs build_store`：vhost 模式手动插桶进 host（`vhost_endpoint`，含端口/basePath 处理 + 单测）；Rust 探针对真实桶 PUT/HEAD/DELETE 全通。
+- **鸿蒙 S3Bridge 双 latent bug**（真机首跑即崩，此前hypium 未在设备执行、Node 镜像够不到）：① cryptoFramework `Md.update` 拒绝空输入——空 body 请求（GET/LIST/DELETE）的 payloadHash 直接抛 "update failed"，改用 NIST 空串定值（镜像断言 21 锁定）；② `createSymKeyGenerator('SHA256')` 算法名非法（应为 `'HMAC'`）——HMAC 签名链全灭。
+- **鸿蒙 listFile 走 URI ENOENT**：`fs.listFileSync` 不支持 `file://` URI（open 系才支持）——工作区列目录全灭、文件树静默显示空、同步 SCAN-READFAIL。修复 `FileManager.listTargetOf`：URI 经 `FileUri.path`（+防御式解码）转真实路径再列。
+- **全败可见性**：trigger 的 error 状态判定原要求根级失败（fatal）——纯单文件失败（如服务端逐条拒绝）显示「上次同步 xx:xx」假成功。放宽为「零成功传输且（根级失败或存在失败文件）→ error 红云」。
+- vitest 758 → 778（键收敛 3 例 + 此前增量）；cargo 21 → 22；tsc / eslint / `hvigorw assembleHap` / `npm run tauri build` 全绿。真机端到端：平板上传对象实际落库 OSS（`mditor/C语言/`）。
+
 ## 4.13.0 (2026-09-14)（鸿蒙端功能补全：AI / 云同步 / watch / 回收站 / 富导出）
 
 鸿蒙（ArkWeb 混合壳）自 v4.11 迁移以来五项能力处于禁用态，本版全部补齐到可用。统一接入模式：ArkTS 桥按 Tauri 命令原名注册 method → `HARMONY_CAPS` 翻 true → 前端硬门控解除 → 断言单测重写——前端业务代码（ai.ts / sync 引擎 / exporter / agent / rag）零改动或仅改门控，本地优先与零遥测不变。

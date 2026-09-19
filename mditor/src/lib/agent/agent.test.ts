@@ -21,6 +21,8 @@ vi.mock("../ai", () => ({
   agentChatStream: vi.fn(),
   embedTexts: vi.fn(async () => [[0, 1]]),
   isEmbedConfigured: vi.fn(() => false),
+  // S5：prompt.ts 现在调用零宽间隔中和，mock 给出与真实实现等价的简化版。
+  neutralizeDelimiters: (text: string) => text.replaceAll("</note", "</​note"),
 }));
 
 vi.mock("../ragIndex", () => ({

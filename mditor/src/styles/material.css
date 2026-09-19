@@ -1,0 +1,268 @@
+/* Mditor — 全局材质层（v5 视觉基建：毛玻璃 / 连续曲率圆角 / 光影纵深 / iOS 式弹性动效）。
+ *
+ * 定位：global.css 之上的「材质与纵深」覆盖层——token 在此扩展，组件挂材质的
+ * 规则集中在此，遏制主文件膨胀。加载顺序（main.tsx）：global.css →
+ * annotation.css → material.css → themes/light.css；懒加载主题 chunk 在运行时
+ * 追加到所有急载样式之后，因此 themes/*.css 里的调参永远能覆盖本文件的
+ * :root 默认值（同特异性、源顺序靠后者胜）。
+ *
+ * ── 材质三原则 ──────────────────────────────────────────────────────────
+ * 1. 玻璃需要背后有内容才成立：悬浮 overlay（菜单/切换器/工具条）吃
+ *    backdrop blur；邻接 chrome（标题栏/侧栏/标签栏/状态栏/AI 面板）是
+ *    grid 浮岛、下方只有画布纯色，只给 tint + hairline + 顶部高光，
+ *    不吃 blur（省性能）；内容面（代码块/引用/表格/图片）禁止玻璃。
+ * 2. 渐进增强：backdrop-filter 与 corner-shape 都必须独立成立回退态——
+ *    不支持时 overlay/modal 落到不透明底色，圆角退回 border-radius。
+ * 3. 性能护栏：同屏活跃 backdrop-filter 表面上限 ≈6（modal=卡+蒙层 2、
+ *    菜单族瞬时）；blur 半径 ≤36px；玻璃层内部不得再嵌套玻璃层；
+ *    玻璃容器不得处于滚动流内。
+ *
+ * ── 调参入口 ────────────────────────────────────────────────────────────
+ * 各主题在 themes/*.css 覆盖：--elev-1..4 / --glass-tint[-modal] /
+ * --glass-border / --glass-highlight / --glass-fallback-bg，及（iOS 主题）
+ * --titlebar-glass 等 chrome 半透明 tint。存量五主题调参克制
+ * （tint 透明度 0.86~0.92），iOS 两套全档表达。
+ */
+
+:root {
+  /* ── 圆角阶梯扩展（§2.2）───────────────────────────────────────────
+     s/m/l 三档的数值微调（6/10/16 → 8/12/18）在 global.css :root 原位更新，
+     保持单一来源；此处补齐 xs / xl / full 三档，完整阶梯：
+     xs 6（微小件）· s 8（列表项/行内块）· m 12（输入框/下拉/菜单容器）·
+     l 18（浮岛面板）· xl 22（modal 卡 / QuickSwitcher）· full 999（胶囊）。
+     组件归属：胶囊=主按钮/开关/搜索框/chip；xl=modal 卡、QuickSwitcher；
+     l=浮岛面板（sidebar/titlebar/tabbar/statusbar/ai-panel）；
+     m=输入框/下拉/ctx-menu 容器；s=列表项/行内块。 */
+  --radius-xs: 6px;
+  --radius-xl: 22px;
+  --radius-full: 999px;
+
+  /* ── 毛玻璃材质（§2.3）────────────────────────────────────────────
+     三档配方全局唯一；tint/border/highlight/fallback 逐主题覆盖。
+     默认值 = 克制浅色（无主题匹配时的兜底，与 light 主题一致）。 */
+  --glass-thin: blur(16px) saturate(180%);
+  --glass-regular: blur(24px) saturate(180%);
+  --glass-thick: blur(36px) saturate(160%);
+  --glass-tint: rgba(255, 255, 255, 0.92); /* 悬浮 overlay 底 tint */
+  --glass-tint-modal: rgba(255, 255, 255, 0.9); /* 模态卡 tint */
+  --glass-border: rgba(0, 0, 0, 0.08); /* 玻璃层 hairline 边 */
+  --glass-highlight: rgba(255, 255, 255, 0.4); /* 顶部内侧 1px 高光（静态） */
+  --glass-fallback-bg: #f7f7fa; /* 不支持 backdrop-filter 时的不透明底 */
+
+  /* ── 光影纵深阶梯（§2.4）──────────────────────────────────────────
+     双层阴影（环境光 + 主光）；默认亮色基值，深色主题覆盖为更深值。
+     分配：chrome 面板 elev-1 / hover 态 elev-2 / 下拉与菜单 elev-3 /
+     modal elev-4。--shadow* 三档保留为别名（向后兼容存量引用）。 */
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.05), 0 2px 8px rgba(0, 0, 0, 0.06);
+  --elev-2: 0 2px 4px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.08);
+  --elev-3: 0 4px 8px rgba(0, 0, 0, 0.08), 0 16px 40px rgba(0, 0, 0, 0.12);
+  --elev-4: 0 8px 16px rgba(0, 0, 0, 0.1), 0 24px 64px rgba(0, 0, 0, 0.16);
+  --shadow: var(--elev-1);
+  --shadow-md: var(--elev-3);
+  --shadow-lg: var(--elev-4);
+}
+
+/* ════════════════ 1. 悬浮 overlay：glass-regular（§2.3 角色表） ═══════════
+ * 右键菜单 / 菜单栏下拉 / 选区工具条及其二级弹层 / 双链补全 / 批注弹层 /
+ * 闪卡面板 / 诊断层 / QuickSwitcher —— 全部浮在内容之上，blur 有意义。
+ * 选择器与 global.css 原子区（.popover 组）对齐；material.css 后载胜出。
+ * 阴影换档 elev-3 + 顶部高光（静态，不参与任何过渡）。 */
+.popover,
+.mb-dropdown,
+.ctx-menu,
+.sel-popout,
+.sel-submenu,
+.wls-pop,
+.fc-panel,
+.anno-popover,
+.anno-diag,
+.sel-toolbar,
+.qs-panel {
+  background: var(--glass-tint);
+  border-color: var(--glass-border);
+  -webkit-backdrop-filter: var(--glass-regular);
+  backdrop-filter: var(--glass-regular);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--elev-3);
+  border-radius: var(--radius-m); /* 菜单/下拉容器归 m 档（§2.2） */
+}
+/* QuickSwitcher 是「迷你模态」，升 xl 档 */
+.qs-panel {
+  border-radius: var(--radius-xl);
+}
+/* 选区工具条是横条浮层，维持 l 档 */
+.sel-toolbar {
+  border-radius: var(--radius-l);
+}
+
+/* ════════════════ 2. 模态：glass-thick + 蒙层轻 blur（§2.3） ═══════════ */
+.modal-card {
+  background: var(--glass-tint-modal);
+  border: 1px solid var(--glass-border);
+  -webkit-backdrop-filter: var(--glass-thick);
+  backdrop-filter: var(--glass-thick);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--elev-4);
+  border-radius: var(--radius-xl);
+}
+/* 蒙层在既有暗化之上加 blur(8px) 提升沉浸。性能取舍：模态存在期才有这一
+ * 层全屏 blur（瞬时、同屏仅 1 个模态），关闭即随 DOM 卸载——护栏「禁止
+ * 常驻全屏 blur」不破。弱核（老 ArkWeb）可由下方 @supports 回退兜底。 */
+.modal-backdrop {
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+/* ── 不透明回退：不支持 backdrop-filter 的内核（ArkWeb 视版本） ──
+ * 回退态必须独立成立：不透明底色 + 无 filter，可读性与旧观感等同。 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .popover,
+  .mb-dropdown,
+  .ctx-menu,
+  .sel-popout,
+  .sel-submenu,
+  .wls-pop,
+  .fc-panel,
+  .anno-popover,
+  .anno-diag,
+  .sel-toolbar,
+  .qs-panel,
+  .modal-card {
+    background: var(--glass-fallback-bg);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .modal-backdrop {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* ════════════════ 3. 邻接 chrome：tint + hairline + elev-1（无 blur） ════
+ * 浮岛面板下方只有画布纯色，blur 无意义——只做半透明 tint（iOS 主题启用，
+ * --*-glass 未定义时回落既有不透明变量，存量主题观感零变化）、hairline
+ * 边与顶部高光、elev-1 换档。 */
+.titlebar {
+  background: var(--titlebar-glass, var(--titlebar-bg));
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--elev-1);
+}
+.tabbar {
+  background: var(--tabbar-glass, var(--titlebar-bg, var(--bg)));
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--elev-1);
+}
+.sidebar {
+  background: var(--sidebar-glass, var(--sidebar-bg));
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--elev-1);
+}
+.sb-status {
+  background: var(--statusbar-glass, var(--statusbar-bg));
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--elev-1);
+}
+.ai-panel {
+  background: var(--ai-glass, var(--sidebar-bg));
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--elev-1);
+}
+
+/* 主题切换的大表面颜色过渡补齐（titlebar/sidebar/ai-panel 已有先例，
+ * tabbar/状态栏原先无过渡，切主题会瞬跳）——只过渡颜色，不涉阴影。 */
+.tabbar,
+.sb-status {
+  transition:
+    background-color var(--dur-slow) var(--ease-out),
+    border-color var(--dur-slow) var(--ease-out);
+}
+
+/* ════════════════ 4. 连续曲率圆角：squircle 渐进增强（§2.2） ═══════════
+ * Chromium 139+ / 新 WebView2 支持 corner-shape；ArkWeb 视内核版本可能
+ * 不支持——@supports 内才升级，回退态（border-radius）独立成立。 */
+@supports (corner-shape: squircle) {
+  .titlebar,
+  .tabbar,
+  .sidebar,
+  .sb-status,
+  .ai-panel,
+  .modal-card,
+  .qs-panel,
+  .sel-toolbar,
+  .popover,
+  .mb-dropdown,
+  .ctx-menu,
+  .sel-popout,
+  .sel-submenu,
+  .wls-pop,
+  .fc-panel,
+  .anno-popover,
+  .anno-diag {
+    corner-shape: squircle;
+  }
+}
+
+/* ════════════════ 5. lively 档动效增强（§2.5 / §2.6） ══════════════════
+ * 惰性前缀 html[data-motion="lively"]，balanced/none 档零开销；
+ * 「无」档与 prefers-reduced-motion 由 global.css 末尾的通配 kill switch
+ * 压制（覆盖本文件新增 keyframes——同为 animation 属性，0.001ms 生效）。 */
+
+/* QuickSwitcher：iOS sheet 曲线弹入（无过冲、丝滑止动）+ 轻微上移。 */
+html[data-motion="lively"] .qs-panel {
+  animation: qs-panel-in-lively 0.3s var(--ease-sheet) both;
+}
+/* 退场优先：显式压过入场规则，保证 .closing 淡出走 --ease-in（对齐
+   global.css 中 modal-card 的同型处理）。 */
+html[data-motion="lively"] .qs-overlay.closing .qs-panel {
+  animation: modal-card-out var(--dur-exit) var(--ease-in) both;
+}
+@keyframes qs-panel-in-lively {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* 选区工具条 / 工作区搜索栏：入场收尾换 spring（轻微回弹定住）。 */
+html[data-motion="lively"] .sel-toolbar {
+  animation-timing-function: var(--ease-spring);
+}
+html[data-motion="lively"] .sb-root {
+  animation-timing-function: var(--ease-spring);
+}
+
+/* 模态内表单组级联（§2.6）：.field 逐项上浮入场，25ms/项、封顶 100ms。
+ * 只选 .field（不碰容器与 .settings-pane——后者已有自己的级联，避免
+ * 容器/子级双重淡入）。 */
+html[data-motion="lively"] .modal-body > .field {
+  animation: settings-field-in var(--dur-base) var(--ease-out) both;
+}
+html[data-motion="lively"] .modal-body > .field:nth-child(2) {
+  animation-delay: 25ms;
+}
+html[data-motion="lively"] .modal-body > .field:nth-child(3) {
+  animation-delay: 50ms;
+}
+html[data-motion="lively"] .modal-body > .field:nth-child(4) {
+  animation-delay: 75ms;
+}
+html[data-motion="lively"] .modal-body > .field:nth-child(n + 5) {
+  animation-delay: 100ms;
+}
+
+/* 可交互卡片按压回弹（§2.6）：按下快缩、松手 spring 回弹（过渡曲线挂
+ * spring，按压位移本身仍是纯 transform）。hover 抬升沿用 global.css
+ * lively 区既有 translateY(-2px) 规则，不重复定义。 */
+html[data-motion="lively"] .template-item,
+html[data-motion="lively"] .anno-item,
+html[data-motion="lively"] .ai-quick-btn,
+html[data-motion="lively"] .qs-item {
+  transition:
+    transform var(--dur-fast) var(--ease-spring),
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+html[data-motion="lively"] .template-item:active,
+html[data-motion="lively"] .anno-item:active,
+html[data-motion="lively"] .ai-quick-btn:active,
+html[data-motion="lively"] .qs-item:active {
+  transform: scale(0.97);
+}

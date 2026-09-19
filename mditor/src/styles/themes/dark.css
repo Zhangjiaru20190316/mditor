@@ -33,9 +33,20 @@
   --diff-add-bg: rgba(66, 165, 88, 0.18);
   --diff-add-border: rgba(66, 165, 88, 0.42);
   --diff-add-mark: rgba(66, 165, 88, 0.45);
-  --shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.48);
-  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.6);
+  /* v5 光影纵深阶梯（深色：阴影更深，轮廓由 glass-highlight rim light 补） */
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.45);
+  --elev-2: 0 2px 4px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.5);
+  --elev-3: 0 4px 8px rgba(0, 0, 0, 0.55), 0 16px 40px rgba(0, 0, 0, 0.6);
+  --elev-4: 0 8px 16px rgba(0, 0, 0, 0.6), 0 24px 64px rgba(0, 0, 0, 0.7);
+  --shadow: var(--elev-1);
+  --shadow-md: var(--elev-3);
+  --shadow-lg: var(--elev-4);
+  /* v5 玻璃调参（克制档：overlay 轻玻璃，chrome 不透明） */
+  --glass-tint: rgba(37, 37, 38, 0.88);
+  --glass-tint-modal: rgba(37, 37, 38, 0.88);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-highlight: rgba(255, 255, 255, 0.06);
+  --glass-fallback-bg: #252526;
   color-scheme: dark;
 }
 

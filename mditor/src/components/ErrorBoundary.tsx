@@ -13,6 +13,9 @@ interface Props {
   children: ReactNode;
   /** Optional label shown in the error card, e.g. "设置面板". */
   label?: string;
+  /** 面板级边界（E2）：提供后错误卡片多一个「关闭面板」按钮——只卸载出错
+   *  子树而不整窗重载，编辑区与未保存内容不受影响。 */
+  onReset?: () => void;
 }
 
 interface State {
@@ -20,13 +23,13 @@ interface State {
 }
 
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { error: null };
+  override state: State = { error: null };
 
   static getDerivedStateFromError(error: Error): State {
     return { error };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo) {
+  override componentDidCatch(error: Error, info: ErrorInfo) {
     // Print the real stack so the cause is visible in Tauri's DevTools console.
     console.error("[ErrorBoundary]", this.props.label ?? "render", error, info);
     try {
@@ -44,7 +47,12 @@ export class ErrorBoundary extends Component<Props, State> {
     if (typeof location !== "undefined") location.reload();
   };
 
-  render() {
+  private handleReset = () => {
+    this.setState({ error: null });
+    this.props.onReset?.();
+  };
+
+  override render() {
     const { error } = this.state;
     if (!error) return this.props.children;
 
@@ -100,6 +108,22 @@ export class ErrorBoundary extends Component<Props, State> {
             {error.stack ? `\n\n${error.stack}` : ""}
           </pre>
           <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
+            {this.props.onReset && (
+              <button
+                onClick={this.handleReset}
+                style={{
+                  padding: "8px 16px",
+                  background: "#6b7280",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 10,
+                  cursor: "pointer",
+                  fontSize: 14,
+                }}
+              >
+                关闭面板
+              </button>
+            )}
             <button
               onClick={this.handleReload}
               style={{

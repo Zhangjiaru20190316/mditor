@@ -39,6 +39,32 @@ export default function UriMapperTest() {
       expect(file.uri).assertEqual('file://docs/storage/Users/x/Docs/notes/sub/a.md');
     });
 
+    it('S7：拒绝 .. 穿越段（/Docs 与 /AppData 两分支），. 与空段被丢弃', 0, () => {
+      const m = new UriMapper('/tmp/mditor-test');
+      m.mountRoot('file://docs/storage/Users/x/Docs/notes', 'notes');
+      // /Docs 分支：.. 越出工作区根 → 抛错
+      let threw = false;
+      try {
+        m.resolve('/Docs/ws-1/../../etc/passwd');
+      } catch (e) {
+        threw = true;
+      }
+      expect(threw).assertTrue();
+      // /AppData 分支：.. 越出沙箱 → 抛错
+      let threw2 = false;
+      try {
+        m.resolve('/AppData/../secrets');
+      } catch (e2) {
+        threw2 = true;
+      }
+      expect(threw2).assertTrue();
+      // `.` 与重复斜杠被消毒，正常解析不受影响
+      const r = m.resolve('/Docs/ws-1/./sub//a.md');
+      expect(r.uri).assertEqual('file://docs/storage/Users/x/Docs/notes/sub/a.md');
+      const r2 = m.resolve('/AppData/./logs//memory.log');
+      expect(r2.sandboxPath).assertEqual('/tmp/mditor-test/logs/memory.log');
+    });
+
     it('中文与特殊字符文件名按段 encodeURIComponent', 0, () => {
       const m = new UriMapper('/tmp/mditor-test');
       m.mountRoot('file://docs/storage/Users/x/Docs/库', '库');

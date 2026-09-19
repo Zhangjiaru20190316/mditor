@@ -1,6 +1,6 @@
 // Shared types for the Mditor frontend.
 
-export type Theme = "light" | "dark" | "sepia" | "claude" | "claude-dark";
+export type Theme = "light" | "dark" | "sepia" | "claude" | "claude-dark" | "ios" | "ios-dark";
 
 /**
  * 动效强度三档（v4.1 动效体系）：
@@ -533,6 +533,72 @@ export interface Settings {
   sync: SyncSettings;
 }
 
+// ---- R3：选区格式标记 -------------------------------------------------------
+
+/** 选区当前格式标记（SelectionToolbar 按钮态）。 */
+export interface ActiveMarks {
+  bold: boolean;
+  highlight: boolean;
+  italic: boolean;
+  strike: boolean;
+  code: boolean;
+  color: string | null;
+}
+
+/** 空标记（无选区/编辑器未就绪）。共享常量——调用方只读；需要可变副本时
+ *  展开 `{ ...EMPTY_MARKS }`。收敛此前 4 处重复字面量。 */
+export const EMPTY_MARKS: ActiveMarks = {
+  bold: false,
+  highlight: false,
+  italic: false,
+  strike: false,
+  code: false,
+  color: null,
+};
+
+// ---- P10：设置窄切片 ---------------------------------------------------------
+//
+// Editor / AiPanel 是最重的两棵 memo 子树；settings 对象任一字段变化（如
+// sidebarWidth）都会生成新引用、打穿 memo 造成整树 reconcile。切片类型 =
+// 两组件（含 useMilkdown）实际消费字段的全量盘点；改消费字段时同步更新，
+// tsc 会强制（缺字段类型错）。
+
+/** Editor（含 useMilkdown：applyProseVars 5 个排版字段 + settingsRef 3 个
+ *  行为字段）实际消费的设置切片。 */
+export interface EditorSettings {
+  autosaveIntervalMs: number;
+  memoryGuard: boolean;
+  memoryGuardThresholdMb: number;
+  spellcheck: boolean;
+  typewriterMode: boolean;
+  fontFamily: string;
+  monoFontFamily: string;
+  fontSize: number;
+  lineHeight: number;
+  paragraphSpacing: number;
+  mathMacros: string;
+  bigDocPerformance: boolean;
+  bigDocViewport: boolean;
+}
+
+export function pickEditorSettings(s: Settings): EditorSettings {
+  return {
+    autosaveIntervalMs: s.autosaveIntervalMs,
+    memoryGuard: s.memoryGuard,
+    memoryGuardThresholdMb: s.memoryGuardThresholdMb,
+    spellcheck: s.spellcheck,
+    typewriterMode: s.typewriterMode,
+    fontFamily: s.fontFamily,
+    monoFontFamily: s.monoFontFamily,
+    fontSize: s.fontSize,
+    lineHeight: s.lineHeight,
+    paragraphSpacing: s.paragraphSpacing,
+    mathMacros: s.mathMacros,
+    bigDocPerformance: s.bigDocPerformance,
+    bigDocViewport: s.bigDocViewport,
+  };
+}
+
 export const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   motionLevel: "balanced",
@@ -763,6 +829,12 @@ export const FONT_PRESETS: FontPreset[] = [
     name: "系统默认",
     stack:
       '"Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+  },
+  {
+    id: "ios",
+    name: "iOS SF 风格",
+    stack:
+      '-apple-system, "SF Pro Text", "PingFang SC", "Segoe UI", "HarmonyOS Sans SC", sans-serif',
   },
   {
     id: "claude",

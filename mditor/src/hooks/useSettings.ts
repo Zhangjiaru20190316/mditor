@@ -39,6 +39,8 @@ const THEME_LOADERS: Partial<Record<Theme, () => Promise<unknown>>> = {
   sepia: () => import("../styles/themes/sepia.css"),
   claude: () => import("../styles/themes/claude.css"),
   "claude-dark": () => import("../styles/themes/claude-dark.css"),
+  ios: () => import("../styles/themes/ios.css"),
+  "ios-dark": () => import("../styles/themes/ios-dark.css"),
 };
 
 export interface SettingsApi {

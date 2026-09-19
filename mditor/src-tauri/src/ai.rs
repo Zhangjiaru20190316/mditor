@@ -43,7 +43,10 @@ struct CancelRegistry {
 
 impl CancelRegistry {
     fn new(cap: usize) -> Self {
-        Self { inner: HashSet::new(), cap }
+        Self {
+            inner: HashSet::new(),
+            cap,
+        }
     }
 
     fn cancel(&mut self, id: &str) {
@@ -105,7 +108,7 @@ const CONNECT_TIMEOUT_SECS: u64 = 10;
 /// newline yet). A well-formed SSE frame is tiny; if `buf` grows past this
 /// the server is misbehaving (no newlines / absurdly long frame) and
 /// continuing would balloon memory → OOM.
-const MAX_BUFFER_BYTES: usize = 1 * 1024 * 1024; // 1 MiB
+const MAX_BUFFER_BYTES: usize = 1024 * 1024; // 1 MiB
 
 /// One chat message, mirroring OpenAI's wire format.
 ///
@@ -170,6 +173,7 @@ fn friendly_error(status: u16, body: &str) -> String {
 /// `base_url` should already end with `/v1` (or equivalent). We append
 /// `/chat/completions`. Empty `api_key` is allowed (for local servers).
 #[command]
+#[allow(clippy::too_many_arguments)] // 命令签名 = wire 格式，参数数量是接口的一部分
 pub async fn ai_chat(
     base_url: String,
     api_key: String,
@@ -207,7 +211,7 @@ pub async fn ai_chat(
     );
 
     let resp = send_request(
-        &client,
+        client,
         &base_url,
         &api_key,
         body,
@@ -216,7 +220,12 @@ pub async fn ai_chat(
     )
     .await?;
     let status = resp.status().as_u16();
-    let text = resp.text().await.unwrap_or_default();
+    // E8：响应体读取失败映射为传输错误——此前静默成空串，用户只看到
+    // 「无法解析 AI 响应」而丢失真实原因（截断读/连接中断）。
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取 AI 响应失败：{e}"))?;
     if status >= 400 {
         return Err(friendly_error(status, &text));
     }
@@ -254,7 +263,10 @@ pub async fn ai_chat(
         .unwrap_or_default();
     let tool_calls = first.and_then(|c| c.message.tool_calls);
 
-    Ok(ChatResult { content, tool_calls })
+    Ok(ChatResult {
+        content,
+        tool_calls,
+    })
 }
 
 /// Payload returned by `ai_embed`: one embedding per input text, in the
@@ -313,7 +325,11 @@ pub async fn ai_embed(
         }
     })?;
     let status = resp.status().as_u16();
-    let text = resp.text().await.unwrap_or_default();
+    // E8：同 ai_chat——读取失败映射为传输错误而非静默空串。
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取嵌入响应失败：{e}"))?;
     if status >= 400 {
         return Err(friendly_error(status, &text));
     }
@@ -372,6 +388,7 @@ pub async fn ai_embed(
 /// so the frontend's `invoke` promise rejects too (defensive: some event races
 /// may drop the last event before the listener detaches).
 #[command]
+#[allow(clippy::too_many_arguments)] // 同 ai_chat：命令签名即 wire 格式
 pub async fn ai_chat_stream(
     app: AppHandle,
     base_url: String,
@@ -388,12 +405,24 @@ pub async fn ai_chat_stream(
 ) -> Result<(), String> {
     if base_url.trim().is_empty() {
         let msg = "未配置 AI Base URL，请在「设置 → AI」中填写。".to_string();
-        let _ = app.emit("ai_stream_error", StreamErr { id: request_id, error: msg.clone() });
+        let _ = app.emit(
+            "ai_stream_error",
+            StreamErr {
+                id: request_id,
+                error: msg.clone(),
+            },
+        );
         return Err(msg);
     }
     if model.trim().is_empty() {
         let msg = "未配置模型名称，请在「设置 → AI」中填写。".to_string();
-        let _ = app.emit("ai_stream_error", StreamErr { id: request_id, error: msg.clone() });
+        let _ = app.emit(
+            "ai_stream_error",
+            StreamErr {
+                id: request_id,
+                error: msg.clone(),
+            },
+        );
         return Err(msg);
     }
 
@@ -416,13 +445,23 @@ pub async fn ai_chat_stream(
 
     // Streaming: NO total timeout — a slow but healthy stream may legitimately
     // run for minutes; only the shared client's connect timeout applies.
-    let resp = send_request(&client, &base_url, &api_key, body, None).await?;
+    let resp = send_request(client, &base_url, &api_key, body, None).await?;
     let status = resp.status().as_u16();
     if status >= 400 {
         // Drain the body for a helpful message, then surface via event + Err.
-        let text = resp.text().await.unwrap_or_default();
+        // E8：错误分支读取详情失败也不再吞成空串——保留占位说明。
+        let text = resp
+            .text()
+            .await
+            .unwrap_or_else(|e| format!("（错误详情读取失败：{e}）"));
         let msg = friendly_error(status, &text);
-        let _ = app.emit("ai_stream_error", StreamErr { id: request_id, error: msg.clone() });
+        let _ = app.emit(
+            "ai_stream_error",
+            StreamErr {
+                id: request_id,
+                error: msg.clone(),
+            },
+        );
         return Err(msg);
     }
 
@@ -444,7 +483,27 @@ pub async fn ai_chat_stream(
     // tools）恒为空，任何路径零影响。
     let mut tool_agg: BTreeMap<u64, AggToolCall> = BTreeMap::new();
 
-    while let Some(chunk_result) = stream.next().await {
+    // P7：读空闲超时（60s）。原实现仅设 connect_timeout：服务器建连后不
+    // 发数据则本命令永久挂起，且取消检查只在 chunk 到达时求值——「停止」
+    // 按钮对停滞流无效（恰是空转计费场景）。SSE 保活注释行本就无害透传，
+    // 60 秒收不到任何字节即判死流并向用户报错。
+    const STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+    loop {
+        let chunk_result = match tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next()).await {
+            Ok(Some(cr)) => cr,
+            Ok(None) => break, // 流正常结束
+            Err(_elapsed) => {
+                let msg = "AI 流式响应已停滞超过 60 秒，连接中断（可重试）".to_string();
+                let _ = app.emit(
+                    "ai_stream_error",
+                    StreamErr {
+                        id: request_id.clone(),
+                        error: msg.clone(),
+                    },
+                );
+                return Err(msg);
+            }
+        };
         // 前端已取消：停拉上游流（不再消耗计费 token），按正常收尾通知。
         if stream_cancelled(&request_id) {
             let _ = app.emit("ai_stream_done", StreamDone { id: request_id });
@@ -454,7 +513,13 @@ pub async fn ai_chat_stream(
             Ok(c) => c,
             Err(e) => {
                 let msg = format!("流式读取失败：{e}");
-                let _ = app.emit("ai_stream_error", StreamErr { id: request_id.clone(), error: msg.clone() });
+                let _ = app.emit(
+                    "ai_stream_error",
+                    StreamErr {
+                        id: request_id.clone(),
+                        error: msg.clone(),
+                    },
+                );
                 return Err(msg);
             }
         };
@@ -486,7 +551,12 @@ pub async fn ai_chat_stream(
                 if !emit_pending_tool_calls(&app, &request_id, &tool_agg) {
                     return Ok(());
                 }
-                let _ = app.emit("ai_stream_done", StreamDone { id: request_id.clone() });
+                let _ = app.emit(
+                    "ai_stream_done",
+                    StreamDone {
+                        id: request_id.clone(),
+                    },
+                );
                 return Ok(());
             }
             // Parse the delta content (may be absent, e.g. role-only frames).
@@ -532,7 +602,10 @@ pub async fn ai_chat_stream(
                         if !emit_to_frontend(
                             &app,
                             "ai_stream_chunk",
-                            StreamChunk { id: request_id.clone(), delta },
+                            StreamChunk {
+                                id: request_id.clone(),
+                                delta,
+                            },
                         ) {
                             return Ok(());
                         }
@@ -543,17 +616,17 @@ pub async fn ai_chat_stream(
                 // both reasoning_content (DeepSeek/GLM/Qwen) and reasoning
                 // (OpenAI o-series); the non-empty one wins. May interleave
                 // with content above.
-                let reasoning = choice
-                    .delta
-                    .reasoning_content
-                    .or(choice.delta.reasoning);
+                let reasoning = choice.delta.reasoning_content.or(choice.delta.reasoning);
                 if let Some(delta) = reasoning {
                     if !delta.is_empty() {
                         // Frontend gone — same early exit as content above.
                         if !emit_to_frontend(
                             &app,
                             "ai_stream_reasoning",
-                            StreamReasoning { id: request_id.clone(), delta },
+                            StreamReasoning {
+                                id: request_id.clone(),
+                                delta,
+                            },
                         ) {
                             return Ok(());
                         }
@@ -564,7 +637,12 @@ pub async fn ai_chat_stream(
                 // 发射一次（ai_stream_tool_calls），随后照常 done。
                 match choice.finish_reason.as_deref() {
                     Some("stop") => {
-                        let _ = app.emit("ai_stream_done", StreamDone { id: request_id.clone() });
+                        let _ = app.emit(
+                            "ai_stream_done",
+                            StreamDone {
+                                id: request_id.clone(),
+                            },
+                        );
                         return Ok(());
                     }
                     Some("tool_calls") => {
@@ -580,7 +658,12 @@ pub async fn ai_chat_stream(
                         {
                             return Ok(());
                         }
-                        let _ = app.emit("ai_stream_done", StreamDone { id: request_id.clone() });
+                        let _ = app.emit(
+                            "ai_stream_done",
+                            StreamDone {
+                                id: request_id.clone(),
+                            },
+                        );
                         return Ok(());
                     }
                     _ => {}
@@ -606,7 +689,13 @@ pub async fn ai_chat_stream(
                 "SSE 缓冲区超出上限（{} 字节），服务端可能未按行分隔响应。",
                 MAX_BUFFER_BYTES
             );
-            let _ = app.emit("ai_stream_error", StreamErr { id: request_id.clone(), error: msg.clone() });
+            let _ = app.emit(
+                "ai_stream_error",
+                StreamErr {
+                    id: request_id.clone(),
+                    error: msg.clone(),
+                },
+            );
             return Err(msg);
         }
     }
@@ -657,6 +746,7 @@ fn emit_to_frontend(app: &AppHandle, event: &str, payload: impl Serialize + Clon
 /// reject). `thinking`, when `Some`, is merged in as-is (provider-specific fields
 /// computed by `thinking_fields`). `tools`（v4.9 Agent 链路）透传；None 时不
 /// 出现该键，普通对话请求体逐字节不变。
+#[allow(clippy::too_many_arguments)] // 请求体字段一一对应，收拢会失去显式性
 fn build_request_body(
     model: &str,
     messages: &[ChatMessage],
@@ -831,6 +921,90 @@ fn thinking_fields(provider: &str, strength: &str) -> Option<serde_json::Value> 
 /// is present. `total_timeout`, when `Some`, bounds the whole request via a
 /// per-request timeout (the shared client itself has none). Centralises the
 /// timeout/connect error wording.
+// ---------------------------------------------------------------------------
+// S3/SSRF 防线：出站端点校验
+//
+// base_url 由渲染层逐次传入。被攻破的 webview 可把端点指向
+// http://169.254.169.254/（云元数据服务）、内网服务或攻击者主机——而请求
+// 会附带用户 api_key，构成密钥外泄 + 内网探测通道。规则与 s3.rs 的
+// 「仅 localhost 允许 http」特判同一纪律：
+//   * 仅接受 http/https；
+//   * http 仅限环回地址（本地 LLM 服务场景），远程端点必须 https；
+//   * https 目标拒绝环回/链路本地字面 IP（云元数据服务、本机管理端口）；
+//   * 校验失败 → 请求不发出、密钥不附带。
+fn endpoint_host(u: &url::Url) -> String {
+    u.host_str().unwrap_or_default().to_string()
+}
+
+fn host_ip(host: &str) -> Option<std::net::IpAddr> {
+    host.trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<std::net::IpAddr>()
+        .ok()
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host_ip(host).map(|ip| ip.is_loopback()).unwrap_or(false)
+}
+
+fn is_link_local_host(host: &str) -> bool {
+    host_ip(host)
+        .map(|ip| match ip {
+            std::net::IpAddr::V4(v4) => v4.is_link_local(),
+            std::net::IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80,
+        })
+        .unwrap_or(false)
+}
+
+fn is_private_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.is_private(),
+        // IPv6 unique local（fc00::/7）
+        std::net::IpAddr::V6(v6) => (v6.segments()[0] & 0xfe00) == 0xfc00,
+    }
+}
+
+/// 校验 AI/嵌入端点（附带 api_key 的出站请求）。
+pub fn validate_ai_endpoint(endpoint: &str) -> Result<(), String> {
+    let u = url::Url::parse(endpoint).map_err(|e| format!("AI 端点 URL 非法：{e}"))?;
+    match u.scheme() {
+        "http" => {
+            if !is_loopback_host(&endpoint_host(&u)) {
+                return Err("AI 端点仅 localhost 允许 http，远程端点必须使用 https".into());
+            }
+        }
+        "https" => {
+            let host = endpoint_host(&u);
+            if is_loopback_host(&host) || is_link_local_host(&host) {
+                return Err(format!(
+                    "AI 端点拒绝环回/链路本地地址（云元数据服务）：{host}"
+                ));
+            }
+        }
+        other => return Err(format!("AI 端点协议不支持：{other}")),
+    }
+    Ok(())
+}
+
+/// 校验图片代理目标（响应字节回传渲染层，构成内网读取原语）：
+/// 拒绝环回/内网/链路本地目标；公网 http/https 均可（远端图片的现实需求）。
+pub fn validate_image_url(url_str: &str) -> Result<(), String> {
+    let u = url::Url::parse(url_str).map_err(|e| format!("图片地址非法：{e}"))?;
+    match u.scheme() {
+        "http" | "https" => {}
+        other => return Err(format!("图片地址协议不支持：{other}")),
+    }
+    let host = endpoint_host(&u);
+    let internal = is_loopback_host(&host)
+        || is_link_local_host(&host)
+        || host_ip(&host).map(is_private_ip).unwrap_or(false);
+    if internal {
+        return Err(format!("图片地址拒绝内网/环回/链路本地目标：{host}"));
+    }
+    Ok(())
+}
+
 async fn send_request(
     client: &reqwest::Client,
     base_url: &str,
@@ -843,6 +1017,8 @@ async fn send_request(
     } else {
         format!("{}/chat/completions", base_url)
     };
+    // S3：端点校验前置——失败则请求不发出、api_key 不附带。
+    validate_ai_endpoint(&endpoint)?;
     let mut req = client.post(&endpoint).json(&body);
     if let Some(t) = total_timeout {
         req = req.timeout(t);
@@ -934,7 +1110,12 @@ mod tests {
         }
     }
 
-    fn tc_delta(index: Option<u64>, id: Option<&str>, name: Option<&str>, args: Option<&str>) -> ToolCallDelta {
+    fn tc_delta(
+        index: Option<u64>,
+        id: Option<&str>,
+        name: Option<&str>,
+        args: Option<&str>,
+    ) -> ToolCallDelta {
         ToolCallDelta {
             index,
             id: id.map(|s| s.to_string()),
@@ -994,9 +1175,25 @@ mod tests {
     #[test]
     fn tool_call_aggregation_concatenates_fragments() {
         let mut agg = BTreeMap::new();
-        merge_tool_call_deltas(&mut agg, &[tc_delta(Some(0), Some("call_1"), Some("search_notes"), Some(""))]);
+        merge_tool_call_deltas(
+            &mut agg,
+            &[tc_delta(
+                Some(0),
+                Some("call_1"),
+                Some("search_notes"),
+                Some(""),
+            )],
+        );
         merge_tool_call_deltas(&mut agg, &[tc_delta(Some(0), None, None, Some("{\"qu"))]);
-        merge_tool_call_deltas(&mut agg, &[tc_delta(Some(0), None, Some("ignored-later"), Some("ery\":\"foo\"}"))]);
+        merge_tool_call_deltas(
+            &mut agg,
+            &[tc_delta(
+                Some(0),
+                None,
+                Some("ignored-later"),
+                Some("ery\":\"foo\"}"),
+            )],
+        );
         assert_eq!(
             agg.get(&0),
             Some(&AggToolCall {
@@ -1011,16 +1208,31 @@ mod tests {
     #[test]
     fn tool_call_aggregation_interleaved_indices() {
         let mut agg = BTreeMap::new();
-        merge_tool_call_deltas(&mut agg, &[
-            tc_delta(Some(1), Some("call_2"), Some("read_note"), Some("{\"path\":\"a.md\"}")),
-        ]);
-        merge_tool_call_deltas(&mut agg, &[
-            tc_delta(Some(0), Some("call_1"), Some("search_notes"), Some("{\"q")),
-        ]);
-        merge_tool_call_deltas(&mut agg, &[
-            tc_delta(Some(0), None, None, Some("uery\":\"x\"}")),
-            tc_delta(Some(1), None, None, None), // 空片（无增量）
-        ]);
+        merge_tool_call_deltas(
+            &mut agg,
+            &[tc_delta(
+                Some(1),
+                Some("call_2"),
+                Some("read_note"),
+                Some("{\"path\":\"a.md\"}"),
+            )],
+        );
+        merge_tool_call_deltas(
+            &mut agg,
+            &[tc_delta(
+                Some(0),
+                Some("call_1"),
+                Some("search_notes"),
+                Some("{\"q"),
+            )],
+        );
+        merge_tool_call_deltas(
+            &mut agg,
+            &[
+                tc_delta(Some(0), None, None, Some("uery\":\"x\"}")),
+                tc_delta(Some(1), None, None, None), // 空片（无增量）
+            ],
+        );
         let out = finalize_tool_calls(&agg);
         assert_eq!(out.len(), 2);
         assert_eq!(out[0]["id"], "call_1");
@@ -1035,7 +1247,10 @@ mod tests {
     #[test]
     fn tool_call_aggregation_missing_index_falls_back_to_position() {
         let mut agg = BTreeMap::new();
-        merge_tool_call_deltas(&mut agg, &[tc_delta(None, Some("call_a"), Some("t1"), Some("{}"))]);
+        merge_tool_call_deltas(
+            &mut agg,
+            &[tc_delta(None, Some("call_a"), Some("t1"), Some("{}"))],
+        );
         merge_tool_call_deltas(&mut agg, &[tc_delta(None, None, None, Some("+"))]);
         assert_eq!(agg.get(&0).unwrap().arguments, "{}+");
         assert_eq!(agg.len(), 1);
@@ -1064,7 +1279,14 @@ mod tests {
                 tool_calls: Option<Vec<ToolCallDelta>>,
             }
             let w: Wire = serde_json::from_str(data).unwrap();
-            let tcs = w.choices.into_iter().next().unwrap().delta.tool_calls.unwrap();
+            let tcs = w
+                .choices
+                .into_iter()
+                .next()
+                .unwrap()
+                .delta
+                .tool_calls
+                .unwrap();
             merge_tool_call_deltas(&mut agg, &tcs);
         }
         let out = finalize_tool_calls(&agg);
@@ -1107,5 +1329,48 @@ mod tests {
     fn finalize_empty_aggregation_is_empty() {
         let agg: BTreeMap<u64, AggToolCall> = BTreeMap::new();
         assert!(finalize_tool_calls(&agg).is_empty());
+    }
+}
+
+// S3：SSRF 校验回归（独立模块，避免改动既有 tests 的大括号序列）。
+#[cfg(test)]
+mod ssrf_tests {
+    use super::{validate_ai_endpoint, validate_image_url};
+
+    #[test]
+    fn ai_endpoint_allows_local_llm_and_public_https() {
+        // 本地 LLM（Ollama/LM Studio 场景）：http 环回允许
+        assert!(validate_ai_endpoint("http://localhost:11434/v1/").is_ok());
+        assert!(validate_ai_endpoint("http://127.0.0.1:1234/v1/").is_ok());
+        assert!(validate_ai_endpoint("http://[::1]:9000/v1/").is_ok());
+        // 公网 https 允许
+        assert!(validate_ai_endpoint("https://api.openai.com/v1/").is_ok());
+    }
+
+    #[test]
+    fn ai_endpoint_blocks_metadata_and_private_http() {
+        // 远程 http 明文拒绝（密钥外泄 + 明文探测通道）
+        assert!(validate_ai_endpoint("http://api.example.com/v1/").is_err());
+        // 云元数据服务：链路本地无论 http/https 一律拒绝
+        assert!(validate_ai_endpoint("http://169.254.169.254/latest/meta-data/").is_err());
+        assert!(validate_ai_endpoint("https://169.254.169.254/").is_err());
+        // https 环回拒绝（本机管理端口）
+        assert!(validate_ai_endpoint("https://127.0.0.1:9222/").is_err());
+        // 非法协议
+        assert!(validate_ai_endpoint("file:///etc/passwd").is_err());
+    }
+
+    #[test]
+    fn image_url_blocks_internal_targets_allows_public() {
+        assert!(validate_image_url("https://cdn.example.com/a.png").is_ok());
+        // 公网 http 允许（远端图片的现实需求）
+        assert!(validate_image_url("http://example.com/a.png").is_ok());
+        // 内网/环回/链路本地全拒
+        assert!(validate_image_url("http://127.0.0.1:9222/json").is_err());
+        assert!(validate_image_url("http://localhost:8080/x.png").is_err());
+        assert!(validate_image_url("http://192.168.1.1/admin").is_err());
+        assert!(validate_image_url("http://10.0.0.2/").is_err());
+        assert!(validate_image_url("http://169.254.169.254/latest/meta-data/").is_err());
+        assert!(validate_image_url("ftp://x/y").is_err());
     }
 }

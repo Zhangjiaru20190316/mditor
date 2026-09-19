@@ -49,7 +49,9 @@ import { formatBytes, getHeapUsage, IS_DEV } from "../lib/memory";
 import { normalizeAnchorText } from "../lib/anchorSearch";
 import { logMemory } from "../lib/diagnostics";
 import { saveHealSnapshot } from "../lib/session";
-import type { EditMode, Settings, BlockInfo, FlatHeading } from "../types";
+import { noteOpError } from "../lib/opDebug";
+import type { ActiveMarks, EditMode, EditorSettings, BlockInfo, FlatHeading } from "../types";
+import { EMPTY_MARKS } from "../types";
 
 // 批注定点写失败诊断的限频出口：流式每帧都可能失败一次，无限频会把控制台
 // 刷爆（真实环境确认失败原因用），2 秒最多一条。
@@ -129,14 +131,7 @@ export interface EditorHandle {
   clearTextColor: () => void;
   /** Whether the current selection/caret already carries bold / highlight / a
    *  text color, for showing the toolbar buttons' active state. */
-  getActiveMarks: () => {
-    bold: boolean;
-    highlight: boolean;
-    italic: boolean;
-    strike: boolean;
-    code: boolean;
-    color: string | null;
-  };
+  getActiveMarks: () => ActiveMarks;
   /** Add an annotation: inserts a `[^anno-N]` marker and appends the definition.
    *  Anchored at `range` when provided (a selection captured while it was still
    *  live — the robust path, since selections collapse once focus moves to a
@@ -191,7 +186,8 @@ export interface EditorHandle {
 }
 
 interface Props {
-  settings: Settings;
+  /** P10：窄切片——App 侧按消费字段 memo，无关设置变化不再重渲染编辑器。 */
+  settings: EditorSettings;
   fileApi: ReturnType<typeof useFile>;
   /** Live markdown change (for outline + word count). */
   onInput?: (md: string) => void;
@@ -202,6 +198,9 @@ interface Props {
   onWatcherStatus?: (msg: string, kind: "sync" | "warn") => void;
   /** Fires with the active mode after the editor (re)builds, for StatusBar. */
   onModeChange?: (m: EditMode) => void;
+  /** P11：编辑器 ready 翻真时回调（重建也会再触发——等待队列语义见 App）。
+   *  替代启动路径的 80×50ms 轮询。 */
+  onReady?: () => void;
 }
 
 const EDITOR_ID = "mditor-editor";
@@ -214,7 +213,7 @@ const EDITOR_ID = "mditor-editor";
 // imperative handle below still refreshes on editor rebuilds as before.
 export const Editor = memo(
   forwardRef<EditorHandle, Props>(function Editor(
-    { settings, fileApi, onInput, onHeadings, onAutosaved, onWatcherStatus, onModeChange },
+    { settings, fileApi, onInput, onHeadings, onAutosaved, onWatcherStatus, onModeChange, onReady },
     ref
   ) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -287,6 +286,14 @@ export const Editor = memo(
   // Stamp annotation marker/def attributes after every editor DOM change so
   // CSS can restyle markers into badges and hide their definition blocks.
   useAnnotationMarkers(handle.ready);
+
+  // P11：ready 翻真（含重建后再翻真）时通知 App——启动/自愈路径据此等待，
+  // 不再 80×50ms 盲轮询。
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
+  useEffect(() => {
+    if (handle.ready) onReadyRef.current?.();
+  }, [handle.ready]);
 
   // 执行排队中的搜索定位（见 revealAfterLoad）。模式在触发时刻读取——
   // 排队期间用户可能切换了 sv/富文本，按当下模式选行号或文本定位。
@@ -779,7 +786,7 @@ export const Editor = memo(
     try {
       await getAdapter().app.openExternal(url);
     } catch {
-      /* 外链打开不可用（平台限制）— 静默忽略 */
+      // silent: 外链打开不可用（平台限制）——无用户可执行的动作，不弹窗。
     }
   }, []);
 
@@ -799,8 +806,10 @@ export const Editor = memo(
         const file = new File([bytes], basename(String(picked)));
         const r = await persistImage(file, fileApiRef.current.doc.path);
         ed.setImageSrc(pos, r.ref);
-      } catch {
-        /* 选择器取消 / 读取失败 — 静默忽略 */
+      } catch (e) {
+        // E9：用户已选文件、替换却失败——此前完全静默（看起来像成功了）。
+        // 选择器取消不进 catch（pickOpenFile 返回 null 提前 return）。
+        noteOpError("replace-image", e);
       }
     },
     [handle]
@@ -975,15 +984,7 @@ export const Editor = memo(
         fileApiRef.current.markDirty();
         onInputRef.current?.(ed.getValue());
       },
-      getActiveMarks: () =>
-        handle.editor?.getActiveMarks() ?? {
-          bold: false,
-          highlight: false,
-          italic: false,
-          strike: false,
-          code: false,
-          color: null,
-        },
+            getActiveMarks: () => handle.editor?.getActiveMarks() ?? { ...EMPTY_MARKS },
       addAnnotation: (content, anchorText, range) => {
         const ed = handle.editor;
         if (!ed) return null;

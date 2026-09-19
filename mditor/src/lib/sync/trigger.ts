@@ -12,8 +12,9 @@
 import { getAdapter } from "../../platform";
 import type { Settings } from "../../types";
 import { sysEmit } from "../sysDebug";
-import { createDefaultSyncIO, syncWorkspace } from "./engine";
+import { createDefaultSyncIO, fullPrefixOf, syncWorkspace } from "./engine";
 import { isSyncSupported, parseSyncError, syncConfigPayload, SYNC_ERROR_CODES } from "./s3";
+import { remoteFingerprint } from "./manifest";
 import { publishSyncState } from "./status";
 import type { SyncSummary, SyncStateEvent } from "./types";
 import { EMPTY_SYNC_SUMMARY } from "./types";
@@ -27,17 +28,28 @@ const OFFLINE_RETRY_MS = 60_000;
 /** 连续网络类错误 ≥2 次转入 offline。 */
 const OFFLINE_THRESHOLD = 2;
 
+/**
+ * 同步根：字符串 = 旧形态（远端目录名取根 basename）；对象形态可覆盖远端
+ * 目录名——鸿蒙虚拟根 /Docs/ws-N 的 basename 是设备本地 token，两端键空间
+ * 按构造不相交，平台层须传真实文件夹名实现「同名工作区」跨设备配对。
+ */
+export type SyncRootSpec = string | { path: string; remoteDir?: string };
+
+function toRootSpec(v: SyncRootSpec): { path: string; remoteDir?: string } {
+  return typeof v === "string" ? { path: v } : v;
+}
+
 export interface SyncTriggerOptions {
   /** 读最新设置（App 经 ref 提供稳定回调）。 */
   getSettings: () => Settings;
   /** 读当前工作区根列表。 */
-  getRoots: () => string[];
+  getRoots: () => SyncRootSpec[];
 }
 
 export interface SyncTrigger {
   /** 保存成功后调用（防抖 5s；autoSync 关闭时为 no-op）。 */
   onSaved(): void;
-  /** 立即同步全部根（互斥：进行中则静默跳过）。 */
+  /** 立即同步全部根（互斥：进行中合并进当前轮并留下 sync:busy 诊断）。 */
   syncNow(reason?: string): Promise<void>;
   dispose(): void;
 }
@@ -60,24 +72,55 @@ export function assembleSyncTrigger(opts: SyncTriggerOptions): SyncTrigger | nul
 
   const enabled = () => opts.getSettings().sync.enabled;
 
+  // D7：记录最近一次发布的状态事件——手动同步在 running 期间被合并时重发它，
+  // 状态栏反馈「正在同步」且进度字段不回退。
+  let lastPublished: SyncStateEvent | null = null;
+  async function publishTracked(evt: SyncStateEvent): Promise<void> {
+    lastPublished = evt;
+    await publishSyncState(evt);
+  }
+
+  /** 手动同步入口（sync-request / syncNow 共用）。D7 修复：running 期间不再
+   *  静默丢弃——留诊断痕迹并重发当前 syncing 状态（用户点击有可感知反馈）。 */
+  async function requestSync(reason: string): Promise<void> {
+    if (disposed || !enabled()) return;
+    if (running) {
+      sysEmit("sync:busy", `同步请求（${reason}）已合并：另一轮同步正在进行`, {
+        level: "info",
+        data: { reason },
+      });
+      if (lastPublished?.status === "syncing") await publishSyncState(lastPublished);
+      return;
+    }
+    await syncAll();
+  }
+
   /** 同步全部根（串行）。互斥：running 期间再触发静默跳过（§5.4）。 */
   async function syncAll(): Promise<void> {
     if (disposed || running || !enabled()) return;
     running = true;
     const s = opts.getSettings().sync;
-    const roots = opts.getRoots();
+    const specs = opts.getRoots().map(toRootSpec);
     const cfg = syncConfigPayload(s);
     const total: SyncSummary = { ...EMPTY_SYNC_SUMMARY, notes: [] };
     let fatal: { code: string; message: string } | null = null;
 
     try {
-      for (const root of roots) {
+      for (const spec of specs) {
+        const root = spec.path;
         if (disposed) return;
-        await publishSyncState({ status: "syncing", phase: "scan", root, done: 0, total: 0 });
+        await publishTracked({ status: "syncing", phase: "scan", root, done: 0, total: 0 });
         try {
+          // D1：远端身份指纹（endpoint+bucket+完整前缀）。remoteDir 参与指纹
+          // ——换配对名 ⇒ 指纹失配 ⇒ 首同步重算（零删除动作），旧前缀对象
+          // 自然成为孤儿而不是被误判「远端已删除」整库进回收站。
+          const fingerprint = await remoteFingerprint(
+            cfg,
+            fullPrefixOf(s.prefix, root, spec.remoteDir)
+          );
           const outcome = await syncWorkspace(root, s.prefix, createDefaultSyncIO(cfg), {
             onState: (e) => {
-              void publishSyncState({
+              void publishTracked({
                 status: "syncing",
                 phase: e.phase,
                 root,
@@ -90,7 +133,7 @@ export function assembleSyncTrigger(opts: SyncTriggerOptions): SyncTrigger | nul
               sysEmit("sync:file-warn", `云同步警告：${msg}`, { level: "warn", data: { root } });
               total.notes.push(msg);
             },
-          });
+          }, fingerprint, spec.remoteDir);
           accumulate(total, outcome.summary);
           netErrorStreak = 0; // 任一根成功即视为链路可用
         } catch (e) {
@@ -116,16 +159,24 @@ export function assembleSyncTrigger(opts: SyncTriggerOptions): SyncTrigger | nul
       }
       if (offline && netErrorStreak === 0) offline = false;
 
+      // error 判定：根级失败（fatal）或存在失败文件且本轮零成功传输。
+      // 纯单文件失败（如上传被服务端逐条拒绝）不经过 catch，fatal 为空——
+      // 旧条件会漏判成 idle，状态栏显示「上次同步 xx:xx」的假成功。
+      const allFailed =
+        total.uploaded + total.downloaded === 0 && (fatal !== null || total.failed > 0);
+      // D6：本轮用户需留意的提示（时钟冲突/超限/中止保险）随终态事件发布，
+      // 状态栏 tooltip 直接可见。去重（warn 与 summary.notes 双路会重）+ 截断。
+      const publishedNotes = [...new Set(total.notes)].slice(0, 5);
       const evt: SyncStateEvent = offline
-        ? { status: "offline", root: roots[0] ?? "", done: 0, total: 0, error: fatal ?? undefined }
-        : fatal && total.failed > 0 && total.uploaded + total.downloaded === 0
-          ? { status: "error", root: roots[0] ?? "", done: 0, total: 0, error: fatal }
-          : { status: "idle", done: 0, total: 0, lastSyncAt: Date.now() };
-      await publishSyncState(evt);
+        ? { status: "offline", root: specs[0]?.path ?? "", done: 0, total: 0, error: fatal ?? undefined, notes: publishedNotes }
+        : allFailed
+          ? { status: "error", root: specs[0]?.path ?? "", done: 0, total: 0, error: fatal ?? undefined, notes: publishedNotes }
+          : { status: "idle", done: 0, total: 0, lastSyncAt: Date.now(), ...(publishedNotes.length ? { notes: publishedNotes } : {}) };
+      await publishTracked(evt);
       if (evt.status === "idle") {
         sysEmit("sync:done", "云同步完成", {
           data: {
-            roots: roots.length,
+            roots: specs.length,
             up: total.uploaded,
             down: total.downloaded,
             conflicts: total.conflicts,
@@ -192,13 +243,13 @@ export function assembleSyncTrigger(opts: SyncTriggerOptions): SyncTrigger | nul
 
   // 非 main 窗口的手动同步请求转发（D8；main 收到自己的 echo 无害——互斥挡住）。
   const unlistenP = getAdapter().app.listen("sync-request", () => {
-    void syncAll();
+    void requestSync("sync-request");
   });
 
   return {
     onSaved,
-    syncNow: async () => {
-      await syncAll();
+    syncNow: async (reason?: string) => {
+      await requestSync(reason ?? "manual");
     },
     dispose(): void {
       disposed = true;

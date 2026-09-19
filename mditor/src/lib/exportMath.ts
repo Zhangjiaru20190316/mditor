@@ -124,9 +124,12 @@ export async function rasterizeFormulas(
   html: string,
   onProgress?: (done: number, total: number) => void
 ): Promise<string> {
+  // S10：栅格化容器 innerHTML 前同样过兜底消毒（幂等——调用方已消毒时无变化）。
+  const { sanitizeExportHtml } = await import("./exportSanitize");
+  const safe = sanitizeExportHtml(html);
   const host = document.createElement("div");
   host.style.cssText = "position:fixed;left:-99999px;top:0;";
-  host.innerHTML = html;
+  host.innerHTML = safe;
   document.body.appendChild(host);
   try {
     if (document.fonts?.ready) await document.fonts.ready;

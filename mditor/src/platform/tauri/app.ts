@@ -45,6 +45,14 @@ export const tauriApp: PlatformApp = {
     invoke("append_log", { path, line, maxBytes }),
   version: () => getVersion(),
   getPendingFile: () => invoke<string | null>("get_pending_file"),
+  // S1：运行时路径授权（对话框选择/启动恢复/双击打开/拖放的收口点调用）。
+  grantFsScope: (paths, recursive) =>
+    invoke("grant_fs_scope", { paths, recursive }).then(() => undefined),
+  // S2：系统凭据存储（Windows Credential Manager，Rust secrets.rs）。
+  secretSet: (key, value) =>
+    invoke("secret_set", { key, value }).then(() => undefined),
+  secretGet: (key) => invoke<string | null>("secret_get", { key }),
+  secretDel: (key) => invoke("secret_del", { key }).then(() => undefined),
   trashFile: (path) => invoke("trash_file", { path }),
   fetchImage: async (url) =>
     new Uint8Array(await invoke<ArrayBuffer>("fetch_image", { url })),

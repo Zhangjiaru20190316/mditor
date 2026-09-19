@@ -300,7 +300,7 @@
   /* ============ 3. 主题与模式切换演示 ============ */
 
   const editor = document.getElementById("demo-editor");
-  const THEME_NAMES = { light: "浅色", dark: "深色", sepia: "护眼", claude: "Claude", "claude-dark": "Claude 深色" };
+  const THEME_NAMES = { light: "浅色", dark: "深色", sepia: "护眼", claude: "Claude", "claude-dark": "Claude 深色", ios: "iOS", "ios-dark": "iOS 深色" };
   const MODE_NAMES = { wysiwyg: "所见即所得", ir: "即时渲染", sv: "源码模式" };
 
   function bindSwitch(groupId, apply) {

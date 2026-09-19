@@ -1,0 +1,53 @@
+{
+ "label": "trash-probe-2026-09-18T17-04-21-023Z",
+ "ts": "2026-09-18T17:04:21.024Z",
+ "n": 8,
+ "rounds": [
+  {
+   "ok": true,
+   "ms": 542
+  },
+  {
+   "ok": true,
+   "ms": 369
+  },
+  {
+   "ok": true,
+   "ms": 358
+  },
+  {
+   "ok": true,
+   "ms": 348
+  },
+  {
+   "ok": true,
+   "ms": 337
+  },
+  {
+   "ok": true,
+   "ms": 365
+  },
+  {
+   "ok": true,
+   "ms": 329
+  },
+  {
+   "ok": true,
+   "ms": 376
+  }
+ ],
+ "okMs": [
+  329,
+  337,
+  348,
+  358,
+  365,
+  369,
+  376,
+  542
+ ],
+ "min": 329,
+ "median": 365,
+ "max": 542,
+ "note": "每次 trash_file 的 UI 冻结时长（修复前）≈ PowerShell 子进程往返耗时；目录删除走 DeleteDirectory 同量级。"
+}

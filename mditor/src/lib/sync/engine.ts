@@ -257,8 +257,10 @@ async function runBatch<T>(
 /** 一次同步的结果。 */
 export interface SyncOutcome {
   summary: SyncSummary;
-  /** 首同步（无清单 / 路径漂移后全量重算）。 */
+  /** 首同步（无清单 / 路径漂移 / 远端身份变化后全量重算）。 */
   firstSync: boolean;
+  /** D1：本轮被安全保险中止（未落盘清单，下轮原样重算）。 */
+  aborted?: "mass-delete";
 }
 
 interface PlannedOp {
@@ -269,32 +271,64 @@ interface PlannedOp {
 }
 
 /**
+ * 远端目录名解析：remoteDir 覆盖值经消毒（去首尾 /、拒内部 / 与 ..、空回退），
+ * 未提供时回退根路径 basename（桌面语义，键空间规则与 v4.12 兼容）。
+ */
+export function resolveRemoteDir(root: string, remoteDir?: string): string {
+  const fallback = basename(toPosix(root));
+  if (remoteDir === undefined) return fallback;
+  const s = remoteDir.trim().replace(/^\/+|\/+$/g, "");
+  if (s.length === 0 || s.includes("/") || s.split("/").some((seg) => seg === "..")) {
+    return fallback;
+  }
+  return s;
+}
+
+/** 桶内完整前缀（恒以 / 结尾）。引擎与 trigger（指纹计算）共用同一推导。 */
+export function fullPrefixOf(prefix: string, root: string, remoteDir?: string): string {
+  return `${prefix}${resolveRemoteDir(root, remoteDir)}/`;
+}
+
+/**
  * 同步单个工作区根 ↔ 桶内 <prefix>/<根目录名>/。互斥由调用方（trigger）
  * 保证；本函数自身不重入。连接配置经注入的 io 携带（默认实现
  * createDefaultSyncIO(cfg)）。事件流：scan → list → transfer(增量) → finalize。
+ *
+ * remoteDir：远端目录名覆盖。桌面根是真实路径，basename 即真实目录名；
+ * 鸿蒙根是虚拟 token（/Docs/ws-N），basename 是设备本地标识——两端键空间
+ * 会不相交（各自备份、永不收敛）。平台层传入真实文件夹名即可与桌面
+ * 「同名工作区」配对。换名经 remoteFingerprint 失配走首同步，零删除动作。
  */
 export async function syncWorkspace(
   root: string,
   prefix: string,
   io: SyncIO,
-  hooks: SyncHooks
+  hooks: SyncHooks,
+  /** D1：远端身份指纹（endpoint+bucket+prefix）。传入时与清单比对，
+   *  不一致 ⇒ 对着新桶/新前缀用旧清单会把全部已跟踪文件判成「远端已删除」
+   *  ⇒ 整库进回收站。改为按首同步重算（首同步矩阵不产生任何删除动作）。 */
+  remoteIdentity?: string,
+  remoteDir?: string
 ): Promise<SyncOutcome> {
   const summary: SyncSummary = { ...EMPTY_SYNC_SUMMARY, notes: [] };
-  const rootPosix = toPosix(root);
-  const rootName = basename(rootPosix);
-  // fullPrefix 恒以 / 结尾（prefix 已归一：非空带尾 /，空则直接根目录名）。
-  const fullPrefix = `${prefix}${rootName}/`;
+  const fullPrefix = fullPrefixOf(prefix, root, remoteDir);
 
   hooks.onState({ phase: "scan", done: 0, total: 0 });
 
-  // 1. 读清单：无 / 版本不识别 / 路径漂移 → 首同步模式（全量重算）。
+  // 1. 读清单：无 / 版本不识别 / 路径漂移 / 远端身份变化 → 首同步模式。
+  //    指纹比对只在「两侧都有值且不同」时触发——旧版清单没有指纹字段，
+  //    升级首轮按匹配处理并在 finalize 补写，避免无谓的全量冲突风暴。
   let manifest = await io.readManifest(root);
   let firstSync = false;
   if (
     !manifest ||
-    toPosix(manifest.workspaceRoot).toLowerCase() !== rootPosix.toLowerCase()
+    toPosix(manifest.workspaceRoot).toLowerCase() !== toPosix(root).toLowerCase() ||
+    (remoteIdentity !== undefined &&
+      manifest.remoteFingerprint !== undefined &&
+      manifest.remoteFingerprint !== remoteIdentity)
   ) {
     manifest = { version: 1, workspaceRoot: root, lastSyncAt: 0, files: {} };
+    if (remoteIdentity !== undefined) manifest.remoteFingerprint = remoteIdentity;
     firstSync = true;
   }
   const files: Record<string, SyncManifestFile> = { ...manifest.files };
@@ -387,6 +421,14 @@ export async function syncWorkspace(
     // 下载前重 stat：扫描之后又被编辑（mtime 更新）→ 跳过并告警（不覆盖）。
     const fresh = await io.statLocal(abs).catch(() => null);
     const scannedF = localMap.get(key);
+    if (fresh && !scannedF) {
+      // D4：扫描时不存在、下载时已存在 ⇒ TOCTOU 窗口期被新建/恢复。
+      // 旧守卫只认「扫描时已存在且 mtime 变新」，窗口期新建会被远端内容
+      // 直接覆盖。缺 scannedF 一律视为脏文件跳过。
+      hooks.warn(`同步窗口期内新建的文件，跳过下载以免覆盖：${key}`);
+      summary.skipped++;
+      return false;
+    }
     if (
       fresh &&
       scannedF &&
@@ -473,6 +515,24 @@ export async function syncWorkspace(
   const deletes = ops.filter(
     (o) => o.action === "deleteLocal" || o.action === "deleteRemote" || o.action === "clearRecord"
   );
+  // D1 批量删除保险：一轮的破坏性删除（本地+远端，clearRecord 只清记录不算）
+  // 超过已跟踪文件的 10% 且 ≥5 个 ⇒ 最可能是 prefix/桶指错或远端被生命周期
+  // 规则清空，而不是用户真的删了整库。立即中止：不执行任何删除、不落盘
+  // 清单（崩溃安全点唯一，旧清单原样保留），notes 里给出数量与比例。
+  // ≥5 的下限避免小库「3 个文件删 1 个」的正常操作被误伤。
+  {
+    const destructive = deletes.filter((o) => o.action !== "clearRecord");
+    const tracked = Object.keys(manifest.files).length;
+    if (tracked > 0 && destructive.length >= 5 && destructive.length / tracked > 0.1) {
+      const pct = Math.round((destructive.length / tracked) * 100);
+      summary.notes.push(
+        `已中止同步：本轮将删除 ${destructive.length}/${tracked} 个已跟踪文件（${pct}%）。` +
+          `这通常是同步前缀/桶配置变更或远端被清空所致。请核对云同步设置；若确属远端丢失，本轮已被安全拦下，云端文件未被改动。`
+      );
+      hooks.onState({ phase: "finalize", done, total: ops.length });
+      return { summary, firstSync, aborted: "mass-delete" };
+    }
+  }
   for (const op of deletes) {
     tick(op.relPath);
     try {
@@ -503,6 +563,7 @@ export async function syncWorkspace(
     workspaceRoot: root,
     lastSyncAt: summary.lastSyncAt,
     files,
+    ...(remoteIdentity !== undefined ? { remoteFingerprint: remoteIdentity } : {}),
   });
   return { summary, firstSync };
 }
@@ -578,7 +639,11 @@ async function resolveConflict(op: PlannedOp, ctx: ConflictCtx): Promise<void> {
     let localWins: boolean;
     if (Number.isNaN(rTime)) {
       localWins = false;
-      summary.notes.push(`冲突时钟不可信（远端 lastModified 无法解析），已按远端为准，请人工确认：${key}`);
+      const msg = `冲突时钟不可信（远端 lastModified 无法解析），已按远端为准，请人工确认：${key}`;
+      summary.notes.push(msg);
+      // D6：时钟类冲突同步升级为 warn——经触发器进入诊断总线与状态事件 notes，
+      // 状态栏 tooltip 可见（此前仅沉入 summary.notes，用户无感）。
+      ctx.hooks.warn(msg);
     } else if (lTime > rTime + 1000) {
       localWins = true;
     } else if (rTime > lTime + 1000) {
@@ -586,7 +651,9 @@ async function resolveConflict(op: PlannedOp, ctx: ConflictCtx): Promise<void> {
     } else {
       // 时间接近无法判定 → 远端胜 + 提示人工确认（§5.3 第 3 条）。
       localWins = false;
-      summary.notes.push(`冲突双方时间接近无法判定新旧，已按远端为准，请人工确认冲突副本：${key}`);
+      const msg = `冲突双方时间接近无法判定新旧，已按远端为准，请人工确认冲突副本：${key}`;
+      summary.notes.push(msg);
+      ctx.hooks.warn(msg); // D6：同上，提升为用户可见警告
     }
 
     const copyRel = conflictCopyName(key);
@@ -684,8 +751,17 @@ export function createDefaultSyncIO(cfg: S3ConfigPayload): SyncIO {
         let entries;
         try {
           entries = await fs().readDir(dir);
-        } catch {
-          continue; // 不可读目录跳过
+        } catch (e) {
+          // D2：读失败绝不能当作「空目录」吞掉——整棵子树在扫描结果中缺席，
+          // 引擎会把其中所有已跟踪文件判成「本地已删除」而清空远端副本
+          // （一次网络盘抖动 = 云端备份被清空）。立即中止本轮：错误向上抛，
+          // syncWorkspace 不捕获、不落盘清单，下轮带着完好清单重扫。
+          // 「消失的文件」（stat 竞态）仍按原样跳过，二者可区分。
+          const reason = e instanceof Error ? e.message : String(e);
+          throw new Error(
+            `SYNC-SCAN-READFAIL: 目录不可读，本轮同步已中止（不会误判为删除）：${dir}（${reason.slice(0, 80)}）`,
+            { cause: e }
+          );
         }
         for (const e of entries) {
           if (isIgnoredName(e.name)) continue;

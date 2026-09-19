@@ -1,0 +1,63 @@
+# CI 质量门禁（优化报告 T1 + S9）。
+#
+# 在此之前仓库没有任何 CI 跑测试/lint/类型检查——约 767 条 vitest 断言、
+# 21 个 Rust 测试、eslint、SigV4 oracle 全部靠自觉执行，release 从 tag
+# 直接出包（测试红了照样发版）。本 workflow 把这些资产变成强制门禁：
+#   * push / PR：跑 check（前端 + Rust + SigV4 oracle）；
+#   * workflow_call：供 release.yml 以 needs 复用（发版前必须过同一道门）。
+#
+# S9：所有 action 固定到 40 位 commit SHA（tag 可变，被劫持即以仓库权限
+# 运行）；升级时人工换 SHA 并核对 diff。
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_call:
+
+jobs:
+  check:
+    name: Lint + Type + Test（前端 & Rust）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # actions/checkout v4.2.2
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # actions/setup-node v4.4.0
+        with:
+          # npm 11 (Node 24) — npm 10 mis-handles the lockfile's cross-platform
+          # esbuild optional deps (vitest 4 needs esbuild 0.28), failing `npm ci`.
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mditor/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # dtolnay/rust-toolchain stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # Swatinem/rust-cache v2.7.8
+        with:
+          workspaces: mditor/src-tauri
+
+      - name: Install frontend deps
+        run: npm ci
+        working-directory: mditor
+
+      - name: 前端门禁（类型 + lint + 全量测试 + SigV4 oracle）
+        working-directory: mditor
+        run: |
+          npx tsc --noEmit
+          npm run lint
+          npm test
+          node scripts/sigv4-check.mjs
+
+      - name: Rust 门禁（fmt + clippy -D warnings + 测试）
+        working-directory: mditor/src-tauri
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test

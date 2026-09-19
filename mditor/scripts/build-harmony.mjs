@@ -21,6 +21,9 @@ const harmony = join(root, "harmony");
 const CLT = process.env.HARMONY_CLT_HOME ?? "C:\\Huawei\\command-line-tools";
 const CLT_BIN = join(CLT, "bin");
 const OHPM_BIN = join(CLT, "ohpm", "bin");
+// G3：isWin 前移——detectJavaHome 引用它，此前声明在其后（const TDZ），
+// 仅因调用时机在模块顶层执行完之后而侥幸安全。
+const isWin = process.platform === "win32";
 // 打包/签名工具为 Java 实现（风险表 §8 预案）：自动探测常见 Temurin 安装。
 const JAVA_CANDIDATES = [
   process.env.JAVA_HOME,
@@ -35,7 +38,6 @@ function detectJavaHome() {
   return null;
 }
 
-const isWin = process.platform === "win32";
 const npmCmd = isWin ? "npm.cmd" : "npm";
 const ohpmCmd = isWin ? join(OHPM_BIN, "ohpm.bat") : "ohpm";
 const hvigorCmd = isWin ? join(CLT_BIN, "hvigorw.bat") : "hvigorw";

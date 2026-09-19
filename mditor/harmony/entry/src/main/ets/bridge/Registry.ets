@@ -58,6 +58,7 @@ export function registerAll(bridge: Bridge): void {
   bridge.register('fs.stat', (p) => fm.stat(p));
   bridge.register('fs.rename', (p) => fm.rename(p));
   bridge.register('fs.remove', (p) => fm.remove(p));
+  bridge.register('fs.syncName', (p) => fm.syncName(p));
 
   // ---- dialog 域 ----------------------------------------------------------
   if (dialogBridge !== null) {

@@ -74,6 +74,25 @@ export class UriMapper {
     return `/Docs/${token}`;
   }
 
+  /** S7：相对路径段消毒——拒绝 `..`（越出已授权根），丢弃 `.` 与空段。
+   *  encodeURIComponent 不编码 `.`，`/Docs/ws-1/../../x` 曾会解析为
+   *  rootUri 之外的真实路径（渲染进程被攻破时的越权读取通道）。 */
+  private static sanitizeRelSegments(rel: string): string {
+    const parts = rel.split('/');
+    const out: string[] = [];
+    for (let i = 0; i < parts.length; i++) {
+      const seg = parts[i];
+      if (seg === '' || seg === '.') {
+        continue;
+      }
+      if (seg === '..') {
+        throw new Error('非法路径：不允许 ".." 越出已授权目录');
+      }
+      out.push(seg);
+    }
+    return out.join('/');
+  }
+
   /** 虚拟路径 → 真实位置。无法解析抛 Error（E_ARGS 语义）。 */
   resolve(virtualPath: string): ResolvedPath {
     if (typeof virtualPath !== 'string' || virtualPath.length === 0) {
@@ -81,7 +100,9 @@ export class UriMapper {
     }
     if (virtualPath === '/AppData' || virtualPath.startsWith('/AppData/')) {
       const sandbox = this.sandboxBase();
-      const rel = virtualPath === '/AppData' ? '' : virtualPath.slice('/AppData'.length);
+      const raw = virtualPath === '/AppData' ? '' : virtualPath.slice('/AppData'.length);
+      // S7：`..` 段拒绝、`.` 丢弃——防越出沙箱（与 S3Bridge key 校验同纪律）。
+      const rel = UriMapper.sanitizeRelSegments(raw);
       const result: ResolvedPath = {
         kind: 'sandbox',
         uri: '',
@@ -93,7 +114,8 @@ export class UriMapper {
       const rest = virtualPath.slice('/Docs/'.length);
       const slash = rest.indexOf('/');
       const token = slash < 0 ? rest : rest.slice(0, slash);
-      const rel = slash < 0 ? '' : rest.slice(slash + 1);
+      // S7：`..` 段拒绝、`.` 丢弃——防越出已挂载工作区根。
+      const rel = UriMapper.sanitizeRelSegments(slash < 0 ? '' : rest.slice(slash + 1));
       const entry = this.entries.get(token);
       if (entry === undefined) {
         throw new Error(`未知的工作区 token：${token}（可能已被重置）`);
@@ -114,6 +136,21 @@ export class UriMapper {
     } catch {
       return null;
     }
+  }
+
+  /** 同步远程目录名（v4.13.1 键收敛）：/Docs/<token> 根 → 挂载时的真实
+   *  文件夹名。桌面端根名天然是真实目录名；鸿蒙若直接用 basename 会拿到
+   *  设备本地 token（ws-N），两端键空间不相交、永不收敛。非 /Docs 根或
+   *  未知 token 返回 null（前端回退 basename，行为同旧版）。 */
+  syncNameOf(virtualPath: string): string | null {
+    if (typeof virtualPath !== 'string' || !virtualPath.startsWith('/Docs/')) {
+      return null;
+    }
+    const rest = virtualPath.slice('/Docs/'.length);
+    const slash = rest.indexOf('/');
+    const token = slash < 0 ? rest : rest.slice(0, slash);
+    const entry = this.entries.get(token);
+    return entry !== undefined ? entry.displayName : null;
   }
 
   /** 当前全部挂载（诊断用）。 */
@@ -172,11 +209,27 @@ export class UriMapper {
       list.push(e);
     });
     const data: UriMapFile = { version: MAP_VERSION, nextId: this.nextId, entries: list };
+    // D5：先写 .tmp 再 rename 原子替换——截断式覆写在断电/崩溃中途会留下
+    // 半份 JSON，下次启动静默清空全部工作区挂载。旧文件让位为 .bak，
+    // 解析失败时可回退。
+    const tmp = `${this.mapFile}.tmp`;
+    const bak = `${this.mapFile}.bak`;
     try {
-      const file = fs.openSync(this.mapFile, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE |
+      const file = fs.openSync(tmp, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE |
         fs.OpenMode.TRUNC);
-      fs.writeSync(file.fd, JSON.stringify(data));
-      fs.closeSync(file);
+      try {
+        fs.writeSync(file.fd, JSON.stringify(data));
+      } finally {
+        fs.closeSync(file);
+      }
+      try {
+        if (fs.accessSync(this.mapFile)) {
+          fs.copyFileSync(this.mapFile, bak);
+        }
+      } catch (ign) {
+        // .bak 让位失败不阻塞主写入
+      }
+      fs.renameSync(tmp, this.mapFile);
     } catch (err) {
       hilog.error(0x0D01, 'mditor', 'UriMapper: 持久化失败: %{public}s', String(err));
     }

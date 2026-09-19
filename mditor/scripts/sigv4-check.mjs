@@ -133,6 +133,10 @@ check("uriEncode slash drop", uriEncode("a/b", false), "a%2Fb");
 check("uriEncodePath 逐段", uriEncodePath("mditor/ws/笔记 目录/a+b.md"),
   `mditor/ws/${encodeURIComponent("笔记")}%20${encodeURIComponent("目录")}/a%2Bb.md`);
 check("amzDateOf", amzDateOf(new Date(Date.UTC(2013, 4, 24, 0, 0, 0))), "20130524T000000Z");
+// 空 payload hash = NIST 定值（S3Bridge.ets sha256Hex 空输入分支的镜像锚：
+// cryptoFramework Md.update 拒绝空输入，空 body 请求必须走常量）。
+check("sha256Hex 空输入定值", sha256Hex(new Uint8Array(0)),
+  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
 check("canonicalQuery 排序", canonicalQueryOf([
   { k: "list-type", v: "2" },
   { k: "prefix", v: "mditor/笔记" },

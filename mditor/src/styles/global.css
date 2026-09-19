@@ -8,13 +8,14 @@
  * 与主题无关；主题只覆盖颜色类令牌——阴影三档在 themes/*.css 逐主题定义）：
  *
  *   ── 令牌速查表 ────────────────────────────────────────────────────────
- *   圆角  --radius-s 6px（小件/菜单项/内联标记）· --radius-m 10px（按钮/
- *         输入框/行）· --radius-l 16px（卡片/弹窗/下拉/代码块/框架浮岛）；
+ *   圆角  --radius-s 8px（小件/菜单项/内联标记）· --radius-m 12px（按钮/
+ *         输入框/行）· --radius-l 18px（卡片/弹窗/下拉/代码块/框架浮岛）；
+ *         xs/xl/full 三档在 material.css 扩展（6/22/999），完整归属见彼处；
  *         收敛映射：3/4/5→s，6/8/9/10/12→就近档（行级取 m、容器级取 l）；
  *         特形保留字面值并注释声明：胶囊 999px、圆 50%、聊天气泡尾角
  *         （16 16 4 16）、resizer 发丝线 2px、色板内圈 ring。
  *         同心原则：嵌套圆角 ≈ 外圆角 − 内边距，按阶梯就近取档
- *         （16−8=8 → 取 m=10，阶梯量化误差 ≤2px）。
+ *         （18−8=10 → 取 s=8 或 m=12，阶梯量化误差 ≤2px）。
  *   间距  --space-1..4 = 4/8/12/16px（铬层 margin/padding/gap 阶梯；
  *         正文排版 --para-spacing 等不在其列）。
  *   字号  --font-size-xs 11px · -s 12px · -m 13px · -l 14px（chrome 层；
@@ -29,7 +30,8 @@
  *         --dur-slow 340ms（主题切换等大面积颜色过渡；>400ms 禁用）；
  *         loading/状态指示循环动画（打字点/呼吸/进度条）时长豁免。
  *   缓动  --ease-out 进入（快起缓收）· --ease-in 退出（缓起快收）·
- *         --ease-spring 弹性（轻微过冲，仅 lively 档强调性小元素）。
+ *         --ease-spring 弹性（轻微过冲，仅 lively 档强调性小元素）·
+ *         --ease-sheet iOS 模态曲线（无过冲止动，v5 新增）。
  *   层级  --z-* 阶梯（值与改造前逐一同值，见 :root 内注释）：
  *         inline 5 < search 30 < edge 35 < float 40 < focus-zone 50 <
  *         focus-bar 51 < sel 60 < sel-pop 61 < anno 70 < chrome 85 <
@@ -38,14 +40,20 @@
  *         （CodeMirror gutter 的 200 为 vendor 内部层叠，不纳入。）
  *   ─────────────────────────────────────────────────────────────────────
  *
- *   语义色 --danger*/--success*/--diff-* 由各主题文件定义（深色主题
- *   各自调值，消除亮块），此处不设兜底——五主题均完整定义。
+ *   语义色 --danger / --success / --diff-* 由各主题文件定义（深色主题
+ *   各自调值，消除亮块），此处不设兜底——七主题均完整定义。
+ *   ⚠ 注释文本内禁止出现「星号紧跟斜杠」的字面序列（2026-08-22 f103da5 起
+ *   头部速查表里 "--danger 星斜杠 --success" 的写法曾把本注释提前终结，
+ *   裸 token 吞掉紧随的 :root 块——圆角/时长/缓动/z 阶梯全部静默失效三周，
+ *   v5 走查时发现修复）。
  */
 
 :root {
-  --radius-s: 6px;
-  --radius-m: 10px;
-  --radius-l: 16px;
+  /* 圆角阶梯（v5 材质升级微调 6/10/16 → 8/12/18；xs/xl/full 三档在
+     material.css 扩展，完整阶梯注释见该文件） */
+  --radius-s: 8px;
+  --radius-m: 12px;
+  --radius-l: 18px;
   --frame-pad: 8px;
   --font-size-xs: 11px;
   --font-size-s: 12px;
@@ -63,11 +71,15 @@
   --dur-base: 220ms;
   --dur-exit: 160ms;
   --dur-slow: 340ms;
-  /* 缓动三曲线：out 进入（快起缓收）/ in 退出（缓起快收）/ spring 弹性
-     （轻微过冲，仅 lively 档强调性小元素使用）。 */
+  /* 缓动曲线族：out 进入（快起缓收）/ in 退出（缓起快收）/ spring 弹性
+     （轻微过冲，仅 lively 档强调性小元素使用）/ sheet iOS 模态标志性曲线
+     （无过冲、丝滑止动，v5 新增）。
+     v5 修复：--ease-spring 此前是自引用（var(--ease-spring)），从未生效，
+     下游四处使用点一直静默回退为 ease——现落为真实回弹曲线。 */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in: cubic-bezier(0.64, 0, 0.78, 0);
-  --ease-spring: var(--ease-spring);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
   /* 阴影三档的浅色兜底（正式定义在 themes/*.css，深色主题覆盖为更深值） */
   --shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.12);

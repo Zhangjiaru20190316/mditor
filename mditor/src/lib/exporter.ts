@@ -23,13 +23,13 @@
 import { getAdapter } from "../platform";
 import { sniffImageMime } from "./imageSniff";
 import { cleanLocalRef, normalizeLocalPath } from "./imageManager";
+import { sanitizeExportHtml } from "./exportSanitize";
 // NOTE: modern-screenshot + juice + @turbodocx/html-to-docx are all imported
 // lazily inside their respective export functions so the heavyweight "export"
 // bundle only loads when the user actually exports. Importing them at the top
 // would pull a 2 MB+ chunk into the initial page load.
 
 const HTML_FILTER = [{ name: "HTML", extensions: ["html"] }];
-const PDF_FILTER = [{ name: "PDF", extensions: ["pdf"] }];
 const PNG_FILTER = [{ name: "Image", extensions: ["png"] }];
 const DOCX_FILTER = [{ name: "Word", extensions: ["docx"] }];
 const TEX_FILTER = [{ name: "LaTeX", extensions: ["tex"] }];
@@ -117,19 +117,37 @@ export interface ExportContext {
   docPath?: string | null;
 }
 
+/** Active theme id（与 collectThemeCss 同源：<html data-theme>）。 */
+function currentTheme(): string {
+  return document.documentElement.getAttribute("data-theme") ?? "light";
+}
+
 /** Wrap rendered HTML + theme CSS into a standalone document string. */
-function wrapHtml(html: string, css: string, title: string): string {
+export function wrapHtml(
+  html: string,
+  css: string,
+  title: string,
+  theme: string
+): string {
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="${theme}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${escapeHtml(title)}</title>
 <style>
 ${css}
-/* export-friendly defaults */
+/* export-friendly defaults. 主题变量全部挂在 [data-theme=...] 下，html 不带
+   该属性时 var(--bg)/var(--fg) 全部退化到 :root 浅色兜底——任何主题导出都
+   变成默认浅色。此处必须回写 data-theme。 */
+html { background: var(--bg); } /* 根元素背景传播到画布：打印时整页带主题底色 */
 body { max-width: 820px; margin: 40px auto; padding: 0 24px; }
-mark { background: rgba(255, 213, 79, 0.55); color: inherit; border-radius: 2px; padding: 0.05em 0.12em; } /* ==高光== */
+mark { background: var(--mark-bg, rgba(255, 213, 79, 0.55)); color: inherit; border-radius: 2px; padding: 0.05em 0.12em; } /* ==高光== */
+/* 打印默认丢弃背景色：暗色主题下浅色文字 + 白纸 = 白纸白字。强制按屏幕
+   色输出（PDF 走「另存为 PDF」，Chromium/WebView2 遵循 print-color-adjust）。 */
+@media print {
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+}
 </style>
 </head>
 <body class="vditor-reset">
@@ -155,7 +173,8 @@ export async function exportHtml(
   const path = await getAdapter().dialog.pickSaveFile(suggestedName, HTML_FILTER);
   if (!path) return null;
   const title = suggestedName.replace(/\.html?$/i, "");
-  let html = ctx.html;
+  // S10：落盘前兜底消毒（raw-HTML 直通漏出时导出文件不再是保护空窗）。
+  let html = sanitizeExportHtml(ctx.html);
   if (options.inlineImages) {
     try {
       html = await inlineLocalImages(html, ctx.docPath);
@@ -175,29 +194,39 @@ export async function exportHtml(
       /* 字体读取失败：保留引用（公式退化到回退字体，导出仍完成） */
     }
   }
-  const standalone = wrapHtml(html, css, title);
+  const standalone = wrapHtml(html, css, title, currentTheme());
   await getAdapter().fs.writeTextFile(path, standalone);
   return path;
 }
 
 /**
- * Export to PDF. Renders the HTML in a hidden iframe and triggers the OS print
- * dialog; the user selects "Save as PDF". Returns the path the user would save
- * to (informational only — the actual file is produced by the print dialog).
+ * Export to PDF. Renders the HTML in a hidden iframe and opens the OS print
+ * dialog; the user selects "Save as PDF" there (true silent export isn't
+ * exposed by Tauri/wry yet — wry#707). No pickSaveFile up front: the path it
+ * returned was never written to, so it only made the user pick twice. The
+ * iframe document's <title> is the doc name, which the print dialog uses to
+ * pre-fill the PDF filename. Resolves after the dialog closes (afterprint).
  */
 export async function exportPdf(
   ctx: ExportContext,
   suggestedName = "untitled.pdf"
-): Promise<string | null> {
-  const path = await getAdapter().dialog.pickSaveFile(suggestedName, PDF_FILTER);
-  if (!path) return null;
+): Promise<void> {
   const title = suggestedName.replace(/\.pdf$/i, "");
-  await printHtml(wrapHtml(ctx.html, ctx.css, title));
-  // Hint the user where they intended to save (the print dialog does the rest).
-  return path;
+  // 本地相对路径图片内联为 data URL：iframe 里相对引用没有文档基准目录，
+  // 必然 404（打出来是裂图/空白）。内联后既可见又即时就绪；asset:/远程引用
+  // 在应用内 iframe 同源可加载，保持原样。失败退回原引用，导出仍完成。
+  // S10：doc.write 前兜底消毒。
+  let html = sanitizeExportHtml(ctx.html);
+  try {
+    html = await inlineLocalImages(html, ctx.docPath);
+  } catch {
+    /* 内联失败保留原引用 */
+  }
+  await printHtml(wrapHtml(html, ctx.css, title, currentTheme()));
 }
 
-/** Render `fullHtml` (a complete document) offscreen and call print(). */
+/** Render `fullHtml` (a complete document) offscreen and call print().
+ *  Resolves when the print dialog closes (afterprint, 打印或取消都触发). */
 function printHtml(fullHtml: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const iframe = document.createElement("iframe");
@@ -208,35 +237,65 @@ function printHtml(fullHtml: string): Promise<void> {
     iframe.style.height = "0";
     iframe.style.border = "0";
     // 幂等回收：移除 iframe 并清掉兜底定时器。连续导出 PDF 时若不即时回收，
-    // 每个隐藏 iframe（含其完整 document 对象）会一直挂到 60s 兜底超时才释放，
+    // 每个隐藏 iframe（含其完整 document 对象）会一直挂到兜底超时才释放，
     // 堆积成可观的内存占用。
     let settled = false;
-    let settleTimer: number | undefined;
+    let resWaitTimer: number | undefined;
     let fallbackTimer: number | undefined;
     const cleanup = () => {
       if (settled) return;
       settled = true;
-      if (settleTimer !== undefined) window.clearTimeout(settleTimer);
+      if (resWaitTimer !== undefined) window.clearTimeout(resWaitTimer);
       if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer);
       iframe.remove();
+    };
+    const finish = () => {
+      cleanup();
+      resolve();
     };
     iframe.onload = () => {
       try {
         const win = iframe.contentWindow;
-        // give layout/fonts a tick to settle before invoking print. Track the
-        // handle and re-check `settled` inside: if cleanup already ran (e.g.
-        // doc.write fires onload twice, or onerror lands after onload), the
-        // pending callback must not call print() on a removed iframe.
-        settleTimer = window.setTimeout(() => {
+        const doc = iframe.contentDocument;
+        if (!win || !doc) {
+          throw new Error("无法创建打印文档（iframe 被浏览器策略拦截）");
+        }
+        // 盲等固定时长会漏掉慢加载的图片/字体（打出来是空白）。等文档内
+        // 字体与全部 <img> 就绪再打印；总上限 5s，防单个远程图挂死导出。
+        const imgsReady = Promise.all(
+          Array.from(doc.images).map((img) =>
+            img.complete
+              ? Promise.resolve()
+              : new Promise<void>((res) => {
+                  img.addEventListener("load", () => res(), { once: true });
+                  img.addEventListener("error", () => res(), { once: true });
+                })
+          )
+        );
+        const fontsReady = doc.fonts?.ready ?? Promise.resolve();
+        const deadline = new Promise<void>((res) => {
+          resWaitTimer = window.setTimeout(res, 5_000);
+        });
+        void Promise.all([imgsReady, fontsReady, deadline]).then(() => {
           if (settled) return;
-          win?.focus();
-          // 打印对话框关闭后立即回收（afterprint 于打印/取消后触发），
-          // 不再空等 60s；兜底定时器防范事件缺失的浏览器。
-          win?.addEventListener("afterprint", cleanup, { once: true });
-          win?.print();
-          fallbackTimer = window.setTimeout(cleanup, 60_000);
-          resolve();
-        }, 400);
+          // 资源就绪后再留一拍给 layout / KaTeX 渲染收尾。Track the handle
+          // and re-check `settled`: if cleanup already ran, the pending
+          // callback must not call print() on a removed iframe.
+          window.setTimeout(() => {
+            if (settled) return;
+            try {
+              win.focus();
+              // afterprint 于打印/取消后触发 → 此刻才算「打印流程结束」；
+              // 兜底定时器防范事件缺失的浏览器（5 分钟，留足预览时间）。
+              win.addEventListener("afterprint", finish, { once: true });
+              win.print();
+              fallbackTimer = window.setTimeout(finish, 300_000);
+            } catch (e) {
+              cleanup();
+              reject(e);
+            }
+          }, 50);
+        });
       } catch (e) {
         cleanup();
         reject(e);
@@ -247,7 +306,12 @@ function printHtml(fullHtml: string): Promise<void> {
       reject(e);
     };
     document.body.appendChild(iframe);
-    const doc = iframe.contentDocument!;
+    const doc = iframe.contentDocument;
+    if (!doc) {
+      cleanup();
+      reject(new Error("无法创建打印文档（iframe contentDocument 为空）"));
+      return;
+    }
     doc.open();
     doc.write(fullHtml);
     doc.close();
@@ -332,7 +396,8 @@ export async function exportDocx(
   if (!path) return null;
   // V3.6：先把本地图片内联成 data URL —— 浏览器构建没有 sharp，相对引用的
   // 图片会被转换器直接丢弃（V3.5 已知问题）。失败退回原 HTML（行为同旧版）。
-  let html = ctx.html;
+  // S10：进转换器前兜底消毒。
+  let html = sanitizeExportHtml(ctx.html);
   try {
     html = await inlineLocalImages(ctx.html, ctx.docPath);
   } catch {

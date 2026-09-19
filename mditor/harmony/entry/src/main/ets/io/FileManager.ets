@@ -2,14 +2,15 @@
 // （鸿蒙迁移 v4.11）。
 //
 // 统一经 UriMapper 把前端虚拟路径解析为 file:// URI 或沙箱路径，再走
-// @ohos.file.fs。URI 的支持面：open 系（API 12+）明确支持；listFile/
-// rename/mkdir 等在 PC（2in1）+ persistPermission 授权下可用（真机验证
-// 项，见 harmony/README.md 已知限制）。错误统一抛 BridgeError：
+// @ohos.file.fs。URI 的支持面（MatePad Edge 真机 2026-09-19 实锤）：open 系
+// （API 12+）可用；listFile 走 URI 报 ENOENT（file_api errno 2）——必须先
+// FileUri.toPath() 转真实路径再列（见 listTargetOf）。错误统一抛 BridgeError：
 //   E_PERMISSION —— URI 权限过期/未授权（前端引导重选工作区）
 //   E_IO —— 其它文件系统错误（带底层码）
 //   E_ARGS —— 虚拟路径无法解析
 
 import fs from '@ohos.file.fs';
+import { fileUri } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { BridgeError } from '../bridge/Bridge';
@@ -38,6 +39,33 @@ export class FileManager {
     this.mapper = mapper;
   }
 
+  /** listFile 的目标路径：listFile 不支持 file:// URI（真机 errno 2 实锤，
+   *  open 系才有 URI 支持面）——file://docs/... 去掉 authority 取 path 段
+   *  还原真实路径；百分号编码（中文目录名）防御式解码。 */
+  private listTargetOf(r: ResolvedPath): string {
+    if (r.kind === 'sandbox') {
+      return r.sandboxPath;
+    }
+    const p = new fileUri.FileUri(r.uri).path;
+    try {
+      return decodeURIComponent(p);
+    } catch {
+      return p;
+    }
+  }
+
+  /** 同步远程目录名（v4.13.1 键收敛）：工作区根的真实文件夹名。非 /Docs
+   *  根 / 未知 token 返回 null，前端回退 basename。 */
+  async syncName(params: Record<string, Object>): Promise<Object | null> {
+    const path = this.pathOf(params);
+    const name = this.mapper.syncNameOf(path);
+    if (name === null) {
+      return null;
+    }
+    const out: Record<string, Object> = { 'name': name };
+    return out;
+  }
+
   mapperRef(): UriMapper {
     return this.mapper;
   }
@@ -51,7 +79,7 @@ export class FileManager {
 
   async listEntryNames(dirPath: string): Promise<string[]> {
     const r = this.mapper.resolve(dirPath);
-    const target = r.kind === 'sandbox' ? r.sandboxPath : r.uri;
+    const target = this.listTargetOf(r);
     const raw = fs.listFileSync(target);
     const out: string[] = [];
     raw.forEach((n: string) => {
@@ -104,7 +132,7 @@ export class FileManager {
   async readDir(params: Record<string, Object>): Promise<Object | null> {
     const path = this.pathOf(params);
     const r = this.mapper.resolve(path);
-    const target = r.kind === 'sandbox' ? r.sandboxPath : r.uri;
+    const target = this.listTargetOf(r);
     let names: string[] = [];
     try {
       // listFile 返回的条目以 '/' 开头（文档行为），统一剥掉取名字段。

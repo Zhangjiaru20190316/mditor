@@ -174,12 +174,28 @@ function fail(error: string): string {
   return JSON.stringify({ ok: false, error });
 }
 
-/** 工具结果超长截断（置 truncated 标记，让模型知道信息不完整）。 */
+/**
+ * 工具结果超长截断。E11：优先**字段级**截断——对长字符串字段逐级收紧预算后
+ * 重新序列化，保持 JSON 语法完整（破损 JSON 会教模型输出破损 JSON）；仅当
+ * 结构本身（海量字段/数组）仍超限时才退回整体切片 + truncated 标记。
+ */
 export function clampResult(obj: Record<string, unknown>): string {
   const json = JSON.stringify(obj);
   if (json.length <= MAX_RESULT_CHARS) return json;
+  // 预算阶梯：先收长文本字段，仍超限再收紧，两级都不行才整体切片。
+  for (const budget of [4000, 800]) {
+    const clamped: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      clamped[k] =
+        typeof v === "string" && v.length > budget
+          ? `${v.slice(0, budget)}…（已截断，原 ${v.length} 字符）`
+          : v;
+    }
+    const next = JSON.stringify(clamped);
+    if (next.length <= MAX_RESULT_CHARS) return next;
+  }
   return (
-    JSON.stringify(obj).slice(0, MAX_RESULT_CHARS) +
+    json.slice(0, MAX_RESULT_CHARS) +
     `\n（结果过长，已截断至 ${MAX_RESULT_CHARS} 字符）`
   );
 }

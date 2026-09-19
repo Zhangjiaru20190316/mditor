@@ -65,6 +65,8 @@ export interface RagIO {
   writeTextFile(p: string, s: string): Promise<void>;
   mkdir(d: string): Promise<void>;
   appDataDir(): Promise<string>;
+  /** D3 原子替换用；缺省（旧测试桩）时 persist 退化为直写。 */
+  rename?(a: string, b: string): Promise<void>;
 }
 
 const tauriIO: RagIO = {
@@ -72,6 +74,7 @@ const tauriIO: RagIO = {
   writeTextFile: (p, s) => getAdapter().fs.writeTextFile(p, s),
   mkdir: (d) => getAdapter().fs.mkdir(d, { recursive: true }),
   appDataDir: () => getAdapter().app.appDataDir(),
+  rename: (a, b) => getAdapter().fs.rename(a, b),
 };
 
 export class RagIndexManager {
@@ -299,7 +302,16 @@ export class RagIndexManager {
       vectors: this.vectors,
     };
     try {
-      await this.io.writeTextFile(this.filePath, JSON.stringify(file));
+      // D3 同款原子写：先写 .tmp 再 rename 替换——截断式直写在崩溃/断电
+      // 中途会留下半份 JSON，下次加载解析失败 → 整库索引无谓重建。
+      const tmp = `${this.filePath}.tmp`;
+      const payload = JSON.stringify(file);
+      await this.io.writeTextFile(tmp, payload);
+      if (this.io.rename) {
+        await this.io.rename(tmp, this.filePath);
+      } else {
+        await this.io.writeTextFile(this.filePath, payload);
+      }
     } catch {
       /* 落盘失败保留内存索引（下次构建重写） */
     }

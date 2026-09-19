@@ -18,7 +18,6 @@ import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { deflateSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { spawnSync } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const iconsDir = join(__dirname, "..", "src-tauri", "icons");
@@ -254,7 +253,7 @@ function buildIco(sizes) {
   dir.writeUInt16LE(0, 0); // reserved
   dir.writeUInt16LE(1, 2); // type = icon
   dir.writeUInt16LE(entries.length, 4);
-  const entryBufs = entries.map((e, i) => {
+  const entryBufs = entries.map((e) => {
     const b = Buffer.alloc(16);
     b[0] = e.s >= 256 ? 0 : e.s; // width
     b[1] = e.s >= 256 ? 0 : e.s; // height

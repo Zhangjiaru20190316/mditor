@@ -1,6 +1,6 @@
 [package]
 name = "mditor"
-version = "4.13.0"
+version = "4.14.0"
 description = "A local-first Markdown editor inspired by Typora"
 authors = ["Mditor"]
 edition = "2021"
@@ -15,7 +15,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "devtools"] }
+# S4：devtools feature 已移除——tauri 在 debug 构建（debug_assertions）下
+# 自动启用 devtools，release 构建不再携带检查器后门。
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = { version = "2", features = ["watch"] }
 tauri-plugin-shell = "2"
@@ -33,11 +35,13 @@ serde_json = "1"
 # dependency on Windows (the bundled reqwest uses native-tls by default).
 # `stream` enables resp.bytes_stream() for SSE streaming in ai_chat_stream.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# S3：SSRF 校验解析端点 host（tauri 传递依赖已有，提为直接使用）。
+url = "2"
 # StreamExt::next over the reqwest byte stream while parsing SSE chunks.
 futures-util = "0.3"
 # 云同步文件通道（v4.12.4）：s3_upload_file / s3_download_file 的异步文件
 # 读写。tokio 已在依赖树内（tauri runtime），这里只是显式声明 fs 能力。
-tokio = { version = "1", default-features = false, features = ["fs"] }
+tokio = { version = "1", default-features = false, features = ["fs", "time"] }
 # 云同步（v4.12）：S3 协议兼容对象存储客户端。default-features=false 只带
 # aws（SigV4 签名/ListObjectsV2 分页等久经考验的实现交给它），不拉 azure/gcp。
 # 刻意停在 0.13 而非 0.14：0.14 的 aws feature 硬依赖 aws-lc-rs（Windows 构
@@ -45,6 +49,14 @@ tokio = { version = "1", default-features = false, features = ["fs"] }
 # object_store 自带 HTTP 客户端（reqwest+rustls），刻意不与 crate::ai::http()
 # 共享——AI 代理客户端无全局超时语义，同步客户端需要独立连接池与超时。
 object_store = { version = "0.13", default-features = false, features = ["aws"] }
+
+# S2：密钥系统凭据存储（Windows Credential Manager / DPAPI）。版本对齐依赖树
+# 中已有的 0.61.2（mio/notify/muda 等在用），不引入新的版本碎片。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Security_Credentials",
+  "Win32_Foundation",
+] }
 
 [features]
 # This feature is used for production builds or when a dev server is not

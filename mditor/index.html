@@ -64,6 +64,18 @@
       html[data-theme="claude-dark"] #splash .splash-name {
         color: #e5e7eb;
       }
+      /* iOS 对（v5）：亮色与默认白底一致仅换 accent；暗色是 OLED 纯黑 */
+      html[data-theme="ios"] #splash {
+        background: #ffffff;
+        color: #007aff;
+      }
+      html[data-theme="ios-dark"] #splash {
+        background: #000000;
+        color: #0a84ff;
+      }
+      html[data-theme="ios-dark"] #splash .splash-name {
+        color: #ffffff;
+      }
       @keyframes splash-zoom {
         from {
           opacity: 0;

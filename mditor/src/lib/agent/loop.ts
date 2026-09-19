@@ -129,7 +129,10 @@ async function executeToolCall(
       return { role: "tool", content: result, tool_call_id: fallbackId };
     }
     result = await tool.execute(args, ctx);
-    status = result.includes(`"ok":false`) ? "error" : "ok";
+    // E10：结构化判定成败——此前 `includes('"ok":false')` 子串嗅探，笔记内容
+    // 里恰好含该字面量即误报失败。截断的结果（JSON 尾部破损）保留前缀嗅探
+    // 兜底（fail() 的 ok:false 恒在输出开头）。
+    status = sniffFailed(result) ? "error" : "ok";
     summary = status === "ok" ? tool.label : extractError(result) ?? tool.label;
   } catch (e) {
     result = JSON.stringify({ ok: false, error: `工具执行异常：${String(e)}` });
@@ -151,6 +154,18 @@ function extractError(resultJson: string): string | null {
     /* 非 JSON 结果按成功处理 */
   }
   return null;
+}
+
+/** E10：工具结果成败判定。可解析 → 看 ok 字段；不可解析（clampResult 兜底
+ *  截断的尾部破损 JSON）→ 看 fail() 输出开头的前缀。内容含 `"ok":false`
+ *  字面量的成功结果不再被误判。 */
+function sniffFailed(resultJson: string): boolean {
+  try {
+    const parsed = JSON.parse(resultJson) as { ok?: boolean };
+    return parsed.ok === false;
+  } catch {
+    return resultJson.startsWith(`{"ok":false`);
+  }
 }
 
 export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {

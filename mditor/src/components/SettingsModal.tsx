@@ -381,6 +381,8 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                     <option value="sepia">护眼</option>
                     <option value="claude">Claude（暖纸感）</option>
                     <option value="claude-dark">Claude Dark</option>
+                    <option value="ios">iOS（苹果原生）</option>
+                    <option value="ios-dark">iOS Dark（纯黑）</option>
                   </select>
                 </Field>
 
@@ -722,6 +724,7 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                             className="model-key mono"
                             type="password"
                             placeholder="API Key（本地服务可留空）"
+                            title="密钥保存于系统凭据管理器（Windows 凭据管理器），不写入配置文件"
                             value={mm.apiKey}
                             onChange={(e) => updateModel(i, { apiKey: e.target.value })}
                           />
@@ -1225,7 +1228,7 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                     </button>
                   </span>
                   <span className="hint sync-secret-hint">
-                    密钥以明文保存在本机 mditor.json，建议使用仅限该桶的最小权限
+                    密钥保存于系统凭据管理器（S2 起），配置文件只留引用标记；建议使用仅限该桶的最小权限
                     子账号；远端删除不可恢复，建议为该桶开启版本控制。
                   </span>
                 </Field>

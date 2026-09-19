@@ -7,9 +7,12 @@ import {
   computeLocalState,
   computeRemoteState,
   conflictCopyName,
+  createDefaultSyncIO,
   decideAction,
+  fullPrefixOf,
   isContentEtag,
   remoteEpochMs,
+  resolveRemoteDir,
   sameSecond,
   syncWorkspace,
   type EngineSideState,
@@ -24,6 +27,8 @@ import type { S3Object, SyncManifestFile } from "./types";
 // manifest.ts 的真实 IO 经平台适配层——这里 mock 一个内存版（读写文本文件）。
 // 引擎本体只吃注入的 SyncIO，不受影响。
 const memFiles = vi.hoisted(() => new Map<string, string>());
+// D2 测试用：让 mock 的 readDir 对含该子串的路径抛错（默认不抛）。
+const memFlags = vi.hoisted(() => ({ failReadDir: "" }));
 vi.mock("../../platform", () => ({
   detectRuntime: () => "tauri",
   getAdapter: () => ({
@@ -44,6 +49,19 @@ vi.mock("../../platform", () => ({
       },
       exists: async (p: string) => memFiles.has(p),
       mkdir: async () => undefined,
+      // D3：writeManifest 走 tmp+rename，rename 语义与真实适配层一致。
+      rename: async (a: string, b: string) => {
+        const v = memFiles.get(a);
+        if (v === undefined) throw new Error("ENOENT");
+        memFiles.delete(a);
+        memFiles.set(b, v);
+      },
+      readDir: async (p: string) => {
+        if (memFlags.failReadDir && p.includes(memFlags.failReadDir)) {
+          throw new Error("EACCES: mocked readDir failure");
+        }
+        return [];
+      },
     },
   }),
 }));
@@ -362,6 +380,46 @@ describe("syncWorkspace：首同步（验收 2）", () => {
   });
 });
 
+describe("远端目录名覆盖（键收敛：鸿蒙 token → 真实文件夹名）", () => {
+  it("resolveRemoteDir：覆盖生效；消毒去首尾斜杠；空/越界回退 basename", () => {
+    expect(resolveRemoteDir("C:/ws/notes")).toBe("notes");
+    expect(resolveRemoteDir("C:/ws/notes", "笔记")).toBe("笔记");
+    expect(resolveRemoteDir("C:/ws/notes", "/笔记/")).toBe("笔记");
+    expect(resolveRemoteDir("/Docs/ws-1", "C语言")).toBe("C语言");
+    expect(resolveRemoteDir("/Docs/ws-1", "")).toBe("ws-1");
+    expect(resolveRemoteDir("/Docs/ws-1", "  ")).toBe("ws-1");
+    expect(resolveRemoteDir("/Docs/ws-1", "a/b")).toBe("ws-1");
+    expect(resolveRemoteDir("/Docs/ws-1", "..")).toBe("ws-1");
+  });
+
+  it("fullPrefixOf：覆盖与回退同源（引擎与指纹共用推导）", () => {
+    expect(fullPrefixOf("mditor/", "C:/ws/notes")).toBe("mditor/notes/");
+    expect(fullPrefixOf("mditor/", "/Docs/ws-1", "C语言")).toBe("mditor/C语言/");
+  });
+
+  it("remoteDir 覆盖上传/下载前缀（同名配对两视角共用 mditor/<真实名>/）", async () => {
+    // 鸿蒙视角：root basename 是 token，覆盖为真实名「C语言」→ 上传换前缀。
+    io.putLocal("a.md", "A");
+    const outcome = await syncWorkspace(ROOT, PREFIX, io, {
+      onState: () => {},
+      warn: () => {},
+    }, undefined, "C语言");
+    expect(outcome.summary.uploaded).toBe(1);
+    expect(io.remote.get("mditor/C语言/a.md")).toBeDefined();
+    expect(io.remote.get("mditor/notes/a.md")).toBeUndefined();
+
+    // 配对视角：对端同名工作区的对象按同一前缀下载落盘（absent|new → download）。
+    const o2 = obj("mditor/C语言/from-remote.md", "R", "2026-09-13T10:00:00Z");
+    io.remote.set("mditor/C语言/from-remote.md", { ...o2, content: enc.encode("R") });
+    const second = await syncWorkspace(ROOT, PREFIX, io, {
+      onState: () => {},
+      warn: () => {},
+    }, undefined, "C语言");
+    expect(second.summary.downloaded).toBe(1);
+    expect(io.local.get("from-remote.md")).toBeDefined();
+  });
+});
+
 describe("syncWorkspace：矩阵行为（有清单基线）", () => {
   /** 建立基线：一轮首同步后返回第二台的 io 视角。 */
   async function baseline(files: Array<[string, string]>) {
@@ -620,5 +678,165 @@ describe("manifest 读写与迁移（§4.2）", () => {
     m.files["a.md"] = { local: { mtimeMs: 1, size: 2, md5: null }, remote: null };
     await writeManifest("C:/ws/rt", m);
     expect(await readManifest("C:/ws/rt")).toEqual(m);
+  });
+
+  it("D3：writeManifest 走 tmp+rename（不留可被误读的半份清单）", async () => {
+    const m = emptyManifest("C:/ws/atomic");
+    await writeManifest("C:/ws/atomic", m);
+    const hash = await rootHash("C:/ws/atomic");
+    const finalPath = `C:/appdata/sync/manifests/${hash}.json`;
+    // rename 已消费 tmp：终态只有正式清单，无 .tmp 残件。
+    expect(memFiles.has(finalPath)).toBe(true);
+    expect(memFiles.has(`${finalPath}.tmp`)).toBe(false);
+  });
+});
+
+// ---- D1/D2/D4 数据安全回归 --------------------------------------------------
+
+describe("D1/D2/D4 数据安全回归", () => {
+  const HOOKS = { onState: () => {}, warn: () => {} };
+
+  /** 按当前 io 的 local/remote 内容构造「已同步」清单（same|same 基线）。 */
+  function syncedManifest(i: MemIO, rels: string[]): SyncManifest {
+    const m = emptyManifest(ROOT);
+    m.lastSyncAt = 1_000;
+    for (const rel of rels) {
+      const l = i.local.get(rel);
+      const o = i.remote.get(`${FULL}${rel}`)!;
+      expect(l).toBeDefined();
+      m.files[rel] = {
+        local: { mtimeMs: l!.mtimeMs, size: l!.content.length, md5: null },
+        remote: { etag: o.etag ?? "", size: o.size, lastModified: o.lastModified },
+      };
+    }
+    return m;
+  }
+
+  it("D1：远端被清空 → 批量删除保险中止，本地/远端/清单零改动", async () => {
+    const keys = Array.from({ length: 10 }, (_, i) => `f${i}.md`);
+    for (const k of keys) {
+      io.putLocal(k, "v");
+      io.putRemote(k, "v");
+    }
+    io.manifests.set(ROOT, syncedManifest(io, keys));
+    io.remote.clear(); // 生命周期规则清空 / 指错了空桶
+
+    const r = await syncWorkspace(ROOT, PREFIX, io, HOOKS, "fp-1");
+    expect(r.aborted).toBe("mass-delete");
+    expect(io.trash).toHaveLength(0); // 一个文件都没进回收站
+    expect(io.local.size).toBe(10); // 本地文件原样
+    expect(io.manifests.get(ROOT)!.lastSyncAt).toBe(1_000); // 清单未被改写
+    expect(r.summary.notes.join()).toContain("已中止");
+  });
+
+  it("D1：少量删除（<5 个）不触发保险，正常同步", async () => {
+    const keys = Array.from({ length: 10 }, (_, i) => `f${i}.md`);
+    for (const k of keys) {
+      io.putLocal(k, "v");
+      io.putRemote(k, "v");
+    }
+    io.manifests.set(ROOT, syncedManifest(io, keys));
+    io.local.delete("f0.md"); // 用户真的删了 1 个 → deleteRemote
+
+    const r = await syncWorkspace(ROOT, PREFIX, io, HOOKS, "fp-1");
+    expect(r.aborted).toBeUndefined();
+    expect(r.summary.deletedRemote).toBe(1);
+  });
+
+  it("D1：换桶/换前缀（指纹失配）→ 按首同步重算，绝不产生删除", async () => {
+    const keys = ["a.md", "b.md", "c.md", "d.md", "e.md", "f.md"];
+    for (const k of keys) {
+      io.putLocal(k, "v");
+      io.putRemote(k, "v");
+    }
+    io.manifests.set(ROOT, { ...syncedManifest(io, keys), remoteFingerprint: "fp-OLD" });
+
+    const r = await syncWorkspace(ROOT, PREFIX, io, HOOKS, "fp-NEW");
+    expect(r.firstSync).toBe(true);
+    expect(r.summary.deletedLocal).toBe(0);
+    expect(r.summary.deletedRemote).toBe(0);
+    expect(io.trash).toHaveLength(0);
+    // 首同步后新指纹落盘。
+    expect(io.manifests.get(ROOT)!.remoteFingerprint).toBe("fp-NEW");
+  });
+
+  it("D1 兼容：旧清单无指纹字段 → 按匹配处理（升级不引发全量冲突），本轮补写指纹", async () => {
+    const keys = ["a.md", "b.md"];
+    for (const k of keys) {
+      io.putLocal(k, "v");
+      io.putRemote(k, "v");
+    }
+    io.manifests.set(ROOT, syncedManifest(io, keys)); // 无 remoteFingerprint
+
+    const r = await syncWorkspace(ROOT, PREFIX, io, HOOKS, "fp-1");
+    expect(r.firstSync).toBe(false);
+    expect(r.summary.conflicts).toBe(0);
+    expect(io.manifests.get(ROOT)!.remoteFingerprint).toBe("fp-1");
+  });
+
+  it("D2：本地扫描读失败 → 中止本轮，远端零改动、清单不落盘", async () => {
+    class ScanFailIO extends MemIO {
+      override async listLocal(): Promise<LocalScanFile[]> {
+        throw new Error("SYNC-SCAN-READFAIL: 目录不可读（mocked）");
+      }
+    }
+    const sio = new ScanFailIO();
+    const keys = Array.from({ length: 6 }, (_, i) => `g${i}.md`);
+    for (const k of keys) {
+      sio.putLocal(k, "v");
+      sio.putRemote(k, "v");
+    }
+    sio.manifests.set(ROOT, syncedManifest(sio, keys));
+
+    await expect(syncWorkspace(ROOT, PREFIX, sio, HOOKS, "fp-1")).rejects.toThrow(
+      /SYNC-SCAN-READFAIL/
+    );
+    expect(sio.remote.size).toBe(6); // 远端一个都没删
+    expect(sio.local.size).toBe(6); // 本地原样
+    expect(sio.trash).toHaveLength(0);
+    expect(sio.manifests.get(ROOT)!.lastSyncAt).toBe(1_000); // 清单未被改写
+  });
+
+  it("D2（默认 IO）：readDir 失败不再被吞成空目录，抛 SYNC-SCAN-READFAIL", async () => {
+    memFlags.failReadDir = "notes";
+    try {
+      const dio = createDefaultSyncIO(CFG);
+      await expect(dio.listLocal("C:/ws/notes")).rejects.toThrow(/SYNC-SCAN-READFAIL/);
+    } finally {
+      memFlags.failReadDir = "";
+    }
+  });
+
+  it("D4：扫描时不存在、下载前被新建的文件不会被远端覆盖（TOCTOU 守卫）", async () => {
+    // 清单记录 a.md 双侧 same，但远端已变（changed）+ 本地已删（deleted）
+    // → deleted|changed = restoreLocal → 走 doDownload。
+    io.putRemote("a.md", "远端新内容", "2026-09-14T10:00:00Z");
+    io.manifests.set(
+      ROOT,
+      {
+        ...emptyManifest(ROOT),
+        lastSyncAt: 1_000,
+        files: {
+          "a.md": {
+            local: { mtimeMs: 1000_000, size: 2, md5: null },
+            remote: { etag: "old-etag", size: 2, lastModified: "2026-09-13T10:00:00Z" },
+          },
+        },
+      }
+    );
+    // 扫描时本地无 a.md；首次 statLocal（即 doDownload 内）之前用户重建了它。
+    const realStat = io.statLocal.bind(io);
+    let injected = false;
+    io.statLocal = async (abs: string) => {
+      if (!injected) {
+        injected = true;
+        io.putLocal("a.md", "用户新建内容", 5000_000);
+      }
+      return realStat(abs);
+    };
+
+    const r = await syncWorkspace(ROOT, PREFIX, io, HOOKS);
+    expect(dec.decode(io.local.get("a.md")!.content)).toBe("用户新建内容");
+    expect(r.summary.skipped).toBeGreaterThanOrEqual(1);
   });
 });
