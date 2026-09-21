@@ -50,7 +50,10 @@ const KEYWORD_NON_CALL = new Set([
 
 // ---- 词法扫描 ---------------------------------------------------------------
 
-/** 转义字符还原（\' \" \\ \` \$ 及常见控制符；未知转义取原字符）。 */
+/**
+ * 转义字符还原（\' \" \\ \` \$ 及常见控制符；未知转义取原字符）。
+ * @param {string} c
+ */
 function unescapeChar(c) {
   switch (c) {
     case "n": return "\n";
@@ -68,9 +71,17 @@ function unescapeChar(c) {
  * 扫描 [start, end) 产出指纹 token 序列。
  * stack 元素：'tmpl'（模板静态段）| number（${} 内的花括号深度）。
  * token: { t: 'c'|'s'|'n', v: string, line: number }
+ * @param {string} src
+ * @param {number} start
+ * @param {number} end
+ * @param {number} baseLine
+ * @returns {{ t: string, v: string, line: number }[]}
  */
 function scanTokens(src, start, end, baseLine) {
+  /** @type {{ t: string, v: string, line: number }[]} */
   const toks = [];
+  // G3：top 会回写 stack（top±1），显式 any[] 断开推断环（TS7022）。
+  /** @type {any[]} */
   const stack = [];
   let tmplBuf = "";
   let line = baseLine;
@@ -187,7 +198,12 @@ function scanTokens(src, start, end, baseLine) {
   return toks;
 }
 
-/** 跳过 for 头部：从 word 后扫描到配对 ')'（字符串/模板/注释感知）。 */
+/**
+ * 跳过 for 头部：从 word 后扫描到配对 ')'（字符串/模板/注释感知）。
+ * @param {string} src
+ * @param {number} end
+ * @param {number} from
+ */
 function skipForHeader(src, end, from) {
   let i = from;
   while (i < end && (src[i] === " " || src[i] === "\t")) i += 1;
@@ -233,9 +249,13 @@ function skipForHeader(src, end, from) {
 
 // ---- 函数体提取 --------------------------------------------------------------
 
-/** 在 src 中找 NAME 的定义锚点，返回 { scanFrom, parenDepth }。
+/**
+ * 在 src 中找 NAME 的定义锚点，返回 { scanFrom, parenDepth }。
  *  扫描起点定在定义名之后（名字自身不进指纹）；函数声明形态锚点止于参数
- *  `(`，故初始括号深度为 1。 */
+ *  `(`，故初始括号深度为 1。
+ * @param {string} src
+ * @param {string} name
+ */
 function findAnchor(src, name) {
   const patterns = [
     { re: new RegExp(`(?:export\\s+)?(?:async\\s+)?function\\s+${name}\\s*\\(`), parenDepth: 1 },
@@ -248,8 +268,15 @@ function findAnchor(src, name) {
   return null;
 }
 
-/** 从锚点起状态机扫描，返回函数体 [start, end)（含花括号体或语句分号）。 */
+/**
+ * 从锚点起状态机扫描，返回函数体 [start, end)（含花括号体或语句分号）。
+ * @param {string} src
+ * @param {number} anchor
+ * @param {number} initialParenDepth
+ */
 function extractRange(src, anchor, initialParenDepth) {
+  // G3：同 scanTokens——top 回写 stack 需显式 any[] 断开推断环（TS7022）。
+  /** @type {any[]} */
   const stack = []; // 'tmpl' | number
   let parenDepth = initialParenDepth;
   let braceDepth = 0;
@@ -310,6 +337,11 @@ function extractRange(src, anchor, initialParenDepth) {
   return [anchor, src.length];
 }
 
+/**
+ * @param {string} src
+ * @param {string} name
+ * @returns {{ t: string, v: string, line: number }[] | null}
+ */
 function extractFingerprint(src, name) {
   const anchor = findAnchor(src, name);
   if (anchor === null) return null;
@@ -321,6 +353,7 @@ function extractFingerprint(src, name) {
 
 // ---- 比对与输出 ---------------------------------------------------------------
 
+/** @param {{ t: string, v: string, line: number } | undefined} tok */
 function tokenDesc(tok) {
   if (tok === undefined) return "（序列已尽）";
   if (tok.t === "c") return `call ${tok.v}() @${tok.line}`;
@@ -328,6 +361,11 @@ function tokenDesc(tok) {
   return `num ${tok.v} @${tok.line}`;
 }
 
+/**
+ * @param {{ t: string, v: string, line: number }[]} toks
+ * @param {number} from
+ * @param {number} count
+ */
 function renderSeq(toks, from, count) {
   return toks.slice(from, from + count)
     .map((t) => (t.t === "c" ? `${t.v}()` : t.t === "s" ? JSON.stringify(t.v) : t.v))

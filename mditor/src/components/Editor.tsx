@@ -51,7 +51,7 @@ import { logMemory } from "../lib/diagnostics";
 import { saveHealSnapshot } from "../lib/session";
 import { noteOpError } from "../lib/opDebug";
 import type { ActiveMarks, EditMode, EditorSettings, BlockInfo, FlatHeading } from "../types";
-import { EMPTY_MARKS } from "../types";
+import { EMPTY_MARKS } from "../defaults";
 
 // 批注定点写失败诊断的限频出口：流式每帧都可能失败一次，无限频会把控制台
 // 刷爆（真实环境确认失败原因用），2 秒最多一条。

@@ -60,7 +60,7 @@ vi.mock("../../platform", () => ({
 }));
 
 import { assembleSyncTrigger } from "./trigger";
-import { DEFAULT_SETTINGS } from "../../types";
+import { DEFAULT_SETTINGS } from "../../defaults";
 
 function settingsWith(sync: Partial<Settings["sync"]>): Settings {
   return { ...DEFAULT_SETTINGS, sync: { ...DEFAULT_SETTINGS.sync, ...sync } };

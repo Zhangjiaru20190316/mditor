@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased（2026-09-21 第 5 批：快赢批 + 插桩门控/lazy + 后端圈禁 + types 拆分 + App.tsx 首块拆分——v4.17.0）
+
+第四批审计与路线图见 `docs/optimization_report4.md`（本批为其 §六第五批路线图 1/2/3/4 条的落地，实测与新审计 `docs/optimization_report5.md`）：
+
+- **Q1 devMode 插桩发射侧门控 + 诊断面板 lazy（高，性能）**：① 新增统一谓词 `diagRecordingOn()`，sysDebug/annoDebug/ipcTrace 的发射函数（sysEmit/sysCount/annoEmit/annoCount/tracedIo 遥测）函数头早退——settings.devMode=false 时生产热路径不再付参数组装与栈帧成本（tracedIo 只短路追踪、被包装 IO 照常执行；scrollDebug/opDebug/cvMemory/devAnomaly 经逐个核对存在生产行为依赖，保留原样并留档理由）；② AnnoDiagnostics/DevAlerts 改 React.lazy + Suspense（具名导出 `then(m => ({default: m.X}))` 适配），移出主 chunk 9.4KB。
+- **Q4 types.ts 拆分（中，可维护性）**：899 → 523 行只剩纯类型（24 个 interface/type，无运行时导出、无 re-export）；运行时迁 `src/defaults.ts`（346 行：DEFAULT_SETTINGS/FONT_PRESETS/MONO_FONT_PRESETS/SYNC_PROVIDERS/isDarkTheme 等 12 导出）与 `src/settingsNormalize.ts`（63 行：normalizeSyncSettings/pickEditorSettings）；消费方 11 文件 import 迁移；types.test.ts 拆 defaults.test.ts ×6 + settingsNormalize.test.ts ×10（先对旧实现跑绿再搬家）。"from types 必是类型"心智模型成立。
+- **Q2 App.tsx 首块拆分（高，结构债偿还 1/4）**：菜单/快捷键层（dispatchMenu 264 行 switch + Rust menu 事件监听 + 全局快捷键 effect + execOnEditor）抽为 `src/hooks/useMenuCommands.ts`（536 行）；App.tsx 3,269 → 2,913 行（本批净减 356）；diff 校验与 HEAD 逐字节等价（依赖数组、case 顺序、preventDefault 语义一字未动）。
+- **Q9 Rust 路径圈禁（低→中，纵深防御）**：`trash_file`/`local_copy_file` 强制"运行时 fs scope（grant_fs_scope 授权根 ∪ 拖放自动授权）∪ appData"圈禁 + `..` 组件一律先拒；`to` 不存在走词法判定；UNC/verbatim 路径 fail-closed；+3 cargo 单测（合法通过/`..` 逃逸拒绝/圈外拒绝）。
+- **Q8 FlashcardModal overdue 时区混比（中，正确性）**：逾期判定右式从 UTC epoch 日序（`Math.floor(now/86_400_000)-1`）改本地日序 `dayOf(now)-1`，与 dueDay 口径统一——UTC+8 下逾期 1-2 天的卡恢复正确标记；+1 边界用例（today−2 标 / today−1 不标，任何时区稳定）。
+- **Q6 侧边栏错误边界（中）**：`.sb-panel` 全部侧栏面板（FileTree/Outline/RecentList/WorkspaceSearch/LinksPanel/AnnotationList）整体包 `<ErrorBoundary key={sidebarTab} label="侧边栏">`——侧栏崩溃不再整窗白屏，与既有"面板级边界"分级策略对齐。
+- **Q11 SettingsModal 组件测试（中，测试覆盖）**：22 例（10 分区导航 + 9 条改值→应用链路 + 云同步三重保存校验 + localhost 豁免 + 测试连接真实 syncConfigPayload/parseSyncError + 排除路径恢复 + 关闭语义与草稿生命周期），SettingsModal 行覆盖 81.65%；组件覆盖 12.26% → 17.58%。
+- **Q12 coverage 防回退阈值（低，工程）**：vitest per-glob thresholds——`src/lib/**` lines ≥55、`src/components/**` lines ≥12（基线略下方防抖动），全量 coverage 实跑验证通过。
+- **G3 scripts checkJs 清债（低，工程）**：scripts/ 六脚本 tsc -p tsconfig.scripts.json 111 错 → **0 错**（纯 JSDoc 注解，零 @ts-expect-error）；sigv4 oracle 21 向量与 mirror-check 5 对指纹复验一致（make-icons 产物 md5 逐字节不变）。
+- **Q5/Q13 决策与流程（低，文档）**：`docs/decision-records.md` DR-001（界面语言保持中文单语，i18n 推迟至两大拆分后）；runbook 增"桥协议三方核对"清单（Registry ↔ platform/types ↔ harmony/README，首次核对 45 条命令 0 孤儿）；修正 README S3 命令数漂移（"六命令"→"八命令"，v4.16.0 P6 遗漏）。
+- **Q7 裸 catch 注释纪律（App 侧清零）**：App.tsx 全部 16 处 `catch {` 带注释（补 3 处）；useMenuCommands 迁移随带 1 处。全仓 244 处基线不变，余量留第六批与 Q3 拆分同期。
+- 质量矩阵：vitest 841 → **870**（+29：SettingsModal 22 + flashcard 1 + normalize 16 − 重组 10）；cargo 24 → **27**；hypium **15/15**；tsc 0 错；eslint 0 错 0 警；clippy -D warnings 0；sigv4 oracle PASS；mirror-check 5 对 PASS；`hvigorw assembleHap` PASS；`npm run build` PASS。**coverage：总行 34.78% → 36.38%（lib 59.35% / components 17.58% / hooks 4.32%——useMenuCommands 536 行 0 覆盖入分母，第六批 V1 垫测试）**。
+- 性能（1MB 文档七场景 ×3 轮，同法同 fixture）：打字 p95 **88/96/96ms**、max ≤104ms、长任务 0（历史最优带）；点击 p95 88–96；打开 2,934–3,454ms（方差带内，r1 冷启动索引长任务 2,255ms 一次性）；滚动 p50 6 / p95 35；undo 收尾恢复原文——本批（门控+lazy+拆分）对热路径零回归。
+- 版本四处对齐 4.17.0（package.json / Cargo.toml / tauri.conf.json / app.json5 versionCode 1001700）+ site/index.html 三处版本标记。
+
 ## Unreleased（2026-09-20 第 4 批：鸿蒙性能/正确性收尾 + 组件测试设施落地——v4.16.0）
 
 第三批实施记录见 `docs/optimization_report3.md`（本批为其 §八路线图的完整落地，实测报告 `docs/optimization_report4.md`）：

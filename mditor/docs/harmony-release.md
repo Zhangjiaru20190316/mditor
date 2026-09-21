@@ -99,6 +99,37 @@ npm run release:harmony
 
 CI（`.github/workflows/release.yml` 的 `harmony` job）会在打 tag 时自动构建 **unsigned** HAP 挂到 Release——那只是构建产物存档，上架包一律用上面 ② 的本机签名 .app。首次启用 CI 需在仓库 Settings → Secrets and variables → Actions → Variables 配置 `HARMONY_CLT_URL`（HarmonyOS Command-Line Tools zip 的直链；官网下载要登录，自己传到可直连的地方），未配置时该 job 自动跳过。
 
+### 发版前检查：桥协议三方核对（本版动过桥命令则必做）
+
+桥协议散落三处，任一处单独改动即产生代码-文档漂移。历史实案两次：v4.16.0 N16 改关窗协议后 `harmony/README.md` 的「1.2s 盲等」描述过期（第四批审计发现后修正）；同批 P6 给 S3Bridge 增 `s3_get_file`/`s3_put_file` 后 README「工程结构」树的「S3 六命令」计数过期（第五批首次核对发现）。快速判据：本版 `git log` 触及 `harmony/entry/src/main/ets/`（bridge/ai/net/io）或 `mditor/src/platform/` 即须核对。
+
+| 方 | 位置 | 核对什么 |
+| --- | --- | --- |
+| ① 注册表 | `harmony/entry/src/main/ets/bridge/Registry.ets` 直注 + `ai/AiBridge.ets`、`net/S3Bridge.ets`、`io/WatchManager.ets` 各自 `registerAll()` 的委托注册 | 注册命令名全集、参数/返回形状、事件名 |
+| ② 前端接口 | `src/platform/types.ts`（PlatformFs/Dialog/Store/Window/App 签名）+ `src/platform/harmony/index.ts` 适配器 + `src/lib`、`App.tsx` 里 `app.invoke` 直通调用（`fs.syncName`、`ai_*`、`s3_*`） | ① 每条命令都有调用点；签名变更两端同步（先例：`onCloseRequested` 为 N16 ack 放宽为 `void \| false \| Promise<void \| false>`） |
+| ③ 文档 | `harmony/README.md`（能力矩阵 / 已知限制 / 工程结构树的命令计数与协议描述）+ Registry.ets 头注释 | 文中命令数、协议语义（ack / 超时 / 轮询参数）与 ① 当前实现一致 |
+
+核对命令（Git Bash，在 `mditor/` 下执行；①↔② 清单 diff，③ 人工比对）：
+
+```bash
+# ① 注册表命令清单（2026-09-21 基线 45 条：fs 13 / dialog 5 / store 4 / app 11 / ai 4 / s3 8）
+grep -rhoE "register\('[^']+'" harmony/entry/src/main/ets --include="*.ets" \
+  | sed "s/register('//;s/'$//" | sort
+
+# ② 前端调用侧清单（具名适配器 + invoke 直通；跨行调用会漏，用下面的兜底补）
+grep -rhoE 'bridge\.request[^"]*"[^"]+"' src/platform/harmony --include="*.ts" | grep -oE '"[^"]+"' | tr -d '"' | sort -u
+grep -rhoE 'invoke[^"]*"[a-z_0-9]+"' src/lib src/App.tsx --include="*.ts" --include="*.tsx" \
+  | grep -oE '"[a-z_0-9]+"' | tr -d '"' | grep -E '^(fs|app|ai|s3)\.' | sort -u
+
+# 兜底（孤儿检查）：① 中每条命令反查 src/ 调用点——跨行 invoke 在此命中；输出「无前端调用」= 死注册
+for c in $(grep -rhoE "register\('[^']+'" harmony/entry/src/main/ets --include="*.ets" | sed "s/register('//;s/'$//"); do \
+  grep -rlq "\"$c\"" src --include="*.ts" --include="*.tsx" || echo "无前端调用: $c"; done
+```
+
+判读：①↔② 应一一对应——② 多出的命令须为桌面 Tauri 专属、鸿蒙分支不触达（如 `s3_download_file`）；兜底输出孤儿即死注册。③ 与 ① 不一致 = 文档漂移，**就地修正 README / Registry 头注释后再出包**。
+
+> 2026-09-21 首次核对记录（本清单随第五批建立时执行）：①↔② 一致（45 条全部有调用点、无孤儿；`s3_download_file` 为桌面专属合规多出）；③ 发现 1 处漂移——`harmony/README.md:180`「S3 六命令」实际为 8 条（v4.16.0 P6 增两条文件通道命令后未同步），另见当批任务报告。
+
 ## 5. AGC 上传与提审
 
 1. AGC → 我的应用 → **Mditor**（`com.mditor.app`）→ **版本管理（HarmonyOS）**。

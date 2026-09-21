@@ -15,7 +15,9 @@ import { HttpRequest } from "@smithy/protocol-http";
 import { createHash, createHmac } from "node:crypto";
 
 // ---- 镜像：S3Bridge.ets 纯函数（保持逐行同构，改动须双向同步） ----------------
+// G3：以下注解均为纯 JSDoc 注释，不进 mirror-check 指纹（注释被词法扫描跳过）。
 
+/** @param {string} s @param {boolean} keepSlash */
 function uriEncode(s, keepSlash) {
   let out = "";
   let i = 0;
@@ -47,9 +49,12 @@ function uriEncode(s, keepSlash) {
   return out;
 }
 
+/** @param {string} p */
 const uriEncodePath = (p) => p.split("/").map((seg) => uriEncode(seg, true)).join("/");
 
+/** @param {Date} d */
 function amzDateOf(d) {
+  /** @param {number} n */
   const p2 = (n) => (n < 10 ? `0${n}` : `${n}`);
   return (
     `${d.getUTCFullYear()}${p2(d.getUTCMonth() + 1)}${p2(d.getUTCDate())}` +
@@ -57,12 +62,20 @@ function amzDateOf(d) {
   );
 }
 
+/** @param {{ k: string, v: string }[]} pairs */
 function canonicalQueryOf(pairs) {
   const encoded = pairs.map((p) => ({ k: uriEncode(p.k, false), v: uriEncode(p.v, false) }));
   encoded.sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
   return encoded.map((p) => `${p.k}=${p.v}`).join("&");
 }
 
+/**
+ * @param {string} method
+ * @param {string} canonicalPath
+ * @param {string} canonicalQuery
+ * @param {{ k: string, v: string }[]} headers
+ * @param {string} payloadHash
+ */
 function canonicalRequestOf(method, canonicalPath, canonicalQuery, headers, payloadHash) {
   const sorted = headers.slice();
   sorted.sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
@@ -75,11 +88,21 @@ function canonicalRequestOf(method, canonicalPath, canonicalQuery, headers, payl
   return `${method}\n${canonicalPath}\n${canonicalQuery}\n${headerLines}\n${names.join(";")}\n${payloadHash}`;
 }
 
+/** @param {Buffer | Uint8Array} bytes */
 const sha256Hex = (bytes) => createHash("sha256").update(bytes).digest("hex");
+/** @param {Buffer} key @param {Buffer} data */
 const hmac = (key, data) => createHmac("sha256", key).update(data).digest();
+/** @param {string} s */
 const utf8 = (s) => Buffer.from(s, "utf8");
 
-/** 签名主链镜像（signHeaders 的纯计算部分；token 附带对齐 S3Bridge 全命令行为）。 */
+/** @typedef {{ method: string, host: string, rawPath: string, region: string, ak: string, sk: string,
+ *              amzDate: string, sessionToken?: string, payload?: Buffer,
+ *              extraHeaders?: Array<[string, string]>, queryPairs?: Array<{ k: string, v: string }> }} SignInput */
+
+/**
+ * 签名主链镜像（signHeaders 的纯计算部分；token 附带对齐 S3Bridge 全命令行为）。
+ * @param {SignInput} o
+ */
 function mineSign(o) {
   const payloadHash = sha256Hex(o.payload ?? Buffer.alloc(0));
   const headers = [
@@ -112,6 +135,11 @@ function mineSign(o) {
 // ---- 断言 ------------------------------------------------------------------
 
 let failed = 0;
+/**
+ * @param {string} name
+ * @param {unknown} actual
+ * @param {unknown} expected
+ */
 function check(name, actual, expected) {
   const ok = actual === expected;
   if (!ok) failed += 1;
@@ -146,6 +174,13 @@ check("canonicalQuery 排序", canonicalQueryOf([
 ]), `continuation-token=a%2Fb%2Bc&encoding-type=url&list-type=2&max-keys=1000&prefix=mditor%2F${encodeURIComponent("笔记")}`);
 
 // 2) 寻址矩阵（buildTarget 语义镜像）
+/**
+ * @param {string} endpoint
+ * @param {string} bucket
+ * @param {string} region
+ * @param {boolean} pathStyle
+ * @param {string} objectPath
+ */
 function mirrorTarget(endpoint, bucket, region, pathStyle, objectPath) {
   let scheme = "https";
   let host = "";
@@ -199,9 +234,16 @@ const SIGNING_DATE = new Date(Date.UTC(2026, 8, 14, 1, 2, 3));
 const AMZ_DATE = amzDateOf(SIGNING_DATE);
 const signer = new SignatureV4({ credentials: CREDS, region: "us-east-1", service: "s3", sha256: Sha256 });
 
+/**
+ * @param {string} name
+ * @param {{ method: string, host: string, rawPath: string, payload?: Buffer,
+ *           extraHeaders?: Array<[string, string]>, queryPairs?: Array<{ k: string, v: string }> }} o
+ */
 async function compareWithSmithy(name, o) {
+  /** @type {Record<string, string>} */
   const headers = { host: o.host };
   for (const [k, v] of o.extraHeaders ?? []) headers[k] = v;
+  /** @type {Record<string, string>} */
   const query = {};
   for (const p of o.queryPairs ?? []) query[p.k] = p.v;
   const req = new HttpRequest({

@@ -176,6 +176,27 @@ describe("FlashcardModal（N3 回归：评卡后前进策略）", () => {
     expect(link.textContent).toContain("已逾期");
   });
 
+  it("逾期标记时区口径（Q8）：today−2 标「已逾期」，today−1 不标", () => {
+    // 种子按 dayOf(Date.now())（本地日序）构造，任何时区/任何运行时刻都
+    // 稳定。修复前右式是 UTC epoch 日序，与本地日序相差 0/1 天（UTC+8 下
+    // 一天中有 16 小时错位），边界日会错标——本用例钉死两侧边界。
+    const today = dayOf(Date.now());
+    // 下边界：比「昨天」更早（today−2）→ 标逾期。
+    seed(K_A1, today - 2);
+    renderModal();
+    expect(document.querySelector<HTMLElement>(".fc-note-link")!.textContent).toContain(
+      "已逾期"
+    );
+    cleanup();
+    // 上边界：恰好昨天（today−1）→ 不标。
+    reviewBacking.clear();
+    seed(K_A1, today - 1);
+    renderModal();
+    const link = document.querySelector<HTMLElement>(".fc-note-link")!;
+    expect(link.textContent).toContain("来源：algo.md:5");
+    expect(link.textContent).not.toContain("已逾期");
+  });
+
   it("评「良好」→ 卡滑出清单：下一张是原第 2 张，不跳卡（N3 核心）", async () => {
     const today = dayOf(Date.now());
     seed(K_A1, today - 3, { box: 2 }); // 严重逾期，评前排第 1

@@ -16,7 +16,8 @@ import {
   loadSettings,
   saveSettings,
 } from "../lib/store";
-import { DEFAULT_SETTINGS, type Settings, type Theme } from "../types";
+import { DEFAULT_SETTINGS } from "../defaults";
+import type { Settings, Theme } from "../types";
 import { setBigDocModeEnabled, setBigDocViewportEnabled } from "../lib/memory";
 import {
   parseMathMacros,

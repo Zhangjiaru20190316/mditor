@@ -28,10 +28,10 @@ const signing = join(harmony, "signing");
 // CLT 位置优先读环境变量（CI 注入），本机默认不变。
 const CLT = process.env.HARMONY_CLT_HOME ?? "C:\\Huawei\\command-line-tools";
 const SIGN_TOOL_JAR = join(CLT, "sdk", "default", "openharmony", "toolchains", "lib", "hap-sign-tool.jar");
-const JAVA_CANDIDATES = [
-  process.env.JAVA_HOME,
-  "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.20.101-hotspot",
-].filter(Boolean);
+// G3：filter(Boolean) 运行时已剔除 undefined，TS 需显式收窄为 string[]（纯注解）。
+const JAVA_CANDIDATES = /** @type {string[]} */ (
+  [process.env.JAVA_HOME, "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.20.101-hotspot"].filter(Boolean)
+);
 
 function detectJavaHome() {
   for (const home of JAVA_CANDIDATES) {
@@ -52,6 +52,7 @@ if (!versionName) {
 const unsignedApp = join(harmony, "build", "outputs", "default", "harmony-default-unsigned.app");
 const signedApp = join(signing, `Mditor_${versionName}_harmony-release.app`);
 
+/** @param {string} name */
 function step(name) {
   console.log(`\n=== ${name} ===`);
 }
@@ -103,7 +104,9 @@ if (buildOnly) {
 
 // 2) 发布签名（参数与 sign-and-install.mjs 的 debug 流程一致，已验证可用）
 const KEY_ALIAS = process.env.MDITOR_RELEASE_KEY_ALIAS ?? "mditor-release";
-const KEY_PWD = process.env.MDITOR_RELEASE_KEYSTORE_PWD;
+// G3：env 缺失时为 undefined——下方守卫（!KEY_PWD → process.exit）保证运行至
+// run() 时必为非空串；类型上收窄为 string（纯注解，不引入 "" 兜底假值）。
+const KEY_PWD = /** @type {string} */ (process.env.MDITOR_RELEASE_KEYSTORE_PWD);
 const materials = {
   密钥库: join(signing, "mditor-release.p12"),
   发布证书: join(signing, "mditor-release.cer"),
@@ -128,6 +131,8 @@ const java = join(javaHome, "bin", "java.exe");
 // 口令只能经 argv 传给 java——本机进程列表瞬时可见，仅在可信机器上签名。
 // 能兜底的是失败路径：execFileSync 抛错时 Node 会把完整命令行（含口令）拼进
 // error.message，必须脱敏后再输出，绝不进控制台/CI 日志。
+// G3：catch 变量为 unknown，取字段/回写均为 any 视图转换（纯注解，脱敏逻辑不变）。
+/** @param {string[]} args */
 function run(args) {
   console.log(`> java ${args.join(" ").replaceAll(KEY_PWD, "******")}`);
   try {
@@ -136,14 +141,14 @@ function run(args) {
     // stdio: inherit 下子进程输出直达终端，error 对象里主要是 message；
     // stdout/stderr/cmd 若存在（如日后改 pipe）也一并处理，Buffer 同样覆盖。
     for (const field of ["message", "stdout", "stderr", "cmd"]) {
-      const value = e?.[field];
+      const value = /** @type {any} */ (e)?.[field];
       if (typeof value === "string" && value.includes(KEY_PWD)) {
-        e[field] = value.replaceAll(KEY_PWD, "******");
+        /** @type {any} */ (e)[field] = value.replaceAll(KEY_PWD, "******");
       } else if (Buffer.isBuffer(value) && value.toString("utf-8").includes(KEY_PWD)) {
-        e[field] = value.toString("utf-8").replaceAll(KEY_PWD, "******");
+        /** @type {any} */ (e)[field] = value.toString("utf-8").replaceAll(KEY_PWD, "******");
       }
     }
-    console.error(`签名失败：${e?.message ?? e}`);
+    console.error(`签名失败：${/** @type {any} */ (e)?.message ?? e}`);
     process.exit(1);
   }
 }

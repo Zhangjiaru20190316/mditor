@@ -272,13 +272,68 @@ pub fn grant_fs_scope(
 //   * Linux：gio trash（GLib 桌面环境标配），退化尝试 trash-put。
 // 任何一条路径失败都返回带 stderr 的错误，绝不回落到不可恢复删除。
 
+// ---- Q9 路径圈禁（v4.16 第五批：trash_file / local_copy_file 纵深防御）------
+//
+// 这两条命令此前只做空串/存在性检查就操作任意路径，唯一的约束在前端工作区
+// 根检查——「渲染进程被攻破」威胁模型下后端必须自持（对齐 append_log 的
+// logs 圈禁先例）。授权面取 Rust 侧可独立核验的两块：
+//   1. 运行时 fs scope：grant_fs_scope 授权的 workspace 根（启动恢复的
+//      工作区、对话框选择、双击/拖放打开——前端在打开前均已完成授权，拖放
+//      另由 fs 插件自动授权）。FsExt::fs_scope() 返回共享 Arc 内部状态的
+//      克隆，运行时授权即时可见；is_allowed 与 fs 插件命令本身走同一套
+//      判定（已存在路径 canonicalize 后匹配、不存在路径词法匹配）。
+//   2. appData 目录：local_copy_file 的暂存区（<app-data>/sync/tmp）在
+//      appData，而静态 fs capability（$APPDATA/$DOCUMENT）只作用于插件命令、
+//      不进运行时 scope 对象，故显式并入。
+// $DOCUMENT 不额外兜底：文档打开必经 grant_fs_scope（对话框 / openPath 均
+// 授权），无需为圈禁再放宽一寸。
+
+/// `p` 是否落在授权面内。`..` 组件一律先拒：is_allowed 对不存在路径只做
+/// 词法 glob 匹配，`<root>/../x` 会被 `<root>/**` 放行（scope glob 不解析
+/// `..`）；已存在路径虽经 canonicalize 可自救，但统一先拒更稳——与
+/// is_log_path_confined 同一教训（v4.6.2）。
+fn is_fs_path_confined(p: &Path, app_data: &Path, scope_allows: impl Fn(&Path) -> bool) -> bool {
+    if p.components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    // appData 侧要求严格内部路径（父目录链含 app_data）——appData 根本身
+    // 不因这条兜底而可被整目录操作。scope 侧语义交给 scope 本身（授权根
+    // 自身可操作：那是用户显式授权过的目录）。
+    let inside_app_data = p
+        .parent()
+        .is_some_and(|parent| parent.starts_with(app_data));
+    inside_app_data || scope_allows(p)
+}
+
+/// 两条文件原语命令的统一前置校验；错误文案风格随文件内既有中文 Err。
+fn ensure_fs_path_confined(app: &tauri::AppHandle, p: &Path) -> Result<(), String> {
+    use tauri_plugin_fs::FsExt;
+    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let scope = app.fs_scope();
+    if is_fs_path_confined(p, &app_data, |x| scope.is_allowed(x)) {
+        Ok(())
+    } else {
+        Err(format!(
+            "路径越界（须位于已授权工作区或应用数据目录内）：{}",
+            p.display()
+        ))
+    }
+}
+
 /// 把一个文件（或目录，含内容）移入系统回收站。
 /// P4：PowerShell 冷启动实测 329–542ms（perf/trash-probe.mjs）——同步命令
 /// 在主线程等待，每次删除整个窗口 UI 冻结同等时长。改为异步命令 +
 /// spawn_blocking：等待移入独立阻塞线程池，主线程与 async worker 均不阻塞。
+///
+/// SECURITY (Q9)：回收站删除是 fs 插件没有的原语，`path` 先经圈禁校验
+/// （ensure_fs_path_confined）再谈存在性——被攻破的渲染进程不得借本命令
+/// 触碰授权面之外的路径；错误文案也不泄露圈外路径是否存在。
 #[command]
-pub async fn trash_file(path: String) -> Result<(), String> {
+pub async fn trash_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);
+    ensure_fs_path_confined(&app, &p)?;
     if !p.exists() {
         return Err(format!("文件不存在：{path}"));
     }
@@ -480,11 +535,21 @@ pub async fn local_files_equal(a: String, b: String) -> Result<bool, String> {
 
 /// 复制本地文件（云同步冲突副本从暂存区落位；字节不经 IPC）。目标父目录
 /// 自动创建。
+///
+/// SECURITY (Q9)：`from`（appData 暂存区）与 `to`（工作区落位）都先过圈禁
+/// 校验再动盘。`to` 允许不存在——is_allowed 对不存在路径做词法匹配，无需
+/// 先创建目录再校验（那反而把校验变成了创建行为的跳板）。
 #[command]
-pub async fn local_copy_file(from: String, to: String) -> Result<(), String> {
+pub async fn local_copy_file(
+    app: tauri::AppHandle,
+    from: String,
+    to: String,
+) -> Result<(), String> {
     if from.trim().is_empty() || to.trim().is_empty() {
         return Err("复制路径为空".into());
     }
+    ensure_fs_path_confined(&app, Path::new(&from))?;
+    ensure_fs_path_confined(&app, Path::new(&to))?;
     if let Some(parent) = Path::new(&to).parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
@@ -579,5 +644,83 @@ mod tests {
         assert_eq!(urlencode("a#b&c=d e"), "a%23b%26c%3Dd%20e");
         assert_eq!(urlencode("笔记 .md"), "%E7%AC%94%E8%AE%B0%20.md");
         assert_eq!(urlencode("a'b(c)"), "a%27b%28c%29");
+    }
+
+    // ---- Q9：trash_file / local_copy_file 路径圈禁（纯函数部分）--------------
+    //
+    // 真正的 ensure_fs_path_confined 需要 AppHandle（运行时 fs scope），单测
+    // 无法构造；圈禁逻辑全部下沉到 is_fs_path_confined，用谓词模拟 scope。
+
+    /// 每个测试一个独立临时目录（并行不冲突；零依赖纪律——不引入 tempfile）。
+    fn q9_temp_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("mditor-q9-{tag}-{}", std::process::id()));
+        fs::create_dir_all(&d).expect("构造临时目录失败");
+        d
+    }
+
+    /// 合法路径通过：已授权工作区内的文件（含子目录深处的），以及 appData
+    /// 内部路径（scope 谓词恒假的 sync 暂存区场景——local_copy_file 的 from）。
+    #[test]
+    fn q9_allows_paths_inside_granted_root_or_app_data() {
+        let ws = q9_temp_dir("ws-ok");
+        let app_data = q9_temp_dir("appdata-ok");
+        let granted = |p: &Path| p.starts_with(&ws);
+        assert!(is_fs_path_confined(
+            &ws.join("notes/a.md"),
+            &app_data,
+            granted
+        ));
+        assert!(is_fs_path_confined(
+            &ws.join("deep/sub/b.md"),
+            &app_data,
+            granted
+        ));
+        assert!(is_fs_path_confined(
+            &app_data.join("sync/tmp/冲突副本.md"),
+            &app_data,
+            |_: &Path| false
+        ));
+        let _ = fs::remove_dir_all(&ws);
+        let _ = fs::remove_dir_all(&app_data);
+    }
+
+    /// `..` 逃逸一律拒绝——scope 谓词恒真也短路：不依赖 scope 实现是否解析
+    /// `..`（glob `<root>/**` 词法上能吞下 `../x`，见 is_allowed 源码）。
+    #[test]
+    fn q9_rejects_parent_dir_traversal_even_when_scope_would_allow() {
+        let ws = q9_temp_dir("ws-dotdot");
+        let app_data = q9_temp_dir("appdata-dotdot");
+        assert!(!is_fs_path_confined(
+            &ws.join("../escaped.md"),
+            &app_data,
+            |_: &Path| true
+        ));
+        assert!(!is_fs_path_confined(
+            &app_data.join("../../evil.bat"),
+            &app_data,
+            |_: &Path| true
+        ));
+        let _ = fs::remove_dir_all(&ws);
+        let _ = fs::remove_dir_all(&app_data);
+    }
+
+    /// 圈外路径拒绝：同盘但不在任何授权根内 / appData 根本身（只放行严格
+    /// 内部路径）/ 相对路径（不匹配任何绝对授权模式，含被攻破渲染进程拿
+    /// CWD 相对路径碰运气的场景）。
+    #[test]
+    fn q9_rejects_paths_outside_all_authorized_roots() {
+        let ws = q9_temp_dir("ws-out");
+        let app_data = q9_temp_dir("appdata-out");
+        let granted = |p: &Path| p.starts_with(&ws);
+        let outside = std::env::temp_dir().join("mditor-q9-elsewhere-zz/x.md");
+        assert!(!is_fs_path_confined(&outside, &app_data, granted));
+        assert!(!is_fs_path_confined(&app_data, &app_data, |_: &Path| false));
+        assert!(!is_fs_path_confined(
+            Path::new("notes/a.md"),
+            &app_data,
+            granted
+        ));
+        let _ = fs::remove_dir_all(&ws);
+        let _ = fs::remove_dir_all(&app_data);
     }
 }

@@ -92,6 +92,35 @@ const tracker = new AnomalyTracker();
 const heartbeats: HeartbeatPoint[] = [];
 const alertSubs = new Set<(a: DevAnomaly) => void>();
 
+/* --------------------------------------------------------------------------
+ * 发射侧门控（Q1a，第五批）：此前「记录器入口早退」只挡住落盘/订阅侧，
+ * 各总线发射函数（annoEmit / annoCount / sysEmit / sysCount / tracedIo 的
+ * 遥测部分）在生产路径仍无条件记账。现在由本谓词统一门控：
+ *   * 记录器开着（enabled）或批注诊断面板开着（annoDiagPanel 设置，
+ *     App 经 setDiagPanelOpen 同步）——任一为真才记录；
+ *   * 双关闭时发射侧早退，热路径不再付事件组装与记账成本；
+ *   * 读取侧（events/counters/订阅/快照）一律不门控。
+ * lifecycleOwned：App 生命周期（enable/disable 至少被调过一次）接管门控
+ * 之前保持「记录」——独立嵌入与单测的库级默认行为不变（总线单测不经过
+ * App，直接断言环形缓冲/计数器）。注意 sysDebug/annoDebug/ipcTrace 对本
+ * 模块的 import 构成循环依赖，但双方只在函数体内互调（无模块初始化期
+ * 访问），ESM 活绑定下安全。
+ * ------------------------------------------------------------------------ */
+let diagPanelOpen = false;
+let lifecycleOwned = false;
+
+/** 发射侧是否需要记录（annoEmit/annoCount/sysEmit/sysCount/tracedIo 遥测
+ *  的函数头早退判定）。 */
+export function diagRecordingOn(): boolean {
+  return !lifecycleOwned || enabled || diagPanelOpen;
+}
+
+/** App 同步「批注诊断面板」设置项（Ctrl+Alt+D / 设置开关，独立于 devMode）
+ *  到门控——面板开着时事件流必须照常进环形缓冲，否则面板是死的。 */
+export function setDiagPanelOpen(open: boolean): void {
+  diagPanelOpen = open;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -443,6 +472,7 @@ function onHeartbeat(): void {
 
 /** 开启记录器（幂等；App 在 devMode 设置变化时调用）。 */
 export function enableDevRecorder(): void {
+  lifecycleOwned = true; // 发射侧门控自此由 App 生命周期接管
   if (enabled) return;
   try {
     enabled = true;
@@ -521,6 +551,7 @@ export function enableDevRecorder(): void {
 
 /** 关闭记录器（幂等）：全退订 + 移除钩子 + 冲尾批。 */
 export function disableDevRecorder(): void {
+  lifecycleOwned = true; // 同上：哪怕从未开过，也让门控按「双关闭」收敛
   if (!enabled) return;
   try {
     enabled = false;

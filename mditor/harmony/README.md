@@ -177,7 +177,7 @@ harmony/
     │   ├── pages/Index.ets            # ArkWeb 壳：注入引导/端口投递/console 看门狗/图片拦截
     │   ├── bridge/                    # Bridge(分发+重载清理钩子) Registry DialogBridge HostContext
     │   ├── ai/AiBridge.ets            # AI 四命令（SSE 代理，契约对齐 ai.rs）
-    │   ├── net/S3Bridge.ets           # S3 六命令（手写 SigV4 + ListObjectsV2 XML）
+    │   ├── net/S3Bridge.ets           # S3 八命令（手写 SigV4 + ListObjectsV2 XML；v4.16.0 增 s3_put_file/s3_get_file 文件通道）
     │   ├── io/                        # UriMapper FileManager(+回收站) AssetResponder WatchManager
     │   └── store/SettingsStore.ets    # filesDir/mditor.json（与桌面同格式）
     └── resources/rawfile/web/         # vite 产物（gitignore，脚本拷贝）

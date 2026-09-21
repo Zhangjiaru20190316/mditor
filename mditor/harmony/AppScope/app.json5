@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.mditor.app",
     "vendor": "mditor",
-    "versionCode": 1001600,
-    "versionName": "4.16.0",
+    "versionCode": 1001700,
+    "versionName": "4.17.0",
     "icon": "$media:app_icon",
     "label": "$string:app_name"
   }

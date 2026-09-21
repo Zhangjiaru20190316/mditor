@@ -1,15 +1,10 @@
 // Shared types for the Mditor frontend.
+// Q4「types 必是类型」拆分（第五批）：本文件只放纯类型（interface / type）。
+// 运行时默认值与预设数据在 ./defaults（DEFAULT_SETTINGS / *_PRESETS /
+// SYNC_PROVIDERS / EMPTY_MARKS / isDarkTheme 等），设置归一与切片函数在
+// ./settingsNormalize（normalizeSyncSettings / pickEditorSettings）。
 
 export type Theme = "light" | "dark" | "sepia" | "claude" | "claude-dark" | "ios" | "ios-dark";
-
-/**
- * 深色主题判定（单一事实源）：dark / claude-dark / ios-dark 三个深色值。
- * 此前 App（PNG 导出底色）与 MarkdownText（data-md-theme）各自手工枚举
- * 三连判断，新增深色主题时容易漏改一处——统一走本谓词。
- */
-export function isDarkTheme(theme: Theme): boolean {
-  return theme === "dark" || theme === "claude-dark" || theme === "ios-dark";
-}
 
 /**
  * 动效强度三档（v4.1 动效体系）：
@@ -94,61 +89,6 @@ export interface AiProviderPreset {
   keyHint?: string;
 }
 
-/** Built-in provider templates. Selecting one in settings pre-fills the URL. */
-export const AI_PROVIDERS: AiProviderPreset[] = [
-  {
-    id: "openai",
-    name: "OpenAI",
-    baseUrl: "https://api.openai.com/v1",
-    defaultModel: "gpt-4o-mini",
-    needsKey: true,
-    keyHint: "sk-...",
-  },
-  {
-    id: "deepseek",
-    name: "DeepSeek 深度求索",
-    baseUrl: "https://api.deepseek.com/v1",
-    defaultModel: "deepseek-chat",
-    needsKey: true,
-    keyHint: "sk-...",
-  },
-  {
-    id: "glm",
-    name: "智谱 GLM",
-    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    defaultModel: "glm-4-flash",
-    needsKey: true,
-    keyHint: "xxx.yyy",
-  },
-  {
-    id: "moonshot",
-    name: "Moonshot Kimi",
-    baseUrl: "https://api.moonshot.cn/v1",
-    defaultModel: "moonshot-v1-8k",
-    needsKey: true,
-    keyHint: "sk-...",
-  },
-  {
-    id: "openrouter",
-    name: "OpenRouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    defaultModel: "openai/gpt-4o-mini",
-    needsKey: true,
-    keyHint: "sk-or-...",
-  },
-  {
-    id: "ollama",
-    name: "Ollama (本地)",
-    baseUrl: "http://localhost:11434/v1",
-    defaultModel: "llama3.1",
-    needsKey: false,
-  },
-];
-
-export const AI_PROVIDER_BY_ID: Record<string, AiProviderPreset> = Object.fromEntries(
-  AI_PROVIDERS.map((p) => [p.id, p])
-);
-
 /* -------------------------------------------------------------------------- */
 /* 云同步（v4.12）：用户自带 S3 兼容对象存储（BYO storage）                      */
 /* -------------------------------------------------------------------------- */
@@ -156,6 +96,7 @@ export const AI_PROVIDER_BY_ID: Record<string, AiProviderPreset> = Object.fromEn
 /**
  * S3 服务商预设。仅用于「预填」endpoint / region / 寻址风格——预填后用户仍可
  * 改（各家控制台信息为准）；不引入任何厂商绑定，前端不出现 SDK 概念。
+ * 预设数据本体（SYNC_PROVIDERS）在 ./defaults。
  */
 export interface S3ProviderPreset {
   id: "qiniu" | "aliyun-oss" | "cloudflare-r2" | "minio" | "aws" | "custom";
@@ -167,54 +108,6 @@ export interface S3ProviderPreset {
   /** path-style 寻址的默认值（预填用）。 */
   pathStyleDefault: boolean;
 }
-
-/** 内置 S3 兼容服务商预设（v4.12 云同步；均以各厂商控制台实际信息为准）。 */
-export const SYNC_PROVIDERS: S3ProviderPreset[] = [
-  {
-    id: "qiniu",
-    name: "七牛云 Kodo",
-    endpointTemplate: "https://s3.{region}.qiniucs.com",
-    regionHint: "cn-east-1（以控制台为准）",
-    pathStyleDefault: false,
-  },
-  {
-    id: "aliyun-oss",
-    name: "阿里云 OSS",
-    endpointTemplate: "https://oss-{region}.aliyuncs.com",
-    regionHint: "cn-hangzhou",
-    pathStyleDefault: false,
-  },
-  {
-    id: "cloudflare-r2",
-    name: "Cloudflare R2",
-    endpointTemplate: "https://{accountId}.r2.cloudflarestorage.com",
-    regionHint: "auto（固定）",
-    pathStyleDefault: true,
-  },
-  {
-    id: "minio",
-    name: "MinIO / 自建",
-    regionHint: "us-east-1（任意）",
-    pathStyleDefault: true,
-  },
-  {
-    id: "aws",
-    name: "AWS S3",
-    // endpoint 留空 = 使用 AWS 默认端点（按 region 自动构造）。
-    regionHint: "us-east-1",
-    pathStyleDefault: false,
-  },
-  {
-    id: "custom",
-    name: "自定义",
-    pathStyleDefault: false,
-  },
-];
-
-/** 合法 provider id 集合（string 宽类型——归一入口要校验未知字符串）。 */
-export const SYNC_PROVIDER_IDS: ReadonlySet<string> = new Set<string>(
-  SYNC_PROVIDERS.map((p) => p.id as string)
-);
 
 /**
  * 云同步设置（v4.12）。默认全关——本地优先红线：不开启就零网络、零行为
@@ -245,84 +138,6 @@ export interface SyncSettings {
   autoSyncIntervalMin: number;
   /** 启动后自动同步一次，默认 true。 */
   syncOnStart: boolean;
-}
-
-/** 云同步默认值：全关、无凭证——默认零网络行为。 */
-export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
-  enabled: false,
-  provider: "custom",
-  endpoint: "",
-  region: "us-east-1",
-  bucket: "",
-  accessKeyId: "",
-  secretAccessKey: "",
-  sessionToken: "",
-  pathStyle: false,
-  prefix: "mditor/",
-  autoSync: true,
-  autoSyncIntervalMin: 10,
-  syncOnStart: true,
-};
-
-/**
- * sync 设置的幂等归一（migrateSettings 每次加载都会跑）：缺失补默认、
- * prefix 规范化（非空时以 / 结尾且不以 / 开头）、非法 interval 归 10、
- * 非法 provider 归 custom。纯数据操作，鸿蒙运行同样无副作用。
- */
-export function normalizeSyncSettings(raw: unknown): SyncSettings {
-  const d = DEFAULT_SYNC_SETTINGS;
-  const s = (raw && typeof raw === "object" ? raw : {}) as Partial<SyncSettings>;
-  const str = (v: unknown, fallback: string): string =>
-    typeof v === "string" ? v : fallback;
-  const bool = (v: unknown, fallback: boolean): boolean =>
-    typeof v === "boolean" ? v : fallback;
-
-  // prefix：去空白 → 去前导 / → 非空补尾随 /（空串 = 无前缀，合法）。
-  let prefix = str(s.prefix, d.prefix).trim().replace(/^\/+/, "");
-  if (prefix !== "" && !prefix.endsWith("/")) prefix += "/";
-
-  const interval = Number(s.autoSyncIntervalMin);
-  return {
-    enabled: bool(s.enabled, d.enabled),
-    provider:
-      typeof s.provider === "string" && SYNC_PROVIDER_IDS.has(s.provider)
-        ? s.provider
-        : d.provider,
-    endpoint: str(s.endpoint, d.endpoint),
-    region: str(s.region, d.region),
-    bucket: str(s.bucket, d.bucket),
-    accessKeyId: str(s.accessKeyId, d.accessKeyId),
-    secretAccessKey: str(s.secretAccessKey, d.secretAccessKey),
-    sessionToken: str(s.sessionToken, d.sessionToken ?? ""),
-    pathStyle: bool(s.pathStyle, d.pathStyle),
-    prefix,
-    autoSync: bool(s.autoSync, d.autoSync),
-    autoSyncIntervalMin:
-      Number.isFinite(interval) && interval >= 0 ? Math.floor(interval) : d.autoSyncIntervalMin,
-    syncOnStart: bool(s.syncOnStart, d.syncOnStart),
-  };
-}
-
-/**
- * Generate a fresh AiModelConfig, optionally seeded from a provider preset
- * (prefills baseUrl + a default model). The id is unique enough for React keys.
- */
-export function newAiModelId(): string {
-  // Prefer crypto.randomUUID when available; fall back to a timestamp/random id.
-  const c = globalThis.crypto as Crypto | undefined;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  return `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-export function emptyAiModel(preset?: AiProviderPreset): AiModelConfig {
-  return {
-    id: newAiModelId(),
-    name: preset ? preset.name : "新模型",
-    provider: preset ? preset.id : "custom",
-    baseUrl: preset ? preset.baseUrl : "",
-    apiKey: "",
-    model: preset ? preset.defaultModel : "",
-  };
 }
 
 export interface Settings {
@@ -554,23 +369,13 @@ export interface ActiveMarks {
   color: string | null;
 }
 
-/** 空标记（无选区/编辑器未就绪）。共享常量——调用方只读；需要可变副本时
- *  展开 `{ ...EMPTY_MARKS }`。收敛此前 4 处重复字面量。 */
-export const EMPTY_MARKS: ActiveMarks = {
-  bold: false,
-  highlight: false,
-  italic: false,
-  strike: false,
-  code: false,
-  color: null,
-};
-
 // ---- P10：设置窄切片 ---------------------------------------------------------
 //
 // Editor / AiPanel 是最重的两棵 memo 子树；settings 对象任一字段变化（如
 // sidebarWidth）都会生成新引用、打穿 memo 造成整树 reconcile。切片类型 =
 // 两组件（含 useMilkdown）实际消费字段的全量盘点；改消费字段时同步更新，
-// tsc 会强制（缺字段类型错）。
+// tsc 会强制（缺字段类型错）。切片提取函数 pickEditorSettings 在
+// ./settingsNormalize。
 
 /** Editor（含 useMilkdown：applyProseVars 5 个排版字段 + settingsRef 3 个
  *  行为字段）实际消费的设置切片。 */
@@ -589,122 +394,6 @@ export interface EditorSettings {
   bigDocPerformance: boolean;
   bigDocViewport: boolean;
 }
-
-export function pickEditorSettings(s: Settings): EditorSettings {
-  return {
-    autosaveIntervalMs: s.autosaveIntervalMs,
-    memoryGuard: s.memoryGuard,
-    memoryGuardThresholdMb: s.memoryGuardThresholdMb,
-    spellcheck: s.spellcheck,
-    typewriterMode: s.typewriterMode,
-    fontFamily: s.fontFamily,
-    monoFontFamily: s.monoFontFamily,
-    fontSize: s.fontSize,
-    lineHeight: s.lineHeight,
-    paragraphSpacing: s.paragraphSpacing,
-    mathMacros: s.mathMacros,
-    bigDocPerformance: s.bigDocPerformance,
-    bigDocViewport: s.bigDocViewport,
-  };
-}
-
-export const DEFAULT_SETTINGS: Settings = {
-  theme: "light",
-  motionLevel: "balanced",
-  fontFamily:
-    '"Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
-  monoFontFamily:
-    '"JetBrains Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace',
-  fontPreset: "system",
-  monoFontPreset: "jetbrains",
-  fontSize: 16,
-  lineHeight: 1.75,
-  paragraphSpacing: 16,
-  sidebarWidth: 260,
-  aiPanelWidth: 360,
-  autosaveIntervalMs: 30_000,
-  focusMode: false,
-  typewriterMode: false,
-  spellcheck: true,
-  annoDiagPanel: false,
-  devMode: false,
-  bigDocPerformance: false,
-  bigDocViewport: false,
-  mathAutoNumber: false,
-  mathMacros: "",
-  memoryGuard: true,
-  memoryGuardThresholdMb: 2500,
-  customCssPath: "",
-  aiProvider: "custom",
-  aiBaseUrl: "https://api.openai.com/v1",
-  aiApiKey: "",
-  aiModel: "gpt-4o-mini",
-  aiTemperature: 0.7,
-  aiMaxTokens: 4096,
-  aiTopP: 1,
-  aiSystemPrompt: "",
-  aiContextStrategy: "standard",
-  aiHistoryBudgetTokens: 8000,
-  aiAnnotateMaxChars: 4000,
-  aiThinkingStrength: "off",
-  aiPanelMode: "chat",
-  agentWriteMode: "confirm",
-  aiModels: [
-    {
-      id: "default",
-      name: "默认模型",
-      provider: "custom",
-      baseUrl: "https://api.openai.com/v1",
-      apiKey: "",
-      model: "gpt-4o-mini",
-    },
-  ],
-  aiActiveModelId: "default",
-  aiQuickActions: [
-    { label: "总结全文", prompt: "请用 3-5 个要点总结这篇笔记。", scope: "full" },
-    {
-      label: "润色全文",
-      prompt: "请润色这篇笔记的措辞，使其更通顺专业，输出完整的润色后全文（仅 Markdown）。",
-      scope: "full",
-    },
-    {
-      label: "纠正错别字",
-      prompt: "请只纠正这篇笔记中的错别字和标点错误，不要改动内容与格式，输出完整全文。",
-      scope: "full",
-    },
-    {
-      label: "扩写",
-      prompt: "请在保持原意的前提下扩写这篇笔记，补充更多细节，输出完整全文。",
-      scope: "full",
-    },
-    {
-      label: "润色选区",
-      prompt: "请润色以下选中的文字，使其更通顺专业，只输出润色后的片段（纯文本或 Markdown）。\n\n{selection}",
-      scope: "selection",
-    },
-    {
-      label: "翻译为英文",
-      prompt: "请把以下选中的文字翻译成英文，只输出译文。\n\n{selection}",
-      scope: "selection",
-    },
-    {
-      label: "解释",
-      prompt: "请解释以下选中的内容，条理清晰地说明其含义。\n\n{selection}",
-      scope: "selection",
-    },
-  ],
-  excludedPaths: [],
-  vaultIndexEnabled: true,
-  wikiLinksEnabled: true,
-  bibliographyPath: "",
-  citationStyle: "numeric",
-  flashcardsEnabled: true,
-  ragEnabled: false,
-  ragEmbedBaseUrl: "",
-  ragEmbedApiKey: "",
-  ragEmbedModel: "",
-  sync: { ...DEFAULT_SYNC_SETTINGS },
-};
 
 /* -------------------------------------------------------------------------- */
 /* 块级右键菜单（BlockContextMenu）共享类型                                      */
@@ -767,8 +456,8 @@ export interface RecentFile {
 
 /**
  * One heading of the LIVE ProseMirror document, as extracted by the editor
- * (useMilkdown). `id` is Milkdown's own attrs.id — i.e. exactly the id on the
- * rendered <hN> — so outline jumps can never diverge from the DOM anchor.
+ * (useMilkdown). `id` is Milkdown's own attrs.id — i.e. exactly the id on
+ * the rendered <hN> — so outline jumps can never diverge from the DOM anchor.
  */
 export interface FlatHeading {
   level: number; // 1..6
@@ -825,75 +514,10 @@ export interface TabItem {
 /**
  * 正文字体预设。选择某个预设会一次性写入 fontFamily，并把 fontPreset 记录下来
  * （供设置面板下拉框回显；用户随后手动改字体栈会把 fontPreset 置空为「自定义」）。
+ * 预设数据本体（FONT_PRESETS / MONO_FONT_PRESETS）在 ./defaults。
  */
 export interface FontPreset {
   id: string;
   name: string;
   stack: string;
 }
-
-export const FONT_PRESETS: FontPreset[] = [
-  {
-    id: "system",
-    name: "系统默认",
-    stack:
-      '"Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
-  },
-  {
-    id: "ios",
-    name: "iOS SF 风格",
-    stack:
-      '-apple-system, "SF Pro Text", "PingFang SC", "Segoe UI", "HarmonyOS Sans SC", sans-serif',
-  },
-  {
-    id: "claude",
-    name: "Claude 风格",
-    stack:
-      'ui-sans-serif, -apple-system, "Segoe UI", system-ui, "PingFang SC", "Microsoft YaHei", sans-serif',
-  },
-  {
-    id: "serif",
-    name: "衬线优雅",
-    stack:
-      '"Source Han Serif SC", "Noto Serif SC", "Songti SC", Georgia, serif',
-  },
-  {
-    id: "wenkai",
-    name: "霞鹜文楷",
-    stack: '"LXGW WenKai", "Source Han Sans SC", system-ui, sans-serif',
-  },
-  {
-    id: "sans",
-    name: "思源黑体",
-    stack: '"Source Han Sans SC", "Noto Sans SC", system-ui, sans-serif',
-  },
-];
-
-/** 代码字体预设。 */
-export const MONO_FONT_PRESETS: FontPreset[] = [
-  {
-    id: "jetbrains",
-    name: "JetBrains Mono",
-    stack: '"JetBrains Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace',
-  },
-  {
-    id: "cascadia",
-    name: "Cascadia Code",
-    stack: '"Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", Menlo, monospace',
-  },
-  {
-    id: "firacode",
-    name: "Fira Code",
-    stack: '"Fira Code", "JetBrains Mono", Consolas, "SF Mono", Menlo, monospace',
-  },
-  {
-    id: "sfmono",
-    name: "SF Mono",
-    stack: '"SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, Menlo, monospace',
-  },
-  {
-    id: "consolas",
-    name: "Consolas",
-    stack: 'Consolas, "JetBrains Mono", "Cascadia Code", "SF Mono", Menlo, monospace',
-  },
-];

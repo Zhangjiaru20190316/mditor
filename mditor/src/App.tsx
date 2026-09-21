@@ -1,7 +1,7 @@
 // App shell: layout (sidebar + editor + status), menu event handling, global
 // shortcuts, and the wiring between editor / file system / export / clipboard.
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useDebouncedValue } from "./hooks/useDebouncedValue";
 import { detectRuntime, getAdapter } from "./platform";
 import { Editor, type EditorHandle } from "./components/Editor";
@@ -12,8 +12,6 @@ import { AiPanel, type AiPanelHandle, type ApplyChangesPayload } from "./compone
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { SelectionToolbar } from "./components/SelectionToolbar";
 import { AnnotationPopover } from "./components/AnnotationPopover";
-import { AnnoDiagnostics } from "./components/AnnoDiagnostics";
-import { DevAlerts } from "./components/DevAlerts";
 import { setPendingJumpAnno } from "./lib/annoHandoff";
 import { noteScrollWrite } from "./lib/scrollDebug";
 import { noteUserAction, setDevDocInfoProvider } from "./lib/devContext";
@@ -22,6 +20,7 @@ import { noteOpError } from "./lib/opDebug";
 import {
   disableDevRecorder,
   enableDevRecorder,
+  setDiagPanelOpen,
 } from "./lib/devMode";
 import { AnnotationList } from "./components/AnnotationList";
 import { SearchBar } from "./components/SearchBar";
@@ -35,7 +34,6 @@ import { TemplateModal } from "./components/TemplateModal";
 import { LinkDialog } from "./components/LinkDialog";
 import { renderTemplate, type DocTemplate } from "./lib/templates";
 import type { SearchHit } from "./lib/workspaceSearch";
-import { persistImage } from "./lib/imageManager";
 import {
   FileTreeIcon,
   OutlineIcon,
@@ -55,6 +53,7 @@ import { useFile } from "./hooks/useFile";
 import { useResizable } from "./hooks/useResizable";
 import { useAnnotations } from "./hooks/useAnnotations";
 import { useSwitchFlow, nextPaint } from "./hooks/useSwitchFlow";
+import { useMenuCommands } from "./hooks/useMenuCommands";
 import { findAnnotationRefLine, parseAnnotations } from "./lib/annotations";
 import { resolveCodeLines, highlightCodeLines } from "./lib/codeAnno";
 import { findHeadingLine } from "./lib/outline";
@@ -97,7 +96,6 @@ import { takeHealSnapshot } from "./lib/session";
 import {
   formatWindowTitle,
   moveTabToNewWindow,
-  openEmptyNewWindow,
   openPathInNewWindow,
   parseBootParams,
   takeHandoff,
@@ -106,10 +104,23 @@ import { countWords } from "./lib/textStats";
 import { isBigDoc } from "./lib/memory";
 import { motionEnabled } from "./lib/motion";
 import type { FlatHeading, OutlineNode, Settings, TabItem } from "./types";
-import { EMPTY_MARKS, isDarkTheme } from "./types";
+import { EMPTY_MARKS, isDarkTheme } from "./defaults";
 import type { EditorSettings } from "./types";
 
 type SidebarTab = "tree" | "outline" | "recent" | "annotations" | "search" | "links";
+
+// Q1b：诊断面板组件懒加载——仅 devMode/诊断面板打开时才需要，平时不进
+// 主包也不付初始化成本。两组件均为具名导出（memo 包装），用 then 适配
+// lazy 需要的 default 形态；挂载点 Suspense fallback 为 null（本来就是
+// 条件渲染的面板，加载瞬间保持 DOM 为空，行为不变）。
+const AnnoDiagnostics = lazy(() =>
+  import("./components/AnnoDiagnostics").then((m) => ({
+    default: m.AnnoDiagnostics,
+  }))
+);
+const DevAlerts = lazy(() =>
+  import("./components/DevAlerts").then((m) => ({ default: m.DevAlerts }))
+);
 
 /** 路径 → 标签匹配键（Windows 大小写不敏感 + 分隔符归一）。 */
 function tabPathKey(p: string): string {
@@ -244,6 +255,13 @@ export default function App() {
     return () => disableDevRecorder();
   }, [settingsApi.settings.devMode]);
 
+  // Q1a 发射侧门控：批注诊断面板（Ctrl+Alt+D / 设置开关，独立于 devMode）
+  // 开着时事件总线必须照常记录，否则面板拿不到实时事件流；状态同步给
+  // lib/devMode 的 diagRecordingOn 谓词。
+  useEffect(() => {
+    setDiagPanelOpen(settingsApi.settings.annoDiagPanel);
+  }, [settingsApi.settings.annoDiagPanel]);
+
   // v4.3 诊断上下文：文档概况 provider（异常落盘/心跳快照时才现算一次，
   // 常驻零成本）；liveMarkdown 用 ref 镜像避免 effect 频繁重注册。
   const liveMarkdownRef = useRef(liveMarkdown);
@@ -263,6 +281,7 @@ export default function App() {
           images: (md.match(/!\[/g) ?? []).length,
         };
       } catch {
+        /* 惰性快照失败：不带文档概况返回 null（诊断富集缺一项，不阻断异常本体记录） */
         return null;
       }
     });
@@ -591,6 +610,7 @@ export default function App() {
           try {
             await fa.writeOnly(() => getCurrentContent());
           } catch {
+            /* 写盘失败：置标记走「无处安放/写失败」最终确认，绝不静默丢用户内容 */
             savedFailed = true;
           }
         } else {
@@ -604,6 +624,7 @@ export default function App() {
           const { saveMd } = await import("./lib/tauriFs");
           await saveMd(t.path, t.content);
         } catch {
+          /* 标签快照落盘失败：置标记交由关闭确认兜底（未保存内容不静默丢弃） */
           savedFailed = true;
         }
       } else {
@@ -1311,18 +1332,7 @@ export default function App() {
   }, []); // stable
   // 注：V3.6 起标签页切换/新建/删除都经 fileApi 的 onLoaded 路径推送内容，
   // 镜像由 onInput 自行更新；旧的 resetLiveMd（强制清空镜像）不再需要。
-
-  // ----- menu events from Rust (registered ONCE, reads latest hooks via refs) -----
-  // macOS 保留原生菜单，其点击以 `menu` 事件转发到这里；Windows 的前端菜单栏
-  // （MenuBar）经 onDispatch 走同一条路径 —— 两条入口行为完全一致。
-  useEffect(() => {
-    const unlistenP = getAdapter().app.listen<string>("menu", (ev) => {
-      dispatchMenuRef.current(ev.payload);
-    });
-    return () => {
-      unlistenP.then((fn) => fn());
-    };
-  }, []); // ← register once — never re-attach
+  // （Rust `menu` 事件监听已随 dispatchMenu 迁入 useMenuCommands。）
 
   // ----- v4.8 多窗口：整 app 退出广播 ----------------------------------------
   // 「退出」菜单 emit("app-quit-request")，各窗（含发起窗）各自 close() 走
@@ -1427,110 +1437,8 @@ export default function App() {
     };
   }, [openPath]);
 
-  // ----- global keyboard shortcuts (registered ONCE) -----
-  // Ctrl+S/N/O/I 等与菜单同名的动作统一转发 dispatchMenu（单一实现来源），
-  // 这里只保留事件层职责：preventDefault 与没有菜单 id 的键（Ctrl+F/H 搜索、
-  // Ctrl+\ 侧边栏、Esc 焦点模式、F11）。
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      // Esc 退出焦点模式（仅焦点模式开启时拦截）
-      if (e.key === "Escape") {
-        if (settingsRef.current.settings.focusMode) {
-          e.preventDefault();
-          void settingsRef.current.toggleFocus();
-        }
-        return;
-      }
-      // F11 全屏（与菜单「视图 → 全屏」同一条 dispatch 路径）
-      if (e.key === "F11") {
-        e.preventDefault();
-        dispatchMenuRef.current("view_fullscreen");
-        return;
-      }
-      const mod = e.ctrlKey || e.metaKey;
-      if (!mod) return;
-      switch (e.key.toLowerCase()) {
-        case "s":
-          e.preventDefault();
-          dispatchMenuRef.current(e.shiftKey ? "file_save_as" : "file_save");
-          break;
-        case "f":
-          e.preventDefault();
-          if (e.altKey) {
-            // Ctrl+Alt+F：AI 一键修复 Markdown 格式（v4.5）。
-            dispatchMenuRef.current("format_fix_md");
-          } else if (e.shiftKey) {
-            // Ctrl+Shift+F：跨文件搜索（V3.6）。
-            setSidebarOpen(true);
-            setSidebarTab("search");
-          } else {
-            setSearchOpen(true);
-          }
-          break;
-        case "h":
-          // Ctrl/Cmd+Shift+H toggles highlight (handled by the editor surface);
-          // only plain Ctrl/Cmd+H opens find/replace.
-          if (e.shiftKey) return;
-          e.preventDefault();
-          setSearchOpen(true);
-          break;
-        case "n":
-          e.preventDefault();
-          // v4.8 多窗口：Ctrl/Cmd+Shift+N 新建窗口；Ctrl+N 仍新建标签，不冲突。
-          if (e.shiftKey) dispatchMenuRef.current("file_new_window");
-          else dispatchMenuRef.current("file_new");
-          break;
-        case "o":
-          e.preventDefault();
-          dispatchMenuRef.current(e.shiftKey ? "file_open_folder" : "file_open");
-          break;
-        case "p":
-          // Ctrl+P：快速切换器（v4.7）。浏览器打印无默认快捷键冲突（Ctrl+P
-          // 在 WebView2 默认打印，编辑器场景统一让位给文件跳转）。
-          e.preventDefault();
-          setQuickOpen(true);
-          break;
-        case "\\":
-          e.preventDefault();
-          setSidebarOpen((o) => !o);
-          break;
-        case "d":
-          // Ctrl+Alt+D：批注诊断面板（v3.9.3）——设置项持久化，与设置
-          // 面板的开关同源。仅 Alt 组合生效，避免占用 Ctrl+D。
-          if (e.altKey) {
-            e.preventDefault();
-            const s = settingsRef.current;
-            void s.update({ annoDiagPanel: !s.settings.annoDiagPanel });
-          }
-          break;
-        case "i":
-          e.preventDefault();
-          dispatchMenuRef.current("view_ai_assistant");
-          break;
-        case "tab":
-          // Ctrl+Tab / Ctrl+Shift+Tab：多标签页轮换（V3.6）。
-          e.preventDefault();
-          {
-            const cur = tabsRef.current;
-            if (cur.length > 1) {
-              const idx = cur.findIndex((t) => t.key === activeKeyRef.current);
-              const next = e.shiftKey
-                ? (idx - 1 + cur.length) % cur.length
-                : (idx + 1) % cur.length;
-              void activateTabRef.current(cur[next].key);
-            }
-          }
-          break;
-        case "w":
-          // Ctrl+W：关闭当前标签页（V3.6；Tauri 窗口未占用该组合键）。
-          e.preventDefault();
-          void closeTabRef.current(activeKeyRef.current);
-          break;
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []); // ← register once
+  // （全局快捷键监听（registered ONCE）已随 dispatchMenu 迁入 useMenuCommands：
+  // Ctrl+S/N/O/I 等与菜单同名的动作在那里统一转发 dispatchMenu。）
 
   // 状态栏闪现消息：设置文本并安排自动清除。每次调用先清掉前一个定时器，
   // 因此快速连续触发（连续保存 / 频繁外部修改）不会堆积定时器，旧 closure
@@ -1803,278 +1711,44 @@ export default function App() {
   const doExportRef = useRef(doExport);
   doExportRef.current = doExport;
 
-  // ----- 统一菜单分发器：原生 `menu` 事件（macOS）与前端菜单栏（Windows）共用 -----
-  // 稳定回调（空依赖）：fileApi/settings 经既有 ref 读取；不稳定的 doExport 经
-  // 上面的 doExportRef 转发；其余依赖（flashStatus/doCopyRich/doCheckUpdate/
-  // resetLiveMd/setter）本身都是稳定引用。
-  const dispatchMenu = useCallback((id: string) => {
-    const fa = fileApiRef.current;
-    const sa = settingsRef.current;
-    switch (id) {
-      case "file_new":
-        // 多标签页：新建 = 新的未命名标签，旧文档留在自己的标签里，无需确认。
-        newUntitledTab();
-        break;
-      case "file_new_template":
-        setTemplateOpen(true);
-        break;
-      case "file_new_window":
-        // v4.8 多窗口：新建空白窗口（菜单「新建窗口」/ Ctrl+Shift+N）。
-        void openEmptyNewWindow().catch((e) => {
-          noteOpError("new-window", e);
-          flashStatus("新建窗口失败", 5000);
-        });
-        break;
-      case "file_open":
-        void (async () => {
-          const ok = await fa.open();
-          if (ok) setRecentKey((k) => k + 1);
-        })();
-        break;
-      case "file_open_folder":
-        void replaceFolderFromDialog();
-        break;
-      case "file_add_folder":
-        void addFolderFromDialog();
-        break;
-      case "file_quick_open":
-        setQuickOpen(true);
-        break;
-      case "file_save":
-        // 乐观反馈：立即提示「已保存」，不等待落盘；失败时覆盖为「保存失败」。
-        // 保存成功后把内存内容推进全库索引（单文件增量，铁律 4）。
-        flashStatus("已保存");
-        {
-          const saved = editorRef.current?.getValue() ?? "";
-          const savedPath = fa.doc.path;
-          fa.save(() => saved)
-            .then(() => {
-              if (savedPath) vaultIndex.noteSaved(savedPath, saved);
-              // v4.12 云同步：保存成功链路挂防抖触发（autoSync 关闭时 no-op）。
-              syncTriggerRef.current?.onSaved();
-            })
-            .catch(() => flashStatus("保存失败", 5000));
-        }
-        break;
-      case "file_save_as":
-        {
-          const saved = editorRef.current?.getValue() ?? "";
-          void fa.saveAs(() => saved).then((ok) => {
-            // saveAs 成功后 doc.path 已更新为落盘路径（useFile.saveAs 语义）。
-            const p = ok ? fa.doc.path : null;
-            if (p) vaultIndex.noteSaved(p, saved);
-            if (ok) syncTriggerRef.current?.onSaved();
-          })
-          // 失败反馈对齐上方 file_save 分支的 .catch 风格。
-          .catch(() => flashStatus("另存为失败", 5000));
-        }
-        break;
-      case "file_sync_now":
-        // 手动同步统一走 sync-request 转发（D8）：doc 窗口由 main 引擎代执行；
-        // main 收到自己的 echo 由互斥挡住，不会双跑。
-        void getAdapter().app.emit("sync-request").catch(() => undefined);
-        break;
-      case "file_export_html":
-        void doExportRef.current("html");
-        break;
-      case "file_export_pdf":
-        void doExportRef.current("pdf");
-        break;
-      case "file_export_png":
-        void doExportRef.current("png");
-        break;
-      case "file_export_docx":
-        void doExportRef.current("docx");
-        break;
-      case "file_export_latex":
-        void doExportRef.current("latex");
-        break;
-      case "edit_insert_citation":
-        setCiteOpen(true);
-        break;
-      case "view_review":
-        setReviewOpen(true);
-        break;
-      case "edit_undo":
-        execOnEditor(editorRef.current, "undo");
-        break;
-      case "edit_redo":
-        execOnEditor(editorRef.current, "redo");
-        break;
-      case "edit_cut":
-        execOnEditor(editorRef.current, "cut");
-        break;
-      case "edit_copy":
-        execOnEditor(editorRef.current, "copy");
-        break;
-      case "edit_paste":
-        execOnEditor(editorRef.current, "paste");
-        break;
-      case "edit_select_all":
-        execOnEditor(editorRef.current, "selectAll");
-        break;
-      case "edit_copy_rich":
-        void doCopyRich();
-        break;
-      case "view_outline":
-        setSidebarOpen(true);
-        setSidebarTab("outline");
-        break;
-      case "view_filetree":
-        setSidebarOpen(true);
-        setSidebarTab("tree");
-        break;
-      case "view_focus":
-        void sa.toggleFocus();
-        break;
-      case "view_ai_assistant":
-        setAiOpen((o) => !o);
-        break;
-      case "view_fullscreen": {
-        const w = getAdapter().app.window;
-        void (async () => {
-          w.setFullscreen(!(await w.isFullscreen()));
-        })();
-        break;
-      }
-      case "theme_light":
-        void sa.setTheme("light");
-        break;
-      case "theme_dark":
-        void sa.setTheme("dark");
-        break;
-      case "theme_sepia":
-        void sa.setTheme("sepia");
-        break;
-      case "theme_claude":
-        void sa.setTheme("claude");
-        break;
-      case "theme_claude_dark":
-        void sa.setTheme("claude-dark");
-        break;
-      case "theme_ios":
-        void sa.setTheme("ios");
-        break;
-      case "theme_ios_dark":
-        void sa.setTheme("ios-dark");
-        break;
-      case "app_settings":
-        setSettingsOpen(true);
-        break;
-      case "app_about":
-        setAboutOpen(true);
-        break;
-      case "app_exit":
-        // v4.8 多窗口「退出」= 广播协议：emit("app-quit-request")（含自己），
-        // 各窗自行 close() 走现有 onCloseRequested → shutdownSequence（flush
-        // 3s + 未命名确认）→ forceClose 管线。任何窗口的用户取消（未命名脏
-        // 缓冲确认点「否」）→ 该窗留存、整个 app 保留——与浏览器一致；最后
-        // 一窗关闭时 forceClose 自然 exit。跨窗「一窗收尾中另一窗发起退出」
-        // 由各窗独立的 shutdownInFlightRef 串行消化，无需全局锁。
-        // 兜底：先挂 5s 硬退计时器再广播；本窗监听器收到事件（协议回路通）
-        // 即取消——计时器只在「广播丢包/监听器全挂」的病态场景触发，且确认
-        // 弹窗期间（监听器早已收到过事件）不会被误伤。
-        void (async () => {
-          quitFallbackTimerRef.current = window.setTimeout(() => {
-            quitFallbackTimerRef.current = undefined;
-            void getAdapter().app.exitApp(0).catch(() => {
-              /* 兜底路径不再连环重试 */
-            });
-          }, 5000);
-          try {
-            await getAdapter().app.emit("app-quit-request");
-          } catch (err) {
-            noteOpError("menu-exit-broadcast", err);
-            if (quitFallbackTimerRef.current !== undefined) {
-              window.clearTimeout(quitFallbackTimerRef.current);
-              quitFallbackTimerRef.current = undefined;
-            }
-            await forceCloseRef.current();
-          }
-        })();
-        break;
-      case "format_bold":
-        editorRef.current?.toggleBold();
-        editorRef.current?.find();
-        break;
-      case "format_highlight":
-        editorRef.current?.toggleHighlight();
-        editorRef.current?.find();
-        break;
-      case "format_italic":
-        editorRef.current?.toggleItalic();
-        editorRef.current?.find();
-        break;
-      case "format_strike":
-        editorRef.current?.toggleStrikethrough();
-        editorRef.current?.find();
-        break;
-      case "format_code":
-        editorRef.current?.toggleInlineCode();
-        editorRef.current?.find();
-        break;
-      case "format_fix_md": {
-        // 一键修复 Markdown 格式（v4.5）：打开 AI 面板并触发内置修复动作。
-        // 面板条件挂载（aiOpen && !focusMode），首次打开要等一帧才拿得到
-        // ref —— rAF 轮询与 onAskSelection 同模式。
-        setAiOpen(true);
-        let fixTries = 0;
-        const fireFix = () => {
-          const handle = aiPanelRef.current;
-          if (handle) handle.fixFormat();
-          else if (fixTries++ < 30) requestAnimationFrame(fireFix);
-        };
-        requestAnimationFrame(fireFix);
-        break;
-      }
-      case "insert_link":
-        setLinkDialogText(editorRef.current?.getSelection() ?? "");
-        setLinkDialogOpen(true);
-        break;
-      case "insert_image":
-        void (async () => {
-          try {
-            const picked = await getAdapter().dialog.pickOpenFile([
-              { name: "图片", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"] },
-            ]);
-            if (!picked || typeof picked !== "string") return;
-            const bytes = await getAdapter().fs.readFile(picked);
-            const name = picked.split(/[\\/]/).pop() ?? "image.png";
-            const r = await persistImage(
-              new File([bytes], name),
-              fileApiRef.current.doc.path
-            );
-            const alt = (name.replace(/\.[^.]+$/, "") || "图片").replace(/[[\]]/g, "");
-            editorRef.current?.insertAtCursor(`![${alt}](${r.ref})\n\n`);
-            editorRef.current?.find();
-          } catch {
-            /* 选择器取消 / 读取失败 — 静默忽略 */
-          }
-        })();
-        break;
-      case "insert_footnote":
-        editorRef.current?.insertFootnote();
-        editorRef.current?.find();
-        break;
-      case "view_typewriter":
-        void settingsRef.current.update((prev) => ({
-          typewriterMode: !prev.typewriterMode,
-        }));
-        break;
-      case "view_search":
-        setSidebarOpen(true);
-        setSidebarTab("search");
-        break;
-    }
-    // 全部依赖都是稳定 useCallback（doCopyRich←flashStatus、newUntitledTab←
-    // snapshotActiveTab←getCurrentContent、addFolder/replaceFolder←addWorkspaceRoot
-    // /replaceWorkspace←flashStatus+refreshRecentWs），列出只为满足
-    // exhaustive-deps —— dispatchMenu 的身份仍然不变。
-  }, [doCopyRich, flashStatus, newUntitledTab, addFolderFromDialog, replaceFolderFromDialog]); // ← stable — reads live state via refs
-  // 上面「注册一次」的事件监听（menu 事件 / 全局快捷键）声明在本回调之前，
-  // 但只在提交后才执行 —— 经 ref 镜像取调用时的最新 dispatchMenu。
-  const dispatchMenuRef = useRef(dispatchMenu);
-  dispatchMenuRef.current = dispatchMenu;
+  // ----- 菜单/快捷键层（Q2 拆分第一块 → hooks/useMenuCommands.ts）-------------
+  // 统一菜单分发器 dispatchMenu（264 行 switch）+ 「注册一次」的 Rust `menu`
+  // 事件监听 + 全局快捷键 effect 都在 hook 内原样运行；依赖面在此显式组装
+  // （render 期 ref 镜像 / setState setters / 稳定回调，全部每次渲染同一
+  // 引用，hook 内部的依赖数组得以维持拆分前原样：dispatchMenu 身份稳定、
+  // 监听只注册一次）。
+  const { dispatchMenu } = useMenuCommands({
+    fileApiRef,
+    settingsRef,
+    editorRef,
+    aiPanelRef,
+    syncTriggerRef,
+    quitFallbackTimerRef,
+    forceCloseRef,
+    doExportRef,
+    tabsRef,
+    activeKeyRef,
+    activateTabRef,
+    closeTabRef,
+    setSidebarOpen,
+    setSidebarTab,
+    setSearchOpen,
+    setQuickOpen,
+    setRecentKey,
+    setTemplateOpen,
+    setCiteOpen,
+    setReviewOpen,
+    setSettingsOpen,
+    setAboutOpen,
+    setAiOpen,
+    setLinkDialogText,
+    setLinkDialogOpen,
+    newUntitledTab,
+    flashStatus,
+    doCopyRich,
+    addFolderFromDialog,
+    replaceFolderFromDialog,
+  });
 
   const jumpToHeading = useCallback(
     (node: OutlineNode) => {
@@ -2835,6 +2509,16 @@ export default function App() {
           </button>
         </nav>
         <div className="sb-panel">
+          {/* Q6：侧边栏面板级错误边界——FileTree / Outline / RecentList /
+              WorkspaceSearch / LinksPanel / AnnotationList 任一渲染崩溃只
+              损失侧边栏面板，不再顶翻根边界整窗白屏；key=sidebarTab 让换
+              标签即重挂边界（崩溃态不粘连到其它标签），onReset 回退到文
+              件树标签；编辑区维持根边界兜底不动。 */}
+          <ErrorBoundary
+            key={sidebarTab}
+            label="侧边栏"
+            onReset={() => setSidebarTab("tree")}
+          >
           {sidebarTab === "tree" &&
             (workspaces.length > 0 ? (
               <>
@@ -2946,6 +2630,7 @@ export default function App() {
               />
             </>
           )}
+          </ErrorBoundary>
         </div>
       </aside>
 
@@ -3059,21 +2744,25 @@ export default function App() {
       />
 
       {settingsApi.settings.annoDiagPanel && (
-        <AnnoDiagnostics
-          getMarkdown={getMarkdown}
-          onClose={() =>
-            void settingsApi.update({ annoDiagPanel: false })
-          }
-          theme={settingsApi.settings.theme}
-        />
+        <Suspense fallback={null}>
+          <AnnoDiagnostics
+            getMarkdown={getMarkdown}
+            onClose={() =>
+              void settingsApi.update({ annoDiagPanel: false })
+            }
+            theme={settingsApi.settings.theme}
+          />
+        </Suspense>
       )}
 
       {settingsApi.settings.devMode && (
-        <DevAlerts
-          onOpenDiagnostics={() =>
-            void settingsApi.update({ annoDiagPanel: true })
-          }
-        />
+        <Suspense fallback={null}>
+          <DevAlerts
+            onOpenDiagnostics={() =>
+              void settingsApi.update({ annoDiagPanel: true })
+            }
+          />
+        </Suspense>
       )}
 
       <button
@@ -3221,12 +2910,4 @@ export default function App() {
       </ErrorBoundary>
     </div>
   );
-}
-
-/** 聚焦编辑器表面后执行 document.execCommand —— 原生菜单取消后，撤销/剪切/
- *  复制/全选等预定义项在前端等价实现（WebView2 对 contenteditable 原生支持；
- *  粘贴受浏览器安全策略限制，尽力而为）。 */
-function execOnEditor(editor: EditorHandle | null, cmd: string) {
-  editor?.find(); // focus the surface first so the command has a target
-  document.execCommand(cmd);
 }

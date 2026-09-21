@@ -23,7 +23,8 @@
 import { memo, useEffect, useLayoutEffect, useRef } from "react";
 import { peekRenderedHtml, renderMarkdown } from "../lib/renderMarkdown";
 import { attachScopedCopyTex } from "../lib/copyTex";
-import { isDarkTheme, type Theme } from "../types";
+import { isDarkTheme } from "../defaults";
+import type { Theme } from "../types";
 
 interface Props {
   content: string;

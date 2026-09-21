@@ -1,11 +1,12 @@
 // 云同步（v4.12）共享类型。
 //
-// 分层契约：SyncSettings/SYNC_PROVIDERS 随设置体系住在 src/types.ts（与
-// AI_PROVIDERS 同一惯例），此处 re-export 方便 sync 模块内单一 import；
-// S3Object / SyncStateEvent / 操作与摘要类型只在同步引擎内部流转，定义于此。
+// 分层契约：类型（SyncSettings/S3ProviderPreset）住在 src/types.ts，预设
+// 数据（SYNC_PROVIDERS）住在 src/defaults.ts（Q4「types 必是类型」拆分），
+// 此处 re-export 方便 sync 模块内单一 import；S3Object / SyncStateEvent /
+// 操作与摘要类型只在同步引擎内部流转，定义于此。
 
 export type { SyncSettings, S3ProviderPreset } from "../../types";
-export { SYNC_PROVIDERS } from "../../types";
+export { SYNC_PROVIDERS } from "../../defaults";
 
 /** s3_list / s3_head 返回的远端对象元数据（镜像 Rust 侧 S3Object）。 */
 export interface S3Object {

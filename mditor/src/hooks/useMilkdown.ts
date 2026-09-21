@@ -79,7 +79,7 @@ import { createSvEditor } from "../lib/svCodeMirror";
 import type { SvEditorHandle, SvSurface } from "../lib/svCodeMirror";
 import "@milkdown/crepe/theme/common/style.css";
 import "@milkdown/crepe/theme/nord.css";
-import { EMPTY_MARKS } from "../types";
+import { EMPTY_MARKS } from "../defaults";
 import type {
   EditMode,
   EditorSettings,
@@ -463,7 +463,7 @@ interface Options {
   /** Live document headings (rich modes). Emitted only when the heading
    *  signature actually changes; the array ref is stable across no-op edits. */
   onHeadings?: (flat: FlatHeading[]) => void;
-  settings: EditorSettings; // P10：窄切片（types.ts pickEditorSettings）
+  settings: EditorSettings; // P10：窄切片（settingsNormalize.ts pickEditorSettings）
 }
 
 // ---- T6: proactive history reclaim ---------------------------------------

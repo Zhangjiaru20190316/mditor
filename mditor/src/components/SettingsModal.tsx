@@ -27,7 +27,7 @@ import {
   emptyAiModel,
   FONT_PRESETS,
   MONO_FONT_PRESETS,
-} from "../types";
+} from "../defaults";
 import { testConnection } from "../lib/ai";
 import { fetchAppVersion } from "../lib/appVersion";
 import {

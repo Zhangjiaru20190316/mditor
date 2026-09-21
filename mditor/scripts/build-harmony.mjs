@@ -25,10 +25,10 @@ const OHPM_BIN = join(CLT, "ohpm", "bin");
 // 仅因调用时机在模块顶层执行完之后而侥幸安全。
 const isWin = process.platform === "win32";
 // 打包/签名工具为 Java 实现（风险表 §8 预案）：自动探测常见 Temurin 安装。
-const JAVA_CANDIDATES = [
-  process.env.JAVA_HOME,
-  "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.20.101-hotspot",
-].filter(Boolean);
+// G3：filter(Boolean) 运行时已剔除 undefined，TS 需显式收窄为 string[]（纯注解）。
+const JAVA_CANDIDATES = /** @type {string[]} */ (
+  [process.env.JAVA_HOME, "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.20.101-hotspot"].filter(Boolean)
+);
 
 function detectJavaHome() {
   for (const home of JAVA_CANDIDATES) {
@@ -43,6 +43,8 @@ const ohpmCmd = isWin ? join(OHPM_BIN, "ohpm.bat") : "ohpm";
 const hvigorCmd = isWin ? join(CLT_BIN, "hvigorw.bat") : "hvigorw";
 
 function buildEnv() {
+  // G3：展开 process.env 后需动态补 JAVA_HOME/PATH，显式声明为 Node 进程 env 形状。
+  /** @type {NodeJS.ProcessEnv} */
   const env = {
     ...process.env,
     // 新开 shell 可能未继承用户 PATH（AGENTS.md 已知限制），这里显式补上。
@@ -58,6 +60,11 @@ function buildEnv() {
   return env;
 }
 
+/**
+ * @param {string} cmd
+ * @param {string[]} args
+ * @param {{ cwd?: string, shell?: boolean }} [opts]
+ */
 function run(cmd, args, opts = {}) {
   console.log(`> ${cmd} ${args.join(" ")}`);
   // Node 24 安全策略：.cmd/.bat 必须经 shell 启动（否则 spawn EINVAL）。
@@ -70,6 +77,7 @@ function run(cmd, args, opts = {}) {
   });
 }
 
+/** @param {string} name */
 function step(name) {
   console.log(`\n=== ${name} ===`);
 }

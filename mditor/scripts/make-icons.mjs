@@ -24,6 +24,7 @@ const iconsDir = join(__dirname, "..", "src-tauri", "icons");
 mkdirSync(iconsDir, { recursive: true });
 
 // --- minimal PNG encoder (RGBA) -------------------------------------------
+/** @param {Buffer} buf */
 function crc32(buf) {
   let c = ~0;
   for (let i = 0; i < buf.length; i++) {
@@ -32,6 +33,10 @@ function crc32(buf) {
   }
   return ~c >>> 0;
 }
+/**
+ * @param {string} type
+ * @param {Buffer} data
+ */
 function chunk(type, data) {
   const len = Buffer.alloc(4);
   len.writeUInt32BE(data.length, 0);
@@ -40,6 +45,11 @@ function chunk(type, data) {
   crcBuf.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
   return Buffer.concat([len, typeBuf, data, crcBuf]);
 }
+/**
+ * @param {number} width
+ * @param {number} height
+ * @param {Buffer} rgba
+ */
 function encodePng(width, height, rgba) {
   const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
   const ihdr = Buffer.alloc(13);
@@ -67,6 +77,7 @@ function encodePng(width, height, rgba) {
 }
 
 // --- color helpers --------------------------------------------------------
+/** @param {string} h */
 function hexToRgb(h) {
   h = h.replace("#", "");
   return [
@@ -75,12 +86,23 @@ function hexToRgb(h) {
     parseInt(h.slice(4, 6), 16),
   ];
 }
+/**
+ * @param {number} a
+ * @param {number} b
+ * @param {number} t
+ */
 const lerp = (a, b, t) => a + (b - a) * t;
+/**
+ * @param {number[]} c1
+ * @param {number[]} c2
+ * @param {number} t
+ */
 const lerpRgb = (c1, c2, t) => [
   lerp(c1[0], c2[0], t),
   lerp(c1[1], c2[1], t),
   lerp(c1[2], c2[2], t),
 ];
+/** @param {number} v */
 const clampByte = (v) => (v < 0 ? 0 : v > 255 ? 255 : Math.round(v));
 
 // --- draw the icon --------------------------------------------------------
@@ -95,8 +117,13 @@ const BG_BOT = hexToRgb("#7c3aed"); // violet-600
 const FG = [255, 255, 255];
 
 // Build a boolean coverage mask for the "M" glyph at hi-res (ss×ss).
+/** @param {number} ss */
 function buildGlyph(ss) {
   const g = new Uint8Array(ss * ss);
+  /**
+   * @param {number} x
+   * @param {number} y
+   */
   const set = (x, y) => {
     if (x < 0 || y < 0 || x >= ss || y >= ss) return;
     g[y * ss + x] = 1;
@@ -141,10 +168,15 @@ function buildGlyph(ss) {
 // Render the full icon at hi-res (ss×ss) RGBA, with gradient, gloss, shade
 // and the glyph already composited. Pixels outside the rounded square are
 // left transparent.
+/** @param {number} ss */
 function drawHi(ss) {
   const buf = Buffer.alloc(ss * ss * 4);
   const radius = ss * 0.205;
   const glyph = buildGlyph(ss);
+  /**
+   * @param {number} x
+   * @param {number} y
+   */
   const insideRect = (x, y) => {
     const cx = Math.min(x, ss - 1 - x);
     const cy = Math.min(y, ss - 1 - y);
@@ -199,6 +231,11 @@ function drawHi(ss) {
 }
 
 // Box-filter downsample from ss×ss (hi-res) to size×size (final, anti-aliased).
+/**
+ * @param {Buffer} hi
+ * @param {number} ss
+ * @param {number} size
+ */
 function downsample(hi, ss, size) {
   const out = Buffer.alloc(size * size * 4);
   const n = SS * SS;
@@ -226,11 +263,16 @@ function downsample(hi, ss, size) {
   return out;
 }
 
+/** @param {number} size */
 function draw(size) {
   const ss = size * SS;
   return downsample(drawHi(ss), ss, size);
 }
 
+/**
+ * @param {string} name
+ * @param {number} size
+ */
 function writePng(name, size) {
   const png = encodePng(size, size, draw(size));
   writeFileSync(join(iconsDir, name), png);
@@ -245,6 +287,7 @@ writePng("icon.png", 512);
 
 // --- ICO (multi-size) -----------------------------------------------------
 // ICONDIR + ICONDIRENTRY[] + image data (each a PNG for >255 colors).
+/** @param {number[]} sizes */
 function buildIco(sizes) {
   const entries = sizes.map((s) => ({ s, png: encodePng(s, s, draw(s)) }));
   const headerSize = 6 + entries.length * 16;

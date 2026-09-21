@@ -14,7 +14,14 @@
 //
 // 纪律：诊断代码绝不能影响编辑器——所有公开入口 try/catch，订阅回调
 // 异常自动摘除；窗口导出仅作控制台排查便利。
+//
+// 发射侧门控（Q1a）：annoEmit/annoCount 在「记录器与诊断面板双关闭」时
+// 函数头早退（diagRecordingOn，见 lib/devMode）；面板开着（annoDiagPanel
+// 设置，Ctrl+Alt+D）或 devMode 开着时照常记录。读取侧（annoEvents/
+// annoCounters/订阅/探针/observer 门）不门控——withPmObserverPaused 等
+// 是生产行为，永不门控。与 devMode 的 import 环为函数级互调，安全。
 
+import { diagRecordingOn } from "./devMode";
 import { buildDefinition, parseAnnotations, type Annotation } from "./annotations";
 import { stripCodeLineMeta } from "./codeAnno";
 
@@ -39,6 +46,7 @@ const subscribers = new Set<(e: AnnoDebugEvent) => void>();
 
 /** 计数器 +1（或 +n）。key 惯例 `域.名`，如 `full.rewrite`、`stream.skip.no-parse`。 */
 export function annoCount(key: string, n = 1): void {
+  if (!diagRecordingOn()) return;
   try {
     counters.set(key, (counters.get(key) ?? 0) + n);
   } catch {
@@ -52,6 +60,7 @@ export function annoEmit(
   msg: string,
   opts: { level?: AnnoDebugLevel; data?: Record<string, unknown>; count?: number } = {}
 ): void {
+  if (!diagRecordingOn()) return;
   try {
     const e: AnnoDebugEvent = {
       ts: Date.now(),

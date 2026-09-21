@@ -4,8 +4,13 @@
 // 只加观测。对话框类不设慢阈值（时长=用户思考时间，不是异常）。
 //
 // 纯逻辑（时钟注入可测）；诊断纪律：永不抛错、永不重试、永不阻塞。
+//
+// 发射侧门控（Q1a）：诊断双关闭（记录器与面板，diagRecordingOn 见
+// lib/devMode）时不做计时/计数/事件——被包装的 IO 操作本身照常执行，
+// 返回值与异常语义和未包装完全一致（只卸观测，不改语义）。
 
 import { sysCount, sysEmit } from "./sysDebug";
+import { diagRecordingOn } from "./devMode";
 
 export type IoKind =
   | "file:read"
@@ -38,6 +43,9 @@ export async function tracedIo<T>(
   run: () => Promise<T>,
   opts: { slowMs?: number; now?: () => number } = {}
 ): Promise<T> {
+  // Q1a 门控：诊断关闭时退化为直接调用——操作必须执行，错误必须原样
+  // 向上抛，只是不再计时/计数/发事件。
+  if (!diagRecordingOn()) return run();
   const now = opts.now ?? (() => performance.now());
   const t0 = now();
   try {

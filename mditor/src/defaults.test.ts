@@ -1,3 +1,6 @@
+// 默认值与预设单测（Q4「types 必是类型」拆分：DEFAULT_SETTINGS / isDarkTheme
+// 自 src/types.ts 迁往 src/defaults.ts，测试随模块走）。
+
 // 设置项清单快照锚点（v4.0.0 设置界面分区重构的防回归用例）。
 //
 // SettingsModal 的分区重组是纯 UI 改动：Settings 的字段集合、默认值与
@@ -7,7 +10,8 @@
 // 形态，完整结构由 types 定义与 store 迁移逻辑约束。
 
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SETTINGS, isDarkTheme, type Theme } from "./types";
+import { DEFAULT_SETTINGS, isDarkTheme } from "./defaults";
+import type { Theme } from "./types";
 
 /** 重构前（v3.9.7）的 Settings 字段全集 + v4.1 motionLevel + v4.2 devMode + v4.4.1 bigDocPerformance + v4.6 mathAutoNumber/mathMacros + v4.6.1 bigDocViewport + v4.7 vaultIndexEnabled/wikiLinksEnabled + v4.7 模块 3 bibliographyPath/citationStyle + v4.9 Agent aiPanelMode/agentWriteMode。 */
 const SETTING_KEYS = [
@@ -144,49 +148,6 @@ describe("settings inventory（v4.0.0 分区重构防回归锚点）", () => {
     expect(DEFAULT_SETTINGS.sync.bucket).toBe("");
     expect(DEFAULT_SETTINGS.sync.secretAccessKey).toBe("");
     expect(DEFAULT_SETTINGS.sync.prefix).toBe("mditor/");
-  });
-});
-
-describe("normalizeSyncSettings（v4.12 云同步设置幂等归一）", () => {
-  it("undefined / 非对象输入补全默认值", async () => {
-    const { normalizeSyncSettings } = await import("./types");
-    const out = normalizeSyncSettings(undefined);
-    expect(out.enabled).toBe(false);
-    expect(out.provider).toBe("custom");
-    expect(out.prefix).toBe("mditor/");
-    expect(out.autoSyncIntervalMin).toBe(10);
-  });
-
-  it("prefix 规范化：去前导 /、补尾随 /、空串保留", async () => {
-    const { normalizeSyncSettings } = await import("./types");
-    expect(normalizeSyncSettings({ prefix: "/docs" }).prefix).toBe("docs/");
-    expect(normalizeSyncSettings({ prefix: "docs" }).prefix).toBe("docs/");
-    expect(normalizeSyncSettings({ prefix: "docs/" }).prefix).toBe("docs/");
-    expect(normalizeSyncSettings({ prefix: "  " }).prefix).toBe("");
-  });
-
-  it("非法 interval 归 10；0（关闭定时）与正常值保留", async () => {
-    const { normalizeSyncSettings } = await import("./types");
-    expect(normalizeSyncSettings({ autoSyncIntervalMin: -5 }).autoSyncIntervalMin).toBe(10);
-    expect(normalizeSyncSettings({ autoSyncIntervalMin: "abc" }).autoSyncIntervalMin).toBe(10);
-    expect(normalizeSyncSettings({ autoSyncIntervalMin: 0 }).autoSyncIntervalMin).toBe(0);
-    expect(normalizeSyncSettings({ autoSyncIntervalMin: 30 }).autoSyncIntervalMin).toBe(30);
-  });
-
-  it("非法 provider 归 custom；已配置字段原样保留（幂等）", async () => {
-    const { normalizeSyncSettings } = await import("./types");
-    expect(normalizeSyncSettings({ provider: "oss-xxx" }).provider).toBe("custom");
-    const once = normalizeSyncSettings({
-      enabled: true,
-      bucket: "my-bucket",
-      accessKeyId: "AK",
-      pathStyle: true,
-    });
-    expect(once.enabled).toBe(true);
-    expect(once.bucket).toBe("my-bucket");
-    expect(once.pathStyle).toBe(true);
-    // 幂等：归一结果再归一不变。
-    expect(normalizeSyncSettings(once)).toEqual(once);
   });
 });
 

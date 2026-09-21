@@ -33,7 +33,8 @@ vi.mock("../platform", () => ({
   }),
 }));
 
-import { DEFAULT_SETTINGS, type Settings } from "../types";
+import { DEFAULT_SETTINGS } from "../defaults";
+import type { Settings } from "../types";
 import { loadSettings, saveSettings } from "./store";
 
 function settingsWithKeys(): Settings {

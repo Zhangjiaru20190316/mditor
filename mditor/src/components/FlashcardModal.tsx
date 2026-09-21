@@ -10,6 +10,7 @@ import { memo, useEffect, useMemo, useState } from "react";
 import { vaultIndex } from "../lib/vaultIndex";
 import {
   GRADE_LABELS,
+  dayOf,
   isDue,
   newSchedule,
   scheduleAfter,
@@ -58,7 +59,9 @@ export const FlashcardModal = memo(function FlashcardModal({ open, onClose, onOp
         liveKeys.add(key);
         const s = reviewStore.get(key) ?? newSchedule(now);
         if (isDue(s, now)) {
-          due.push({ card, key, dueDay: s.dueDay, overdue: s.dueDay < Math.floor(now / 86_400_000) - 1 });
+          // 逾期标记与 dueDay 同口径（dayOf 本地日序）——右式勿用 UTC epoch
+          // 日序，否则非 UTC 时区下边界日错标（Q8）。
+          due.push({ card, key, dueDay: s.dueDay, overdue: s.dueDay < dayOf(now) - 1 });
         }
       }
     }

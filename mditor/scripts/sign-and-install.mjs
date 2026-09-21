@@ -60,6 +60,8 @@ const java = join(javaHome, "bin", "java.exe");
 // 口令只能经 argv 传给 java——本机进程列表瞬时可见，仅在可信机器上签名。
 // 能兜底的是失败路径：execFileSync 抛错时 Node 会把完整命令行（含口令）拼进
 // error.message，必须脱敏后再输出，绝不进控制台/CI 日志。
+// G3：catch 变量为 unknown，取字段/回写均为 any 视图转换（纯注解，脱敏逻辑不变）。
+/** @param {string[]} args */
 function run(args) {
   console.log(`> java ${args.join(" ").replaceAll(KEY_PWD, "******")}`);
   try {
@@ -68,14 +70,14 @@ function run(args) {
     // stdio: inherit 下子进程输出直达终端，error 对象里主要是 message；
     // stdout/stderr/cmd 若存在（如日后改 pipe）也一并处理，Buffer 同样覆盖。
     for (const field of ["message", "stdout", "stderr", "cmd"]) {
-      const value = e?.[field];
+      const value = /** @type {any} */ (e)?.[field];
       if (typeof value === "string" && value.includes(KEY_PWD)) {
-        e[field] = value.replaceAll(KEY_PWD, "******");
+        /** @type {any} */ (e)[field] = value.replaceAll(KEY_PWD, "******");
       } else if (Buffer.isBuffer(value) && value.toString("utf-8").includes(KEY_PWD)) {
-        e[field] = value.toString("utf-8").replaceAll(KEY_PWD, "******");
+        /** @type {any} */ (e)[field] = value.toString("utf-8").replaceAll(KEY_PWD, "******");
       }
     }
-    console.error(`签名失败：${e?.message ?? e}`);
+    console.error(`签名失败：${/** @type {any} */ (e)?.message ?? e}`);
     process.exit(1);
   }
 }

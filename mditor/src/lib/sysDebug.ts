@@ -15,6 +15,12 @@
 // 归类规则在 lib/devAnomaly.ts（MD-6xxx 文件 / MD-7xxx IPC / MD-8xxx AI），
 // 三处消费与三条既有总线一致：DevAlerts 卡、诊断面板、dev-events.log。
 // 纪律同其他总线：所有公开入口 try/catch 永不抛错，绝不影响编辑器。
+//
+// 发射侧门控（Q1a）：sysEmit/sysCount 在「记录器与诊断面板双关闭」时
+// 函数头早退（diagRecordingOn，见 lib/devMode）；读取侧（sysEvents/
+// sysCounters/订阅）不门控。与 devMode 的 import 环为函数级互调，安全。
+
+import { diagRecordingOn } from "./devMode";
 
 export type SysDebugLevel = "info" | "warn" | "error";
 
@@ -33,6 +39,7 @@ const counters = new Map<string, number>();
 const subscribers = new Set<(e: SysDebugEvent) => void>();
 
 export function sysCount(key: string, n = 1): void {
+  if (!diagRecordingOn()) return;
   try {
     counters.set(key, (counters.get(key) ?? 0) + n);
   } catch {
@@ -46,6 +53,7 @@ export function sysEmit(
   msg: string,
   opts: { level?: SysDebugLevel; data?: Record<string, unknown>; count?: number } = {}
 ): void {
+  if (!diagRecordingOn()) return;
   try {
     const e: SysDebugEvent = {
       ts: Date.now(),

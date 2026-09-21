@@ -9,13 +9,9 @@
 // filesDir/mditor.json，键与格式完全一致），函数签名不变。
 
 import { getAdapter } from "../platform";
-import {
-  DEFAULT_SETTINGS,
-  type AiModelConfig,
-  type RecentFile,
-  type Settings,
-  normalizeSyncSettings,
-} from "../types";
+import { DEFAULT_SETTINGS } from "../defaults";
+import { normalizeSyncSettings } from "../settingsNormalize";
+import type { AiModelConfig, RecentFile, Settings } from "../types";
 import { normalizeStoredWorkspaces } from "./workspaces";
 import { sysEmit } from "./sysDebug";
 
