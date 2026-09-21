@@ -35,7 +35,6 @@ import {
   $remark,
   $prose,
 } from "@milkdown/utils";
-import type { MilkdownPlugin } from "@milkdown/ctx";
 import { editorViewCtx, parserCtx, schemaCtx, serializerCtx } from "@milkdown/core";
 import type { Ctx } from "@milkdown/ctx";
 import { closeHistory } from "@milkdown/prose/history";
@@ -65,6 +64,7 @@ import { createCitationPlugins } from "../lib/citationNode";
 import { createFlashcardPlugins } from "../lib/flashcardNode";
 import { remarkMathFenceAlias } from "../lib/remarkMathFenceAlias";
 import { remarkMathGuard } from "../lib/remarkMathGuard";
+import { asMilkdownPlugins } from "../lib/pluginCast";
 import { mathLiveGuardPlugin } from "../lib/mathLiveGuard";
 import { normalizeMathDelimiters } from "../lib/mathNormalize";
 import { mathConfigSignature, parseMathMacros } from "../lib/mathConfig";
@@ -502,11 +502,11 @@ const REMOTE_IMG_URL_RE =
 // 节点（`$1-$10` 敲到第二个 `$` 时），guard 只在整篇解析时兜底——此插件
 // 在同一事务后实时降级，规则与 remarkMathGuard 完全一致。
 const mathLiveGuard = $prose(() => mathLiveGuardPlugin());
-const mathFencePlugins = [
+const mathFencePlugins = asMilkdownPlugins([
   $remark("remarkMathFenceAlias", () => remarkMathFenceAlias as never),
   $remark("remarkMathGuard", () => remarkMathGuard as never),
   mathLiveGuard,
-].flat() as unknown as MilkdownPlugin[];
+].flat());
 
 /** 整篇文档载入（flush 语义 = replaceAll(md, true)），带解析缓存快路径：
  *  命中 → Node.fromJSON + EditorState 重建，零 remark 解析（阶段 1）；

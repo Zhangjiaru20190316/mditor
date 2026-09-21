@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased（2026-09-20 第 4 批：鸿蒙性能/正确性收尾 + 组件测试设施落地——v4.16.0）
+
+第三批实施记录见 `docs/optimization_report3.md`（本批为其 §八路线图的完整落地，实测报告 `docs/optimization_report4.md`）：
+
+- **W8 UriMapper 沙箱路径拼接真修（高，鸿蒙数据正确性）**：`resolve('/AppData/<rel>')` 的 `sandboxPath` 缺 `/` 分隔符——回收站实际写到 `<filesDir>trash`（filesDir 同级畸形目录）而 `cleanupTrash` 清理 `<filesDir>/trash`，两处永不相交 → 回收站永不清理、日志等 /AppData 路径全部错位。report3 记为"CLI 环境测试失败"的 3 例基线实为该真 bug（本批修复后 hypium 15/15 全绿，第 3 例为用例自身期望构造 bug 一并修正：mountRoot 按原样存储根 URI，encodeURIComponent 只作用于 rel 段）。存续期（4.13.0–4.15.x）畸形回收站由 `migrateLegacyTrash` 启动一次性搬入正确位置（30 天策略自然回收）。
+- **W6 cleanupTrash 递归删除补齐（中）**：目录条目原 `fs.rmdirSync` 单删，非空目录必抛被吞 → 回收站目录条目只增不减；改后序递归整棵删（`removeTreeReal`）。
+- **N8 鸿蒙 TaskPool 迁移（中，性能）**：WatchManager 全量快照扫描（≤5000 条 statSync × 每 2-5s 一轮）移出 ArkTS 主线程——`@Concurrent scanTree` 在 taskpool 工作线程以真实路径遍历（虚拟/真实双栈），主线程仅剩结果 Map 重组；目录读取失败仍整轮跳过、单条目 stat 失败跳过、超限丢弃本轮——语义与旧版逐条对齐。ArkTS 约束实测留档：@Concurrent 只能引用 import 绑载与 @Sendable 类，且 @Sendable 字段须 sendable 类型（collections.Array），类必须独立模块。
+- **P6 鸿蒙 S3 文件通道（中，内存/稳定性）**：新增桥命令 `s3_put_file {cfg,key,path,mtimeMs?}` / `s3_get_file {cfg,key,path}`——上传/下载字节在 ArkTS 桥内经 FileManager 虚拟路径直读直写，对齐桌面 Rust 直读直写语义；前端 `s3PutFile/s3GetFile` 鸿蒙分支退役 readFile→btoa→s3_put 三重编码链（50MB 文件 WebView/桥两侧各 ~1.33x+ 内存放大归零）。get/put 核心抽 `getObjectBytes/putObjectBytes` 共用（原两份逐行重复的 HEAD 校验+上限+PUT+HEAD 回读收口）。
+- **N16 closeWindow ack 协议（中）**：鸿蒙关窗从"盲等 1.2s 杀进程"改为 ack 协议——广播 `window-close-requested` 后等前端 `app.closeWindowAck {ok}`：收尾完成立即终止（快路径不再盲等）、用户取消不终止（返回 false 经适配层回执）、8s 超时按确认兜底；`flushDirtyTabs` 的 3s 落盘上限首次被关窗窗口完整覆盖（原先 1.2s 必截断）。`PlatformWindow.onCloseRequested` handler 签名放宽 `void | false`，Tauri 端包装丢弃返回值（preventDefault 同义）。
+- **测试设施落地（高，长期收益）**：网络恢复后安装 @testing-library/react + jest-dom + @vitest/coverage-v8 + @types/node；vitest include 扩 `.test.tsx`（jsdom 经文件头 docblock 按需启用）；`@types/node` 的全局污染用 `types: []` 隔离 + 计时器类型改 `ReturnType<typeof setTimeout>`（跨环境安全）。**组件测试从 0 → 44 例**（QuickSwitcher ×9 / CitationPicker ×9 / FileTree ×8 / FlashcardModal ×9 / QuickSwitcher 纯逻辑既有 ×4 + s3 文件通道改造 ×2 等）。
+- **N19 PickerShell 抽取（低）**：QuickSwitcher/CitationPicker 约 120 行重复外壳（overlay+键盘导航+scrollIntoView+延迟卸载+聚焦定时器）收进 `PickerShell.tsx`，两消费者各 -41 行，DOM 逐字节不变。
+- **N20 插件断言收口（低）**：25 处 `as unknown as MilkdownPlugin[]/Plugin` 收进 `src/lib/pluginCast.ts`（`asMilkdownPlugins` + 泛型化 `asRemarkPlugin`——unified `.use()` 的 settings 元组推断需要）。
+- **N21 FileTree 键盘可达（低，可达性）**：WAI-ARIA tree 模式最小子集——roving tabindex（焦点行派生：焦点行→activePath 行→首行）+ ↑↓←→/Enter/Home/End 事件委托（输入框/按钮守卫）；focusedPath 只驱动 tabIndex 不与选中耦合，行级 useSyncExternalStore 订阅保 memo 性能。
+- 质量矩阵：vitest 806 → **841**（+35）；cargo **24**；hypium **15/15**（基线 3 失败清零）；tsc 0 错；eslint 0 错 0 警；clippy -D warnings 0；sigv4 oracle PASS；mirror-check 5 对 PASS；`hvigorw assembleHap` PASS；`npm run build` PASS。**coverage 基线（N32 首次量化）：总行覆盖 34.78%（lib 57.01% / sync 84% / platform 76.19% / components 12.26%）**，`npm run test:coverage` 入列脚本。
+- 性能（1MB 文档七场景 ×3 轮，与 batch3 同法）：打字 p95 三轮全 **88ms**（batch3：96/392/96）；打开 2,910–3,458ms（方差带内）；滚动 p95 30–36ms；打字/滚动期长任务 0——本批对热路径零回归。
+- 版本四处对齐 4.16.0（package.json / Cargo.toml / tauri.conf.json / app.json5 versionCode 1001600）。
+
 ## Unreleased（2026-09-19 第 3 批：鸿蒙删除/回收站语义根修 + 前端订阅正确性 + CI 补强——v4.15.0）
 
 第二批实施记录见 `docs/optimization_report2.md`（第三批 26 项，全部附证据与复核，实测报告 `docs/optimization_report3.md`）：

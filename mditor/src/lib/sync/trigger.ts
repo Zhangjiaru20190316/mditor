@@ -67,8 +67,8 @@ export function assembleSyncTrigger(opts: SyncTriggerOptions): SyncTrigger | nul
   let netErrorStreak = 0;
   let offline = false;
   // interval 与 timeout 分开收（规范上 id 空间独立，清理要各归各）。
-  const intervals: number[] = [];
-  const timeouts: number[] = [];
+  const intervals: ReturnType<typeof setInterval>[] = [];
+  const timeouts: ReturnType<typeof setTimeout>[] = [];
 
   const enabled = () => opts.getSettings().sync.enabled;
 
@@ -203,7 +203,7 @@ export function assembleSyncTrigger(opts: SyncTriggerOptions): SyncTrigger | nul
 
   /** offline 恢复探测：每 60s 试跑一次，成功（netErrorStreak 归零 → offline
    *  置 false）即自动补跑完成；本轮探测本身走 syncAll 全量。 */
-  let offlineRetryTimer: number | null = null;
+  let offlineRetryTimer: ReturnType<typeof setInterval> | null = null;
   function armOfflineRetry(): void {
     if (offlineRetryTimer != null || disposed) return;
     offlineRetryTimer = setInterval(() => {
@@ -220,7 +220,7 @@ export function assembleSyncTrigger(opts: SyncTriggerOptions): SyncTrigger | nul
   // ---- 触发源装配 -----------------------------------------------------------
 
   // 保存后防抖（仅 autoSync 开启时生效）。
-  let saveTimer: number | null = null;
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
   const onSaved = (): void => {
     if (disposed || !opts.getSettings().sync.autoSync) return;
     if (saveTimer != null) clearTimeout(saveTimer);

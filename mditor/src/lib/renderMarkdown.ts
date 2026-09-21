@@ -19,7 +19,6 @@
 // footnotes, mark, math.inlineDigit, hljs.
 
 import { unified } from "unified";
-import type { Plugin } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -29,6 +28,7 @@ import rehypeHighlight from "rehype-highlight";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeStringify from "rehype-stringify";
+import { asRemarkPlugin } from "./pluginCast";
 import { remarkMark } from "./remarkMark";
 import { remarkMathFence } from "./remarkMathFence";
 import { remarkMathGuard } from "./remarkMathGuard";
@@ -146,22 +146,22 @@ function makeProcessor(macros: Record<string, string>, docPath: string | null) {
   return unified()
     .use(remarkParse)
     .use(remarkGfm) // tables, strikethrough, task lists, autolinks
-    .use(remarkMark as unknown as Plugin) // ==highlight== -> mdast `mark` (rendered as <mark> below)
+    .use(asRemarkPlugin(remarkMark)) // ==highlight== -> mdast `mark` (rendered as <mark> below)
     .use(remarkMath) // $...$ / $$...$$ -> mdast math nodes
-    .use(remarkMathGuard as unknown as Plugin) // v4.10.1：宽松定界假公式（货币/区间）降级为字面文本
-    .use(remarkMathFence as unknown as Plugin) // ```math 围栏 -> mdast math 节点（GitHub 风格）
-    .use(remarkMathNumbering as unknown as Plugin) // \label 剥除 + 自动编号 \tag 注入 + \ref/\eqref 解析
+    .use(asRemarkPlugin(remarkMathGuard)) // v4.10.1：宽松定界假公式（货币/区间）降级为字面文本
+    .use(asRemarkPlugin(remarkMathFence)) // ```math 围栏 -> mdast math 节点（GitHub 风格）
+    .use(asRemarkPlugin(remarkMathNumbering)) // \label 剥除 + 自动编号 \tag 注入 + \ref/\eqref 解析
     // v4.7：[[双链]] 降级（铁律 5）——静态管线无文档上下文，resolver 恒
     // null：输出 <a class="wikilink">label</a>（可读文本）；导出链路的
     // href 补全在 wikiLinkNode.resolveWikiLinksInHtml（有 docPath）。
-    .use(remarkWikiLink as unknown as Plugin<[WikiLinkOptions]>, { exportMode: true })
+    .use(asRemarkPlugin<[WikiLinkOptions]>(remarkWikiLink), { exportMode: true })
     // v4.7 模块 3：[@引用] → 编号纯文本 + References 标题下自动生成文献表
     // （配置/数据来自 lib/bibliography，缓存键含其 signature）。
-    .use(remarkCitation as unknown as Plugin<[CitationRemarkOptions]>, { mode: "render" })
+    .use(asRemarkPlugin<[CitationRemarkOptions]>(remarkCitation), { mode: "render" })
     // v4.7 模块 4：:::flash 闪卡 → blockquote 降级（铁律 6）。
-    .use(remarkFlash as unknown as Plugin<[FlashRemarkOptions]>, { mode: "render" })
+    .use(asRemarkPlugin<[FlashRemarkOptions]>(remarkFlash), { mode: "render" })
     // v4.7 模块 3：图表 caption/编号 + @fig:@tbl: 交叉引用解析。
-    .use(remarkFigureNumbering as unknown as Plugin)
+    .use(asRemarkPlugin(remarkFigureNumbering))
     .use(remarkRehype, {
       allowDangerousHtml: true, // keep raw html nodes
       // Map the `mark` mdast node (produced by remarkMark) to a <mark> element

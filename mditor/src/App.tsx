@@ -703,17 +703,20 @@ export default function App() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    getAdapter()
-      .app.window.onCloseRequested(async (ev) => {
-        if (destroyingRef.current) return;
+      getAdapter()
+        .app.window.onCloseRequested(async (ev) => {
+        if (destroyingRef.current) return undefined;
         if (shutdownInFlightRef.current) {
           ev.preventDefault();
-          return;
+          return undefined;
         }
         shutdownInFlightRef.current = true;
         try {
           ev.preventDefault();
-          if (!(await shutdownRef.current())) return; // 用户取消，留在应用
+          // 返回 false = 用户取消（N16：鸿蒙桥经 onCloseRequested 的返回值
+          // 回执 app.closeWindowAck{ok:false}，不终止进程；桌面端返回值
+          // 被忽略，preventDefault 已表达同义）。
+          if (!(await shutdownRef.current())) return false;
           await forceCloseRef.current();
         } catch (err) {
           // 任何异常都不得让窗口永远关不掉：记录后强制关闭。
@@ -722,6 +725,7 @@ export default function App() {
         } finally {
           shutdownInFlightRef.current = false;
         }
+        return undefined;
       })
       .then((fn) => {
         if (cancelled) fn();

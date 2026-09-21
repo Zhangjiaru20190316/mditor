@@ -9,9 +9,10 @@
 //   * isSyncSupported() 是全部 UI/装配点的唯一判定入口（detectRuntime 判定，
 //     禁止各处自写运行时判断）——browser 预览运行时判 false；
 //   * 每个原语入口先守卫——不支持时抛 UnsupportedError（复用项目既有约定）；
-//   * 文件通道（v4.12.4）：桌面 s3GetFile/s3PutFile 走 Rust 直读直写本地
-//     文件，文件字节不经 IPC（修复 WebView 大 base64 载荷崩溃）；鸿蒙桥
-//     统一 {base64}（fromBase64 解码复用鸿蒙适配层实现）。
+//   * 文件通道（v4.12.4 桌面 / v4.16.0 P6 鸿蒙）：s3GetFile/s3PutFile 全
+//     平台走后端直读直写本地文件，文件字节不经 IPC（修复 WebView 大 base64
+//     载荷崩溃；鸿蒙桥内经 FileManager 虚拟路径直读直写）。仅 s3Get 小对象
+//     通道保留 {base64}（fromBase64 解码复用鸿蒙适配层实现）。
 // node（vitest）环境 detectRuntime 恒按 tauri 处理，测试需显式 vi.mock。
 
 import { detectRuntime } from "../../platform";
@@ -105,8 +106,8 @@ export async function s3Get(cfg: S3ConfigPayload, key: string): Promise<Uint8Arr
 
 /**
  * 下载对象到本地文件（v4.12.4 崩溃修复：桌面 Rust 直写落盘，字节不经
- * JS——旧通道把整文件读进 WebView 是首同步崩溃嫌疑之一）。鸿蒙桥暂无
- * 文件直写通道：经 base64 字节通道读出后由适配层落盘（50MB 上限内）。
+ * JS。v4.16.0 P6：鸿蒙同样走文件通道——ArkTS 桥 s3_get_file 直写虚拟
+ * 路径，base64 IPC 往返与 WebView 侧内存放大一并消除）。
  */
 export async function s3GetFile(
   cfg: S3ConfigPayload,
@@ -115,8 +116,10 @@ export async function s3GetFile(
 ): Promise<void> {
   requireSync();
   if (detectRuntime() === "harmony") {
-    const bytes = await s3Get(cfg, key);
-    await writeFileEnsuringDir(destAbs, bytes);
+    await getAdapter().app.invoke<void>(
+      "s3_get_file",
+      toArgs(cfg, { key, path: destAbs })
+    );
     return;
   }
   await getAdapter().app.invoke<void>(
@@ -130,8 +133,9 @@ export async function s3GetFile(
  * s3Put 的 base64 JSON 通道对 50MB 文件有 ~4.3x 内存放大，且 WebView2 超
  * 大自定义协议请求体是崩溃高发点——「启用云同步后首同步崩溃」的头号嫌
  * 疑）。mtimeMs 尽力写入 x-amz-meta-mtime；返回上传后的对象元数据（内部
- * HEAD 取回，供 manifest 记录 etag/lastModified）。鸿蒙无 Rust 侧：读字节
- * 走 base64 通道（ArkTS S3Bridge 语义不变）。
+ * HEAD 取回，供 manifest 记录 etag/lastModified）。v4.16.0 P6：鸿蒙同样
+ * 走文件通道（s3_put_file 桥内直读虚拟路径字节，原先的
+ * readFile→btoa→s3_put 三重编码链退役）。
  */
 export async function s3PutFile(
   cfg: S3ConfigPayload,
@@ -141,39 +145,15 @@ export async function s3PutFile(
 ): Promise<S3Object> {
   requireSync();
   if (detectRuntime() === "harmony") {
-    const bytes = await getAdapter().fs.readFile(absPath);
-    return putBytesViaBase64(cfg, key, bytes, mtimeMs);
+    return getAdapter().app.invoke<S3Object>(
+      "s3_put_file",
+      toArgs(cfg, { key, path: absPath, mtimeMs })
+    );
   }
   return getAdapter().app.invoke<S3Object>(
     "s3_upload_file",
     toArgs(cfg, { key, localPath: absPath, mtimeMs })
   );
-}
-
-/** 鸿蒙 base64 上传通道（ArkTS S3Bridge 的 s3_put 语义；桌面不再使用）。 */
-async function putBytesViaBase64(
-  cfg: S3ConfigPayload,
-  key: string,
-  data: Uint8Array,
-  mtimeMs?: number
-): Promise<S3Object> {
-  let binary = "";
-  const CHUNK = 0x8000;
-  for (let i = 0; i < data.length; i += CHUNK) {
-    binary += String.fromCharCode(...data.subarray(i, i + CHUNK));
-  }
-  return getAdapter().app.invoke<S3Object>(
-    "s3_put",
-    toArgs(cfg, { key, data: btoa(binary), mtimeMs })
-  );
-}
-
-/** 适配层落盘（父目录自动创建）——鸿蒙 base64 通道专用。 */
-async function writeFileEnsuringDir(abs: string, data: Uint8Array): Promise<void> {
-  const fs = getAdapter().fs;
-  const dir = abs.slice(0, abs.lastIndexOf("/"));
-  if (dir && !(await fs.exists(dir))) await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(abs, data);
 }
 
 /** 删除远端对象（不可恢复——设置界面建议开启桶版本控制）。 */

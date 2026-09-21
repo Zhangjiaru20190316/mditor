@@ -86,9 +86,12 @@ export default function localUnitTests() {
       const m = new UriMapper('/tmp/mditor-test');
       m.mountRoot('file://docs/storage/Users/x/Docs/库', '库');
       const file = m.resolve('/Docs/ws-1/中文 目录/笔记 #1.md');
-      const expected = 'file://docs/storage/Users/x/Docs/' +
-        encodeURIComponent('库') + '/' + encodeURIComponent('中文 目录') + '/' +
-        encodeURIComponent('笔记 #1.md');
+      // mountRoot 按调用方原样存储根 URI（Picker 返回的 URI 已由系统层
+      // 编码）；encodeURIComponent 只作用于 rel 各段——测试期望此前错把
+      // 根段也编码，属用例构造 bug（基线 3 失败仅存的第 3 例，前 2 例为
+      // W8 沙箱拼接真 bug、已随 resolve 修复转绿）。
+      const expected = 'file://docs/storage/Users/x/Docs/库/' +
+        encodeURIComponent('中文 目录') + '/' + encodeURIComponent('笔记 #1.md');
       expect(file.uri).assertEqual(expected);
     });
 

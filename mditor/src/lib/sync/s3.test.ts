@@ -102,25 +102,33 @@ describe("鸿蒙正路径（v4.13：ArkTS S3Bridge 代理）", () => {
     expect(invokeMock).toHaveBeenCalledWith("s3_get", { cfg: CFG, key: "k" });
   });
 
-  it("s3PutFile 鸿蒙回落：读字节 → base64 → s3_put（ArkTS 语义不变）", async () => {
+  it("s3PutFile 鸿蒙文件通道（P6）：只传路径不传字节，不经 base64", async () => {
     mockRuntime = "harmony";
-    fsReadFileMock.mockResolvedValueOnce(new Uint8Array([104, 105]));
     invokeMock.mockResolvedValueOnce({ key: "k", size: 2, etag: "e", lastModified: "t" });
-    await s3PutFile(CFG, "k", "C:/docs/a.md", 1234.5);
-    expect(fsReadFileMock).toHaveBeenCalledWith("C:/docs/a.md");
+    await s3PutFile(CFG, "k", "/Docs/ws-1/docs/a.md", 1234.5);
     expect(invokeMock).toHaveBeenCalledWith(
+      "s3_put_file",
+      expect.objectContaining({ key: "k", path: "/Docs/ws-1/docs/a.md", mtimeMs: 1234.5 })
+    );
+    // 字节不经前端：读文件/旧 base64 通道都不应被触达。
+    expect(fsReadFileMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith(
       "s3_put",
-      expect.objectContaining({ key: "k", data: "aGk=", mtimeMs: 1234.5 })
+      expect.anything()
     );
   });
 
-  it("s3GetFile 鸿蒙回落：s3_get → 适配层落盘（父目录存在时免 mkdir）", async () => {
+  it("s3GetFile 鸿蒙文件通道（P6）：s3_get_file 直写路径，适配层 fs 零调用", async () => {
     mockRuntime = "harmony";
-    invokeMock.mockResolvedValueOnce({ base64: "aGk=" });
-    fsExistsMock.mockResolvedValueOnce(true);
-    await s3GetFile(CFG, "k", "C:/docs/a.md");
-    expect(invokeMock).toHaveBeenCalledWith("s3_get", { cfg: CFG, key: "k" });
-    expect(fsWriteFileMock).toHaveBeenCalledWith("C:/docs/a.md", expect.any(Uint8Array));
+    invokeMock.mockResolvedValueOnce(undefined);
+    await s3GetFile(CFG, "k", "/Docs/ws-1/docs/a.md");
+    expect(invokeMock).toHaveBeenCalledWith(
+      "s3_get_file",
+      { cfg: CFG, key: "k", path: "/Docs/ws-1/docs/a.md" }
+    );
+    expect(fsWriteFileMock).not.toHaveBeenCalled();
+    expect(fsExistsMock).not.toHaveBeenCalled();
+    expect(fsMkdirMock).not.toHaveBeenCalled();
   });
 });
 

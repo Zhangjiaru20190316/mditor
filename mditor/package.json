@@ -1,7 +1,7 @@
 {
   "name": "mditor",
   "private": true,
-  "version": "4.15.0",
+  "version": "4.16.0",
   "type": "module",
   "description": "Mditor — a local-first Markdown editor inspired by Typora (Tauri 2 + React + Milkdown).",
   "scripts": {
@@ -17,7 +17,8 @@
     "test:watch": "vitest",
     "build:harmony-web": "vite build --base ./",
     "build:harmony": "node scripts/build-harmony.mjs",
-    "release:harmony": "node scripts/release-harmony.mjs"
+    "release:harmony": "node scripts/release-harmony.mjs",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",
@@ -62,9 +63,13 @@
     "@smithy/protocol-http": "^5.6.2",
     "@smithy/signature-v4": "^5.7.3",
     "@tauri-apps/cli": "^2.11.4",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^26.6.2",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^4.1.11",
     "eslint": "^10.8.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "jsdom": "^30.0.1",

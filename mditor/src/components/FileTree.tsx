@@ -28,6 +28,15 @@
 // Performance: FileTree and FileNode are both React.memo'd. `onOpen`/`onChanged`
 // are stable callbacks from App (read via refs). Batch/selection props only
 // change during management interactions — never while typing in the editor.
+//
+// Keyboard (report3 N21, WAI-ARIA tree pattern minimal subset): roving
+// tabindex — exactly one `.ft-row` is tabbable (focusedPath row, falling back
+// to the active-file row / first visible row). ArrowUp/Down/Left/Right, Enter,
+// Home/End are delegated to a single onKeyDown on `.ft-scroll`; the per-row
+// `focused` flag rides the same useSyncExternalStore subscription as
+// expanded/childNodes/loading, so a focus move only re-renders the old and the
+// new row. focusedPath drives tabIndex only — it never touches selection or
+// the active-file styling.
 
 import {
   memo,
@@ -142,6 +151,16 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
   // 多根分区折叠状态（根路径集合）：折叠只是不渲染该区行，childrenMap/
   // expanded 全部保留 —— 再展开零 IO、状态原样恢复。
   const [sectionCollapsed, setSectionCollapsed] = useState<Set<string>>(new Set());
+  // ---- 键盘可达（WAI-ARIA tree 模式最小子集，report3 遗留项 N21）--------
+  // roving tabindex：整棵树同一时刻只有一个 tab stop——focusedPath 行（用户
+  // 键盘/点击聚焦过的行）；它不可见（被折叠/删除/重命名卸载）或未设置时，
+  // 回退活动文件行，再回退第一个可见行（effectiveFocusPath，纯渲染期派生）。
+  // focusedPath 只驱动行 div 的 tabIndex，不参与选中/active 样式（鼠标行为
+  // 零耦合）。行经 useSyncExternalStore 订阅自己的 focused 布尔（同
+  // isExpanded/isSelected 的行级订阅方案），焦点移动只重渲「旧行 + 新行」
+  // 两行，memo 兄弟全部跳过。键盘事件在 .ft-scroll 上单个 onKeyDown 委托分发。
+  const [focusedPath, setFocusedPath] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   // 闪现消息的自动清除定时器：每次 flash 先清前一个，避免批量文件操作 /
   // 监视器刷新突发时堆叠一堆 4s 定时器（各自持有 msg 闭包）。对齐 App.flashStatus。
   const noticeTimerRef = useRef<number | undefined>(undefined);
@@ -417,6 +436,35 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
     return map;
   }, [childrenMap, roots]);
 
+  // ---- roving tab stop 的有效焦点行（纯渲染期派生，WAI-ARIA tree N21）-------
+  // focusedPath 行（若仍可见）→ 活动文件行（若可见）→ 第一个可见行。可见性
+  // 按渲染序游历（分区未折叠 + 已展开目录；忽略「显示更多」截断——键盘导航
+  // 本就到不了截断后才挂载的行，活动行恰好落在截断后的概率与代价都可忽略）。
+  // 派生而非 effect 清理：焦点行被折叠/删除/重命名卸载时 tab stop 自动回退，
+  // 无 setState-in-effect 链，树永远不会陷入「没有 tab stop」的键盘死区。
+  const effectiveFocusPath = useMemo(() => {
+    let firstVisible: string | null = null;
+    let focusedVisible = false;
+    let activeHit: string | null = null;
+    const walk = (nodes: TreeNode[] | undefined): void => {
+      if (!nodes) return;
+      for (const n of nodes) {
+        if (firstVisible == null) firstVisible = n.path;
+        if (activePath && samePath(n.path, activePath)) activeHit ??= n.path;
+        if (focusedPath && samePath(n.path, focusedPath)) focusedVisible = true;
+        if (n.isDir && expanded.has(n.path)) walk(childrenMap.get(n.path));
+      }
+    };
+    for (const r of roots) {
+      if (sectionCollapsed.has(r)) continue;
+      walk(childrenMap.get(r));
+    }
+    if (focusedPath && focusedVisible) return focusedPath;
+    return activeHit ?? firstVisible;
+  }, [activePath, roots, childrenMap, expanded, sectionCollapsed, focusedPath]);
+  const effectiveFocusPathRef = useRef(effectiveFocusPath);
+  effectiveFocusPathRef.current = effectiveFocusPath;
+
   // ---- expand / collapse (loads children on first expand) -----------------
   const toggleDir = useCallback(
     async (path: string) => {
@@ -463,6 +511,14 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
   // Stable, ref-backed accessors so every FileNode gets the SAME function
   // identity (memo isn't defeated) while still reading live state.
   const isExpanded = useCallback((p: string) => expandedRef.current.has(p), []);
+  // 键盘 roving tabindex 的稳定 accessor（同上，ref 读活值）：行经
+  // useSyncExternalStore 订阅自己的 focused 布尔；samePath 大小写不敏感，
+  // 对齐活动行比较的既有惯例。
+  const isFocused = useCallback((p: string) => {
+    const f = effectiveFocusPathRef.current;
+    return f != null && samePath(f, p);
+  }, []);
+  const onRowFocus = useCallback((p: string) => setFocusedPath(p), []);
   const getChildNodes = useCallback(
     (p: string) => childrenMapRef.current.get(p),
     []
@@ -513,6 +569,79 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
     setMenu({ x: e.clientX, y: e.clientY, node });
   }, []);
   const closeMenu = useCallback(() => setMenu(null), []);
+
+  // ---- 键盘导航（事件委托：.ft-scroll 单个 onKeyDown）-----------------------
+  // WAI-ARIA APG tree 模式：ArrowDown/Up 沿 DOM 序移动焦点；ArrowRight 展开
+  // 目录 / 已展开则进第一个子行（文件无操作）；ArrowLeft 折叠目录 / 否则焦
+  // 点回父行（顶层找不到父行即无操作）；Enter 目录=展开折叠、文件=打开
+  // （批量模式下=勾选）；Home/End 首末行。所有方向键 preventDefault 防页面
+  // 滚动。行内嵌控件（重命名输入框 / 批量复选框 /「显示更多」按钮）的按键
+  // 不属于树导航——先于行命中短路，交还控件自身（如输入框内移动光标）。
+  const handleTreeKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const container = scrollRef.current;
+      if (!container) return;
+      const target = e.target as HTMLElement;
+      if (target.closest("input, button")) return;
+      const row = target.closest<HTMLElement>(".ft-row");
+      const path = row?.dataset.path;
+      if (!row || !path) return;
+      const isDir = row.dataset.kind === "dir";
+      const rows = Array.from(container.querySelectorAll<HTMLElement>(".ft-row"));
+      const idx = rows.indexOf(row);
+      if (idx < 0) return;
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          rows[idx + 1]?.focus();
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          rows[idx - 1]?.focus();
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          if (isDir) {
+            if (!expandedRef.current.has(path)) {
+              void toggleDir(path); // 展开（首次异步加载，焦点原地等待）
+            } else {
+              const kids = childrenMapRef.current.get(path);
+              // 已展开且有子行 → 进第一个子行（DOM 中紧随本行）；空目录不动。
+              if (kids && kids.length > 0) rows[idx + 1]?.focus();
+            }
+          }
+          break; // 文件行：无操作
+        case "ArrowLeft":
+          e.preventDefault();
+          if (isDir && expandedRef.current.has(path)) {
+            void toggleDir(path); // 折叠
+          } else {
+            // 文件 / 未展开目录：焦点回父行（顶层无父行则无操作）。
+            row
+              .closest("li")
+              ?.parentElement?.closest("li")
+              ?.querySelector<HTMLElement>(".ft-row")
+              ?.focus();
+          }
+          break;
+        case "Enter":
+          e.preventDefault();
+          if (isDir) void toggleDir(path);
+          else if (batchMode) toggleSelect(path);
+          else onOpenRef.current(path);
+          break;
+        case "Home":
+          e.preventDefault();
+          rows[0]?.focus();
+          break;
+        case "End":
+          e.preventDefault();
+          rows[rows.length - 1]?.focus();
+          break;
+      }
+    },
+    [toggleDir, toggleSelect, batchMode]
+  );
 
   const startRename = useCallback((path: string) => {
     setRenamingPath(path);
@@ -779,7 +908,7 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
       )}
 
       {/* ---- scrollable tree: one collapsible section per root ---- */}
-      <div className="ft-scroll">
+      <div className="ft-scroll" ref={scrollRef} onKeyDown={handleTreeKeyDown}>
         {roots.map((r) => {
           const collapsed = sectionCollapsed.has(r);
           const rows = childrenMap.get(r) ?? [];
@@ -826,6 +955,8 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
                         isSelected={isSelected}
                         renamingPath={renamingPath}
                         isExpanded={isExpanded}
+                        isFocused={isFocused}
+                        onRowFocus={onRowFocus}
                         getChildNodes={getChildNodes}
                         isLoading={isLoading}
                         subscribeRow={subscribeRow}
@@ -880,6 +1011,8 @@ const FileNode = memo(function FileNode({
   isSelected,
   renamingPath,
   isExpanded,
+  isFocused,
+  onRowFocus,
   getChildNodes,
   isLoading,
   subscribeRow,
@@ -909,6 +1042,11 @@ const FileNode = memo(function FileNode({
    *  row reads its OWN expanded / children / loading through them (see the
    *  subscriptions below) and passes them on so children can do the same. */
   isExpanded: (p: string) => boolean;
+  /** 键盘 roving tabindex 的稳定 accessor（focusedPath 行为唯一 tab stop，
+   *  见 FileTree 的 N21 注释）。行经下方订阅读自己的布尔，焦点移动只重渲
+   *  旧行 + 新行两行。 */
+  isFocused: (p: string) => boolean;
+  onRowFocus: (p: string) => void;
   getChildNodes: (p: string) => TreeNode[] | undefined;
   isLoading: (p: string) => boolean;
   /** Stable subscription into FileTree's post-render row notification. */
@@ -942,6 +1080,12 @@ const FileNode = memo(function FileNode({
     subscribeRow,
     () => isLoading(node.path)
   );
+  // 本行是否持有整棵树唯一的 tab stop（N21 键盘可达；快照为布尔，焦点移动
+  // 只让「旧行 + 新行」两个 snapshot 翻转，兄弟行照旧被 memo 跳过）。
+  const focused = useSyncExternalStore(
+    subscribeRow,
+    () => isFocused(node.path)
+  );
 
   const handleRowClick = () => {
     if (batchMode) {
@@ -958,6 +1102,10 @@ const FileNode = memo(function FileNode({
         <div
           className={`ft-row ft-dir${selected && batchMode ? " ft-selected" : ""}`}
           style={pad}
+          tabIndex={focused ? 0 : -1}
+          data-path={node.path}
+          data-kind="dir"
+          onFocus={() => onRowFocus(node.path)}
           onClick={handleRowClick}
           onContextMenu={(e) => onContext(e, node)}
         >
@@ -1016,6 +1164,8 @@ const FileNode = memo(function FileNode({
                 isSelected={isSelected}
                 renamingPath={renamingPath}
                 isExpanded={isExpanded}
+                isFocused={isFocused}
+                onRowFocus={onRowFocus}
                 getChildNodes={getChildNodes}
                 isLoading={isLoading}
                 subscribeRow={subscribeRow}
@@ -1055,6 +1205,10 @@ const FileNode = memo(function FileNode({
           selected && batchMode ? " ft-selected" : ""
         }`}
         style={pad}
+        tabIndex={focused ? 0 : -1}
+        data-path={node.path}
+        data-kind="file"
+        onFocus={() => onRowFocus(node.path)}
         onClick={handleRowClick}
         onContextMenu={(e) => onContext(e, node)}
         onPointerEnter={() => prefetchFile(node.path)}

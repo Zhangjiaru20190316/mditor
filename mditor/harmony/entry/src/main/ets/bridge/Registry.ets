@@ -95,7 +95,8 @@ export function registerAll(bridge: Bridge): void {
   });
 
   // ---- net 域（v4.13 P3：ArkTS SigV4，契约对齐 src-tauri/src/s3.rs）---------
-  const s3Bridge = new S3Bridge(bridge);
+  // P6：装配 FileManager——s3_get_file/s3_put_file 文件通道直读直写本地字节。
+  const s3Bridge = new S3Bridge(bridge, fm);
   s3Bridge.registerAll();
 
   // ---- fs.watch（v4.13 P4：stat 轮询，事件 fs-watch-event 按 watchId 过滤）--
@@ -183,20 +184,49 @@ export function registerAll(bridge: Bridge): void {
     return null;
   });
 
-  // 关窗收尾协议：先广播 window-close-requested 给页面（App 的
-  // onCloseRequested 监听驱动 shutdownSequence 落盘/确认），给 1.2s
-  // 收尾窗口后终止进程。preventDefault 在鸿蒙 MVP 下是 no-op（关闭不可
-  // 拦截），脏缓冲依赖自动保存兜底——已知限制见 harmony/README.md。
+  // 关窗收尾协议（N16 ack 版）：先广播 window-close-requested 给页面（App 的
+  // onCloseRequested 监听驱动 shutdownSequence 落盘/确认），随后等前端
+  // app.closeWindowAck {ok}：ok=true（收尾完成）→ 立即终止（快路径不再盲
+  // 等）；ok=false（用户取消）→ 不终止，留在应用；8s 无 ack（IPC 挂起等）
+  // → 按确认终止。ack 槽位单一：forceClose→destroy 的回声广播被前端
+  // destroyingRef 忽略（不回 ack），首个 ack 唤醒当前等待者，更早的等待者由
+  // 自身超时兜底（terminateSelf 二次调用无副作用，try/catch 包住）。
+  // preventDefault 在鸿蒙下仍是 no-op（关闭本身不可拦截——可延后不可取消的
+  // 部分：确认弹窗超过 8s 仍未决时按关闭处理，脏缓冲另有自动保存兜底）。
+  let closeAckResolver: ((ok: boolean) => void) | null = null;
+  const CLOSE_ACK_TIMEOUT_MS = 8000;
   bridge.register('app.closeWindow', async (): Promise<Object | null> => {
     bridge.sendEvent('window-close-requested', ({ } as Record<string, Object>));
-    await new Promise<void>((resolve) => {
+    const ok = await new Promise<boolean>((resolve) => {
+      closeAckResolver = resolve;
       setTimeout(() => {
-        resolve();
-      }, 1200);
+        if (closeAckResolver === resolve) {
+          closeAckResolver = null;
+          resolve(true); // 超时按确认收尾（对齐旧 1.2s 盲等语义，仅放宽窗口）
+        }
+      }, CLOSE_ACK_TIMEOUT_MS);
     });
+    if (!ok) {
+      return null; // 用户取消：留在应用
+    }
     const a = HostContext.ability;
     if (a !== null && a.context !== null) {
-      a.context.terminateSelf();
+      try {
+        a.context.terminateSelf();
+      } catch {
+        // 已随前一个等待者终止 — 无事可做
+      }
+    }
+    return null;
+  });
+
+  // N16：前端收尾完成/取消的回执（单一等待槽位，收到即唤醒；重复 ack 无害）。
+  bridge.register('app.closeWindowAck', async (params: Record<string, Object>): Promise<Object | null> => {
+    const ok = params['ok'] === true;
+    if (closeAckResolver !== null) {
+      const r = closeAckResolver;
+      closeAckResolver = null;
+      r(ok);
     }
     return null;
   });

@@ -119,7 +119,7 @@ Tauri 命令原名注册 method → `HARMONY_CAPS` 翻 true → 前端硬门控�
 **P0 冒烟（既有清单顺带核销）**
 - [ ] `fs.listFile` 对授权 URI 的目录遍历；URI 上的 rename/mkdir/unlink
 - [ ] 选工作区 → 文件树 → 打开 → 编辑 → 保存 → 重启恢复端到端
-- [ ] 关窗收尾（window-close-requested → 1.2s → 终止）
+- [ ] 关窗收尾（N16 ack 协议：window-close-requested → app.closeWindowAck{ok} → 立即终止；取消 → 不终止；8s 超时兜底）——含「取消关窗留在应用」与「脏文档落盘后关」两分支
 
 **P1 导出**
 - [ ] LaTeX .tex 内容正确；DOCX 设备 Office/WPS 可开（含图片内联）；

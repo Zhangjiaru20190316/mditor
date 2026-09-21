@@ -137,8 +137,11 @@ export interface PlatformWindow {
   onDragDropEvent(
     handler: (event: { payload: DragDropPayload }) => void
   ): Promise<Unlisten>;
+  /** 关窗请求监听。handler 返回 false = 用户取消关闭（N16：鸿蒙桥据此不
+   *  终止进程；桌面端 Tauri 语义靠 preventDefault，返回值被忽略——两端
+   *  合一约定）。 */
   onCloseRequested(
-    handler: (ev: WindowCloseRequestedEvent) => void | Promise<void>
+    handler: (ev: WindowCloseRequestedEvent) => void | false | Promise<void | false>
   ): Promise<Unlisten>;
   onFocusChanged(handler: (ev: { payload: boolean }) => void): Promise<Unlisten>;
 }

@@ -31,7 +31,12 @@ function tauriWindow(): PlatformWindow {
       isFullscreen: () => w.isFullscreen(),
       setFullscreen: (flag) => w.setFullscreen(flag),
       onDragDropEvent: (handler) => w.onDragDropEvent(handler),
-      onCloseRequested: (handler) => w.onCloseRequested(handler),
+      // N16：平台 handler 允许返回 false（鸿蒙 ack 协议的取消信号）；Tauri
+      // 的 preventDefault 已表达同义，这里包一层丢弃返回值以满足插件签名。
+      onCloseRequested: (handler) =>
+        w.onCloseRequested(async (ev) => {
+          await handler(ev);
+        }),
       onFocusChanged: (handler) => w.onFocusChanged(handler),
     };
   })();

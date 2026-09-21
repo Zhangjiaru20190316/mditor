@@ -10,10 +10,10 @@
 // citation / wikiLink mdast 节点），语法降级规则与 HTML 导出一致。
 
 import { unified } from "unified";
-import type { Plugin } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { asRemarkPlugin } from "./pluginCast";
 import { remarkCitation } from "./remarkCitation";
 import { remarkWikiLink } from "./remarkWikiLink";
 import { parseFigureAttr, parseTableCaption } from "./figureNumbering";
@@ -50,8 +50,8 @@ function buildTexProcessor() {
     .use(remarkParse)
     .use(remarkGfm)
     .use(remarkMath)
-    .use(remarkCitation as unknown as Plugin)
-    .use(remarkWikiLink as unknown as Plugin);
+    .use(asRemarkPlugin(remarkCitation))
+    .use(asRemarkPlugin(remarkWikiLink));
 }
 
 function getProcessor() {

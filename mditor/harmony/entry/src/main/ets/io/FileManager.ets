@@ -70,22 +70,29 @@ export class FileManager {
     return this.mapper;
   }
 
-  /** statByPath / listEntryNames：WatchManager 轮询专用（v4.13 P4）。
-   *  与 readDir 的差异：不做逐条目 stat 推断 isDirectory（轮询方自己 stat
-   *  拿 mtime，减半系统调用）。 */
-  async statByPath(path: string): Promise<StatOut> {
-    return this.statOf(path);
+  /** N8：虚拟路径 → 可列目录的真实目标（沙箱路径或 URI 的 FileUri.path 解码
+   *  形态）。WatchManager 的 TaskPool 扫描以真实路径遍历（worker 内不经
+   *  UriMapper），根目标由主线程解析一次。无法解析抛 Error（E_ARGS 语义）。 */
+  realTargetOf(virtualPath: string): string {
+    return this.listTargetOf(this.mapper.resolve(virtualPath));
   }
 
-  async listEntryNames(dirPath: string): Promise<string[]> {
-    const r = this.mapper.resolve(dirPath);
-    const target = this.listTargetOf(r);
-    const raw = fs.listFileSync(target);
-    const out: string[] = [];
-    raw.forEach((n: string) => {
-      out.push(n.startsWith('/') ? n.slice(1) : n);
-    });
-    return out;
+  /** P6：S3 文件通道——虚拟路径直读字节（ArkTS 桥内直传，不经 base64 IPC
+   *  往返；同步引擎 s3GetFile/s3PutFile 鸿蒙分支的底层）。 */
+  async readFileBytesVirtual(path: string): Promise<Uint8Array> {
+    return this.readBytes(path);
+  }
+
+  /** P6：S3 文件通道——字节直写虚拟路径（父目录自动创建，沙箱侧对齐
+   *  writeFile 的 ensureSandboxDir 行为）。 */
+  async writeFileBytesVirtual(path: string, bytes: Uint8Array): Promise<void> {
+    const r = this.mapper.resolve(path);
+    if (r.kind === 'sandbox') {
+      this.ensureSandboxDir(this.parentOf(r.sandboxPath));
+    }
+    // bytes 可能是视图（byteOffset ≠ 0）：截出精确区间再写，避免写出前缀垃圾。
+    const exact = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    await this.withWriteHandle(r, (fd: number) => fs.writeSync(fd, exact));
   }
 
   async readTextFile(params: Record<string, Object>): Promise<Object | null> {
@@ -568,8 +575,11 @@ export class FileManager {
 }
 
 /** 启动清理应用回收站：删除 30 天前的条目（EntryAbility.onCreate 调用，
- *  尽力而为——任何失败都不拖垮启动）。条目名 <epochMs>-<原名>。 */
+ *  尽力而为——任何失败都不拖垮启动）。条目名 <epochMs>-<原名>。
+ *  W6 修复：目录条目改后序递归整棵删（原 fs.rmdirSync 单删，非空目录必抛
+ *  被吞 → 回收站目录条目永远清不掉，只增不减）。 */
 export function cleanupTrash(filesDir: string): void {
+  migrateLegacyTrash(filesDir);
   const trashDir = `${filesDir}/trash`;
   try {
     if (!fs.accessSync(trashDir)) {
@@ -602,12 +612,63 @@ export function cleanupTrash(filesDir: string): void {
       const target = `${trashDir}/${name}`;
       const st = fs.statSync(target);
       if (st.isDirectory()) {
-        fs.rmdirSync(target);
+        removeTreeReal(target);
       } else {
         fs.unlinkSync(target);
       }
     } catch {
       // 单条失败跳过 — 下次启动再试
     }
+  }
+}
+
+/** 真实路径后序递归删除（cleanupTrash 专用；虚拟路径版见 FileManager
+ *  removeTreeVirtual——那边经 UriMapper 编解码，这边直接操作沙箱路径）。 */
+function removeTreeReal(dir: string): void {
+  let names: string[] = [];
+  try {
+    names = fs.listFileSync(dir);
+  } catch {
+    // 读不出来直接尝试 rmdir（空目录/已消失仍能成功）
+  }
+  for (const raw of names) {
+    const name = raw.startsWith('/') ? raw.slice(1) : raw;
+    if (name.length === 0) {
+      continue;
+    }
+    const child = `${dir}/${name}`;
+    let isDir = false;
+    try {
+      isDir = fs.statSync(child).isDirectory();
+    } catch {
+      continue; // 条目消失：跳过
+    }
+    if (isDir) {
+      removeTreeReal(child);
+    } else {
+      fs.unlinkSync(child);
+    }
+  }
+  fs.rmdirSync(dir);
+}
+
+/** W8 修复的善后：UriMapper 沙箱拼接 bug 存续期（v4.13.0–v4.15.x），回收站
+ *  被写到 `<filesDir>trash`（缺 `/`，实为 filesDir 同级的畸形目录名）而非
+ *  `<filesDir>/trash`。这里一次性把整棵畸形目录改名搬进正确回收站（条目名
+ *  打 legacy- 前缀 + 当前时间戳，30 天策略自然回收）。尽力而为，任何失败
+ *  都不影响启动；首次成功后畸形目录不复存在，后续为 no-op。 */
+function migrateLegacyTrash(filesDir: string): void {
+  const legacy = `${filesDir}trash`;
+  try {
+    if (!fs.accessSync(legacy)) {
+      return;
+    }
+    const trashDir = `${filesDir}/trash`;
+    if (!fs.accessSync(trashDir)) {
+      fs.mkdirSync(trashDir, true);
+    }
+    fs.renameSync(legacy, `${trashDir}/${Date.now()}-legacy-trash`);
+  } catch {
+    // 搬不动就留着（不阻塞启动；畸形目录不再增长——写入侧已修复）
   }
 }

@@ -12,6 +12,7 @@ import { InputRule } from "@milkdown/prose/inputrules";
 import type { Node as PMNode } from "@milkdown/prose/model";
 import { Plugin, PluginKey, TextSelection } from "@milkdown/prose/state";
 import { $inputRule, $nodeSchema, $prose, $remark } from "@milkdown/utils";
+import { asMilkdownPlugins } from "./pluginCast";
 import { parseWikiLink, remarkWikiLink } from "./remarkWikiLink";
 
 const WIKILINK_ID = "wikiLink";
@@ -127,10 +128,10 @@ function createWikiLinkClickPlugin(): Plugin {
 
 /** 组装插件束（remark 在前、schema 次之、input rule / prose 末）。 */
 export function createWikiLinkPlugins(): MilkdownPlugin[] {
-  return [
+  return asMilkdownPlugins([
     wikiLinkRemark,
     wikiLinkSchema,
     wikiLinkInputRule,
     $prose(() => createWikiLinkClickPlugin()),
-  ].flat() as unknown as MilkdownPlugin[];
+  ].flat());
 }

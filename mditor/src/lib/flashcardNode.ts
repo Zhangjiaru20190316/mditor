@@ -14,6 +14,7 @@ import { InputRule } from "@milkdown/prose/inputrules";
 import type { Node as PMNode } from "@milkdown/prose/model";
 import { TextSelection } from "@milkdown/prose/state";
 import { $inputRule, $nodeSchema, $remark } from "@milkdown/utils";
+import { asMilkdownPlugins } from "./pluginCast";
 import { remarkFlash } from "./remarkFlash";
 
 const FLASHCARD_ID = "flashcard";
@@ -73,5 +74,5 @@ const flashcardInputRule = $inputRule(() =>
 
 /** 组装插件束（remark 在前、schema 次之、input rule 末）。 */
 export function createFlashcardPlugins(): MilkdownPlugin[] {
-  return [flashcardRemark, flashcardSchema, flashcardInputRule].flat() as unknown as MilkdownPlugin[];
+  return asMilkdownPlugins([flashcardRemark, flashcardSchema, flashcardInputRule].flat());
 }

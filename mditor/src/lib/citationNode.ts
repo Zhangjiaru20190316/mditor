@@ -17,6 +17,7 @@ import type { Node as PMNode } from "@milkdown/prose/model";
 import type { EditorView } from "@milkdown/prose/view";
 import { Decoration, DecorationSet } from "@milkdown/prose/view";
 import { $inputRule, $nodeSchema, $prose, $remark } from "@milkdown/utils";
+import { asMilkdownPlugins } from "./pluginCast";
 import { parseCitationInner, buildReferences, formatInlineCitation, isReferencesHeadingText } from "./citation";
 import { remarkCitation } from "./remarkCitation";
 import { bibliography } from "./bibliography";
@@ -217,10 +218,10 @@ function createCitationRefsPlugin(): Plugin {
 
 /** 组装插件束（remark 在前、schema 次之、input rule / prose 末）。 */
 export function createCitationPlugins(): MilkdownPlugin[] {
-  return [
+  return asMilkdownPlugins([
     citationRemark,
     citationSchema,
     citationInputRule,
     $prose(() => createCitationRefsPlugin()),
-  ].flat() as unknown as MilkdownPlugin[];
+  ].flat());
 }

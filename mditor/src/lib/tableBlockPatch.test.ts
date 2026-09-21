@@ -16,12 +16,8 @@
 // 回归面。锚点失配时先重打补丁（改 node_modules 后 npx patch-package
 // @milkdown/components），不要删测试。
 //
-// 注：tsc 的 lib 不含 node 类型（测试约定纯逻辑），node:fs 走运行时动态
-// 导入 + @ts-expect-error；若未来引入 @types/node 使其失效，删注释即可。
-
 import { describe, expect, it } from "vitest";
 
-// @ts-expect-error node:fs 仅存在于 vitest 的 node 运行时
 const { readFileSync } = await import("node:fs");
 
 /** 截取 TableNodeView.update() 方法体（class 内首个 update(node) { … }）。 */

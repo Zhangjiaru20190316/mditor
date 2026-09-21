@@ -10,6 +10,10 @@
 //                                             HEAD 取回规范元数据）
 //   s3_delete         {cfg, key}            → null
 //   s3_head           {cfg, key}            → S3Object | null（404 → null）
+//   s3_get_file       {cfg, key, path}      → null（P6：GET 字节直写虚拟路径，
+//                                             不经 base64 IPC）
+//   s3_put_file       {cfg, key, path, mtimeMs?} → S3Object（P6：虚拟路径直读
+//                                             字节上传，不经 base64 IPC）
 //   cfg = {endpoint, region, bucket, accessKeyId, secretAccessKey,
 //          sessionToken?, pathStyle}
 //   S3Object = {key, size, etag(无引号), lastModified(RFC3339/ISO)}
@@ -38,6 +42,7 @@ import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { Bridge, BridgeError } from '../bridge/Bridge';
+import { FileManager } from '../io/FileManager';
 
 const DOMAIN = 0x0D01;
 
@@ -686,9 +691,12 @@ function s3ObjectOf(key: string, size: number, etag: string | null, lastModified
 
 export class S3Bridge {
   private readonly bridge: Bridge;
+  /** P6 文件通道的本地字节读写（虚拟路径直读直写，不经 base64 IPC）。 */
+  private readonly fm: FileManager | null;
 
-  constructor(bridge: Bridge) {
+  constructor(bridge: Bridge, fm: FileManager | null = null) {
     this.bridge = bridge;
+    this.fm = fm;
   }
 
   registerAll(): void {
@@ -698,7 +706,9 @@ export class S3Bridge {
     this.bridge.register('s3_put', (p) => this.put(p));
     this.bridge.register('s3_delete', (p) => this.delete(p));
     this.bridge.register('s3_head', (p) => this.head(p));
-    hilog.info(DOMAIN, 'mditor', 'S3Bridge: 六命令已注册');
+    this.bridge.register('s3_get_file', (p) => this.getFile(p));
+    this.bridge.register('s3_put_file', (p) => this.putFile(p));
+    hilog.info(DOMAIN, 'mditor', 'S3Bridge: 八命令已注册');
   }
 
   /** 连通性测试：List 1 键（验证 endpoint + 凭证 + 桶存在 + ListBucket 权限）。 */
@@ -767,18 +777,41 @@ export class S3Bridge {
   async get(params: Record<string, Object>): Promise<Object | null> {
     const key = this.keyOf(params);
     const cfg = parseCfg(params['cfg']);
+    const bytes = await this.getObjectBytes(cfg, key, '下载失败');
+    const b64 = new util.Base64Helper().encodeToStringSync(bytes);
+    const out: Record<string, Object> = { 'base64': b64 };
+    return out;
+  }
+
+  /** P6 文件通道：下载对象直写本地虚拟路径（字节不经 base64 IPC——对齐
+   *  桌面 s3_download_file 的 Rust 直写语义；前端 sync/s3.ts 鸿蒙分支调用）。
+   *  父目录由 FileManager.writeFileBytesVirtual 自动创建。 */
+  async getFile(params: Record<string, Object>): Promise<Object | null> {
+    const key = this.keyOf(params);
+    const cfg = parseCfg(params['cfg']);
+    const path = strOf(params['path']) ?? '';
+    if (this.fm === null) {
+      throw new BridgeError('E_ARGS', 's3_get_file：文件通道未装配（FileManager 缺失）');
+    }
+    const bytes = await this.getObjectBytes(cfg, key, '下载失败');
+    await this.fm.writeFileBytesVirtual(path, bytes);
+    return null;
+  }
+
+  /** GET 字节核心（get / getFile 共用）：HEAD 前置校验 + 双重 ≤50MB 上限。 */
+  private async getObjectBytes(cfg: S3Config, key: string, ctx: string): Promise<Uint8Array> {
     const ep = parseEndpoint(cfg.endpoint);
     ensureScheme(ep, cfg.endpoint);
     // HEAD 阶段：404 → 002（对象不存在或无权限）
     const headTarget = buildTarget(cfg, ep, key, []);
     const headHeaders = await this.signedHeadersFor(cfg, 'HEAD', headTarget, null, this.tokenExtra(cfg));
     const headResp = await doRequest(headTarget, headHeaders, http.RequestMethod.HEAD, null, false,
-      '下载失败（对象不存在或无权限）');
+      `${ctx}（对象不存在或无权限）`);
     if (headResp.code === 404) {
-      throw mapStatusError('下载失败（对象不存在或无权限）', 404, '', '');
+      throw mapStatusError(`${ctx}（对象不存在或无权限）`, 404, '', '');
     }
     if (headResp.code >= 400) {
-      throw mapStatusError('下载失败（对象不存在或无权限）', headResp.code,
+      throw mapStatusError(`${ctx}（对象不存在或无权限）`, headResp.code,
         s3ErrorCodeOf(headResp.bodyText), headResp.bodyText);
     }
     const sizeHeader = headerOf(headResp.headers, 'content-length');
@@ -788,34 +821,51 @@ export class S3Bridge {
     }
     const target = buildTarget(cfg, ep, key, []);
     const headers = await this.signedHeadersFor(cfg, 'GET', target, null, this.tokenExtra(cfg));
-    const resp = await doRequest(target, headers, http.RequestMethod.GET, null, true, '下载失败');
+    const resp = await doRequest(target, headers, http.RequestMethod.GET, null, true, ctx);
     if (resp.code >= 400) {
-      throw mapStatusError('下载失败', resp.code, s3ErrorCodeOf(resp.bodyText), '');
+      throw mapStatusError(ctx, resp.code, s3ErrorCodeOf(resp.bodyText), '');
     }
     const bytes = resp.bodyBytes ?? new Uint8Array(0);
     if (bytes.length > MAX_OBJECT_BYTES) {
       throw new BridgeError('E_IO', `SYNC-005: 对象过大（${bytes.length} 字节，上限 ${MAX_OBJECT_BYTES}）`);
     }
-    const b64 = new util.Base64Helper().encodeToStringSync(bytes);
-    const out: Record<string, Object> = { 'base64': b64 };
-    return out;
+    return bytes;
   }
 
   /** 上传：base64 解码（≤50MB）→ PUT（尽力 x-amz-meta-mtime）→ HEAD 取回。 */
   async put(params: Record<string, Object>): Promise<Object | null> {
     const key = this.keyOf(params);
     const cfg = parseCfg(params['cfg']);
-    const ep = parseEndpoint(cfg.endpoint);
-    ensureScheme(ep, cfg.endpoint);
     const dataB64 = strOf(params['data']) ?? '';
     const bytes = new util.Base64Helper().decodeSync(dataB64);
+    return await this.putObjectBytes(cfg, key, bytes, params['mtimeMs']);
+  }
+
+  /** P6 文件通道：虚拟路径直读字节 → PUT → HEAD 取回（上传不再经 base64
+   *  IPC——50MB 文件原先在 WebView/桥两侧各放大 ~1.33x+，现零放大）。 */
+  async putFile(params: Record<string, Object>): Promise<Object | null> {
+    const key = this.keyOf(params);
+    const cfg = parseCfg(params['cfg']);
+    const path = strOf(params['path']) ?? '';
+    if (this.fm === null) {
+      throw new BridgeError('E_ARGS', 's3_put_file：文件通道未装配（FileManager 缺失）');
+    }
+    const bytes = await this.fm.readFileBytesVirtual(path);
+    return await this.putObjectBytes(cfg, key, bytes, params['mtimeMs']);
+  }
+
+  /** PUT 核心（put / putFile 共用）：≤50MB 校验 + x-amz-meta-mtime +
+   *  PUT + HEAD 取回规范元数据。 */
+  private async putObjectBytes(cfg: S3Config, key: string, bytes: Uint8Array,
+    mtimeRaw: Object | undefined): Promise<Object | null> {
+    const ep = parseEndpoint(cfg.endpoint);
+    ensureScheme(ep, cfg.endpoint);
     if (bytes.length > MAX_OBJECT_BYTES) {
       throw new BridgeError('E_IO', `SYNC-005: 文件过大（${bytes.length} 字节，上限 ${MAX_OBJECT_BYTES}）`);
     }
     const extra: Record<string, string> = {};
-    const mtimeMs = params['mtimeMs'];
-    if (typeof mtimeMs === 'number' && isFinite(mtimeMs as number) && (mtimeMs as number) >= 0) {
-      extra['x-amz-meta-mtime'] = `${Math.round(mtimeMs as number)}`;
+    if (typeof mtimeRaw === 'number' && isFinite(mtimeRaw as number) && (mtimeRaw as number) >= 0) {
+      extra['x-amz-meta-mtime'] = `${Math.round(mtimeRaw as number)}`;
     }
     if (cfg.sessionToken.length > 0) {
       extra['x-amz-security-token'] = cfg.sessionToken;

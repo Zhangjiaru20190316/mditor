@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { unified } from "unified";
-import type { Plugin } from "unified";
 import remarkParse from "remark-parse";
 import remarkStringify from "remark-stringify";
 import remarkGfm from "remark-gfm";
+import { asRemarkPlugin } from "./pluginCast";
 import { remarkMark } from "./remarkMark";
 import { remarkTextColor } from "./remarkTextColor";
 
@@ -36,8 +36,8 @@ function buildMilkdownLikeProcessor() {
     .use(remarkParse)
     .use(remarkStringify)
     .use(remarkGfm)
-    .use(remarkMark as unknown as Plugin)
-    .use(remarkTextColor as unknown as Plugin);
+    .use(asRemarkPlugin(remarkMark))
+    .use(asRemarkPlugin(remarkTextColor));
 }
 
 /** 模拟 Milkdown SerializerState.build() 对「段落：前缀 + 高亮 + 颜色字 +

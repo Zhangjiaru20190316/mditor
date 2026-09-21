@@ -9,10 +9,10 @@
 // by remarkMark is "mark".
 
 import { commandsCtx } from "@milkdown/core";
-import type { MilkdownPlugin } from "@milkdown/ctx";
 import { markRule } from "@milkdown/prose";
 import { toggleMark } from "@milkdown/prose/commands";
 import { $command, $inputRule, $markSchema, $remark, $useKeymap } from "@milkdown/utils";
+import { asMilkdownPlugins } from "./pluginCast";
 import { remarkMark } from "./remarkMark";
 
 const MARK_ID = "highlight";
@@ -69,11 +69,13 @@ const highlightRemark = $remark("remarkMark", () => remarkMark as never);
 /// Milkdown's `$markSchema`/`$remark`/`$useKeymap` composables are tuples
 /// `[ctxSlice, plugin]`; `$command`/`$inputRule` are single plugins. `.flat()`
 /// (the same pattern the built-in presets use) flattens the tuples into
-/// individual plugin entries before handing them to `editor.use()`.
-export const highlightPlugins = [
+/// individual plugin entries before handing them to `editor.use()`. The flat
+/// result's element type doesn't line up with `MilkdownPlugin[]`, so the
+/// bundle is funnelled through lib/pluginCast.ts (single audit point).
+export const highlightPlugins = asMilkdownPlugins([
   highlightRemark,
   highlightSchema,
   toggleHighlightCommand,
   highlightInputRule,
   highlightKeymap,
-].flat() as unknown as MilkdownPlugin[];
+].flat());

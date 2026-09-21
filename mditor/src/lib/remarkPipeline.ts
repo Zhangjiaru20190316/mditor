@@ -27,6 +27,7 @@ import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import remarkInlineLinks from "remark-inline-links";
+import { asRemarkPlugin } from "./pluginCast";
 import { remarkMark } from "./remarkMark";
 import { remarkTextColor } from "./remarkTextColor";
 import { remarkMathFenceAlias } from "./remarkMathFenceAlias";
@@ -91,8 +92,8 @@ function mathBlocksToCode(node: MdastNode): void {
  *  （大文档模式关闭 latex → 无 remark-math，$$ 解析为普通文本，与编辑器
  *  行为一致）。同一处理器可重复 parse/runSync（unified 冻结只禁止继续
  *  use()，不影响复用——Milkdown 自己的 ParserState 也是这样复用的）。
- *  自定义小变换与 remarkMark/remarkTextColor 的注册沿用 renderMarkdown
- *  管线的 `as Plugin` 惯例（见 lib/remarkMark.ts 的类型说明）。 */
+ *  自定义小变换与 remarkMark/remarkTextColor 的注册经 lib/pluginCast.ts 的
+ *  asRemarkPlugin 收口断言（见 lib/remarkMark.ts 的类型说明）。 */
 export function buildEditorParseProcessor(withMath: boolean) {
   const stripBr: Plugin = () => (tree) => {
     removeEmptyLineBreaks(tree as MdastNode);
@@ -106,18 +107,18 @@ export function buildEditorParseProcessor(withMath: boolean) {
     .use(stripBr)
     .use(remarkGfm);
   if (withMath)
-    proc.use(remarkMath).use(mathToCode).use(remarkMathFenceAlias as unknown as Plugin)
-      .use(remarkMathGuard as unknown as Plugin);
+    proc.use(remarkMath).use(mathToCode).use(asRemarkPlugin(remarkMathFenceAlias))
+      .use(asRemarkPlugin(remarkMathGuard));
   // v4.7：[[双链]] 解析（native 模式）无条件注册（大小文档两档一致），
   // 哨兵计数两档各 +1。导出降级走 renderMarkdown 的 exportMode。
   // v4.7 模块 3：[@引用] 解析（native 模式）同样无条件注册，两档各 +1。
   // v4.7 模块 4：:::flash 闪卡容器解析（native 模式）无条件注册，+1。
   return proc
-    .use(remarkWikiLink as unknown as Plugin)
-    .use(remarkCitation as unknown as Plugin)
-    .use(remarkFlash as unknown as Plugin)
-    .use(remarkMark as unknown as Plugin)
-    .use(remarkTextColor as unknown as Plugin);
+    .use(asRemarkPlugin(remarkWikiLink))
+    .use(asRemarkPlugin(remarkCitation))
+    .use(asRemarkPlugin(remarkFlash))
+    .use(asRemarkPlugin(remarkMark))
+    .use(asRemarkPlugin(remarkTextColor));
 }
 
 /** 哨兵校验用：Milkdown 实例应注册的 remark 插件总数（不含 parse/stringify

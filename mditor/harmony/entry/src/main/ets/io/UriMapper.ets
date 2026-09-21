@@ -103,10 +103,15 @@ export class UriMapper {
       const raw = virtualPath === '/AppData' ? '' : virtualPath.slice('/AppData'.length);
       // S7：`..` 段拒绝、`.` 丢弃——防越出沙箱（与 S3Bridge key 校验同纪律）。
       const rel = UriMapper.sanitizeRelSegments(raw);
+      // W8 修复：sanitize 后的 rel 无前导斜杠（空段已剥），必须显式补 `/`——
+      // 原先 `${sandbox}${rel}` 拼出 `<filesDir>logs`（缺分隔符），回收站被
+      // 写到 `<filesDir>trash` 而 cleanupTrash 清理的是 `<filesDir>/trash`，
+      // 两处永不相交 → 回收站永不清理。LocalUnit 3 例基线失败实为该真 bug
+      // 被 CLI 环境误判（修复后 3/3 PASS）。
       const result: ResolvedPath = {
         kind: 'sandbox',
         uri: '',
-        sandboxPath: `${sandbox}${rel}`,
+        sandboxPath: rel.length === 0 ? sandbox : `${sandbox}/${rel}`,
       };
       return result;
     }

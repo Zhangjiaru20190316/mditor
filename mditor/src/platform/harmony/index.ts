@@ -158,8 +158,16 @@ const harmonyWindow: PlatformWindow = {
   setFullscreen: () => Promise.resolve(),
   onDragDropEvent: () => Promise.resolve(() => undefined), // ArkWeb 内部拖拽走 DOM 事件
   onCloseRequested: (handler) => {
+    // N16 ack 协议：handler 跑完（shutdownSequence 落盘/确认）回执
+    // app.closeWindowAck——ok=true 触发桥侧立即终止（快路径不再盲等 8s），
+    // 返回 false（用户取消）则桥侧留在应用。handler 异常按确认回执（兜底
+    // 永不卡死关窗流程）。
     const un = bridge.subscribe("window-close-requested", () => {
-      void handler({ preventDefault: () => undefined });
+      Promise.resolve(handler({ preventDefault: () => undefined }))
+        .then((r) => bridge.request("app.closeWindowAck", { ok: r !== false }))
+        .catch(() => {
+          void bridge.request("app.closeWindowAck", { ok: true }).catch(() => undefined);
+        });
     });
     return Promise.resolve(un);
   },

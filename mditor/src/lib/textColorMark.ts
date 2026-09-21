@@ -12,8 +12,8 @@
 // the floating selection toolbar's color palette (which calls the setTextColor /
 // clearTextColor facade methods, built on ProseMirror transactions directly).
 
-import type { MilkdownPlugin } from "@milkdown/ctx";
 import { $markSchema, $remark } from "@milkdown/utils";
+import { asMilkdownPlugins } from "./pluginCast";
 import { remarkTextColor } from "./remarkTextColor";
 
 const MARK_ID = "textColor";
@@ -61,5 +61,6 @@ const textColorRemark = $remark("remarkTextColor", () => remarkTextColor as neve
 
 /// Register remark (parser/serializer wiring) before the schema is built.
 /// Milkdown's `$markSchema`/`$remark` composables are tuples `[ctxSlice, plugin]`;
-/// `.flat()` (the built-in presets' pattern) flattens them before `editor.use()`.
-export const textColorPlugins = [textColorRemark, textColorSchema].flat() as unknown as MilkdownPlugin[];
+/// `.flat()` (the built-in presets' pattern) flattens them before `editor.use()`,
+/// with the flat result funneled through lib/pluginCast.ts (see highlightMark.ts).
+export const textColorPlugins = asMilkdownPlugins([textColorRemark, textColorSchema].flat());
