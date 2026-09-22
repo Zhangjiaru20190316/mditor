@@ -4,6 +4,9 @@
   "version": "4.17.0",
   "type": "module",
   "description": "Mditor — a local-first Markdown editor inspired by Typora (Tauri 2 + React + Milkdown).",
+  "overrides": {
+    "katex": "0.18.4"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
@@ -42,7 +45,7 @@
     "@turbodocx/html-to-docx": "^1.22.0",
     "highlight.js": "^11.12.0",
     "juice": "^12.1.2",
-    "katex": "^0.18.4",
+    "katex": "0.18.4",
     "modern-screenshot": "^4.7.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

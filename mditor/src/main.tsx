@@ -20,6 +20,9 @@ import "katex/dist/katex.min.css";
 // mhchem 扩展（v4.6）：side-effect import，在全局共享的 KaTeX 实例上注册
 // \ce{} 化学式与 \pu 物理单位宏——编辑器（Crepe）、静态管线（rehype-katex）
 // 与导出再渲染三条路径用的是同一个 katex 模块实例，这里注册一次全部生效。
+// （单实例由 package.json overrides katex=0.18.4 保证——v4.17.1 前静态管线
+// 曾解析到嵌套 katex@0.16.47，DOM 类名与应用所载 0.18.4 CSS 镜像失配；归一
+// 回归守卫见 src/lib/mathKatexDedupe.test.ts。）
 import "katex/contrib/mhchem";
 import "highlight.js/styles/github.css";
 import "./styles/global.css";

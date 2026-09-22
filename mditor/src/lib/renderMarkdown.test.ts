@@ -115,9 +115,11 @@ describe("renderMarkdown math（v4.6）", () => {
       const html = await renderMarkdown(
         "$$\na=b \\label{eq:a}\n$$\n\n$$\nc=d \\notag\n$$\n\n见 \\eqref{eq:a}。"
       );
-      // rehype-katex 输出里编号元素的类名是 "tag"（直接调 katex.
-      // renderToString 才是 "katex-tag"）；MathML 里同步有 (1)。
-      expect(html).toContain('class="tag"');
+      // v4.17.1 katex overrides 归一为 0.18.4 后：编号元素类名前缀化为
+      // "katex-tag"（0.16 时代的裸 "tag" 不再出现），且 rehype-katex 与直接
+      // 调 katex.renderToString 输出一致（单实例，差异注释不再成立）；
+      // MathML 里同步有 (1)。
+      expect(html).toContain('class="katex-tag"');
       expect(html).toContain("<mtext>(1)</mtext>");
       expect(html).toContain("见 (1)。");
     });
