@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased（2026-09-22 修复发版：静态管线 KaTeX 双实例错位根修——v4.17.1）
+
+根因取证与独立复核全链见工作流报告（证据 `.workflow/task1-forensics/`）：
+
+- **F1 katex 双实例错位根修（高，正确性）**：rehype-katex 7.0.1 声明 `katex:^0.16.0` 不被顶层 0.18.4 满足 → npm 结构性嵌套 katex@0.16.47，静态管线（AI 面板/批注弹窗/导出再渲染）产出旧类名 DOM（`strut/base/sizing`），而全应用只加载顶层 0.18.4 CSS（`katex-strut/katex-base/katex-sizing`，旧类选择器 0 条，两版镜像互补）→ strut `display:inline-block`、`.base`、121 条 sizing 字号规则整体失效，分数 vlist 结构坍塌（截图症状：分子消失/分数线贴分母/上下标错位）。修复：`package.json` `overrides: { katex: "0.18.4" }` 单实例化 + 直接依赖收紧精确版。附带：`\ce{}`/`\pu` 在静态管线恢复渲染（mhchem 注册实例与渲染实例合一，此前从未生效过）；`\tag` 编号类名 `tag→katex-tag` 归一。回归守卫 `mathKatexDedupe.test.ts` 12 例（strut 类名前缀断言防再错位）；数学套件 90/90；编辑器路径 103/103 块逐字符干净未受影响。错位自 init 即存在（非新引入），"最新版本才出现"的感知源于 v4.12.1 Typora 双行 `$$` 根修让此前不渲染的公式真正进入（塌掉的）静态渲染。
+- 版本四处对齐 4.17.1（package.json / Cargo.toml / tauri.conf.json / app.json5 versionCode 1001701）。
+
 ## Unreleased（2026-09-21 第 5 批：快赢批 + 插桩门控/lazy + 后端圈禁 + types 拆分 + App.tsx 首块拆分——v4.17.0）
 
 第四批审计与路线图见 `docs/optimization_report4.md`（本批为其 §六第五批路线图 1/2/3/4 条的落地，实测与新审计 `docs/optimization_report5.md`）：
