@@ -201,4 +201,38 @@ describe("cvIntrinsic 插件 apply：docChanged 走增量映射（性能回归�
     const next = st.apply(st.tr.setSelection(st.selection));
     expect(cvIntrinsicKey.getState(next)).toBe(cvIntrinsicKey.getState(st));
   });
+
+  it("R2 分片重建：多片 rebuild-slice + rebuild-end 的终态 == learned 整树重建", () => {
+    const st = stateWithDocs(["甲", "乙", "丙"]);
+    const tr = st.tr.insertText("新增", st.doc.content.child(0).content.size + 1);
+    const edited = st.apply(tr);
+    const n1 = edited.doc.content.child(0);
+    noteCvSize(cvHash(n1.type.name, n1.textContent), 800, 200);
+    const full = edited.apply(edited.tr.setMeta(cvIntrinsicKey, { type: "learned" }));
+
+    // 分片路径：两片各盖一部分（片内块位置按 doc 计）
+    const doc = edited.doc;
+    const p0 = 0;
+    const b1 = doc.child(0).nodeSize;
+    const end = doc.content.size;
+    let sliced = edited;
+    sliced = sliced.apply(
+      sliced.tr.setMeta(cvIntrinsicKey, { type: "rebuild-slice", from: p0, to: b1 })
+    );
+    sliced = sliced.apply(
+      sliced.tr.setMeta(cvIntrinsicKey, { type: "rebuild-slice", from: b1, to: end })
+    );
+    sliced = sliced.apply(sliced.tr.setMeta(cvIntrinsicKey, { type: "rebuild-end" }));
+    expect(decoratedBlockStarts(sliced)).toEqual(decoratedBlockStarts(full));
+    // 装饰样式逐块等价（contain-intrinsic-size 串）
+    const styleOf = (state: EditorState) => {
+      const set = cvIntrinsicKey.getState(state) as unknown as { find: (a: number, b: number) => { spec: { attrs?: { style?: string } } }[] };
+      return decoratedBlockStarts(state).map((start) => {
+        const nodeEnd = start + 2;
+        const d = set.find(start, nodeEnd)[0];
+        return d?.spec.attrs?.style ?? null;
+      });
+    };
+    expect(styleOf(sliced)).toEqual(styleOf(full));
+  });
 });

@@ -140,12 +140,48 @@ function buildDecos(doc: PMNode, range: PrewarmRange | null): DecorationSet {
   return DecorationSet.create(doc, decos);
 }
 
+/**
+ * R2 分片重建的区间替换：清掉 [fromPos,toPos) 内的旧装饰，重算并加回。
+ * 区间外的装饰对象实例原样保留（区别于 buildDecos 的全量新集——那会让
+ * prosemirror-view 对全部顶层块重做装饰对账，1MB 档 300-500ms 单长任务）。
+ */
+function updateSlice(
+  decos: DecorationSet,
+  doc: PMNode,
+  fromPos: number,
+  toPos: number
+): DecorationSet {
+  const fresh: Decoration[] = [];
+  doc.forEach((node, offset) => {
+    if (offset < fromPos || offset >= toPos) return;
+    const size = cvSizeFor(hashNode(node));
+    if (!size) return;
+    fresh.push(
+      Decoration.node(offset, offset + node.nodeSize, {
+        style: intrinsicStyleOf(size.w, size.h),
+      })
+    );
+  });
+  // 本版本 prosemirror-view 的 DecorationSet 无 update()——用 find+remove+add
+  // 组合实现区间替换（remove 按对象引用删，区间外实例原样保留）。
+  // find 的命中是「相触即中」——切片边界上邻居块的装饰也会被扫进来；
+  // 直接 remove 会把它删掉且本片不会补回（它不在片内）。按装饰起点严格
+  // 过滤到 [fromPos, toPos)。
+  const stale = decos
+    .find(fromPos, toPos)
+    .filter((d) => d.from >= fromPos && d.from < toPos);
+  const next = stale.length ? decos.remove(stale) : decos;
+  return fresh.length ? next.add(doc, fresh) : next;
+}
+
 /* -------------------------------------------------------------------------- */
 /* 插件（decoration 承载 + 视口学习调度）                                       */
 /* -------------------------------------------------------------------------- */
 
 type CvMeta =
   | { type: "learned" }
+  | { type: "rebuild-slice"; from: number; to: number }
+  | { type: "rebuild-end" }
   | { type: "prewarm"; from: number; to: number }
   | { type: "prewarm-end" };
 
@@ -183,23 +219,92 @@ function scheduleLearn(view: EditorView, delay = 0): void {
   }, delay);
 }
 
-/** 整树重建 dispatch 的尾随防抖（learned meta）。两种来源共用一个定时器：
- *  学习到新高度（REBUILD_DEBOUNCE）与编辑停顿（REBUILD_AFTER_EDIT_DEBOUNCE，
- *  修复 map 语义丢不掉的装饰——撤销重做/粘贴已知尺寸块经删除映射后不会
- *  复活）。尾随语义：新调度会重置挂起定时器——打字连击期间永不触发
- *  （增量映射足够），真停顿后才补一次整树重建。 */
+/** 整树重建的调度入口（R2：分片推进）。两种来源共用一个定时器：学习到
+ *  新高度（REBUILD_DEBOUNCE）与编辑停顿（REBUILD_AFTER_EDIT_DEBOUNCE）。
+ *  尾随语义：新调度重置挂起定时器——打字连击期间永不触发。到点后不再单笔
+ *  dispatch 整树（1MB 档 buildDecos+视图对账是一次 300-500ms 长任务），而是
+ *  按块区间分片：每片一次 idle 回调、8ms 预算、DecorationSet.update 局部
+ *  替换（未触碰区间的装饰对象保持实例稳定，视图对账只看变更区间）。 */
 function scheduleRebuild(view: EditorView, delay = REBUILD_DEBOUNCE): void {
   if (rebuildTimer != null) window.clearTimeout(rebuildTimer);
   rebuildTimer = window.setTimeout(() => {
     rebuildTimer = null;
     try {
       if (!view.dom.isConnected) return;
-      view.dispatch(view.state.tr.setMeta(cvIntrinsicKey, { type: "learned" }));
+      startSlicedRebuild(view);
     } catch {
       /* never throw */
     }
   }, delay);
 }
+
+/** 分片重建的代际令牌：新的重建序列（或销毁）取代旧循环。 */
+let rebuildGen = 0;
+/** 分片重建单步的块数上限（自适应前的起始值；8ms 预算断片）。 */
+const REBUILD_SLICE_BLOCKS = 400;
+
+/** 分片整树重建：按块区间推进 rebuild-slice meta。文档被编辑（doc 引用
+ *  变化）即中止——增量映射已保持可用，下一次停顿重来。 */
+function startSlicedRebuild(view: EditorView): void {
+  const gen = ++rebuildGen;
+  const doc0 = view.state.doc;
+  const total = doc0.childCount;
+  // 顶层块位置表（分片期间的稳定索引）
+  const posOf: number[] = new Array(total);
+  {
+    let pos = 0;
+    for (let i = 0; i < total; i++) {
+      posOf[i] = pos;
+      pos += doc0.child(i).nodeSize;
+    }
+  }
+  let i = 0;
+  const step = (): void => {
+    try {
+      if (gen !== rebuildGen) return;
+      if (!view.dom.isConnected) return;
+      if (view.state.doc !== doc0) {
+        rebuildGen++; // 文档被编辑：让位（增量映射足够，下次停顿重来）
+        return;
+      }
+      const t0 = performance.now();
+      while (i < total) {
+        const from = posOf[i];
+        const toK = Math.min(total, i + REBUILD_SLICE_BLOCKS);
+        const to = posOf[toK - 1] + doc0.child(toK - 1).nodeSize;
+        view.dispatch(
+          view.state.tr.setMeta(cvIntrinsicKey, { type: "rebuild-slice", from, to })
+        );
+        i = toK;
+        if (performance.now() - t0 > 8 && i < total) break;
+      }
+      if (i < total) {
+        scheduleRebuildIdle(step);
+      } else {
+        try {
+          view.dispatch(view.state.tr.setMeta(cvIntrinsicKey, { type: "rebuild-end" }));
+        } catch {
+          /* never throw */
+        }
+      }
+    } catch {
+      /* 分片失败：已完成的片保持有效，剩余由下次停顿/学习重建补齐 */
+    }
+  };
+  scheduleRebuildIdle(step);
+}
+
+const scheduleRebuildIdle = (fn: () => void): void => {
+  try {
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(fn, { timeout: 300 });
+      return;
+    }
+  } catch {
+    /* 环境异常退回定时器 */
+  }
+  window.setTimeout(fn, 16);
+};
 
 /** 量取视口带内已渲染块的真实高度（二分定位 + 线性扫 O(log n + k)）。
  *  返回 true 表示学到了新高度。DOM 子元素与 doc 顶层块不能按索引对齐
@@ -267,6 +372,16 @@ export function createCvIntrinsicPlugin(): Plugin<DecorationSet> {
         if (meta.type === "prewarm") {
           return buildDecos(newState.doc, { fromPos: meta.from, toPos: meta.to });
         }
+        if (meta.type === "rebuild-slice") {
+          // R2 分片重建：只重算 [from,to) 块区间的装饰，其余实例原样保留
+          // （DecorationSet.update 的 filter+add——视图对账只看变更区间，
+          // 未触碰块的装饰对象恒等 ⇒ 零成本）。
+          return updateSlice(decos, newState.doc, meta.from, meta.to);
+        }
+        if (meta.type === "rebuild-end") {
+          editSinceRebuild = false;
+          return decos;
+        }
         editSinceRebuild = false;
         return buildDecos(newState.doc, null);
       }
@@ -303,6 +418,7 @@ export function createCvIntrinsicPlugin(): Plugin<DecorationSet> {
         learnTimer = null;
         if (rebuildTimer != null) window.clearTimeout(rebuildTimer);
         rebuildTimer = null;
+        rebuildGen++; // 在飞的分片重建序列随之作废
         editSinceRebuild = false;
       },
     };
