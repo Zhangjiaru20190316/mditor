@@ -122,6 +122,7 @@ import {
   takeCachedDoc,
   unbindEditor,
 } from "../lib/parsePipeline";
+import { installIncrementalSerializer, warmIncrementalSerializer } from "../lib/incrementalSerializer";
 import { stampHeadingIdsFromCtx } from "../lib/headingStamp";
 import {
   insertIntoTextarea,
@@ -525,6 +526,7 @@ function loadMarkdownFull(crepe: Crepe, mdRaw: string): void {
       const applied = crepe.editor.action((ctx) => {
         const doc = Node.fromJSON(ctx.get(schemaCtx), cachedJson as never);
         applyParsedDoc(ctx, doc);
+        warmIncrementalSerializer(ctx, doc);
         return true;
       });
       if (applied) return;
@@ -535,7 +537,10 @@ function loadMarkdownFull(crepe: Crepe, mdRaw: string): void {
   try {
     const parsed = crepe.editor.action((ctx) => {
       const doc = ctx.get(parserCtx)(md);
-      if (doc) applyParsedDoc(ctx, doc);
+      if (doc) {
+        applyParsedDoc(ctx, doc);
+        warmIncrementalSerializer(ctx, doc);
+      }
       return doc;
     });
     if (parsed) cacheParsedDoc(md, parsed);
@@ -893,6 +898,10 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       // worker 哨兵校验都基于它）。每次 recreate 都会重新绑定。放在 seed 之前，
       // 让 seed 的整篇解析也能正确回填缓存。
       bindEditor(crepe.editor.ctx);
+      // S1：顶层块粒度增量序列化（保存/搜索/监听器共用 serializerCtx）。
+      // 1MB 档全量序列化 967ms → 单块编辑 2ms（差分测试逐字节锚定，见
+      // lib/incrementalSerializer.ts 头注）。
+      crepe.editor.action((ctx) => installIncrementalSerializer(ctx));
       // B2：footnote_reference toDOM 注入 data-anno-num（编号随 DOM 创建即
       // 存在，重建零延迟恢复）+ 诊断探针（批注体检用，重建时重绑）+
       // PM 观察器暂停门（盖章战争根修，见 annoDebug.withPmObserverPaused）。

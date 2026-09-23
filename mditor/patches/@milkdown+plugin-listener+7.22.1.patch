@@ -1,8 +1,18 @@
 diff --git a/node_modules/@milkdown/plugin-listener/lib/index.js b/node_modules/@milkdown/plugin-listener/lib/index.js
-index 8573b1b..1515cfd 100644
+index 8573b1b..823867b 100644
 --- a/node_modules/@milkdown/plugin-listener/lib/index.js
 +++ b/node_modules/@milkdown/plugin-listener/lib/index.js
-@@ -73,9 +73,19 @@ var listener = (ctx) => {
+@@ -68,32 +68,66 @@ var listener = (ctx) => {
+ 		const { listeners } = ctx.get(listenerCtx);
+ 		listeners.beforeMount.forEach((fn) => fn(ctx));
+ 		await ctx.wait(SerializerReady);
+-		const serializer = ctx.get(serializerCtx);
++		// mditor perf (S1): read the serializer lazily on each run — the slice
++		// value is replaced by the incremental serializer wrapper after
++		// create() (lib/incrementalSerializer); a once-captured reference would
++		// keep the O(doc) naive path forever.
++		const serializer = () => ctx.get(serializerCtx);
+ 		let prevDoc = null;
  		let prevMarkdown = null;
  		let prevSelection = null;
  		let latestTr = null;
@@ -24,7 +34,11 @@ index 8573b1b..1515cfd 100644
  			if (listeners.updated.length > 0 && prevDoc && !prevDoc.eq(doc)) listeners.updated.forEach((fn) => {
  				fn(ctx, doc, prevDoc);
  			});
-@@ -86,14 +96,34 @@ var listener = (ctx) => {
+ 			if (listeners.markdownUpdated.length > 0 && prevDoc && !prevDoc.eq(doc)) {
+-				const markdown = serializer(doc);
++				const markdown = serializer()(doc);
+ 				listeners.markdownUpdated.forEach((fn) => {
+ 					fn(ctx, markdown, prevMarkdown);
  				});
  				prevMarkdown = markdown;
  			}
