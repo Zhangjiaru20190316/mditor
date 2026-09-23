@@ -101,6 +101,10 @@ export function setBigDocViewportEnabled(v: boolean): void {
 }
 
 /** Pure size test: big enough to warrant big-doc handling (no setting gate). */
+export function sizeIsBigDocRaw(content: string | null | undefined): boolean {
+  return sizeIsBigDoc(content);
+}
+
 function sizeIsBigDoc(content: string | null | undefined): boolean {
   if (!content) return false;
   if (content.length > BIG_DOC_BYTES) return true;

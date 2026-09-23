@@ -123,6 +123,7 @@ import {
   unbindEditor,
 } from "../lib/parsePipeline";
 import { installIncrementalSerializer, warmIncrementalSerializer } from "../lib/incrementalSerializer";
+import { lazyInlineMath, setLazyMathBySize } from "../lib/lazyInlineMath";
 import { stampHeadingIdsFromCtx } from "../lib/headingStamp";
 import {
   insertIntoTextarea,
@@ -659,6 +660,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
 
       const seed = contentRef.current;
       const big = isBigDoc(seed);
+      // R1：按体量（不经设置开关）决定行内公式是否懒渲染——重建时重估。
+      setLazyMathBySize(seed);
       bigDocRef.current = big;
       setBigDoc(big);
       const cv = isBigDocCv(seed);
@@ -852,6 +855,9 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       // 误，但白白丢掉 worker 路径）。
       if (!big) {
         crepe.editor.use(mathFencePlugins);
+        // R1：行内公式视口懒渲染 nodeview（大文档打开墙的行内侧，默认档也
+        // 生效——开关按体量，见 lib/lazyInlineMath.ts 头注）。
+        crepe.editor.use(lazyInlineMath);
       }
 
       // 大文档 c-v 高度记忆（v4.0.1 根修）：decoration 承载
@@ -1188,6 +1194,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
         if (clearStack === true) {
           // 整篇载入：优先解析缓存（阶段 1 命中 → 零解析），未命中原地解析
           // 并回填缓存。suppress 包住两条路径，避免程序化载入被当作用户输入。
+          setLazyMathBySize(md);
           suppressRef.current = true;
           loadMarkdownFull(crepe, md);
           suppressRef.current = false;

@@ -5942,3 +5942,34 @@ blockquote.md-flashcard {
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* ---- R1 行内公式懒渲染占位（lib/lazyInlineMath.ts）-----------------------
+ * 大文档（≥3000 行 / 500KB）里 math_inline 先以公式源码占位（span 内保留
+ * 完整源文本——window.find / 跨视口选区 / 复制语义不变），进入视口（余量
+ * 800px）后渲染 KaTeX 真身（加 ready 类）。占位样式向行内代码靠拢但更轻，
+ * 避免与真公式视觉跳变过大。 */
+span.mditor-math-inline-lazy {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.92em;
+  color: var(--fg-muted, inherit);
+  background: var(--accent-soft, transparent);
+  border-radius: 3px;
+  padding: 0 2px;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+span.mditor-math-inline-lazy::-webkit-scrollbar {
+  display: none;
+}
+span.mditor-math-inline-lazy.mditor-math-inline-ready {
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  color: inherit;
+  font-size: inherit;
+  white-space: normal;
+  overflow: visible;
+}
