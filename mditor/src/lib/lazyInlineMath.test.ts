@@ -115,9 +115,11 @@ describe("R1 行内公式懒渲染", () => {
     const views = (plugin.spec.props as { nodeViews: Record<string, (n: PMNode, v: unknown, g: () => number | undefined) => unknown> }).nodeViews;
     const a = views.math_inline(fakeNode("\\frac{a}{b}"), {} as never, () => 0) as {
       dom: HTMLElement;
+      destroy?: () => void;
     };
     const b = views.math_inline(fakeNode("e^{i\\pi}"), {} as never, () => 1) as {
       dom: HTMLElement;
+      destroy?: () => void;
     };
     // 一个占位、一个渲染态：全选复制的可见文本都包含各自源码
     expect(a.dom.textContent).toContain("\\frac{a}{b}");

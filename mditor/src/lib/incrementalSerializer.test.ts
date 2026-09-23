@@ -170,7 +170,7 @@ function randomEdit(doc: PMNode, rng: () => number): PMNode | null {
     // 删除一块（保留至少一块）
     if (n <= 1) return null;
     try {
-      return doc.replace(from, to) as PMNode;
+      return doc.replace(from, to, Slice.empty) as PMNode;
     } catch {
       return null;
     }

@@ -259,6 +259,9 @@ function startSlicedRebuild(view: EditorView): void {
     }
   }
   let i = 0;
+  // 自适应片大小：dispatch（含视图对账）实测可超纯装饰构建耗时数倍，
+  // 超预算即减半下片（同 prewarm nextChunkSize 思想），下限 25 块。
+  let chunk = REBUILD_SLICE_BLOCKS;
   const step = (): void => {
     try {
       if (gen !== rebuildGen) return;
@@ -268,16 +271,19 @@ function startSlicedRebuild(view: EditorView): void {
         return;
       }
       const t0 = performance.now();
+      let lastMs = 0;
       while (i < total) {
         const from = posOf[i];
-        const toK = Math.min(total, i + REBUILD_SLICE_BLOCKS);
+        const toK = Math.min(total, i + chunk);
         const to = posOf[toK - 1] + doc0.child(toK - 1).nodeSize;
         view.dispatch(
           view.state.tr.setMeta(cvIntrinsicKey, { type: "rebuild-slice", from, to })
         );
+        lastMs = performance.now() - t0;
         i = toK;
-        if (performance.now() - t0 > 8 && i < total) break;
+        if (lastMs > 8 && i < total) break;
       }
+      if (lastMs > 8) chunk = Math.max(25, Math.ceil(chunk / 2));
       if (i < total) {
         scheduleRebuildIdle(step);
       } else {
