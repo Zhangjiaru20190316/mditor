@@ -98,13 +98,41 @@ describe("Typora $$ 块（math-flow patch）", () => {
     expect(collect(tree, "math")[0].value).toBe("E=mc^2");
   });
 
-  it("单个 $ 在行中段是内容（探测失败整行作内容，块到 EOF）", () => {
-    // `a$b$$`：探测在单 $ 处 nok → 整行（含尾 $$）成为内容。文档化局限：
-    // display 公式体内的裸单 $ 极罕见；Typora 会闭合成 a$b，这里选择保守。
+  it("单个 $ 在行中段是内容，行尾 $$ 仍闭合（Typora 语义，不再吞到 EOF）", () => {
+    // `a$b$$`：中段单 $ 是公式内容，尾部 $$ 是收尾（v2 探针修：首版在第一个
+    // $ 处 nok 整行 → 块吞到 EOF；含 `\\tag{$\\ast$}` 的真实文档因此整篇塌
+    // 成一个巨型公式节点，见下一条回归用例）。
     const tree = parse("$$a$b$$\n");
     const maths = collect(tree, "math");
     expect(maths).toHaveLength(1);
-    expect(maths[0].value).toBe("a$b$$");
+    expect(maths[0].value).toBe("a$b");
+  });
+
+  it("回归：公式体内含孤立 $（\\tag{$\\ast$} 形态）不吞后文", () => {
+    // 1MB 压测副本实测塌块形态：`$$…\\tag{$\\ast$}$$` 的 \\tag 参数里带 $…$，
+    // 首版探针在孤立 $ 处提前 nok → 行尾 $$ 永远匹配不上 → 数学块吞掉后续
+    // 全部内容（实测一个 954k 字符的公式节点、11629 块塌成 1649 块）。
+    const md = [
+      `$$${BS}= g'(${BS}eta)(b - a) ${BS}= e^{${BS}eta}${BS}left[${BS}f(${BS}eta) + f'(${BS}eta)${BS}right](${BS}b - a) ${BS}tag{${BS}\\*$}$$`,
+      "",
+      "**第二步**：后续内容必须存活。",
+      "",
+      "![图](assets/fig.png)",
+    ].join("\n");
+    const tree = parse(md);
+    const maths = collect(tree, "math");
+    expect(maths).toHaveLength(1);
+    expect(maths[0].value).toContain(`${BS}tag{${BS}\\*$}`);
+    expect(collect(tree, "image")).toHaveLength(1);
+    expect(collect(tree, "paragraph").length).toBeGreaterThan(0);
+  });
+
+  it("回归：中间 $$-run 后跟内容也不误闭合", () => {
+    // `a$$b$$`：中段双 $ 后还有内容 → 不是收尾 run；尾部 $$ 才闭合。
+    const tree = parse("$$a$$b$$\n");
+    const maths = collect(tree, "math");
+    expect(maths).toHaveLength(1);
+    expect(maths[0].value).toBe("a$$b");
   });
 
   it("空白行在块内是内容换行（不闭合）", () => {

@@ -1,5 +1,5 @@
 diff --git a/node_modules/micromark-extension-math/dev/lib/math-flow.js b/node_modules/micromark-extension-math/dev/lib/math-flow.js
-index d795fab..6e3ddc9 100644
+index d795fab..505f001 100644
 --- a/node_modules/micromark-extension-math/dev/lib/math-flow.js
 +++ b/node_modules/micromark-extension-math/dev/lib/math-flow.js
 @@ -1,12 +1,55 @@
@@ -90,14 +90,12 @@ index d795fab..6e3ddc9 100644
  
      effects.exit('mathFlowFenceSequence')
 -    return factorySpace(effects, metaBefore, types.whitespace)(code)
-+    return factorySpace(effects, afterOpenSpace, types.whitespace)(code)
-   }
- 
-   /**
+-  }
+-
+-  /**
 -   * In opening fence, before meta.
-+   * After the opening sequence and any spaces on the opening line.
-    *
-    * ```markdown
+-   *
+-   * ```markdown
 -   * > | $$asciimath
 -   *       ^
 -   *   | x < y
@@ -115,21 +113,23 @@ index d795fab..6e3ddc9 100644
 -    effects.enter('mathFlowFenceMeta')
 -    effects.enter(types.chunkString, {contentType: constants.contentTypeString})
 -    return meta(code)
--  }
--
--  /**
++    return factorySpace(effects, afterOpenSpace, types.whitespace)(code)
+   }
+ 
+   /**
 -   * In meta.
--   *
--   * ```markdown
++   * After the opening sequence and any spaces on the opening line.
+    *
+    * ```markdown
 -   * > | $$asciimath
 +   * > | $$ \frac{1}{2}
     *        ^
 -   *   | x < y
--   *   | $$
--   * ```
--   *
--   * @type {State}
--   */
+    *   | $$
+    * ```
+    *
+    * @type {State}
+    */
 -  function meta(code) {
 -    if (code === codes.eof || markdownLineEnding(code)) {
 -      effects.exit(types.chunkString)
@@ -152,11 +152,11 @@ index d795fab..6e3ddc9 100644
 -   * > | $$
 -   *       ^
 -   *   | \frac{1}{2}
-    *   | $$
-    * ```
-    *
-    * @type {State}
-    */
+-   *   | $$
+-   * ```
+-   *
+-   * @type {State}
+-   */
 -  function metaAfter(code) {
 -    // Guaranteed to be eol/eof.
 +  function afterOpenSpace(code) {
@@ -201,19 +201,32 @@ index d795fab..6e3ddc9 100644
     *
     * ```markdown
     *   | $$
-@@ -272,96 +268,111 @@ function tokenizeMathFenced(effects, ok, nok) {
+@@ -272,97 +268,200 @@ function tokenizeMathFenced(effects, ok, nok) {
      effects.exit('mathFlow')
      return ok(code)
    }
 +}
-+
+ 
+-  /** @type {Tokenizer} */
+-  function tokenizeClosingFence(effects, ok, nok) {
+-    let size = 0
 +/**
 + * Probe one line for the Typora closing shape
 + * `[content…]$$+[ \t]*(eol|eof)`.
 + *
-+ * A `$` run of exactly one before other content (`a$b`) or a run followed by
-+ * more content (`a$$b`) noks — the caller then consumes the whole line as a
-+ * content line.
++ * mditor patch v2 (large-doc perf round): a `$` run inside the content no
++ * longer kills the probe. The first version decided “closer vs content” at
++ * the FIRST dollar run: any run that failed (`\tag{$\ast$}`, `$100…$` inside
++ * a display formula) noked the whole line, so the real trailing `$$` closer
++ * was never seen and the math block swallowed the REST OF THE DOCUMENT (one
++ * 954k-char math node measured on the 1MB fixture; whole-document collapse).
++ *
++ * Now every dollar run is tested with a rewindable `effects.check`
++ * micro-probe: the run is the closer iff everything after it on the line is
++ * dollars-then-(spaces)-then-eol and the trailing run length is ≥2. Runs
++ * followed by other content are consumed as mathFlowValue content, and the
++ * probe keeps scanning (`a$b$$` now closes with value `a$b`, matching Typora
++ * instead of swallowing to EOF).
 + *
 + * @this {TokenizeContext}
 + * @type {Tokenizer}
@@ -221,20 +234,8 @@ index d795fab..6e3ddc9 100644
 +function tokenizeTyporaClosingLine(effects, ok, nok) {
 +  const self = this
 +  let sizeClose = 0
-+
-+  return factorySpace(
-+    effects,
-+    beforeData,
-+    types.linePrefix,
-+    self.parser.constructs.disable.null.includes('codeIndented')
-+      ? undefined
-+      : constants.tabSize
-+  )
++  let inValue = false
  
--  /** @type {Tokenizer} */
--  function tokenizeClosingFence(effects, ok, nok) {
--    let size = 0
--
 -    assert(self.parser.constructs.disable.null, 'expected `disable.null`')
 -    /**
 -     * Before closing fence, at optional whitespace.
@@ -272,13 +273,34 @@ index d795fab..6e3ddc9 100644
 -      effects.enter('mathFlowFenceSequence')
 -      return sequenceClose(code)
 +  /**
++   * Micro-probe construct (always rewound via `effects.check`): does the rest
++   * of the line consist of `$`-run (≥2) + optional spaces/tabs + eol/eof?
++   *
++   * @type {Construct}
++   */
++  const trailingDollarRun = {
++    tokenize: tokenizeTrailingDollarRun,
++    partial: true
++  }
++
++  return factorySpace(
++    effects,
++    beforeData,
++    types.linePrefix,
++    self.parser.constructs.disable.null.includes('codeIndented')
++      ? undefined
++      : constants.tabSize
++  )
++
++  /**
 +   * At content or the closing dollars.
 +   *
 +   * @type {State}
 +   */
 +  function beforeData(code) {
-+    if (code === codes.dollarSign) {
-+      return dollarRun(code)
++    if (code === codes.eof || markdownLineEnding(code)) {
++      // No dollars at all — not a closing line.
++      return nok(code)
      }
  
 -    /**
@@ -294,22 +316,110 @@ index d795fab..6e3ddc9 100644
 -     * @type {State}
 -     */
 -    function sequenceClose(code) {
--      if (code === codes.dollarSign) {
--        size++
++    return atDollarOrContent(code)
++  }
++
++  /**
++   * Shared scanner state: every `$` run is check-probed; non-dollars are
++   * content. Entered both at line start and mid-line.
++   *
++   * @type {State}
++   */
++  function atDollarOrContent(code) {
++    if (code === codes.dollarSign) {
++      return effects.check(trailingDollarRun, closeFromHere, dollarAsContent)(code)
++    }
++
++    if (code === codes.eof || markdownLineEnding(code)) {
++      // Reached eol without a qualifying trailing run — plain content line.
++      return nok(code)
++    }
++
++    if (!inValue) {
++      effects.enter('mathFlowValue')
++      inValue = true
++    }
++
++    effects.consume(code)
++    return atDollarOrContent
++  }
++
++  /**
++   * A mid-line dollar run that failed the closer check: content.
++   *
++   * @type {State}
++   */
++  function dollarAsContent(code) {
++    if (!inValue) {
++      effects.enter('mathFlowValue')
++      inValue = true
++    }
++
++    effects.consume(code)
++    return atDollarOrContent
++  }
++
++  /**
++   * The check confirmed a trailing closer run starts here.
++   *
++   * @type {State}
++   */
++  function closeFromHere(code) {
++    if (inValue) {
++      effects.exit('mathFlowValue')
++      inValue = false
++    }
++
++    effects.enter('mathFlowFence')
++    effects.enter('mathFlowFenceSequence')
++    return sequenceClose(code)
++  }
++
++  /**
++   * Rewindable scanner for `$`+[ \t]*(eol|eof) from the current position.
++   * Consumes under a throwaway token (check always restores the event stream,
++   * so nothing is emitted either way).
++   *
++   * @this {TokenizeContext}
++   * @type {Tokenizer}
++   */
++  function tokenizeTrailingDollarRun(effects2, ok2, nok2) {
++    let size = 0
++    let open = false
++    return sequenceStart
++
++    function sequenceStart(code) {
++      if (!open) {
++        effects2.enter('mathFlowValue')
++        open = true
++      }
++
+       if (code === codes.dollarSign) {
++        effects2.consume(code)
+         size++
 -        effects.consume(code)
 -        return sequenceClose
--      }
--
++        return sequenceStart
+       }
+ 
 -      if (size < sizeOpen) {
 -        return nok(code)
--      }
--
++      return afterRun(code)
++    }
++
++    function afterRun(code) {
++      if (code === codes.space || code === codes.tab) {
++        effects2.consume(code)
++        return afterRun
+       }
+ 
 -      effects.exit('mathFlowFenceSequence')
 -      return factorySpace(effects, afterSequenceClose, types.whitespace)(code)
-+    if (code === codes.eof || markdownLineEnding(code)) {
-+      // No dollars at all — not a closing line.
-+      return nok(code)
-     }
+-    }
++      if (open) {
++        effects2.exit('mathFlowValue')
++        open = false
++      }
  
 -    /**
 -     * After closing fence sequence, after optional whitespace.
@@ -327,42 +437,14 @@ index d795fab..6e3ddc9 100644
 -      if (code === codes.eof || markdownLineEnding(code)) {
 -        effects.exit('mathFlowFence')
 -        return ok(code)
--      }
-+    effects.enter('mathFlowValue')
-+    return data(code)
-+  }
++      if (size >= 2 && (code === codes.eof || markdownLineEnding(code))) {
++        return ok2(code)
+       }
  
-+  /**
-+   * In content of the probed line. Dollar signs are not content here: they
-+   * either start the closing run or fail the probe.
-+   *
-+   * @type {State}
-+   */
-+  function data(code) {
-+    if (code === codes.dollarSign) {
-+      effects.exit('mathFlowValue')
-+      return dollarRun(code)
-+    }
-+
-+    if (code === codes.eof || markdownLineEnding(code)) {
-+      // No trailing dollar run — plain content line.
-       return nok(code)
+-      return nok(code)
++      return nok2(code)
      }
-+
-+    effects.consume(code)
-+    return data
-+  }
-+
-+  /**
-+   * In the closing dollar run.
-+   *
-+   * @type {State}
-+   */
-+  function dollarRun(code) {
-+    effects.enter('mathFlowFence')
-+    effects.enter('mathFlowFenceSequence')
-+    return sequenceClose(code)
-+  }
+   }
 +
 +  /**
 +   * In closing fence sequence.
@@ -392,11 +474,12 @@ index d795fab..6e3ddc9 100644
 +    }
 +
 +    return nok(code)
-   }
++  }
  }
  
+ /**
 diff --git a/node_modules/micromark-extension-math/lib/math-flow.js b/node_modules/micromark-extension-math/lib/math-flow.js
-index e5646a7..789c242 100644
+index e5646a7..b4949b1 100644
 --- a/node_modules/micromark-extension-math/lib/math-flow.js
 +++ b/node_modules/micromark-extension-math/lib/math-flow.js
 @@ -1,7 +1,13 @@
@@ -539,7 +622,7 @@ index e5646a7..789c242 100644
     *
     * ```markdown
     *   | $$
-@@ -238,84 +203,95 @@ function tokenizeMathFenced(effects, ok, nok) {
+@@ -238,84 +203,177 @@ function tokenizeMathFenced(effects, ok, nok) {
      effects.exit('mathFlow');
      return ok(code);
    }
@@ -562,16 +645,53 @@ index e5646a7..789c242 100644
 +/**
 + * Probe one line for the Typora closing shape
 + * `[content…]$$+[ \t]*(eol|eof)`.
-+ * A `$` run of exactly one before other content (`a$b`) or a run followed by
-+ * more content (`a$$b`) noks — the caller then consumes the whole line as a
-+ * content line.
++ *
++ * mditor patch v2 (large-doc perf round): a `$` run inside the content no
++ * longer kills the probe. The first version decided “closer vs content” at
++ * the FIRST dollar run: any run that failed (`\tag{$\ast$}`, `$100…$` inside
++ * a display formula) noked the whole line, so the real trailing `$$` closer
++ * was never seen and the math block swallowed the REST OF THE DOCUMENT (one
++ * 954k-char math node measured on the 1MB fixture; whole-document collapse).
++ *
++ * Now every dollar run is tested with a rewindable `effects.check`
++ * micro-probe: the run is the closer iff everything after it on the line is
++ * dollars-then-(spaces)-then-eol and the trailing run length is ≥2. Runs
++ * followed by other content are consumed as mathFlowValue content, and the
++ * probe keeps scanning (`a$b$$` now closes with value `a$b`, matching Typora
++ * instead of swallowing to EOF).
++ *
 + * @this {TokenizeContext}
 + * @type {Tokenizer}
 + */
 +function tokenizeTyporaClosingLine(effects, ok, nok) {
 +  const self = this;
 +  let sizeClose = 0;
++  let inValue = false;
++
++  /**
++   * Micro-probe construct (always rewound via `effects.check`): does the rest
++   * of the line consist of `$`-run (≥2) + optional spaces/tabs + eol/eof?
++   * @type {Construct}
++   */
++  const trailingDollarRun = {
++    tokenize: tokenizeTrailingDollarRun,
++    partial: true
++  };
++
 +  return factorySpace(effects, beforeData, "linePrefix", self.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4);
++
++  /**
++   * At content or the closing dollars.
++   *
++   * @type {State}
++   */
++  function beforeData(code) {
++    if (code === null || markdownLineEnding(code)) {
++      // No dollars at all — not a closing line.
++      return nok(code);
++    }
++    return atDollarOrContent(code);
++  }
  
 -    /**
 -     * In closing fence, after optional whitespace, at sequence.
@@ -590,15 +710,27 @@ index e5646a7..789c242 100644
 -      effects.enter('mathFlowFenceSequence');
 -      return sequenceClose(code);
 +  /**
-+   * At content or the closing dollars.
++   * Shared scanner state: every `$` run is check-probed; non-dollars are
++   * content. Entered both at line start and mid-line.
 +   *
 +   * @type {State}
 +   */
-+  function beforeData(code) {
++  function atDollarOrContent(code) {
 +    if (code === 36) {
-+      return dollarRun(code);
++      return effects.check(trailingDollarRun, closeFromHere, dollarAsContent)(code);
      }
--
++    if (code === null || markdownLineEnding(code)) {
++      // Reached eol without a qualifying trailing run — plain content line.
++      return nok(code);
++    }
++    if (!inValue) {
++      effects.enter('mathFlowValue');
++      inValue = true;
++    }
++    effects.consume(code);
++    return atDollarOrContent;
++  }
+ 
 -    /**
 -     * In closing fence sequence.
 -     *
@@ -612,23 +744,66 @@ index e5646a7..789c242 100644
 -     * @type {State}
 -     */
 -    function sequenceClose(code) {
--      if (code === 36) {
--        size++;
++  /**
++   * A mid-line dollar run that failed the closer check: content.
++   *
++   * @type {State}
++   */
++  function dollarAsContent(code) {
++    if (!inValue) {
++      effects.enter('mathFlowValue');
++      inValue = true;
++    }
++    effects.consume(code);
++    return atDollarOrContent;
++  }
++
++  /**
++   * The check confirmed a trailing closer run starts here.
++   *
++   * @type {State}
++   */
++  function closeFromHere(code) {
++    if (inValue) {
++      effects.exit('mathFlowValue');
++      inValue = false;
++    }
++    effects.enter('mathFlowFence');
++    effects.enter('mathFlowFenceSequence');
++    return sequenceClose(code);
++  }
++
++  /**
++   * Rewindable scanner for `$`+[ \t]*(eol|eof) from the current position.
++   * Consumes under a throwaway token (check always restores the event stream,
++   * so nothing is emitted either way).
++   * @this {TokenizeContext}
++   * @type {Tokenizer}
++   */
++  function tokenizeTrailingDollarRun(effects2, ok2, nok2) {
++    let size = 0;
++    let open = false;
++    return sequenceStart;
++
++    function sequenceStart(code) {
++      if (!open) {
++        effects2.enter('mathFlowValue');
++        open = true;
++      }
+       if (code === 36) {
++        effects2.consume(code);
+         size++;
 -        effects.consume(code);
 -        return sequenceClose;
 -      }
 -      if (size < sizeOpen) {
 -        return nok(code);
--      }
++        return sequenceStart;
+       }
 -      effects.exit('mathFlowFenceSequence');
 -      return factorySpace(effects, afterSequenceClose, "whitespace")(code);
-+    if (code === null || markdownLineEnding(code)) {
-+      // No dollars at all — not a closing line.
-+      return nok(code);
++      return afterRun(code);
      }
-+    effects.enter('mathFlowValue');
-+    return data(code);
-+  }
  
 -    /**
 -     * After closing fence sequence, after optional whitespace.
@@ -646,35 +821,21 @@ index e5646a7..789c242 100644
 -      if (code === null || markdownLineEnding(code)) {
 -        effects.exit('mathFlowFence');
 -        return ok(code);
--      }
-+  /**
-+   * In content of the probed line. Dollar signs are not content here: they
-+   * either start the closing run or fail the probe.
-+   *
-+   * @type {State}
-+   */
-+  function data(code) {
-+    if (code === 36) {
-+      effects.exit('mathFlowValue');
-+      return dollarRun(code);
++    function afterRun(code) {
++      if (code === 32 || code === 9) {
++        effects2.consume(code);
++        return afterRun;
+       }
+-      return nok(code);
++      if (open) {
++        effects2.exit('mathFlowValue');
++        open = false;
++      }
++      if (size >= 2 && (code === null || markdownLineEnding(code))) {
++        return ok2(code);
++      }
++      return nok2(code);
 +    }
-+    if (code === null || markdownLineEnding(code)) {
-+      // No trailing dollar run — plain content line.
-       return nok(code);
-     }
-+    effects.consume(code);
-+    return data;
-+  }
-+
-+  /**
-+   * In the closing dollar run.
-+   *
-+   * @type {State}
-+   */
-+  function dollarRun(code) {
-+    effects.enter('mathFlowFence');
-+    effects.enter('mathFlowFenceSequence');
-+    return sequenceClose(code);
 +  }
 +
 +  /**
@@ -701,7 +862,7 @@ index e5646a7..789c242 100644
 +    if (sizeClose >= 2 && (code === null || markdownLineEnding(code))) {
 +      effects.exit('mathFlowFence');
 +      return ok(code);
-+    }
+     }
 +    return nok(code);
    }
  }
