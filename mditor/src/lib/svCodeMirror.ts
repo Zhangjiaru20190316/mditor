@@ -76,8 +76,10 @@ export interface SvEditorHandle {
 export interface SvEditorOptions {
   /** 初始文档内容。 */
   initial: string;
-  /** 文档变化（用户输入或适配器写入）回调 —— 由 useMilkdown 决定是否上抛。 */
-  onDocChanged: (md: string) => void;
+  /** 文档变化（用户输入或适配器写入）回调 —— 由 useMilkdown 决定是否上抛。
+   *  I1（大文档性能轮）：不带 md 参数——CM 的 doc 是 B 树，toString() 是
+   *  O(doc) 全文摊平，每键一次 = 每键一次全文分配；消费者按需/防抖取串。 */
+  onDocChanged: () => void;
   /** 选区变化回调（选区字数统计等轻量监听）。 */
   onSelectionChanged?: () => void;
   /** 读取打字机模式是否开启（实时读取，避免重建编辑器）。 */
@@ -158,7 +160,7 @@ function buildExtensions(opts: SvEditorOptions, smoothJump?: SmoothJumpFlag) {
       ...historyKeymap,
     ]),
     EditorView.updateListener.of((update) => {
-      if (update.docChanged) opts.onDocChanged(update.state.doc.toString());
+      if (update.docChanged) opts.onDocChanged();
       if (update.selectionSet) {
         opts.onSelectionChanged?.();
         // 打字机模式：光标行滚动到视口中部（effect-only 事务，不进历史，

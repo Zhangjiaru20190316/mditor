@@ -279,6 +279,10 @@ export const Editor = memo(
       getContentRef.current = () => md;
       onInputRef.current?.(md);
     },
+    // I1：sv 连击期只置脏（全文镜像在 useMilkdown 内 150ms 停顿合并）。
+    onInputLight: () => {
+      fileApi.markDirty();
+    },
     onHeadings,
     settings,
   });

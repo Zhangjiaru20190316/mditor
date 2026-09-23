@@ -462,6 +462,8 @@ interface Options {
   svHostRef: RefObject<HTMLDivElement | null>;
   docPath: () => string | null;
   onInput: (md: string) => void;
+  /** I1：sv 连击期的轻量通知（仅置脏，不带内容）——Editor 传 markDirty。 */
+  onInputLight?: () => void;
   /** Live document headings (rich modes). Emitted only when the heading
    *  signature actually changes; the array ref is stable across no-op edits. */
   onHeadings?: (flat: FlatHeading[]) => void;
@@ -578,6 +580,25 @@ export function useMilkdown(opts: Options): MilkdownHandle {
   // 旧 <textarea>（CM 创建失败/宿主缺失时仍可用）。
   const svRef = useRef<SvEditorHandle | null>(null);
   const [svCm, setSvCm] = useState(false);
+  // I1：sv 每键只置脏；全文镜像（CM B 树 → string 的 O(doc) 摊平）150ms
+  // 停顿合并一次。getValue/自动保存/切换快照都按需现取（surface.value），
+  // 不依赖镜像的实时性。
+  const onInputLightRef = useRef(opts.onInputLight);
+  onInputLightRef.current = opts.onInputLight;
+  const svMirrorTimerRef = useRef<number | null>(null);
+  const scheduleSvMirror = useCallback(() => {
+    if (svMirrorTimerRef.current != null) return;
+    svMirrorTimerRef.current = window.setTimeout(() => {
+      svMirrorTimerRef.current = null;
+      const ta = svRef.current?.surface ?? sourceRef.current;
+      if (!ta) return;
+      const v = ta.value;
+      sourceTextRef.current = v;
+      contentRef.current = v;
+      if (!suppressRef.current) onInputRef.current(v);
+    }, 150);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceRef]);
 
   const modeRef = useRef(mode);
   modeRef.current = mode;
@@ -1003,12 +1024,13 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     if (!host || svRef.current) return;
     svRef.current = createSvEditor(host, {
       initial: contentRef.current,
-      onDocChanged: (md) => {
+      onDocChanged: () => {
         // suppressRef 由 facade 的程序化写入置位 —— 那些写入由调用方自行上抛。
         if (suppressRef.current) return;
-        sourceTextRef.current = md;
-        contentRef.current = md;
-        onInputRef.current(md);
+        // I1：脏标记每键即时（关闭标签/自动保存的判定不受防抖影响），
+        // 全文镜像（O(doc) 的 CM doc.toString）合并到 150ms 停顿后取一次。
+        onInputLightRef.current?.();
+        scheduleSvMirror();
       },
       isTypewriter: () => settingsRef.current.typewriterMode,
       onToggleWrap: (mark) => {
@@ -1044,23 +1066,12 @@ export function useMilkdown(opts: Options): MilkdownHandle {
   useEffect(() => {
     const ta = sourceRef.current;
     if (!ta) return;
-    // The upstream notification (markDirty → outline + word count recompute)
-    // is debounced; the text mirrors below stay immediate so getValue /
-    // autosave / mode switches always read fresh content regardless of a
-    // pending notification. Flushed on teardown so a final burst isn't lost.
-    let notifyTimer: number | null = null;
-    const notifyInput = () => {
-      if (notifyTimer != null) window.clearTimeout(notifyTimer);
-      notifyTimer = window.setTimeout(() => {
-        notifyTimer = null;
-        onInputRef.current(ta.value);
-      }, 200);
-    };
     const onInput = () => {
       if (suppressRef.current) return;
-      sourceTextRef.current = ta.value;
-      contentRef.current = ta.value;
-      notifyInput();
+      // I1：与 CM 表面同构——脏标记即时，镜像 150ms 合并（textarea 本身
+      // 持有全文串，这里的成本只是引用拷贝，但统一路径避免两套语义）。
+      onInputLightRef.current?.();
+      scheduleSvMirror();
     };
     ta.addEventListener("input", onInput);
     // Tab inserts a tab rather than leaving the field; matches a source editor.
@@ -1094,10 +1105,6 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     return () => {
       ta.removeEventListener("input", onInput);
       ta.removeEventListener("keydown", onKeyDown);
-      if (notifyTimer != null) {
-        window.clearTimeout(notifyTimer);
-        onInputRef.current(ta.value);
-      }
     };
   }, [sourceRef]);
 
