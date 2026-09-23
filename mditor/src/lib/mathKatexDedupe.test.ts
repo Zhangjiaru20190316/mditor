@@ -8,14 +8,22 @@
 // .workflow/task1-forensics/static-chain.md）。修复：package.json overrides
 // 钉 katex=0.18.4 全局单实例。
 //
-// 本文件锁定两件事，防止错位回归：
+// 本文件锁定四件事，防止错位回归：
 //   1. 静态管线产出的 DOM 与所载 CSS 同版本（strut 等结构类名带 katex- 前缀，
 //      不存在 0.16.x 旧裸类名），且公式结构健康（无 katex-error、分数线、
 //      上下标、∂、撇号俱全）——含用户真实文档（cmc/微分方程专题）摘录块。
 //   2. 编辑器载入链（mathNormalize → remark 词法层 → buildEditorParseProcessor
 //      全链）对块级公式源串逐字符零改写（复刻 task1 取证 harness，固化）。
+//   3. 截图症状表征面（\int_a^b / \sum_{i=1}^{n} 上下限、\overline/\underline
+//      划线）的塌陷结构健康签名——v4.17.1 前的失配塌陷直接砸在这类结构上，
+//      但五个数学测试文件原本无一条 \int/\sum/\overline 断言，非双实例路径的
+//      同症状回归（CSS 半旧、编辑器 DOM 分叉）会全量绿漏网。
+//   4. DOM↔CSS 同源同代配对：DOM 守卫跑在测试进程的 katex 实例上，应用布局
+//      却由 main.tsx 打包进 dist 的 katex.min.css 决定——两条通道此前零交集，
+//      产物混入旧代 CSS（裸 .strut 选择器）时 DOM 检查全绿而布局照塌。
 // 另含 mhchem 单实例证据用例与 `\=` 现状固化用例（escapedEqDecision：不处理）。
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { unified } from "unified";
@@ -190,6 +198,73 @@ describe("mathKatexDedupe: 静态管线 DOM 与所载 CSS 同版本", () => {
     expect(existsSync(join(nm, "rehype-katex", "node_modules", "katex"))).toBe(false);
     expect(existsSync(join(nm, "micromark-extension-math", "node_modules", "katex"))).toBe(false);
     expect(existsSync(join(nm, "katex"))).toBe(true);
+  });
+});
+
+// ---- Part A'：截图症状表征面（积分/求和上下限与上/下划线结构）----
+// 用户截图的塌陷正是这三类结构（strut 行高失效 → vlist 行塌、划线无衬底）。
+// 签名为 0.18.4 实测（probe + 取证 __diag）：∫ U+222B / op-symbol / msupsub；
+// ∑ U+2211（非希腊 Σ U+03A3）/ class="mop op-limits" / vlist-t2；
+// katex-overline + overline-line / katex-underline + underline-line。
+// 注意：op-limits/vlist/msupsub 在 0.16.x 与 0.18.x 同为裸名（0.18.4 混合
+// 前缀），故代次判别仍只靠 LEGACY_16_CLASSES，不得把裸结构名加进去。
+
+const SYMPTOM_FORMULA_INT = String.raw`\int_a^b f\,dx\ \overline{S}(T)-\underline{S}`;
+const SYMPTOM_FORMULA_SUM = String.raw`\sum_{i=1}^{n}\omega_i\Delta x_i<\varepsilon`;
+
+describe("mathKatexDedupe: 截图症状表征面（积分/求和上下限与划线结构）", () => {
+  it("A5: \\int_a^b + \\overline{S}(T) + \\underline 块级渲染结构齐全", async () => {
+    const html = await renderMarkdown(`$$\n${SYMPTOM_FORMULA_INT}\n$$\n`);
+    expect(html).not.toContain("katex-error");
+    expect(html).toContain("\u222B"); // ∫ 大算符字形（非塌陷占位）
+    expect(html).toContain("op-symbol");
+    expect(html).toContain("msupsub"); // a/b 上下标挂载结构
+    expect(html).toContain("katex-overline");
+    expect(html).toContain("overline-line");
+    expect(html).toContain("katex-underline");
+    expect(html).toContain("underline-line");
+    // 代次判别 + 行高依赖：strut 必须在且带前缀（其 display:inline-block
+    // 规则由所载 CSS 提供，见 A7）
+    const tokens = classTokens(html);
+    expect(LEGACY_16_CLASSES.filter((c) => tokens.has(c))).toEqual([]);
+    expect(tokens.has("katex-strut")).toBe(true);
+  });
+
+  it("A6: \\sum_{i=1}^{n} 块级渲染 op-limits + vlist-t2 行结构齐全", async () => {
+    const html = await renderMarkdown(`$$\n${SYMPTOM_FORMULA_SUM}\n$$\n`);
+    expect(html).not.toContain("katex-error");
+    expect(html).toContain("\u2211"); // ∑ 大算符字形
+    expect(html).not.toContain("\u03A3"); // 退化成希腊 Σ = 渲染路径分叉信号
+    expect(html).toContain('class="mop op-limits"'); // 上下限挂载结构
+    expect(html).toContain("vlist-t2"); // 上下限双行 vlist
+    expect(html).toContain("msupsub");
+    const tokens = classTokens(html);
+    expect(LEGACY_16_CLASSES.filter((c) => tokens.has(c))).toEqual([]);
+    expect(tokens.has("katex-strut")).toBe(true);
+  });
+});
+
+// ---- Part A'': DOM↔CSS 同源同代配对（发布通道防半旧）----
+// A1-A6 的 DOM 守卫跑在测试进程的 katex 实例上，应用布局却由 main.tsx 打包
+// 进 dist 的 katex.min.css 决定。此处把配对钉死：与 main.tsx:19 同一解析器
+// 取到同一份 CSS 文件（= vite 实际打包的那份），校验其选择器代次，并以
+// katex.version === "0.18.4" 作为 DOM 侧单实例运行时证据。
+
+describe("mathKatexDedupe: DOM↔CSS 同源同代配对", () => {
+  it("A7: 应用所载 katex.min.css 为 0.18 前缀选择器且与 DOM 实例同版本", () => {
+    const req = createRequire(import.meta.url);
+    // main.tsx:19 是全应用唯一的 KaTeX CSS 入口（grep 全 src 仅此一处）。
+    const mainTsx = readFileSync(join(import.meta.dirname, "..", "main.tsx"), "utf8");
+    expect(mainTsx).toContain('import "katex/dist/katex.min.css";');
+    const css = readFileSync(req.resolve("katex/dist/katex.min.css"), "utf8");
+    expect(css).toContain(".katex-strut");
+    expect(css).toContain(".katex-base");
+    expect(css).toContain(".katex-sizing");
+    // 0.16.x 专属裸 .strut{ 选择器：出现 = 旧代 CSS 混入——DOM 的
+    // katex-strut 将无规则可配，strut 行高失效 → 上下限/分数塌陷。
+    // 用固定字符串匹配（".katex-strut{"/"-strut{" 不该误报，正则会）。
+    expect(css.includes(".strut{")).toBe(false);
+    expect((req("katex") as { version: string }).version).toBe("0.18.4");
   });
 });
 
