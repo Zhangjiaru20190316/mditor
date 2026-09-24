@@ -8,8 +8,9 @@
 //
 // 机制：nodeview 占位（span 内放公式源码文本）+ IntersectionObserver（余量
 // 800px）临近渲染 KaTeX、远离延迟降级回占位（TEARDOWN_DELAY，与 code-block
-// teardown 同款思想）。仅大文档启用（sizeIsBigDocRaw 阈值同 memory.ts，与
-// 设置开关无关——默认档正是要救的场景）。
+// teardown 同款思想）。仅 cv 档大文档启用（isBigDocCv：体量 + bigDocViewport；
+// 默认档急切渲染——无 content-visibility 时懒渲染的块高变化是全文档回流，
+// scroll-abab 实测默认档滚动 p50 4.2→41.7ms，得不偿失）。
 //
 // 渲染泵（R1b，公式密集文档滚动回归修复）：IO 回调只入队，不同步渲染。
 // 滚动进行中（SCROLL_QUIET_MS 内有滚动事件）保持占位——占位是纯文本，
@@ -36,7 +37,7 @@ import type { Node as PMNode } from "@milkdown/prose/model";
 import katex from "katex";
 import { $prose } from "@milkdown/utils";
 import { getMathRenderConfig } from "./mathConfig";
-import { sizeIsBigDocRaw } from "./memory";
+import { isBigDocCv } from "./memory";
 
 /** 视口观察余量：提前 800px 渲染（慢速滚动不闪占位）。 */
 const IO_MARGIN = "800px";
@@ -275,7 +276,13 @@ export function lazyInlineMathPlugin(): Plugin {
 
 export const lazyInlineMath = $prose(() => lazyInlineMathPlugin());
 
-/** useMilkdown 在建实例/载入时按体量调用（阈值同 memory.ts 的大文档判定，不经过设置开关）。 */
+/** useMilkdown 在建实例/载入时按体量+视口档调用。
+ *
+ * v2 门控（G6 回归修复）：仅 cv 档（content-visibility）懒渲染。默认档无
+ * content-visibility，每次懒渲染的块高变化都是全文档级回流——scroll-abab
+ * 1MB 副本实测默认档滚动 p50 4.2→41.7ms；默认档恢复急切渲染后打开 12.4s
+ * 仍在 G1 ≤18s 门内。减配档（bigDocMode）本就关闭 Latex 特性，无
+ * math_inline，门控值对其无实际影响。 */
 export function setLazyMathBySize(content: string | null | undefined): void {
-  setLazyInlineMathEnabled(sizeIsBigDocRaw(content));
+  setLazyInlineMathEnabled(isBigDocCv(content));
 }

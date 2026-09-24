@@ -11,6 +11,7 @@ import {
   lazyInlineMathPlugin,
   __resetRenderPumpForTest,
 } from "./lazyInlineMath";
+import { setBigDocViewportEnabled } from "./memory";
 
 // ---- IntersectionObserver stub：手动派发可见性 --------------------------------
 interface IOEntry {
@@ -117,13 +118,18 @@ function useRealPumpTimers(): void {
 }
 
 describe("R1 行内公式懒渲染", () => {
-  it("开关按体量（阈值同 memory.ts，与设置无关）", () => {
+  it("开关按体量+视口档（仅 cv 档懒渲染；默认档急切防全文档回流）", () => {
+    setBigDocViewportEnabled(true);
     setLazyMathBySize("x".repeat(100));
-    expect(lazyInlineMathEnabled()).toBe(false);
+    expect(lazyInlineMathEnabled()).toBe(false); // 小文档
     setLazyMathBySize("x".repeat(600_000));
-    expect(lazyInlineMathEnabled()).toBe(true);
+    expect(lazyInlineMathEnabled()).toBe(true); // 大文档 + cv 档
+    setBigDocViewportEnabled(false);
+    setLazyMathBySize("x".repeat(600_000));
+    expect(lazyInlineMathEnabled()).toBe(false); // 大文档但默认档 → 急切渲染
     setLazyMathBySize(null);
     expect(lazyInlineMathEnabled()).toBe(false);
+    setBigDocViewportEnabled(false);
   });
 
   it("占位保留源文本（window.find/选区/复制语义），静止后渲染 KaTeX，滚出延迟降级", () => {
