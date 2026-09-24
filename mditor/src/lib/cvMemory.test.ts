@@ -16,6 +16,7 @@ import {
   nextChunkSize,
   noteCvSize,
   prewarmOrder,
+  prewarmShouldYield,
 } from "./cvMemory";
 
 afterEach(() => cvClearStore());
@@ -234,5 +235,20 @@ describe("cvIntrinsic 插件 apply：docChanged 走增量映射（性能回归�
       });
     };
     expect(styleOf(sliced)).toEqual(styleOf(full));
+  });
+});
+
+describe("prewarmShouldYield（G6 预热让路判定）", () => {
+  it("用户滚动窗口内让出，窗口外放行；未来时刻（时钟回拨防御）放行", () => {
+    // 0 = 从未滚动（模块初值语义）
+    expect(prewarmShouldYield(0, 0)).toBe(true);
+    expect(prewarmShouldYield(0, 10_000)).toBe(false);
+    // t=1000 滚动：500ms 窗口内让出
+    expect(prewarmShouldYield(1000, 1200)).toBe(true);
+    expect(prewarmShouldYield(1000, 1499)).toBe(true);
+    expect(prewarmShouldYield(1000, 1500)).toBe(false);
+    expect(prewarmShouldYield(1000, 60_000)).toBe(false);
+    // lastUserScrollAt 在未来（异常时钟）→ 放行，不无限让出
+    expect(prewarmShouldYield(2000, 1000)).toBe(false);
   });
 });

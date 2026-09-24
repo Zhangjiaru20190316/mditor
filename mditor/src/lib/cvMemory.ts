@@ -619,6 +619,34 @@ const scheduleIdle = (fn: () => void): void => {
   window.setTimeout(fn, 16);
 };
 
+// ---- 预热让路（G6）：用户滚动进行中不交错派发批次 ---------------------------
+// 剖面证据（tmp-profile-scroll，1MB 副本 cv 档滚动 10s）：两臂的主导负载都是
+// 预热批次的 PM 装饰派发（DecorationSet forChild 8.9-9.2s + takeSpansForNode
+// 7.3-7.7s / 60s 窗）与连带布局——预热在重 fixture 上 >45s 跑不完，整个滚动
+// 期都在与用户交错。滚动源监听 wheel/touchmove/keydown（程序化 scrollTop
+// 写入不触发，prewarm-comp 不会自锁）。
+/** 用户滚动静止窗口（ms）：窗口内有 wheel/touch/键 → 预热批次让出。 */
+const PREWARM_USER_YIELD_MS = 500;
+
+let lastUserScrollAt = 0;
+let userScrollHooked = false;
+
+function hookUserScrollOnce(): void {
+  if (userScrollHooked) return;
+  userScrollHooked = true;
+  const mark = (): void => {
+    lastUserScrollAt = performance.now();
+  };
+  window.addEventListener("wheel", mark, { capture: true, passive: true });
+  window.addEventListener("touchmove", mark, { capture: true, passive: true });
+  window.addEventListener("keydown", mark, { capture: true, passive: true });
+}
+
+/** 预热让路判定（纯函数供单测）：用户滚动窗口内 → true（step 让出不派发）。 */
+export function prewarmShouldYield(lastUserScrollAt: number, now: number): boolean {
+  return now - lastUserScrollAt >= 0 && now - lastUserScrollAt < PREWARM_USER_YIELD_MS;
+}
+
 /**
  * 分块预热整篇文档的块高度（P0 重构：视口优先、先下后上、按时间预算）。
  *
@@ -670,6 +698,7 @@ async function runPrewarm(
   total: number,
   posOf: number[]
 ): Promise<void> {
+  hookUserScrollOnce();
   // P0-3：等 webfont 上屏再量——fallback 度量会让高度表整批错误，字体上屏
   // 后再测是「二次批量高度变化」的直接来源。
   const fontWaitMs = await waitForFonts(PREWARM_FONTS_WAIT_MAX_MS);
@@ -718,6 +747,13 @@ async function runPrewarm(
       }
       if (view.state.doc !== doc0) {
         abort("文档被编辑");
+        return;
+      }
+      // G6 让路：用户滚动进行中不派发批次（装饰派发+量测与滚动交错是
+      // 重 fixture 滚动期长任务的共同主导——见模块头剖面证据）。
+      if (prewarmShouldYield(lastUserScrollAt, performance.now())) {
+        scrollCount("prewarm.yield");
+        scheduleIdle(step);
         return;
       }
       if (k >= order.length) {
