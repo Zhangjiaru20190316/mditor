@@ -86,27 +86,33 @@ type PendingRender = { run: () => void };
 
 const pendingRenders: PendingRender[] = [];
 let pumpScheduled = false;
-let lastScrollAt = -Infinity;
-let scrollHooked = false;
+let lastUserInputAt = -Infinity;
+let userInputHooked = false;
 
-/** 仅供测试：重置渲染泵共享态（队列/滚动时间戳/帧调度位）。 */
+/** 仅供测试：重置渲染泵共享态（队列/输入时间戳/帧调度位）。 */
 export function __resetRenderPumpForTest(): void {
   pendingRenders.length = 0;
   pumpScheduled = false;
-  lastScrollAt = -Infinity;
+  lastUserInputAt = -Infinity;
 }
 
-/** 捕获阶段监听一切滚动（滚动容器是编辑器 host，scroll 不冒泡但可捕获）。 */
-function hookScrollOnce(): void {
-  if (scrollHooked) return;
-  scrollHooked = true;
-  document.addEventListener(
-    "scroll",
-    () => {
-      lastScrollAt = performance.now();
-    },
-    { capture: true, passive: true }
-  );
+/** 用户输入源（wheel/touch/键）标记静止窗口。不监听 scroll 事件：程序化
+ *  scrollTop 写入（prewarm-comp 高度补偿、ghost 锚定、恢复落位）也会触发
+ *  scroll，会把整个预热补偿期误判成"滚动中"，公式一直被门在占位态
+ *  （实测滚到公式带后 ready 23→10 回落）。 */
+function hookUserInputOnce(): void {
+  if (userInputHooked) return;
+  userInputHooked = true;
+  const mark = (): void => {
+    lastUserInputAt = performance.now();
+  };
+  window.addEventListener("wheel", mark, { capture: true, passive: true });
+  window.addEventListener("touchmove", mark, { capture: true, passive: true });
+  window.addEventListener("keydown", mark, { capture: true, passive: true });
+}
+
+function scrollQuiet(now: number): boolean {
+  return now - lastUserInputAt >= SCROLL_QUIET_MS;
 }
 
 function schedulePump(): void {
@@ -115,8 +121,8 @@ function schedulePump(): void {
   window.requestAnimationFrame(() => {
     pumpScheduled = false;
     if (!pendingRenders.length) return;
-    if (performance.now() - lastScrollAt < SCROLL_QUIET_MS) {
-      schedulePump(); // 滚动中：占位即终态，等静止窗口
+    if (!scrollQuiet(performance.now())) {
+      schedulePump(); // 用户滚动中：占位即终态，等静止窗口
       return;
     }
     const t0 = performance.now();
@@ -193,7 +199,7 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
       if (demoteTimer != null) window.clearTimeout(demoteTimer);
       demoteTimer = window.setTimeout(() => {
         demoteTimer = null;
-        if (performance.now() - lastScrollAt < SCROLL_QUIET_MS) {
+        if (!scrollQuiet(performance.now())) {
           demoteTimer = window.setTimeout(() => {
             demoteTimer = null;
             demote();
@@ -204,7 +210,7 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
       }, DEMOTE_DELAY);
     }
   });
-  hookScrollOnce();
+  hookUserInputOnce();
   getIO().observe(dom);
 
   // 挂载时即不可见（视口外）→ 占位即可，IO 回调稍后接管。

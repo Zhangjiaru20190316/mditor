@@ -67,9 +67,10 @@ function setVisibility(intersecting: boolean): void {
   obs.cb(entries);
 }
 
-/** 模拟一次滚动（捕获阶段的 document scroll 监听应更新静止时间戳）。 */
-function fireScroll(): void {
-  document.dispatchEvent(new Event("scroll"));
+/** 模拟一次用户滚动输入（wheel 捕获监听应更新静止时间戳）。
+ *  scroll 事件不再作为门控源——程序化 scrollTop 写入会误门渲染泵。 */
+function fireUserInput(): void {
+  window.dispatchEvent(new Event("wheel"));
 }
 
 const fakeNode = (value: string): PMNode =>
@@ -172,7 +173,7 @@ describe("R1 行内公式懒渲染", () => {
     setVisibility(true);
     // 持续滚动：泵每帧都看到静止窗口未满 → 一直占位
     for (let i = 0; i < 5; i++) {
-      fireScroll();
+      fireUserInput();
       flushFrames(1);
       expect(view.dom.querySelector(".katex")).toBeFalsy();
       advance(40);
@@ -192,7 +193,7 @@ describe("R1 行内公式懒渲染", () => {
     setLazyInlineMathEnabled(true);
     const a = makeView("a^2");
     const b = makeView("b^2");
-    fireScroll(); // 滚动中入队
+    fireUserInput(); // 滚动中入队
     setVisibility(true);
     flushFrames(2);
     expect(a.dom.querySelector(".katex")).toBeFalsy();
@@ -218,10 +219,10 @@ describe("R1 行内公式懒渲染", () => {
     flushFrames(1);
     expect(view.dom.querySelector(".katex")).toBeTruthy();
     // 滚出 + 滚动中到期：重排降级，真身保留
-    fireScroll(); // t=0
+    fireUserInput(); // t=0
     setVisibility(false);
     advance(2400);
-    fireScroll(); // t=2400（到期前 100ms 的新滚动）
+    fireUserInput(); // t=2400（到期前 100ms 的新滚动）
     advance(100); // t=2500：DEMOTE_DELAY 到期 → 静止窗未满 → 重排
     expect(view.dom.querySelector(".katex")).toBeTruthy();
     // 静止后重排的下一轮到期（t=5000）→ 降级回占位
