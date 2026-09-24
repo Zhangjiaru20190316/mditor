@@ -38,12 +38,14 @@ import { $prose } from "@milkdown/utils";
 import { getMathRenderConfig } from "./mathConfig";
 import { sizeIsBigDocRaw } from "./memory";
 
-/** 视口观察余量：提前 800px 渲染（快速滚动不闪占位）。 */
+/** 视口观察余量：提前 800px 渲染（慢速滚动不闪占位）。 */
 const IO_MARGIN = "800px";
 /** 离开视口后延迟降级回占位（ms）——快速来回滚动不做抖动式重建。 */
 const DEMOTE_DELAY = 2500;
-/** 滚动静止判定窗口（ms）：窗口内出现过滚动事件则渲染泵暂缓。 */
-const SCROLL_QUIET_MS = 160;
+/** 滚动静止判定窗口（ms）：窗口内出现过滚动事件则渲染/降级均暂缓。
+ *  取 400ms：基准滚轮节奏 ~190ms/格仍在滚动中；慢速阅读式滚动（>400ms/格）
+ *  不受影响，公式照常提前渲染。 */
+const SCROLL_QUIET_MS = 400;
 /** 渲染泵单帧预算（ms）：静止后每帧最多花这么多时间补渲染。 */
 const PUMP_FRAME_BUDGET_MS = 10;
 
@@ -185,10 +187,18 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
         },
       });
     } else if (rendered) {
-      // 远离：延迟降级（快速滚动往返不抖动）
+      // 远离：延迟降级（快速滚动往返不抖动）。降级改变块高会触发回流
+      // （无 cv 档是全文档级），滚动进行中不执行，静止后再降。
       if (demoteTimer != null) window.clearTimeout(demoteTimer);
       demoteTimer = window.setTimeout(() => {
         demoteTimer = null;
+        if (performance.now() - lastScrollAt < SCROLL_QUIET_MS) {
+          demoteTimer = window.setTimeout(() => {
+            demoteTimer = null;
+            demote();
+          }, DEMOTE_DELAY);
+          return;
+        }
         demote();
       }, DEMOTE_DELAY);
     }

@@ -171,8 +171,8 @@ describe("R1 行内公式懒渲染", () => {
       expect(view.dom.querySelector(".katex")).toBeFalsy();
       advance(40);
     }
-    // 停止滚动，静止窗口（160ms）过去 → 渲染落定
-    advance(200);
+    // 停止滚动，静止窗口（400ms）过去 → 渲染落定
+    advance(450);
     flushFrames(1);
     expect(view.dom.querySelector(".katex")).toBeTruthy();
     expect(view.dom.textContent).toContain("\\alpha+\\beta");
@@ -196,10 +196,33 @@ describe("R1 行内公式懒渲染", () => {
     expect(a.dom.querySelector(".katex")).toBeTruthy();
     // b 先销毁（队列条目仍在），静止后泵丢弃已销毁条目不报错
     b.destroy();
-    advance(200);
+    advance(450);
     flushFrames(2);
     expect(b.dom.querySelector(".katex")).toBeFalsy(); // 已销毁：保持占位
     a.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+
+  it("降级静止门：滚动中到期不降级（避免高度变化触发回流），静止后下一轮降", () => {
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    const view = makeView("c^2");
+    setVisibility(true);
+    flushFrames(1);
+    expect(view.dom.querySelector(".katex")).toBeTruthy();
+    // 滚出 + 滚动中到期：重排降级，真身保留
+    fireScroll(); // t=0
+    setVisibility(false);
+    advance(2400);
+    fireScroll(); // t=2400（到期前 100ms 的新滚动）
+    advance(100); // t=2500：DEMOTE_DELAY 到期 → 静止窗未满 → 重排
+    expect(view.dom.querySelector(".katex")).toBeTruthy();
+    // 静止后重排的下一轮到期（t=5000）→ 降级回占位
+    advance(2600);
+    expect(view.dom.querySelector(".katex")).toBeFalsy();
+    expect(view.dom.textContent).toBe("c^2");
+    view.destroy();
     useRealPumpTimers();
     setLazyInlineMathEnabled(false);
   });
