@@ -1,0 +1,84 @@
+{
+ "label": "ctx2",
+ "blocks": 11629,
+ "ev": {
+  "n": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0
+ },
+ "longtasks": [
+  {
+   "t": 10,
+   "d": 67,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 79,
+   "d": 76,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 233,
+   "d": 246,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 493,
+   "d": 76,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 583,
+   "d": 56,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 640,
+   "d": 58,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 795,
+   "d": 275,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 1088,
+   "d": 55,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 1381,
+   "d": 295,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 1697,
+   "d": 74,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 1782,
+   "d": 55,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 1846,
+   "d": 53,
+   "name": "self",
+   "attribution": "unknown:window"
+  }
+ ]
+}

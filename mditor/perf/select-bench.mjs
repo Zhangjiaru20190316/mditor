@@ -11,7 +11,8 @@ import { findPageTarget, Cdp, mouse, sleep, LONGTASK_RECORDER, FRAME_RECORDER } 
 const label = process.argv[2] ?? "sel";
 const rounds = Number(process.argv[3] ?? 1);
 const here = dirname(fileURLToPath(import.meta.url));
-const DOC_NAME = "一元微分学习题集";
+// 钉死 1MB 压测副本（默认子串同时命中 224KB 原件与 1MB 副本，会静默测错档）
+const DOC_NAME = "一元微分学习题集_1MB压测副本";
 
 const EVENT_RECORDER = `(() => {
   if (window.__evRec) return 'already';

@@ -597,7 +597,6 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       contentRef.current = v;
       if (!suppressRef.current) onInputRef.current(v);
     }, 150);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceRef]);
 
   const modeRef = useRef(mode);
@@ -1044,7 +1043,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       },
     });
     setSvCm(true);
-  }, [mode, svHostRef]);
+  }, [mode, svHostRef, scheduleSvMirror]);
 
   // 组件卸载时销毁 CM（sv ⇄ 富文本切换不销毁 —— 每次进入 sv 重置内容即可）。
   useEffect(
@@ -1106,7 +1105,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       ta.removeEventListener("input", onInput);
       ta.removeEventListener("keydown", onKeyDown);
     };
-  }, [sourceRef]);
+  }, [sourceRef, scheduleSvMirror]);
 
   // ---- the imperative facade (stable; reads live state via refs) --------
   const facade = useMemo<MilkdownFacade>(() => {

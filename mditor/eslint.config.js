@@ -25,7 +25,7 @@ const NODE_GLOBALS = {
 };
 
 export default tseslint.config(
-  { ignores: ["dist", "node_modules", "src-tauri", "perf", "scrolltest", "harmony", "*.config.*"] },
+  { ignores: ["dist", "node_modules", "src-tauri", "perf", "scrolltest", "harmony", "*.config.*", ".zcode"] },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {

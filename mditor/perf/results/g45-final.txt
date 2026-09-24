@@ -1,0 +1,13 @@
+search-in-doc(2字+防抖计数): {"wallMs":1002,"count":"1869 个"} | 长任务: 1个 max 282ms
+save-ctrls(序列化+写盘): {"writeMsDelta":0} | 长任务: 2个 max 57ms
+file:///C:/Users/hh/Desktop/Tp/mditor/perf/cdp.mjs:76
+      throw new Error(
+            ^
+
+Error: eval 异常: TypeError: Failed to fetch dynamically imported module: http://127.0.0.1:1420/src/lib/exporterProbe.ts
+    at Cdp.eval (file:///C:/Users/hh/Desktop/Tp/mditor/perf/cdp.mjs:76:13)
+    at async file:///C:/Users/hh/Desktop/Tp/mditor/perf/bench-export-search-save.mjs:64:12
+    at async withLongtasks (file:///C:/Users/hh/Desktop/Tp/mditor/perf/bench-export-search-save.mjs:16:13)
+    at async file:///C:/Users/hh/Desktop/Tp/mditor/perf/bench-export-search-save.mjs:63:13
+
+Node.js v24.15.0

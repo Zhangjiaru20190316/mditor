@@ -1,0 +1,543 @@
+{
+ "label": "r2B",
+ "ts": "2026-09-24T04:29:54.536Z",
+ "rounds": [
+  {
+   "round": 1,
+   "dragSelect": {
+    "longtasks": [
+     {
+      "t": 1,
+      "d": 76,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 77,
+      "d": 61,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 220,
+      "d": 212,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 432,
+      "d": 318,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 751,
+      "d": 154,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 1167,
+      "d": 383,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 1550,
+      "d": 147,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 1708,
+      "d": 68,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 1776,
+      "d": 75,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 1959,
+      "d": 95,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 2054,
+      "d": 58,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 2198,
+      "d": 68,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 2293,
+      "d": 377,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 2671,
+      "d": 128,
+      "name": "self",
+      "attribution": "unknown:window"
+     }
+    ],
+    "events": {
+     "n": 46,
+     "p50": 144,
+     "p95": 544,
+     "max": 544,
+     "events": [
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerout"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerleave"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerleave"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerleave"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerleave"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerleave"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerleave"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerleave"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerleave"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerleave"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerover"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerenter"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerenter"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerenter"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerenter"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerenter"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerenter"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "mouseout"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "mouseover"
+      },
+      {
+       "t": 14457,
+       "d": 144,
+       "type": "pointerdown"
+      }
+     ]
+    }
+   },
+   "tripleClick": {
+    "longtasks": [
+     {
+      "t": 0,
+      "d": 74,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 95,
+      "d": 66,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 208,
+      "d": 554,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 763,
+      "d": 125,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 889,
+      "d": 70,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 960,
+      "d": 65,
+      "name": "self",
+      "attribution": "unknown:window"
+     }
+    ],
+    "events": {
+     "n": 37,
+     "p50": 120,
+     "p95": 120,
+     "max": 120,
+     "events": [
+      {
+       "t": 18146,
+       "d": 80,
+       "type": "pointerout"
+      },
+      {
+       "t": 18146,
+       "d": 80,
+       "type": "pointerleave"
+      },
+      {
+       "t": 18146,
+       "d": 80,
+       "type": "pointerover"
+      },
+      {
+       "t": 18146,
+       "d": 80,
+       "type": "pointerenter"
+      },
+      {
+       "t": 18146,
+       "d": 80,
+       "type": "pointerenter"
+      },
+      {
+       "t": 18146,
+       "d": 80,
+       "type": "pointerenter"
+      },
+      {
+       "t": 18146,
+       "d": 80,
+       "type": "pointerenter"
+      },
+      {
+       "t": 18146,
+       "d": 80,
+       "type": "pointerenter"
+      },
+      {
+       "t": 18146,
+       "d": 80,
+       "type": "mouseout"
+      },
+      {
+       "t": 18146,
+       "d": 80,
+       "type": "mouseover"
+      },
+      {
+       "t": 18221,
+       "d": 120,
+       "type": "pointerout"
+      },
+      {
+       "t": 18221,
+       "d": 120,
+       "type": "pointerleave"
+      },
+      {
+       "t": 18221,
+       "d": 120,
+       "type": "pointerleave"
+      },
+      {
+       "t": 18221,
+       "d": 120,
+       "type": "pointerleave"
+      },
+      {
+       "t": 18221,
+       "d": 120,
+       "type": "pointerleave"
+      },
+      {
+       "t": 18221,
+       "d": 120,
+       "type": "pointerleave"
+      },
+      {
+       "t": 18221,
+       "d": 120,
+       "type": "pointerleave"
+      },
+      {
+       "t": 18221,
+       "d": 120,
+       "type": "pointerleave"
+      },
+      {
+       "t": 18221,
+       "d": 120,
+       "type": "pointerleave"
+      },
+      {
+       "t": 18221,
+       "d": 120,
+       "type": "pointerleave"
+      }
+     ]
+    }
+   },
+   "clickFormula": {
+    "longtasks": [
+     {
+      "t": 220,
+      "d": 516,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 737,
+      "d": 84,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 1072,
+      "d": 522,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 1594,
+      "d": 92,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 1950,
+      "d": 686,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 2637,
+      "d": 107,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 2744,
+      "d": 75,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 3040,
+      "d": 584,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 3625,
+      "d": 83,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 3708,
+      "d": 64,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 3975,
+      "d": 704,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 4680,
+      "d": 94,
+      "name": "self",
+      "attribution": "unknown:window"
+     },
+     {
+      "t": 4774,
+      "d": 75,
+      "name": "self",
+      "attribution": "unknown:window"
+     }
+    ],
+    "events": {
+     "n": 46,
+     "p50": 32,
+     "p95": 680,
+     "max": 688,
+     "events": [
+      {
+       "t": 21603,
+       "d": 40,
+       "type": "pointerover"
+      },
+      {
+       "t": 21603,
+       "d": 40,
+       "type": "pointerenter"
+      },
+      {
+       "t": 21603,
+       "d": 40,
+       "type": "pointerenter"
+      },
+      {
+       "t": 21603,
+       "d": 40,
+       "type": "mouseover"
+      },
+      {
+       "t": 21603,
+       "d": 40,
+       "type": "pointerdown"
+      },
+      {
+       "t": 21603,
+       "d": 40,
+       "type": "mousedown"
+      },
+      {
+       "t": 21706,
+       "d": 24,
+       "type": "pointerup"
+      },
+      {
+       "t": 21706,
+       "d": 24,
+       "type": "mouseup"
+      },
+      {
+       "t": 21706,
+       "d": 24,
+       "type": "click"
+      },
+      {
+       "t": 22070,
+       "d": 392,
+       "type": "pointerdown"
+      },
+      {
+       "t": 22070,
+       "d": 392,
+       "type": "mousedown"
+      },
+      {
+       "t": 22493,
+       "d": 24,
+       "type": "pointerup"
+      },
+      {
+       "t": 22493,
+       "d": 24,
+       "type": "mouseup"
+      },
+      {
+       "t": 22493,
+       "d": 24,
+       "type": "click"
+      },
+      {
+       "t": 22858,
+       "d": 472,
+       "type": "pointerdown"
+      },
+      {
+       "t": 22858,
+       "d": 472,
+       "type": "mousedown"
+      },
+      {
+       "t": 23357,
+       "d": 16,
+       "type": "pointerup"
+      },
+      {
+       "t": 23357,
+       "d": 16,
+       "type": "mouseup"
+      },
+      {
+       "t": 23357,
+       "d": 16,
+       "type": "click"
+      },
+      {
+       "t": 23720,
+       "d": 680,
+       "type": "pointerdown"
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

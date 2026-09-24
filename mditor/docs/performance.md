@@ -269,3 +269,36 @@ sv 模式（CodeMirror）天然只渲染可见行。富文本侧 V3.6.5 落地�
 | 切换动画状态机（token/最短可见时长） | `src/hooks/useSwitchFlow.ts`、`src/lib/switchTiming.ts` |
 | setValue 缓存快路径 | `src/hooks/useMilkdown.ts`（loadMarkdownFull） |
 | 内存守护接入 | `src/hooks/useMemoryGuard.ts` |
+
+## 第三轮：1MB 档系统性卡顿（2026-09-23 ~ 09-24）
+
+结题报告：`docs/large-doc-perf-report.md`（改动清单 / G1-G7 数据 / 归因 / 风险）。
+本节只沉淀**结论与基准口径**，供后续轮次直接引用。
+
+### 合入的改动（10 commits）
+
+| 技法 | commit | 一句话 |
+| --- | --- | --- |
+| S1 增量序列化 | 1dcc518 | 保存/搜索 O(doc)→O(变更块+拼接)；G4/G5 归零长任务 |
+| R1 行内公式懒渲染 | 7c88898 | 打开墙行内侧：视口+800px 才渲染 KaTeX |
+| R1b 渲染泵×3 | 876a18d/5624316/bb2ddbd/60e3388 | 滚动静止门控+帧预算+双门控（体量+viewport）+输入源门控——修 G6 滚动回归 |
+| R2 重建分片 | 9407f44/7625db8 | cvMemory 停顿重建 300-500ms 单笔 → 8ms idle 切片 |
+| R2b 预热让路 | dc733c1 | 滚动窗口内预热不派发批次；滚动 p95 760→82ms |
+| I1 sv 脏标记 | 4721404 | 每键全文摊平 O(doc) → 停顿一次取串 |
+
+### 基准口径沉淀
+
+- **fixture**：1MB 档 = `perf/fixtures/一元微分学习题集_1MB压测副本.md`（f4ef4f0 后
+  重新生成，行内公式 ≈1.58 万，是旧副本的 7.1 倍——**旧滚动数据不可与今比**）。
+- **回归判定**：代码 ABAB 交错（A=f4ef4f0 优化前），中位数，劣化 >10% 且方向一致
+  才算回归；A 臂 node_modules 的 plugin-listener 保持 HEAD 补丁态（行为等价）。
+- **打字两口径**：g2-typing（新开即打，~300ms/键）≠ baseline（六场景后，~480ms/键）。
+  差异 = cvMemory 装饰随预热覆盖增长后的每键 DecorationSet diff（forChild+valid
+  占 65%，profile-typing-ctx-*.cpuprofile）。G2 判定用 baseline 口径。
+- **懒渲染门控语义**（R1b 最终形态）：仅 cv 档大文档启用；滚动（wheel/touch/键）
+  400ms 静止后按 10ms/帧补渲染；降级同样走静止门；选中/编辑恒即时渲染；程序化
+  scrollTop 写入（prewarm-comp/ghost）不算滚动。
+- **冷启动偶发文件树 0 行**：getWorkspaces 读空被吞，reload 即恢复（非本轮引入）。
+  基准轮撞上按「单轮超标不作数」丢弃。
+- **scroll-abab 预热等待上限单位错**（bytes/15000≈105ms）：1MB 档只等 45s；重
+  fixture 预热超时不阻塞滚动测量（两臂同条件）。

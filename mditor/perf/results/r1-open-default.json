@@ -1,0 +1,74 @@
+{
+ "doc": "1MB",
+ "rounds": [
+  {
+   "round": 1,
+   "openMs": 5967,
+   "stableMs": 5967,
+   "blocks": 11629,
+   "longtasks": 2,
+   "ltMax": 3670,
+   "ltTotal": 5001,
+   "events": [
+    {
+     "t": 118,
+     "d": 3670,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 3794,
+     "d": 1331,
+     "name": "self",
+     "attribution": "unknown:window"
+    }
+   ]
+  },
+  {
+   "round": 2,
+   "openMs": 5751,
+   "stableMs": 5751,
+   "blocks": 11629,
+   "longtasks": 2,
+   "ltMax": 3479,
+   "ltTotal": 4766,
+   "events": [
+    {
+     "t": 121,
+     "d": 3479,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 3605,
+     "d": 1287,
+     "name": "self",
+     "attribution": "unknown:window"
+    }
+   ]
+  },
+  {
+   "round": 3,
+   "openMs": 5706,
+   "stableMs": 5706,
+   "blocks": 11629,
+   "longtasks": 2,
+   "ltMax": 3388,
+   "ltTotal": 4703,
+   "events": [
+    {
+     "t": 116,
+     "d": 3388,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 3510,
+     "d": 1315,
+     "name": "self",
+     "attribution": "unknown:window"
+    }
+   ]
+  }
+ ]
+}
