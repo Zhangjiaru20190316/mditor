@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased（2026-09-24 第三轮大文档性能 + 打包版修复——v4.18.0）
+
+- **打包版 CSP 根修（高，正确性，6bc1517）**：打包版 CSP 注入 nonce 致行内样式失效 → KaTeX 块公式整体塌陷（母题：公式显示为源码/竖排堆叠）。根修注入逻辑，块公式恢复。
+- **Typora `$$` 收尾探针 v2（高，正确性，f4ef4f0）**：公式体内孤立 `$` 不再被收尾探针吞掉整篇文档（此前会把 `$$...$$` 后的全部内容折进一个公式块）；压测 fixture 重新生成并复测全轮。
+- **大文档 1MB 档系统性卡顿优化（本轮主体，7 commits）**：结题报告 `docs/large-doc-perf-report.md`（G1-G7 全表 + 归因剖面）。
+  - S1 顶层块粒度增量序列化（1dcc518）：保存/搜索/脏标签 O(doc)→O(变更块+拼接)；Ctrl+S 与搜索计数长任务归零（原 662/694ms）。
+  - R1 行内公式视口懒渲染（7c88898）+ R1b 渲染泵四连修复（876a18d/5624316/bb2ddbd/60e3388）：打开墙行内侧——大文档视口档打开 7.0s→5.5s；滚动静止门控+帧预算+双门控（体量+bigDocViewport）+用户输入源门控，修公式密集档滚动回归。
+  - R2 cvMemory 停顿重建分片（9407f44/7625db8）：停顿重建 300-500ms 单笔 → 8ms idle 切片；打字停顿窗 max 662→207ms。
+  - R2b 预热让路用户滚动（dc733c1）：滚动窗口内预热不派发批次；滚动 p95 760→82ms。
+  - I1 sv 模式每键全文摊平改脏标记（4721404）：O(doc)/键 → 停顿一次取串。
+- **门禁**：G1-G5 达成 4 项（G2 打字 448-536ms 未达 ≤360，附 I5+装饰 diff 归因剖面）；G6/G7 零回归（终测滚动 B/A on 0.82 / off 1.00；拖选 -79%、点公式 -88%）。903 vitest / cargo / tsc / eslint / coverage / build 全绿。
+- **提案（未合入默认行为）**：≥1MB 自动开启 bigDocViewport（`docs/proposal-bigdoc-viewport-auto.md`，待拍板）。
+- 版本四处对齐 4.18.0（package.json / Cargo.toml / tauri.conf.json / app.json5 versionCode 1001800）。
+
 ## Unreleased（2026-09-22 修复发版：静态管线 KaTeX 双实例错位根修——v4.17.1）
 
 根因取证与独立复核全链见工作流报告（证据 `.workflow/task1-forensics/`）：
