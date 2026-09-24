@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // R1 行内公式懒渲染：占位/渲染/降级/等价性（源文本保留、开关按体量、
-// update/destroy 生命周期）。
+// update/destroy 生命周期）+ R1b 渲染泵（滚动静止门控、帧预算补渲染、
+// 选中/编辑立即渲染）。
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { Node as PMNode } from "@milkdown/prose/model";
 import {
@@ -8,6 +9,7 @@ import {
   setLazyInlineMathEnabled,
   setLazyMathBySize,
   lazyInlineMathPlugin,
+  __resetRenderPumpForTest,
 } from "./lazyInlineMath";
 
 // ---- IntersectionObserver stub：手动派发可见性 --------------------------------
@@ -19,6 +21,9 @@ const observers: {
   cb: (es: IOEntry[]) => void;
   els: Set<Element>;
 }[] = [];
+
+// ---- rAF stub：手动逐帧驱动渲染泵 -------------------------------------------
+let frameCbs: FrameRequestCallback[] = [];
 
 beforeAll(() => {
   (globalThis as unknown as Record<string, unknown>).IntersectionObserver = class {
@@ -38,7 +43,20 @@ beforeAll(() => {
       this.els.clear();
     }
   };
+  (window as unknown as Record<string, unknown>).requestAnimationFrame = (cb: FrameRequestCallback) => {
+    frameCbs.push(cb);
+    return frameCbs.length;
+  };
 });
+
+/** 排空 n 帧回调（泵在帧内可能再排程，先取当前批再执行）。 */
+function flushFrames(n = 1): void {
+  for (let i = 0; i < n; i++) {
+    const batch = frameCbs;
+    frameCbs = [];
+    for (const cb of batch) cb(performance.now());
+  }
+}
 
 /** 把最后一个观察器的目标设为可见/不可见（模拟滚入/滚出）。 */
 function setVisibility(intersecting: boolean): void {
@@ -48,8 +66,55 @@ function setVisibility(intersecting: boolean): void {
   obs.cb(entries);
 }
 
+/** 模拟一次滚动（捕获阶段的 document scroll 监听应更新静止时间戳）。 */
+function fireScroll(): void {
+  document.dispatchEvent(new Event("scroll"));
+}
+
 const fakeNode = (value: string): PMNode =>
   ({ type: { name: "math_inline" }, attrs: { value } }) as unknown as PMNode;
+
+interface TestView {
+  dom: HTMLElement;
+  update: (n: PMNode) => boolean;
+  selectNode: () => void;
+  destroy: () => void;
+}
+
+/** 建 view 并挂到 body（泵的 isConnected 守卫要求真实挂载；destroy 时摘除）。 */
+function makeView(value: string): TestView {
+  const plugin = lazyInlineMathPlugin();
+  const views = (plugin.spec.props as { nodeViews: Record<string, (n: PMNode, v: unknown, g: () => number | undefined) => unknown> }).nodeViews;
+  const view = views.math_inline(fakeNode(value), {} as never, () => 0) as TestView;
+  expect(view).toBeTruthy();
+  document.body.appendChild(view.dom);
+  const rawDestroy = view.destroy.bind(view);
+  view.destroy = () => {
+    rawDestroy();
+    view.dom.remove();
+  };
+  return view;
+}
+
+// ---- 时间源：假 setTimeout + spyOn(performance.now) 手控静止窗口 -------------
+let fakeNow = 0;
+
+function usePumpTimers(): void {
+  fakeNow = 0;
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  vi.spyOn(performance, "now").mockImplementation(() => fakeNow);
+  __resetRenderPumpForTest();
+}
+
+function advance(ms: number): void {
+  fakeNow += ms;
+  vi.advanceTimersByTime(ms);
+}
+
+function useRealPumpTimers(): void {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+}
 
 describe("R1 行内公式懒渲染", () => {
   it("开关按体量（阈值同 memory.ts，与设置无关）", () => {
@@ -61,44 +126,81 @@ describe("R1 行内公式懒渲染", () => {
     expect(lazyInlineMathEnabled()).toBe(false);
   });
 
-  it("占位保留源文本（window.find/选区/复制语义），滚入渲染 KaTeX，滚出延迟降级", () => {
-    vi.useFakeTimers();
+  it("占位保留源文本（window.find/选区/复制语义），静止后渲染 KaTeX，滚出延迟降级", () => {
+    usePumpTimers();
     setLazyInlineMathEnabled(true);
-    lazyInlineMathPlugin(); // 触发插件构造（nodeViews 注册路径）
-    const node = fakeNode("x^2+y_2");
-    // 经 nodeViews 工厂拿 view：直接从插件的 props.nodeViews 取
-    const plugin = lazyInlineMathPlugin();
-    const views = (plugin.spec.props as { nodeViews: Record<string, (n: PMNode, v: unknown, g: () => number | undefined) => unknown> }).nodeViews;
-    const view = views.math_inline(node, {} as never, () => 0) as {
-      dom: HTMLElement;
-      update: (n: PMNode) => boolean;
-      selectNode: () => void;
-      destroy: () => void;
-    };
-    expect(view).toBeTruthy();
+    const view = makeView("x^2+y_2");
     // 占位态：源文本完整保留
     expect(view.dom.dataset.type).toBe("math_inline");
     expect(view.dom.textContent).toBe("x^2+y_2");
-    // 滚入 → 渲染（KaTeX 真身，含 MathML annotation）
+    // 滚入 → 入队（同步不渲染——泵语义）
     setVisibility(true);
+    expect(view.dom.querySelector(".katex")).toBeFalsy();
+    // 静止（从未滚动）→ 下一帧渲染（KaTeX 真身，含 MathML annotation）
+    flushFrames(1);
     expect(view.dom.querySelector(".katex")).toBeTruthy();
     expect(view.dom.textContent).toContain("x^2+y_2"); // annotation 内保留源码
     // 滚出 → 延迟降级回占位
     setVisibility(false);
     expect(view.dom.querySelector(".katex")).toBeTruthy(); // 未到期不降
-    vi.advanceTimersByTime(2600);
+    advance(2600);
     expect(view.dom.querySelector(".katex")).toBeFalsy();
     expect(view.dom.textContent).toBe("x^2+y_2");
-    // update：值变化回到占位并（rAF 后）重渲染
+    // update：值变化回到占位并（rAF 后）重渲染（编辑路径不过静止门）
     setVisibility(true);
+    flushFrames(1);
     expect(view.update(fakeNode("z^3"))).toBe(true);
     expect(view.dom.textContent).toBe("z^3");
     expect(view.update({ type: { name: "paragraph" }, attrs: {} } as unknown as PMNode)).toBe(false);
-    // 选中立即渲染
-    view.selectNode();
+    flushFrames(1);
     expect(view.dom.querySelector(".katex")).toBeTruthy();
     view.destroy();
-    vi.useRealTimers();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+
+  it("渲染泵：滚动进行中保持占位（无渲染成本），静止后才补渲染", () => {
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    const view = makeView("\\alpha+\\beta");
+    setVisibility(true);
+    // 持续滚动：泵每帧都看到静止窗口未满 → 一直占位
+    for (let i = 0; i < 5; i++) {
+      fireScroll();
+      flushFrames(1);
+      expect(view.dom.querySelector(".katex")).toBeFalsy();
+      advance(40);
+    }
+    // 停止滚动，静止窗口（160ms）过去 → 渲染落定
+    advance(200);
+    flushFrames(1);
+    expect(view.dom.querySelector(".katex")).toBeTruthy();
+    expect(view.dom.textContent).toContain("\\alpha+\\beta");
+    view.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+
+  it("渲染泵：选中（交互）绕过泵立即渲染；销毁后队列残留静默丢弃", () => {
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    const a = makeView("a^2");
+    const b = makeView("b^2");
+    fireScroll(); // 滚动中入队
+    setVisibility(true);
+    flushFrames(2);
+    expect(a.dom.querySelector(".katex")).toBeFalsy();
+    expect(b.dom.querySelector(".katex")).toBeFalsy();
+    // 交互选中：同步渲染真身
+    a.selectNode();
+    expect(a.dom.querySelector(".katex")).toBeTruthy();
+    // b 先销毁（队列条目仍在），静止后泵丢弃已销毁条目不报错
+    b.destroy();
+    advance(200);
+    flushFrames(2);
+    expect(b.dom.querySelector(".katex")).toBeFalsy(); // 已销毁：保持占位
+    a.destroy();
+    useRealPumpTimers();
     setLazyInlineMathEnabled(false);
   });
 
@@ -110,23 +212,18 @@ describe("R1 行内公式懒渲染", () => {
   });
 
   it("跨视口全选语义：全文档占位与真身的 textContent 都含源码（等价判据）", () => {
+    usePumpTimers();
     setLazyInlineMathEnabled(true);
-    const plugin = lazyInlineMathPlugin();
-    const views = (plugin.spec.props as { nodeViews: Record<string, (n: PMNode, v: unknown, g: () => number | undefined) => unknown> }).nodeViews;
-    const a = views.math_inline(fakeNode("\\frac{a}{b}"), {} as never, () => 0) as {
-      dom: HTMLElement;
-      destroy?: () => void;
-    };
-    const b = views.math_inline(fakeNode("e^{i\\pi}"), {} as never, () => 1) as {
-      dom: HTMLElement;
-      destroy?: () => void;
-    };
+    const a = makeView("\\frac{a}{b}");
+    const b = makeView("e^{i\\pi}");
     // 一个占位、一个渲染态：全选复制的可见文本都包含各自源码
     expect(a.dom.textContent).toContain("\\frac{a}{b}");
-    setVisibility(true); // 只影响最后注册的观察器（b）
+    setVisibility(true);
+    flushFrames(1);
     expect(b.dom.textContent).toContain("e^{i\\pi}");
-    a.destroy?.();
-    b.destroy?.();
+    a.destroy();
+    b.destroy();
+    useRealPumpTimers();
     setLazyInlineMathEnabled(false);
   });
 });

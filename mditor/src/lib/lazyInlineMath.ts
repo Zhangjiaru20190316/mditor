@@ -11,6 +11,15 @@
 // teardown 同款思想）。仅大文档启用（sizeIsBigDocRaw 阈值同 memory.ts，与
 // 设置开关无关——默认档正是要救的场景）。
 //
+// 渲染泵（R1b，公式密集文档滚动回归修复）：IO 回调只入队，不同步渲染。
+// 滚动进行中（SCROLL_QUIET_MS 内有滚动事件）保持占位——占位是纯文本，
+// 无 KaTeX DOM 参与布局；静止后每帧按 PUMP_FRAME_BUDGET_MS 预算逐个补
+// 渲染。初版在 IO 回调里同步渲染整批 entries，公式密集文档（1MB 副本
+// katex≈1.6 万）快速滚动时一批数百个 katex.render + 连带布局，形成
+// 300-700ms 长任务风暴：scroll-abab 实测滚动帧 p50 94-150ms，比关闭懒
+// 渲染（A 臂）还差 41%（on 档）~23 倍（off 档）。选中（NodeSelection）
+// 与编辑重渲染仍立即执行。
+//
 // 等价性（红线判定，R1 反向判据）：
 //  * Ctrl+F 计数走 markdown 源串（SearchBar regex），与 DOM 无关——恒等价；
 //    window.find 侧占位文本=公式源码，与 KaTeX MathML annotation 同样可命中。
@@ -33,6 +42,10 @@ import { sizeIsBigDocRaw } from "./memory";
 const IO_MARGIN = "800px";
 /** 离开视口后延迟降级回占位（ms）——快速来回滚动不做抖动式重建。 */
 const DEMOTE_DELAY = 2500;
+/** 滚动静止判定窗口（ms）：窗口内出现过滚动事件则渲染泵暂缓。 */
+const SCROLL_QUIET_MS = 160;
+/** 渲染泵单帧预算（ms）：静止后每帧最多花这么多时间补渲染。 */
+const PUMP_FRAME_BUDGET_MS = 10;
 
 /** 大文档才启用（模块级开关由 useMilkdown 在载入/建实例时按体量维护）。 */
 let lazyEnabled = false;
@@ -65,6 +78,57 @@ function getIO(): IntersectionObserver {
   return sharedIO;
 }
 
+// ---- 渲染泵：IO 只入队；滚动静止后按帧预算补渲染 ---------------------------
+type PendingRender = { run: () => void };
+
+const pendingRenders: PendingRender[] = [];
+let pumpScheduled = false;
+let lastScrollAt = -Infinity;
+let scrollHooked = false;
+
+/** 仅供测试：重置渲染泵共享态（队列/滚动时间戳/帧调度位）。 */
+export function __resetRenderPumpForTest(): void {
+  pendingRenders.length = 0;
+  pumpScheduled = false;
+  lastScrollAt = -Infinity;
+}
+
+/** 捕获阶段监听一切滚动（滚动容器是编辑器 host，scroll 不冒泡但可捕获）。 */
+function hookScrollOnce(): void {
+  if (scrollHooked) return;
+  scrollHooked = true;
+  document.addEventListener(
+    "scroll",
+    () => {
+      lastScrollAt = performance.now();
+    },
+    { capture: true, passive: true }
+  );
+}
+
+function schedulePump(): void {
+  if (pumpScheduled) return;
+  pumpScheduled = true;
+  window.requestAnimationFrame(() => {
+    pumpScheduled = false;
+    if (!pendingRenders.length) return;
+    if (performance.now() - lastScrollAt < SCROLL_QUIET_MS) {
+      schedulePump(); // 滚动中：占位即终态，等静止窗口
+      return;
+    }
+    const t0 = performance.now();
+    while (pendingRenders.length && performance.now() - t0 < PUMP_FRAME_BUDGET_MS) {
+      pendingRenders.shift()!.run();
+    }
+    if (pendingRenders.length) schedulePump();
+  });
+}
+
+function enqueueRender(entry: PendingRender): void {
+  pendingRenders.push(entry);
+  schedulePump();
+}
+
 function createLazyInlineMathView(node: PMNode): LazyMathView {
   const dom = document.createElement("span");
   dom.dataset.type = "math_inline";
@@ -73,6 +137,7 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
 
   let current = node.attrs.value as string;
   let rendered = false;
+  let queued = false;
   let demoteTimer: number | null = null;
 
   const paintPlaceholder = () => {
@@ -81,6 +146,7 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
   };
 
   const render = () => {
+    queued = false;
     if (rendered) return;
     rendered = true;
     if (demoteTimer != null) {
@@ -109,7 +175,15 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
 
   callbacks.set(dom, (visible) => {
     if (visible) {
-      render();
+      if (rendered || queued) return;
+      queued = true;
+      enqueueRender({
+        run: () => {
+          queued = false;
+          if (!dom.isConnected) return; // 已销毁：静默丢弃
+          render();
+        },
+      });
     } else if (rendered) {
       // 远离：延迟降级（快速滚动往返不抖动）
       if (demoteTimer != null) window.clearTimeout(demoteTimer);
@@ -119,6 +193,7 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
       }, DEMOTE_DELAY);
     }
   });
+  hookScrollOnce();
   getIO().observe(dom);
 
   // 挂载时即不可见（视口外）→ 占位即可，IO 回调稍后接管。
@@ -135,13 +210,14 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
       rendered = false;
       paintPlaceholder();
       // 值变化后若在视口内，下一帧重渲染（IO 不会重复回调同状态）。
+      // 编辑路径单公式，直接 rAF 渲染（不过滚动静止门）。
       const r = dom.getBoundingClientRect();
       void r;
       window.requestAnimationFrame(() => render());
       return true;
     },
     selectNode() {
-      render();
+      render(); // 交互选中：立即渲染真身（同步，绕过泵）
       dom.classList.add("PROSE-selected");
     },
     deselectNode() {
@@ -154,6 +230,7 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
       if (demoteTimer != null) window.clearTimeout(demoteTimer);
       sharedIO?.unobserve(dom);
       callbacks.delete(dom);
+      // 队列中的残留条目由 run() 的 isConnected 检查静默丢弃
     },
   };
 }
@@ -188,7 +265,7 @@ export function lazyInlineMathPlugin(): Plugin {
 
 export const lazyInlineMath = $prose(() => lazyInlineMathPlugin());
 
-/** useMilkdown 在建实例/载入时按体量调用（阈值与 memory.ts 大文档判定一致，不经过设置开关）。 */
+/** useMilkdown 在建实例/载入时按体量调用（阈值同 memory.ts 的大文档判定，不经过设置开关）。 */
 export function setLazyMathBySize(content: string | null | undefined): void {
   setLazyInlineMathEnabled(sizeIsBigDocRaw(content));
 }
