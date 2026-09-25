@@ -5,10 +5,32 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mditor — 本地优先的 Markdown 编辑器</title>
   <meta name="description" content="Mditor：免费开源的本地优先 Markdown 编辑器，体验对标 Typora。所见即所得、AI 助手、批注与大纲、七套主题、多格式导出。无云端、无遥测、无广告，你的文件始终保存在自己的电脑上。">
+  <link rel="canonical" href="https://Zhangjiaru20190316.github.io/mditor/">
+  <meta property="og:title" content="Mditor — 本地优先的 Markdown 编辑器">
+  <meta property="og:description" content="Mditor：免费开源的本地优先 Markdown 编辑器，体验对标 Typora。所见即所得、AI 助手、批注与大纲、七套主题、多格式导出。无云端、无遥测、无广告，你的文件始终保存在自己的电脑上。">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://Zhangjiaru20190316.github.io/mditor/">
+  <meta property="og:image" content="https://Zhangjiaru20190316.github.io/mditor/assets/icon.png">
+  <meta name="twitter:card" content="summary">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1220">
   <link rel="icon" href="assets/icon.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Mditor",
+    "operatingSystem": "Windows",
+    "applicationCategory": "DeveloperApplication",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "downloadUrl": "https://github.com/Zhangjiaru20190316/mditor/releases/latest"
+  }
+  </script>
   <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
+
+  <a class="skip-link" href="#features">跳到主要内容</a>
 
   <div class="scroll-progress" id="scroll-progress" aria-hidden="true"></div>
 
@@ -18,7 +40,7 @@
         <img src="assets/icon.png" alt="Mditor" class="nav-logo">
         <span class="nav-name">Mditor</span>
       </a>
-      <div class="nav-links">
+      <div class="nav-links" id="nav-links">
         <a href="#try">在线试用</a>
         <a href="#features">功能</a>
         <a href="#guide">操作说明</a>
@@ -26,6 +48,20 @@
         <a href="#faq">常见问题</a>
         <a href="#support" class="nav-support">支持本项目</a>
       </div>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="切换深浅色" aria-pressed="false">
+        <svg class="icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>
+        </svg>
+        <svg class="icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/>
+        </svg>
+      </button>
+      <button id="nav-toggle" class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-links" aria-label="打开菜单">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/>
+        </svg>
+      </button>
     </div>
   </nav>
 
@@ -41,17 +77,35 @@
     <span class="hero-glyph" style="left:18%; top:38%; font-size:38px;  animation-delay:4.0s;" aria-hidden="true">[]()</span>
     <span class="hero-glyph" style="left:55%; top:6%;  font-size:40px;  animation-delay:2.7s;" aria-hidden="true">-</span>
     <div class="hero-inner">
-      <img src="assets/icon.png" alt="Mditor logo" class="logo">
-      <h1>Mditor</h1>
-      <p class="tagline">本地优先的 Markdown 编辑器，体验对标 Typora</p>
-      <p class="sub">免费 · 开源 · 无云端 · 无遥测 · 无广告 —— 你的文件始终保存在自己的电脑上</p>
-      <div class="cta">
-        <a class="btn btn-primary" href="https://github.com/Zhangjiaru20190316/mditor/releases/latest/download/Mditor_4.17.0_x64-setup.exe">下载 Windows 版</a>
-        <a class="btn btn-ghost" href="#try">在线试用</a>
-        <a class="btn btn-ghost" href="https://github.com/Zhangjiaru20190316/mditor">查看源码</a>
+      <div class="hero-copy">
+        <img src="assets/icon.png" alt="Mditor logo" class="logo">
+        <h1>Mditor</h1>
+        <p class="tagline">本地优先的 Markdown 编辑器，体验对标 Typora</p>
+        <p class="sub">免费 · 开源 · 无云端 · 无遥测 · 无广告 —— 你的文件始终保存在自己的电脑上</p>
+        <div class="cta">
+          <a class="btn btn-primary" href="https://github.com/Zhangjiaru20190316/mditor/releases/latest/download/Mditor_4.17.0_x64-setup.exe">下载 Windows 版</a>
+          <a class="btn btn-ghost" href="#try">在线试用</a>
+          <a class="btn btn-ghost" href="https://github.com/Zhangjiaru20190316/mditor">查看源码</a>
+        </div>
+        <div class="hero-badges">
+          <span class="hb-new"><i></i>v4.17.0</span><span>Windows 10/11</span><span>5 MB 安装包</span><span>MIT 开源</span>
+        </div>
       </div>
-      <div class="hero-badges">
-        <span class="hb-new"><i></i>v4.17.0</span><span>Windows 10/11</span><span>5 MB 安装包</span><span>MIT 开源</span>
+      <div class="hero-visual" aria-hidden="true">
+        <div class="hero-window">
+          <div class="hw-titlebar">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            <span class="hw-file">writing.md</span>
+          </div>
+          <div class="hw-body">
+            <div class="hw-line hw-h"># 今日写作</div>
+            <div class="hw-line hw-p">用 <span class="hw-strong">Mditor</span> 记录每一点灵感，</div>
+            <div class="hw-line hw-p">行内公式 <span class="hw-formula">E = mc²</span> 即输即得。</div>
+            <div class="hw-line hw-li">- 大纲与批注随手挂</div>
+            <div class="hw-line hw-li">- 一键导出 PDF / Word</div>
+            <div class="hw-line hw-p">&gt; 本地优先，无遥测。</div>
+          </div>
+        </div>
       </div>
     </div>
   </header>
@@ -166,32 +220,63 @@
       </div>
       <div class="grid">
         <div class="card reveal">
-          <span class="card-icon">✍️</span>
+          <span class="card-icon" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+              <path d="M12 20h9"/>
+              <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+            </svg>
+          </span>
           <h3>所见即所得</h3>
           <p>Milkdown/ProseMirror 内核，支持 GFM、KaTeX 公式、代码高亮；高光、文字颜色随手标记；所见即所得 / 即时渲染 / 源码三种模式一键切换。</p>
         </div>
         <div class="card reveal">
-          <span class="card-icon">🗂️</span>
+          <span class="card-icon" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+              <rect x="3" y="3" width="7" height="6" rx="1"/>
+              <rect x="14" y="15" width="7" height="6" rx="1"/>
+              <path d="M6.5 9v6a3 3 0 0 0 3 3H14"/>
+            </svg>
+          </span>
           <h3>工作区文件树</h3>
           <p>懒加载目录、深层文件夹秒展开、批量操作、外部修改实时监听；多标签页 + 拖放打开，关窗前脏标签自动落盘。</p>
         </div>
         <div class="card reveal">
-          <span class="card-icon">✨</span>
+          <span class="card-icon" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+              <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9Z"/>
+              <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8Z"/>
+            </svg>
+          </span>
           <h3>AI 写作助手</h3>
           <p>OpenAI 兼容接口，内置 DeepSeek / 智谱 / Kimi / OpenRouter / Ollama 预设；SSE 流式输出，选中文字即可改写、翻译、解释。</p>
         </div>
         <div class="card reveal">
-          <span class="card-icon">📌</span>
+          <span class="card-icon" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+              <path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/>
+              <path d="M3.5 6h.01"/><path d="M3.5 12h.01"/><path d="M3.5 18h.01"/>
+            </svg>
+          </span>
           <h3>大纲与批注</h3>
           <p>侧边栏大纲一键跳转；原生脚注语法的行内批注，点击标记平滑滚动到位；支持 AI 一键生成，阅读与写作互不干扰。</p>
         </div>
         <div class="card reveal">
-          <span class="card-icon">📤</span>
+          <span class="card-icon" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <path d="m17 8-5-5-5 5"/><path d="M12 3v12"/>
+            </svg>
+          </span>
           <h3>多格式导出</h3>
           <p>HTML / PDF / PNG 长图 / Word (docx)，主题样式完整保留；支持复制富文本直接粘贴到微信、Word。</p>
         </div>
         <div class="card reveal">
-          <span class="card-icon">🛡️</span>
+          <span class="card-icon" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              <path d="m9 11.5 2 2 4-4"/>
+            </svg>
+          </span>
           <h3>本地优先 · 隐私安全</h3>
           <p>设置与最近文件仅存于本机；严格 CSP、HTML 消毒、出站请求全部经 Rust 代理——没有遥测，没有数据上传。</p>
         </div>
@@ -253,7 +338,7 @@
           <div class="de-content">
             <div class="de-mode" data-mode-view="wysiwyg">
               <h2>会议纪要</h2>
-              <p><strong>本周重点</strong>：Mditor <code>v4.12.3</code> 正式发布，<mark>数学公式全链路增强</mark>。</p>
+              <p><strong>本周重点</strong>：Mditor <code>v4.18.0</code> 正式发布，<mark>数学公式全链路增强</mark>。</p>
               <ul>
                 <li>\(…\) 与 ```math 定界符全支持</li>
                 <li>导出 Word / PDF 公式完整渲染</li>
@@ -262,7 +347,7 @@
             </div>
             <div class="de-mode" data-mode-view="ir" hidden>
               <h2><span class="de-mark">##</span> 会议纪要</h2>
-              <p><span class="de-mark">**</span><strong>本周重点</strong><span class="de-mark">**</span>：Mditor <span class="de-mark">`</span><code>v4.12.3</code><span class="de-mark">`</span> 正式发布，<span class="de-mark">==</span><mark>数学公式全链路增强</mark><span class="de-mark">==</span>。</p>
+              <p><span class="de-mark">**</span><strong>本周重点</strong><span class="de-mark">**</span>：Mditor <span class="de-mark">`</span><code>v4.18.0</code><span class="de-mark">`</span> 正式发布，<span class="de-mark">==</span><mark>数学公式全链路增强</mark><span class="de-mark">==</span>。</p>
               <ul>
                 <li><span class="de-mark">-</span> \(…\) 与 ```math 定界符全支持</li>
                 <li><span class="de-mark">-</span> 导出 Word / PDF 公式完整渲染</li>
@@ -271,7 +356,7 @@
             </div>
             <div class="de-mode" data-mode-view="sv" hidden>
               <pre>## 会议纪要
-**本周重点**：Mditor `v4.12.3` 正式发布，
+**本周重点**：Mditor `v4.18.0` 正式发布，
 ==数学公式全链路增强==。
 
 - \(…\) 与 ```math 定界符全支持
@@ -348,7 +433,10 @@
 
       <!-- 1. 写作与三种模式 -->
       <div class="shot-row reveal">
-        <img src="assets/screens/2-wysiwyg.png" alt="Mditor 写作主界面截图" loading="lazy">
+        <figure class="shot-frame">
+          <div class="browser-chrome" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="chrome-url">mditor · 写作与格式化</span></div>
+          <img src="assets/screens/2-wysiwyg.png" alt="Mditor 写作主界面截图" loading="lazy" tabindex="0">
+        </figure>
         <div class="shot-text">
           <h3>1 · 写作与格式化</h3>
           <p>主编辑区干净专注：标题、加粗（Ctrl+B）、高光（Ctrl+Shift+H）、<b>文字颜色</b>、斜体、删除线、行内代码全部即输即得；选中文字会弹出浮动工具栏，链接、图片、脚注一键插入。</p>
@@ -356,7 +444,10 @@
         </div>
       </div>
       <div class="shot-row flip reveal">
-        <img src="assets/screens/7-source.png" alt="Mditor 源码模式截图" loading="lazy">
+        <figure class="shot-frame">
+          <div class="browser-chrome" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="chrome-url">mditor · 三种编辑模式</span></div>
+          <img src="assets/screens/7-source.png" alt="Mditor 源码模式截图" loading="lazy" tabindex="0">
+        </figure>
         <div class="shot-text">
           <h3>2 · 三种编辑模式</h3>
           <p>状态栏下拉一键切换，初稿阶段用<b>所见即所得</b>，快速浏览用<b>即时渲染</b>，精确控制格式切<b>源码模式</b>——同一份文档随时互换，内容不会丢失。</p>
@@ -379,7 +470,10 @@
         </div>
       </div>
       <div class="shot-row reveal">
-        <img src="assets/screens/6-template.png" alt="Mditor 从模板新建截图" loading="lazy">
+        <figure class="shot-frame">
+          <div class="browser-chrome" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="chrome-url">mditor · 从模板新建</span></div>
+          <img src="assets/screens/6-template.png" alt="Mditor 从模板新建截图" loading="lazy" tabindex="0">
+        </figure>
         <div class="shot-text">
           <h3>4 · 从模板新建</h3>
           <p>「文件 → 从模板新建」内置空白文档、会议纪要、周报、阅读笔记、写作提纲等多种模板，日期自动填充，新建即用。</p>
@@ -389,7 +483,10 @@
 
       <!-- 5. 大纲 -->
       <div class="shot-row flip reveal">
-        <img src="assets/screens/1-outline.png" alt="Mditor 大纲导航截图" loading="lazy">
+        <figure class="shot-frame">
+          <div class="browser-chrome" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="chrome-url">mditor · 大纲导航</span></div>
+          <img src="assets/screens/1-outline.png" alt="Mditor 大纲导航截图" loading="lazy" tabindex="0">
+        </figure>
         <div class="shot-text">
           <h3>5 · 大纲导航</h3>
           <p>侧边栏「大纲」自动提取全文标题，长文结构一目了然；列表再长也流畅滚动，点击任意标题即平滑跳转。</p>
@@ -399,7 +496,10 @@
 
       <!-- 6. 批注 -->
       <div class="shot-row reveal">
-        <img src="assets/screens/3-annotation.png" alt="Mditor 批注弹层截图" loading="lazy">
+        <figure class="shot-frame">
+          <div class="browser-chrome" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="chrome-url">mditor · 行内批注</span></div>
+          <img src="assets/screens/3-annotation.png" alt="Mditor 批注弹层截图" loading="lazy" tabindex="0">
+        </figure>
         <div class="shot-text">
           <h3>6 · 行内批注</h3>
           <p>选中任意文字点浮动工具栏的「批注」，即在该处生成脚注式标记；点击标记查看内容，随时编辑或删除。</p>
@@ -409,7 +509,10 @@
 
       <!-- 7. AI -->
       <div class="shot-row flip reveal">
-        <img src="assets/screens/4-ai-panel.png" alt="Mditor AI 助手截图" loading="lazy">
+        <figure class="shot-frame">
+          <div class="browser-chrome" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="chrome-url">mditor · AI 助手</span></div>
+          <img src="assets/screens/4-ai-panel.png" alt="Mditor AI 助手截图" loading="lazy" tabindex="0">
+        </figure>
         <div class="shot-text">
           <h3>7 · AI 助手</h3>
           <p>支持任意 OpenAI 兼容接口（自定义 BaseURL / Key / 模型），内置 DeepSeek、智谱 GLM、Kimi、OpenRouter、Ollama 本地模型预设，多套配置可切换。</p>
@@ -419,7 +522,10 @@
 
       <!-- 8. 设置与个性化 -->
       <div class="shot-row reveal">
-        <img src="assets/screens/5-settings.png" alt="Mditor 设置面板截图" loading="lazy">
+        <figure class="shot-frame">
+          <div class="browser-chrome" aria-hidden="true"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="chrome-url">mditor · 设置与个性化</span></div>
+          <img src="assets/screens/5-settings.png" alt="Mditor 设置面板截图" loading="lazy" tabindex="0">
+        </figure>
         <div class="shot-text">
           <h3>8 · 设置与个性化</h3>
           <p>「帮助 → 设置」左导航双栏布局，约 20 项设置按功能分区：<b>外观</b>（七套主题、字体、动效强度三档）、<b>排版</b>（字号 / 行高 / 段距）、<b>编辑行为</b>、<b>性能与诊断</b>、<b>AI 助手</b>、<b>快捷操作</b>、<b>工作区</b>。</p>
@@ -489,30 +595,30 @@
         <h2>常见问题</h2>
       </div>
       <div class="faq-tools">
-        <button type="button" class="faq-toggle" id="faq-toggle">展开全部</button>
+        <button type="button" class="faq-toggle" id="faq-toggle" aria-expanded="false">展开全部</button>
       </div>
       <div class="faq-list">
-        <details>
+        <details aria-expanded="false">
           <summary>支持 macOS / Linux 吗？</summary>
           <p>目前发布 Windows 10/11 版本（WebView2）。macOS / Linux 在计划中，欢迎在 GitHub Issues 提出需求。</p>
         </details>
-        <details>
+        <details aria-expanded="false">
           <summary>我的数据会被上传吗？</summary>
           <p>不会。文档就是本地磁盘上的 .md 文件，设置与最近文件存于本机 mditor.json。应用无遥测、无广告、无任何数据上报；唯一的网络请求只有你主动配置的 AI 接口，且经本地 Rust 代理转发。</p>
         </details>
-        <details>
+        <details aria-expanded="false">
           <summary>为什么没有自动更新？</summary>
           <p>v3.5.0 起移除了自动更新器（原端点为占位符，无法工作）。手动到 Releases 页下载新版本即可，安装包仅 5 MB。</p>
         </details>
-        <details>
+        <details aria-expanded="false">
           <summary>AI 功能需要付费吗？</summary>
           <p>AI 助手本身免费，但需要你自己配置模型接口（OpenAI 兼容即可，也可以用 DeepSeek、智谱、Kimi 或本地 Ollama）。不配置 AI 也不影响任何写作功能。</p>
         </details>
-        <details>
+        <details aria-expanded="false">
           <summary>大文档会卡吗？</summary>
           <p>不会。超过阈值自动进入性能模式（关闭代码高亮与公式渲染）；v4.1.1 起大文档滚动零漂移——3894 行实测文档中，大纲跳转落点偏差仅 48px，长时间编辑无可感知掉帧。</p>
         </details>
-        <details>
+        <details aria-expanded="false">
           <summary>如何参与或支持这个项目？</summary>
           <p>点个 Star、提 Issue、发 PR 都是最好的支持；也欢迎通过下方渠道请作者喝杯咖啡。</p>
         </details>
@@ -536,12 +642,32 @@
   </main>
 
   <footer>
-    <p>Mditor © 2026 · <a href="https://github.com/Zhangjiaru20190316/mditor">GitHub</a> · <a href="https://github.com/Zhangjiaru20190316/mditor/blob/main/mditor/CHANGELOG.md">更新日志</a> · <a href="privacy.html">隐私政策</a> · <a href="https://github.com/Zhangjiaru20190316/mditor/issues">反馈问题</a></p>
+    <div class="footer-grid">
+      <div class="footer-col">
+        <strong>产品</strong>
+        <a href="#try">在线试用</a>
+        <a href="#features">功能</a>
+        <a href="#shortcuts">快捷键</a>
+      </div>
+      <div class="footer-col">
+        <strong>资源</strong>
+        <a href="https://github.com/Zhangjiaru20190316/mditor/blob/main/mditor/CHANGELOG.md">更新日志</a>
+        <a href="https://github.com/Zhangjiaru20190316/mditor">GitHub</a>
+        <a href="https://github.com/Zhangjiaru20190316/mditor/issues">反馈 Issues</a>
+      </div>
+      <div class="footer-col">
+        <strong>支持</strong>
+        <a href="https://afdian.com/a/zhangabc">爱发电</a>
+        <a href="https://github.com/sponsors/Zhangjiaru20190316">GitHub Sponsors</a>
+        <a href="privacy.html">隐私政策</a>
+      </div>
+    </div>
+    <p>Mditor © 2026</p>
     <p class="footnote">MIT License · Built with Tauri 2 + React + Milkdown</p>
   </footer>
 
   <button type="button" class="to-top" id="to-top" aria-label="返回顶部">↑</button>
-  <div class="lightbox" id="lightbox" hidden>
+  <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="截图放大查看" tabindex="-1" hidden>
     <img src="" alt="截图放大查看">
   </div>
 

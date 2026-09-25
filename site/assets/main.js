@@ -1,10 +1,44 @@
 /* Mditor 官网交互 — 纯 vanilla JS，无依赖。
- * 模块：迷你 Markdown 渲染器（在线试用）、主题/模式切换演示、
- *       滚动进场动画（含错峰编排）、截图 Lightbox、FAQ 折叠、
- *       返回顶部、滚动进度条、导航高亮、卡片聚光 / 截图轻倾斜。
+ * 模块：深浅色主题（置于最顶部尽早执行，防首屏闪白）、
+ *       迷你 Markdown 渲染器（在线试用）、主题/模式切换演示、
+ *       滚动进场动画（含错峰编排）、截图 Lightbox（键盘可达 + 焦点圈）、
+ *       FAQ 折叠、返回顶部、滚动进度条、移动端导航折叠 + 导航高亮、
+ *       卡片聚光 / 截图轻倾斜。
  */
 (function () {
   "use strict";
+
+  /* ============ 0. 深浅色主题（尽早执行，避免闪白） ============ */
+
+  var THEME_KEY = "mditor-theme";
+  var rootEl = document.documentElement;
+  var themeToggle = document.getElementById("theme-toggle");
+  var storedTheme = null;
+  /* localStorage 在隐私模式等场景可能抛异常，失败时按首访处理 */
+  try { storedTheme = localStorage.getItem(THEME_KEY); } catch (err) { /* ignore */ }
+
+  var currentTheme =
+    storedTheme === "light" || storedTheme === "dark"
+      ? storedTheme /* 用户曾手动切换：应用其偏好 */
+      : window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+        ? "light" /* 首访：跟随系统 */
+        : "dark";
+
+  function setTheme(theme, persist) {
+    currentTheme = theme;
+    rootEl.setAttribute("data-theme", theme);
+    if (themeToggle) themeToggle.setAttribute("aria-pressed", String(theme === "dark"));
+    if (persist) {
+      try { localStorage.setItem(THEME_KEY, theme); } catch (err) { /* 写入失败不影响本次切换 */ }
+    }
+  }
+
+  setTheme(currentTheme, false);
+  if (themeToggle) {
+    themeToggle.addEventListener("click", function () {
+      setTheme(currentTheme === "dark" ? "light" : "dark", true);
+    });
+  }
 
   /* ============ 1. 迷你 Markdown 渲染器 ============ */
 
@@ -306,11 +340,19 @@
   function bindSwitch(groupId, apply) {
     const group = document.getElementById(groupId);
     if (!group) return;
+    /* aria-pressed 与 .active 同步 */
+    const syncPressed = function () {
+      group.querySelectorAll("button").forEach(function (b) {
+        b.setAttribute("aria-pressed", String(b.classList.contains("active")));
+      });
+    };
+    syncPressed();
     group.addEventListener("click", function (e) {
       const btn = e.target.closest("button");
       if (!btn) return;
       group.querySelectorAll("button").forEach(function (b) { b.classList.remove("active"); });
       btn.classList.add("active");
+      syncPressed();
       apply(btn);
     });
   }
@@ -368,6 +410,20 @@
   const lightbox = document.getElementById("lightbox");
   const lightboxImg = lightbox ? lightbox.querySelector("img") : null;
   let lbRaf = 0;
+  let lbTrigger = null;
+
+  function openLightbox(img, trigger) {
+    if (!lightbox || !lightboxImg) return;
+    lbTrigger = trigger || img;
+    lightboxImg.src = img.src;
+    lightboxImg.alt = img.alt;
+    lightbox.hidden = false;
+    /* 强制一帧后再加 show，保证过渡生效；关闭时取消未决帧避免竞态 */
+    lbRaf = requestAnimationFrame(function () { lightbox.classList.add("show"); });
+    document.body.style.overflow = "hidden";
+    /* 焦点移入对话框 */
+    lightbox.focus({ preventScroll: true });
+  }
 
   function closeLightbox() {
     if (!lightbox) return;
@@ -375,22 +431,36 @@
     lightbox.classList.remove("show");
     document.body.style.overflow = "";
     setTimeout(function () { lightbox.hidden = true; }, 200);
+    /* 焦点归还触发元素 */
+    if (lbTrigger && typeof lbTrigger.focus === "function") {
+      lbTrigger.focus({ preventScroll: true });
+    }
+    lbTrigger = null;
   }
 
   if (lightbox && lightboxImg) {
-    document.querySelectorAll(".shot-row img").forEach(function (img) {
+    document.querySelectorAll(".shot-frame img").forEach(function (img) {
       img.addEventListener("click", function () {
-        lightboxImg.src = img.src;
-        lightboxImg.alt = img.alt;
-        lightbox.hidden = false;
-        /* 强制一帧后再加 show，保证过渡生效；关闭时取消未决帧避免竞态 */
-        lbRaf = requestAnimationFrame(function () { lightbox.classList.add("show"); });
-        document.body.style.overflow = "hidden";
+        openLightbox(img, img);
+      });
+      /* 键盘可达：Enter / Space 与点击走同一打开逻辑 */
+      img.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+          e.preventDefault();
+          openLightbox(img, img);
+        }
       });
     });
     lightbox.addEventListener("click", closeLightbox);
     document.addEventListener("keydown", function (e) {
-      if (e.key === "Escape" && !lightbox.hidden) closeLightbox();
+      if (lightbox.hidden) return;
+      if (e.key === "Escape") {
+        closeLightbox();
+      } else if (e.key === "Tab") {
+        /* 简单焦点圈：对话框内无可聚焦后代，Tab 一律留在对话框上 */
+        e.preventDefault();
+        lightbox.focus({ preventScroll: true });
+      }
     });
   }
 
@@ -398,12 +468,27 @@
 
   const faqToggle = document.getElementById("faq-toggle");
   const faqItems = document.querySelectorAll(".faq-list details");
+
+  /* 按钮 aria-expanded = 是否全部展开；每个 details 的 aria-expanded 跟随 open */
+  function syncFaqState() {
+    const allOpen = Array.prototype.every.call(faqItems, function (d) { return d.open; });
+    faqItems.forEach(function (d) { d.setAttribute("aria-expanded", String(d.open)); });
+    if (faqToggle) {
+      faqToggle.setAttribute("aria-expanded", String(allOpen));
+      faqToggle.textContent = allOpen ? "收起全部" : "展开全部";
+    }
+  }
+
   if (faqToggle && faqItems.length) {
+    faqItems.forEach(function (d) {
+      d.addEventListener("toggle", syncFaqState); /* 用户单独点开/收起某条时也同步 */
+    });
     faqToggle.addEventListener("click", function () {
       const anyClosed = Array.prototype.some.call(faqItems, function (d) { return !d.open; });
       faqItems.forEach(function (d) { d.open = anyClosed; });
-      faqToggle.textContent = anyClosed ? "收起全部" : "展开全部";
+      syncFaqState();
     });
+    syncFaqState();
   }
 
   /* ============ 7. 返回顶部 + 滚动进度条 ============ */
@@ -434,7 +519,27 @@
     });
   }
 
-  /* ============ 8. 导航当前区块高亮 ============ */
+  /* ============ 8. 导航：移动端折叠 + 当前区块高亮 ============ */
+
+  const navToggleBtn = document.getElementById("nav-toggle");
+  const navLinksBox = document.getElementById("nav-links");
+
+  function setMobileNav(open) {
+    if (!navLinksBox || !navToggleBtn) return;
+    navLinksBox.classList.toggle("open", open);
+    navToggleBtn.setAttribute("aria-expanded", String(open));
+    navToggleBtn.setAttribute("aria-label", open ? "关闭菜单" : "打开菜单");
+  }
+
+  if (navToggleBtn && navLinksBox) {
+    navToggleBtn.addEventListener("click", function () {
+      setMobileNav(!navLinksBox.classList.contains("open"));
+    });
+    /* 点击任一链接后收起菜单 */
+    navLinksBox.addEventListener("click", function (e) {
+      if (e.target.closest("a")) setMobileNav(false);
+    });
+  }
 
   const navLinks = document.querySelectorAll(".nav-links a[href^='#']");
   const sections = Array.prototype.map
@@ -471,7 +576,7 @@
     });
   });
 
-  document.querySelectorAll(".shot-row img").forEach(function (img) {
+  document.querySelectorAll(".shot-frame img").forEach(function (img) {
     let tiltRaf = 0;
     img.addEventListener("pointermove", function (e) {
       if (tiltRaf) return;
