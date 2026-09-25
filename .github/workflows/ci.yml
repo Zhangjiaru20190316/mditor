@@ -32,6 +32,14 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # actions/checkout v4.2.2
 
+      - name: 安装 Tauri Linux 系统依赖
+        # tauri 2 在 Linux 目标要编译 gtk/glib/gio/webkit2gtk 的 -sys crate，
+        # runner 镜像不带这些开发包——缺了 glib-sys 构建脚本直接 exit 101
+        # （2026-09-25 首次真实运行即栽在这里：本 workflow 此前从未跑过）。
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # actions/setup-node v4.4.0
         with:
