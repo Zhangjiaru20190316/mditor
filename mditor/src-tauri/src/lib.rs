@@ -313,7 +313,7 @@ pub fn run() {
                     .text(INSERT_IMAGE, "插入图片…")
                     .text(INSERT_FOOTNOTE, "插入脚注")
                     .separator()
-                    .item(&PredefinedMenuItem::copy(app, Some("复制为富文本".into()))?)
+                    .item(&PredefinedMenuItem::copy(app, Some("复制为富文本"))?)
                     .build()?;
 
                 let menu = MenuBuilder::new(app)
