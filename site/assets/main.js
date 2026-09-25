@@ -410,10 +410,14 @@
   const lightbox = document.getElementById("lightbox");
   const lightboxImg = lightbox ? lightbox.querySelector("img") : null;
   let lbRaf = 0;
+  let lbCloseTimer = 0;
   let lbTrigger = null;
 
   function openLightbox(img, trigger) {
     if (!lightbox || !lightboxImg) return;
+    /* 清掉上一轮关闭挂起的 hidden 定时器：200ms 内快速重开时，
+     * 未决定时器会在打开态触发 hidden=true，浮层消失而滚动锁残留 */
+    clearTimeout(lbCloseTimer);
     lbTrigger = trigger || img;
     lightboxImg.src = img.src;
     lightboxImg.alt = img.alt;
@@ -430,7 +434,7 @@
     cancelAnimationFrame(lbRaf);
     lightbox.classList.remove("show");
     document.body.style.overflow = "";
-    setTimeout(function () { lightbox.hidden = true; }, 200);
+    lbCloseTimer = setTimeout(function () { lightbox.hidden = true; }, 200);
     /* 焦点归还触发元素 */
     if (lbTrigger && typeof lbTrigger.focus === "function") {
       lbTrigger.focus({ preventScroll: true });
@@ -539,6 +543,15 @@
     navLinksBox.addEventListener("click", function (e) {
       if (e.target.closest("a")) setMobileNav(false);
     });
+    /* 窗口拉宽跨过 760px 断点时 CSS 直接隐藏抽屉，同步复位 aria 状态，
+     * 避免 aria-expanded 残留 true */
+    const desktopMq = window.matchMedia("(max-width: 760px)");
+    const onDesktopMq = function (e) { if (!e.matches) setMobileNav(false); };
+    if (typeof desktopMq.addEventListener === "function") {
+      desktopMq.addEventListener("change", onDesktopMq);
+    } else if (typeof desktopMq.addListener === "function") {
+      desktopMq.addListener(onDesktopMq);
+    }
   }
 
   const navLinks = document.querySelectorAll(".nav-links a[href^='#']");

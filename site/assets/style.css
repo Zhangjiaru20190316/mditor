@@ -278,7 +278,7 @@ img { max-width: 100%; display: block; }
   background: var(--card-bg);
   border-color: var(--border);
 }
-/* 图标随主题显隐：亮色显示月亮（点击切深色），暗色显示太阳 */
+/* 图标随主题显隐：亮色显示太阳、暗色显示月亮（呈现当前主题，点击切另一态） */
 .theme-toggle .icon-moon { display: none; }
 :root[data-theme="dark"] .theme-toggle .icon-sun { display: none; }
 :root[data-theme="dark"] .theme-toggle .icon-moon { display: block; }
