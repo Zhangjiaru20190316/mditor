@@ -69,6 +69,7 @@ import { mathLiveGuardPlugin } from "../lib/mathLiveGuard";
 import { normalizeMathDelimiters } from "../lib/mathNormalize";
 import { mathConfigSignature, parseMathMacros } from "../lib/mathConfig";
 import { cvIntrinsicPlugin, startCvPrewarm } from "../lib/cvMemory";
+import { startMathCachePrewarm } from "../lib/mathCachePrewarm";
 import { noteScrollWrite } from "../lib/scrollDebug";
 import { sysEmit } from "../lib/sysDebug";
 
@@ -564,6 +565,19 @@ function scheduleCvPrewarm(crepe: Crepe, delayMs = 350): void {
   }
 }
 
+/** 大文档公式缓存预热的调度入口（与 scheduleCvPrewarm 同点位调用；尽力
+ *  而为——空闲分批把整篇行内公式算进 katexCache，滚动冷路径提前消灭）。 */
+function scheduleMathCachePrewarm(crepe: Crepe, delayMs = 350): void {
+  try {
+    crepe.editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      window.setTimeout(() => startMathCachePrewarm(view), delayMs);
+    });
+  } catch {
+    /* 预热失败静默：滚动帧渲染与静止补渲染自然兜底 */
+  }
+}
+
 export function useMilkdown(opts: Options): MilkdownHandle {
   const { hostRef, sourceRef, svHostRef } = opts;
   const crepeRef = useRef<Crepe | null>(null);
@@ -973,10 +987,11 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       applyProseVars(settingsRef.current);
       setReady(true);
       // big/cv 实例就绪且内容已种子落地：空闲窗口分块预热高度表（冷启动首跳
-      // 即按真实高度计算目的地）。空实例（无 seed）由后续 setValue→重建/
-      // 载入路径触发，这里不空跑。
+      // 即按真实高度计算目的地）与公式缓存（滚动冷路径提前消灭）。空实例
+      // （无 seed）由后续 setValue→重建/载入路径触发，这里不空跑。
       if (cvDocRef.current && seed) {
         scheduleCvPrewarm(crepe);
+        scheduleMathCachePrewarm(crepe);
       }
     });
     // Defensive: never let an unexpected late rejection surface as unhandled.
@@ -1206,8 +1221,12 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           suppressRef.current = false;
           contentRef.current = md;
           // big→big 换文档（无重建）：新内容的高度表未填，重新预热——冷表
-          // 会让大纲跳转按 3em 占位计算目的地（落点漂移）。
-          if (cvDocRef.current) scheduleCvPrewarm(crepe);
+          // 会让大纲跳转按 3em 占位计算目的地（落点漂移）。公式缓存预热
+          // 同点位重调（代际令牌顶替旧循环，只算新文档的冷公式）。
+          if (cvDocRef.current) {
+            scheduleCvPrewarm(crepe);
+            scheduleMathCachePrewarm(crepe);
+          }
           return;
         }
         suppressRef.current = true;

@@ -5947,7 +5947,10 @@ blockquote.md-flashcard {
  * 大文档（≥3000 行 / 500KB）里 math_inline 先以公式源码占位（span 内保留
  * 完整源文本——window.find / 跨视口选区 / 复制语义不变），进入视口（余量
  * 800px）后渲染 KaTeX 真身（加 ready 类）。占位样式向行内代码靠拢但更轻，
- * 避免与真公式视觉跳变过大。 */
+ * 避免与真公式视觉跳变过大。
+ * 高度预留与切换过渡：离屏降级前 JS 侧记录渲染态高度并以内联 minHeight
+ * 撑住占位（占位↔真身切换不再引起行高跳动）；~120ms opacity 过渡让占位
+ * 源码与 KaTeX 真身的互换不刺眼。 */
 span.mditor-math-inline-lazy {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.92em;
@@ -5964,6 +5967,20 @@ span.mditor-math-inline-lazy {
 span.mditor-math-inline-lazy::-webkit-scrollbar {
   display: none;
 }
+span.mditor-math-inline-lazy:not(.mditor-math-inline-ready) {
+  /* minHeight 预留需要块化盒子（inline 的 min-height/overflow 不生效）；
+   * 记录的是 border-box 高度，故 border-box 计量。overflow 必须显式恢复
+   * visible：继承基础规则的 overflow-x:auto/y:hidden 会让 inline-block 的
+   * 基线落到盒子底边缘（CSS2.1 规定 overflow 非 visible 的 inline-block
+   * 以底边为基线），minHeight 高于占位文本时源码整体上浮脱离行基线，
+   * 降级/重渲染瞬间仍有竖向跳动——预留高度应向基线下方延伸。 */
+  display: inline-block;
+  vertical-align: baseline;
+  box-sizing: border-box;
+  overflow: visible;
+  opacity: 0.72;
+  transition: opacity 120ms ease-out;
+}
 span.mditor-math-inline-lazy.mditor-math-inline-ready {
   background: transparent;
   padding: 0;
@@ -5972,4 +5989,6 @@ span.mditor-math-inline-lazy.mditor-math-inline-ready {
   font-size: inherit;
   white-space: normal;
   overflow: visible;
+  opacity: 1;
+  transition: opacity 120ms ease-out;
 }

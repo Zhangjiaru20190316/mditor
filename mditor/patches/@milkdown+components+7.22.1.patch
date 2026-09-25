@@ -1,7 +1,16 @@
 diff --git a/node_modules/@milkdown/components/lib/code-block/index.js b/node_modules/@milkdown/components/lib/code-block/index.js
-index 7e1baef..fadd46b 100644
+index 7e1baef..9eb0403 100644
 --- a/node_modules/@milkdown/components/lib/code-block/index.js
 +++ b/node_modules/@milkdown/components/lib/code-block/index.js
+@@ -581,7 +581,7 @@ function getSharedObserver() {
+           callback == null ? void 0 : callback(entry.isIntersecting);
+         }
+       },
+-      { rootMargin: "200px" }
++      { rootMargin: "800px 0px 800px 0px" }
+     );
+   }
+   return sharedObserver;
 @@ -746,6 +746,9 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
    initializeCodeMirror() {
      if (this.initialized) return;
@@ -68,7 +77,7 @@ index 7e1baef..fadd46b 100644
  };
  /** Delay before tearing down an off-screen CodeMirror instance. */
 -_CodeMirrorBlock.TEARDOWN_DELAY = 5e3;
-+_CodeMirrorBlock.TEARDOWN_DELAY = 3e4;
++_CodeMirrorBlock.TEARDOWN_DELAY = 15e3;
  let CodeMirrorBlock = _CodeMirrorBlock;
  function computeChange(oldVal, newVal) {
    if (oldVal === newVal) return null;
