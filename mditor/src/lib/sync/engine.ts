@@ -79,6 +79,31 @@ export interface SyncHooks {
   warn(msg: string): void;
 }
 
+/** moveFileWithFallback 的注入原语（trashMove 用；单测注入内存桩）。 */
+export interface MoveFileIo {
+  rename(a: string, b: string): Promise<void>;
+  copy(a: string, b: string): Promise<void>;
+  remove(a: string): Promise<void>;
+}
+
+/** 同盘 rename 原子移动；跨盘（Windows/Linux 均报 EXDEV 类错误）回退
+ *  copy+delete。工作区与 app-data 常在不同卷（E:\笔记 → C:\AppData），
+ *  直接 rename 必败：2026-09-22/23 生产日志 517 连报 MD-10002「删除失败：
+ *  failed to rename old path …」即此。copy 失败时原样抛出（源文件不动，
+ *  由上层 warn 兜底），绝不先删后拷。 */
+export async function moveFileWithFallback(
+  src: string,
+  target: string,
+  io: MoveFileIo
+): Promise<void> {
+  try {
+    await io.rename(src, target);
+  } catch {
+    await io.copy(src, target);
+    await io.remove(src);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 状态判定（§5.2）纯函数
 // ---------------------------------------------------------------------------
@@ -806,7 +831,11 @@ export function createDefaultSyncIO(cfg: S3ConfigPayload): SyncIO {
       const src = absOf(root, relPath);
       const dir = target.slice(0, target.lastIndexOf("/"));
       if (!(await fs().exists(dir))) await fs().mkdir(dir, { recursive: true });
-      await fs().rename(src, target);
+      await moveFileWithFallback(src, target, {
+        rename: (a, b) => fs().rename(a, b),
+        copy: (a, b) => getAdapter().app.invoke<void>("local_copy_file", { from: a, to: b }),
+        remove: (a) => fs().remove(a),
+      });
     },
     async statLocal(abs) {
       try {

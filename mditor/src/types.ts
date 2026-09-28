@@ -200,7 +200,9 @@ export interface Settings {
   bigDocPerformance: boolean;
   /**
    * 大文档视口渲染（v4.6.1，默认关）：与「大文档性能模式」的减配解耦——
-   * 文档超过 3000 行或 500KB 时只启用 content-visibility 视口化（data-big
+   * 文档超过 3000 行、500KB，或行内公式 ≈400 个以上（公式密度旁路，
+   * v4.18.1：KaTeX 的 DOM 成本由公式数主导，35KB/700 公式文档的节点量
+   * 与 500KB 纯文本同量级）时，只启用 content-visibility 视口化（data-big
    * CSS + cvMemory 高度记忆），保留 CodeMirror 代码高亮与 KaTeX 公式渲染。
    * 动机：选中链路（拖选/三击/点公式）在 154KB KaTeX 密集文档上的 0.7~1.7s
    * 卡顿全部来自全量渲染 DOM（21 万节点）的布局款，视口化实测压到 ≤16ms；

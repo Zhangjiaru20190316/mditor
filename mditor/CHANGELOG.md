@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased（2026-09-28 生产日志驱动优化批：公式密度视口档 + 检测器去噪 + 同步跨盘删除根修）
+
+数据来源：`%APPDATA%/com.mditor.app/logs/` 生产日志（09-22~09-28 六天全量聚合，
+MD-9001 持续掉帧 1,700+ / MD-10002 云同步 517 / MD-4011 DOM 增长 72 /
+MD-5012 资源噪声 27 / panic 1）：
+
+- **视口档公式密度旁路（高，性能）**：35KB~110KB 习题集文档（实测最多 2,356 个行内公式）因 500KB/3000 行阈值全不达标而永远急切渲染——MD-9001 三日 1,700+ 次、MD-1003 秒级阻塞 65 次（最坏 4,489ms）。`isBigDocCv` 增加 `$` 定界符 ≥800（≈400 公式）密度旁路（阈值取两类生产样本间隙中段：170 公式零异常 / 551+ 公式持续阻塞）；减配档 `isBigDoc` 不按密度触发（不能靠密度关掉 KaTeX）。设置默认仍关——开启 bigDocViewport 即覆盖这批文档。+11 例 `memory.test.ts` 钉住「密度绝不触发减配」。
+- **帧统计可见性门 + 窗口口径最坏值（中，检测器）**：最小化/整窗遮挡时 rAF 暂停，恢复首帧的「挂机间隔」被计成掉帧并顶高最坏值（日志里 5968ms「最坏」连日复读）；且 MD-9001 detail 的「本心跳窗内最坏」实取会话累计 max。修复：`visibilitychange`→hidden 清帧基线 + tick 内 hidden 短路；新增 `windowWorstGapMs / windowWorstInputLagMs`（心跳消费后复位），MD-9001/9003 改报窗口值（旧快照无窗口值回落会话值兼容）。
+- **MD-4011 台阶型假阳性过滤（中，检测器）**：编辑器重建/整篇上屏的一次性 DOM 台阶完全落在 15 分钟窗前半时，尾段平稳却被连报「持续增长」（09-25 同文档 72 连报同一 gain=56650）。增加尾半窗仍在增长（≥1/4 斜率）条件；线性泄漏尾半窗斜率恒为全程一半，不受影响。
+- **MD-5012 空 src 噪声过滤（低，检测器）**：无 URL 的元素 error 事件（style-mod 注入的 `<style>`、空 src img）不可归因不可行动，曾以「资源加载失败：style 」空转刷屏 27 条；现在要求 src 非空。
+- **云同步删除跨盘根修（高，正确性）**：`trashMove` 把工作区文件 rename 进 `<app-data>/sync/trash/`——工作区（E:）与 app-data（C:）跨卷时 rename 必败，09-22/23 生产日志 517 连报「删除失败：failed to rename old path …」。抽出 `moveFileWithFallback`：rename 失败回退 copy（Rust `local_copy_file`，字节不经 JS）+delete；copy 失败抛出不删源（绝不先删后拷）。+3 例单测（同盘直达/跨盘回退/copy 失败保源）。
+- **未改代码的日志结论（留档）**：① panic.log 1 条 tao-0.35.3 退出期「cannot move state from Destroyed」（上游窗口库关窗竞态，应用无害，升级 Tauri/tao 时自然带走）；② MD-1001 ghost 滚动 47 次集中在一个文档（41-42px 往复，疑滚动锚定与告警卡开合互动），视口档落地后观察是否消失；③ MD-4001 堆增长 4.2MB/分仅 1 次（窗口内重建余波候选），不构成行动依据。
+- 质量矩阵：vitest 926 → **942**（+16：memory 11 + devAnomaly 2 + moveFileWithFallback 3）；tsc 0 错；eslint 0 错 0 警。默认设置零变更（bigDocViewport 仍默认关，`docs/proposal-bigdoc-viewport-auto.md` 已更新密度档证据待拍板）。
+
 ## Unreleased（2026-09-24 第三轮大文档性能 + 打包版修复——v4.18.0）
 
 - **打包版 CSP 根修（高，正确性，6bc1517）**：打包版 CSP 注入 nonce 致行内样式失效 → KaTeX 块公式整体塌陷（母题：公式显示为源码/竖排堆叠）。根修注入逻辑，块公式恢复。

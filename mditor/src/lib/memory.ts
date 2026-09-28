@@ -75,6 +75,19 @@ export const IS_DEV = Boolean(import.meta.env && import.meta.env.DEV);
 export const BIG_DOC_LINES = 3000;
 export const BIG_DOC_BYTES = 500_000;
 
+/**
+ * 视口档（isBigDocCv）的公式密度旁路：`$` 定界符数达到此值（≈400 个
+ * 公式）即按大文档处理——KaTeX 行内公式的 DOM 成本（每公式数十节点）
+ * 由公式数主导而非字节数。生产日志（2026-09-26~28，MD-9001/1003）实测：
+ * 104KB/2356 公式文档持续掉帧风暴 + 1~4.5s 长任务，35KB/732 公式文档
+ * 切标签 1~4.5s 阻塞，而 6KB/170 公式文档无任何异常——阈值取两类样本
+ * 间隙的中段。只影响视口档（content-visibility + 行内公式懒渲染，特性
+ * 全保留）；减配档（isBigDoc）不按公式密度触发——那会恰恰关掉公式
+ * 渲染，对公式密集文档不可接受。转义 `\$` 与代码块内的 `$` 会造成
+ * 高估，方向保守（多触发的是特性保留的视口档），可接受。
+ */
+export const BIG_DOC_MATH_DOLLARS = 800;
+
 // 设置「大文档性能模式」的总开关（useSettings 在设置加载/每次更新时同步
 // 维护，不在 effect 里更新——子组件 effect 先于父组件执行，同步设置才能
 // 保证 useMilkdown 的档位翻转检测读到新值）。初始值与 DEFAULT_SETTINGS
@@ -119,6 +132,16 @@ function sizeIsBigDoc(content: string | null | undefined): boolean {
   return lines > BIG_DOC_LINES;
 }
 
+/** 纯密度测试：`$` 定界符是否达到视口档阈值（无设置门，早退扫描）。 */
+export function sizeIsMathDenseDoc(content: string | null | undefined): boolean {
+  if (!content) return false;
+  let dollars = 0;
+  for (let i = 0; i < content.length; i++) {
+    if (content.charCodeAt(i) === 36 && ++dollars >= BIG_DOC_MATH_DOLLARS) return true;
+  }
+  return false;
+}
+
 /** Is the document large enough to warrant preview degradation?
  *  Gated by the 大文档性能模式 master switch (feature-downgrade tier). */
 export function isBigDoc(content: string | null | undefined): boolean {
@@ -129,10 +152,13 @@ export function isBigDoc(content: string | null | undefined): boolean {
 /** Should the document get content-visibility (viewport rendering)?
  *  True under EITHER the master switch (which implies c-v) or the standalone
  *  viewport sub-switch — the CodeMirror/KaTeX features stay keyed on
- *  isBigDoc alone. */
+ *  isBigDoc alone. Size test OR math-density test: a 35KB/700-formula
+ *  document costs the layout engine as much as a 500KB plain-text one
+ *  (KaTeX ≈ tens of nodes per formula) — density alone qualifies it for
+ *  the viewport tier (see BIG_DOC_MATH_DOLLARS). */
 export function isBigDocCv(content: string | null | undefined): boolean {
   if (!bigDocModeEnabled && !bigDocViewportEnabled) return false;
-  return sizeIsBigDoc(content);
+  return sizeIsBigDoc(content) || sizeIsMathDenseDoc(content);
 }
 
 /** Human-readable byte size (B / MB / GB) for status display + logging. */

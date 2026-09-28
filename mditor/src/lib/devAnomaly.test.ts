@@ -309,6 +309,36 @@ describe("v4.3：心跳 DOM 趋势（MD-4011）", () => {
     const legacy: HeartbeatPoint[] = leak.map(({ docKey: _drop, ...p }) => p);
     expect(analyzeHeartbeats(legacy).map((a) => a.code)).toContain("MD-4011");
   });
+
+  it("v4.18.1：前半窗一次性台阶（重建/整篇上屏）不再连报——尾半窗须仍在增长", () => {
+    // 2026-09-25 生产日志实测：同一文档 72 连报同一 gain=56650——台阶
+    // （编辑器重建后整篇 DOM 重挂）完全落进 15 分钟窗前半，尾段平稳，
+    // 窗口滑出前每个心跳都复读同一增量。
+    const base = Date.now() - 14 * 60_000;
+    const step: HeartbeatPoint[] = [
+      ...Array.from({ length: 5 }, (_, i) => ({
+        ts: base + i * 60_000,
+        used: 30 * 1024 * 1024,
+        prosemirrorViews: 1,
+        domNodes: 20_000 + (i % 2),
+        docKey: "E:/notes/多元微分学专题.md",
+      })),
+      ...Array.from({ length: 10 }, (_, i) => ({
+        ts: base + (5 + i) * 60_000,
+        used: 30 * 1024 * 1024,
+        prosemirrorViews: 1,
+        domNodes: 76_650 + (i % 2),
+        docKey: "E:/notes/多元微分学专题.md",
+      })),
+    ];
+    expect(analyzeHeartbeats(step).map((a) => a.code)).not.toContain("MD-4011");
+
+    // 台阶后继续缓涨但斜率极低（净增 <30 节点）：仍不算泄漏。
+    const stepThenFlatDrift = step.map((p, i) =>
+      i >= 5 ? { ...p, domNodes: (p.domNodes ?? 0) + (i - 5) } : p
+    );
+    expect(analyzeHeartbeats(stepThenFlatDrift).map((a) => a.code)).not.toContain("MD-4011");
+  });
 });
 
 describe("v4.3：帧统计差分与位移抖动风暴（MD-9001/9002/9003）", () => {
@@ -316,8 +346,10 @@ describe("v4.3：帧统计差分与位移抖动风暴（MD-9001/9002/9003）", (
     frames: 1800,
     jankFrames: 0,
     worstGapMs: 0,
+    windowWorstGapMs: 0,
     inputLagEvents: 0,
     worstInputLagMs: 0,
+    windowWorstInputLagMs: 0,
     ...over,
   });
 
@@ -327,6 +359,19 @@ describe("v4.3：帧统计差分与位移抖动风暴（MD-9001/9002/9003）", (
     const out = analyzeFrameStatsDelta(prev, cur);
     expect(out.map((a) => a.code)).toContain("MD-9001");
     expect(analyzeFrameStatsDelta(prev, fs({ jankFrames: JANK_FRAME_THRESHOLD - 1 }))).toEqual([]);
+  });
+
+  it("v4.18.1：「窗内最坏」用窗口值——会话累计最值不再复读进后续窗口", () => {
+    const prev = fs({});
+    // 会话累计 5968ms（挂机暂停遗留），本窗实际最坏 120ms。
+    const cur = fs({ jankFrames: 12, worstGapMs: 5968, windowWorstGapMs: 120 });
+    const out = analyzeFrameStatsDelta(prev, cur);
+    const a = out.find((x) => x.code === "MD-9001");
+    expect(a?.data?.worstGapMs).toBe(120);
+    expect(a?.detail).toContain("120ms");
+    // 兼容旧快照（无窗口值，0）回落会话累计值。
+    const legacy = analyzeFrameStatsDelta(prev, fs({ jankFrames: 12, worstGapMs: 400 }));
+    expect(legacy.find((x) => x.code === "MD-9001")?.data?.worstGapMs).toBe(400);
   });
 
   it("input lag delta ≥ threshold → MD-9003", () => {

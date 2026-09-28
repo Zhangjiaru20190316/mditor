@@ -150,8 +150,10 @@ export function scrollDebugClear(): void {
   frameStats.frames = 0;
   frameStats.jankFrames = 0;
   frameStats.worstGapMs = 0;
+  frameStats.windowWorstGapMs = 0;
   frameStats.inputLagEvents = 0;
   frameStats.worstInputLagMs = 0;
+  frameStats.windowWorstInputLagMs = 0;
   lastTickAt = 0;
   lastKeyAt = 0;
   keyLagPending = false;
@@ -524,20 +526,28 @@ export interface ScrollFrameStats {
   frames: number;
   /** 帧间隔 >50ms 的次数（掉帧卡顿证据）。 */
   jankFrames: number;
-  /** 最坏帧间隔（ms）。 */
+  /** 最坏帧间隔（ms，会话累计最值）。 */
   worstGapMs: number;
+  /** 本窗口最坏帧间隔（ms）：resetFrameWindowStats 归零，心跳差分用它报
+   *  「窗内最坏」——此前 detail 拿会话累计值冒充窗口值，挂机前的历史最坏
+   *  （如最小化暂停 5968ms）被报进之后每个窗口的 MD-9001。 */
+  windowWorstGapMs: number;
   /** 按键→下一帧延迟 >100ms 的次数（输入响应卡顿证据）。 */
   inputLagEvents: number;
-  /** 最坏按键→帧延迟（ms）。 */
+  /** 最坏按键→帧延迟（ms，会话累计最值）。 */
   worstInputLagMs: number;
+  /** 本窗口最坏按键→帧延迟（ms），窗口口径同 windowWorstGapMs。 */
+  windowWorstInputLagMs: number;
 }
 
 const frameStats: ScrollFrameStats = {
   frames: 0,
   jankFrames: 0,
   worstGapMs: 0,
+  windowWorstGapMs: 0,
   inputLagEvents: 0,
   worstInputLagMs: 0,
+  windowWorstInputLagMs: 0,
 };
 /** 输入延迟判定线：按键后下一帧超过此值才算「输入响应卡顿」。 */
 const INPUT_LAG_MS = 100;
@@ -551,6 +561,12 @@ let keyLagPending = false;
 /** 帧统计快照（累计值；心跳侧自行差分）。 */
 export function scrollFrameStats(): ScrollFrameStats {
   return { ...frameStats };
+}
+
+/** 心跳消费侧窗口复位：窗口内最坏值归零，下次差分从新窗口起算。 */
+export function resetFrameWindowStats(): void {
+  frameStats.windowWorstGapMs = 0;
+  frameStats.windowWorstInputLagMs = 0;
 }
 
 export function scrollWatchStats(): ScrollWatchStats {
@@ -937,6 +953,14 @@ export function attachScrollWatch(host: HTMLElement): () => void {
   }
 
 
+  // 可见性门（v4.18.1）：转 hidden 即清帧间隔基线——rAF 在最小化/整窗
+  // 遮挡时暂停，恢复首帧的巨型间隔是挂机时长不是掉帧，此前被计成一次
+  // jank 帧并顶高最坏值（生产日志 MD-9001 的 5968ms「最坏」即此来源）。
+  const onVisibilityChange = () => {
+    if (document.hidden) lastTickAt = 0;
+  };
+  document.addEventListener("visibilitychange", onVisibilityChange);
+
   host.addEventListener("wheel", onUserIntent, { passive: true, capture: true });
   host.addEventListener("touchstart", onUserIntent, { passive: true, capture: true });
   window.addEventListener("pointerdown", onPointerDown, { passive: true, capture: true });
@@ -982,11 +1006,15 @@ export function attachScrollWatch(host: HTMLElement): () => void {
       const moving = Math.abs(st - prevSt) > 0.5;
 
       // --- 帧统计（v4.3）：帧间隔 / 卡顿帧 / 输入→帧延迟（纯计数，常驻）。
+      // 可见性门（v4.18.1）：最小化/整窗遮挡时 rAF 暂停，恢复首帧的间隔
+      // 是「挂机时长」不是「掉帧」——hidden 即重置基线，恢复首帧不计。
+      if (document.hidden) lastTickAt = 0;
       if (lastTickAt > 0) {
         const gap = now - lastTickAt;
         frameStats.frames += 1;
         if (gap > JANK_GAP_MS) frameStats.jankFrames += 1;
         if (gap > frameStats.worstGapMs) frameStats.worstGapMs = gap;
+        if (gap > frameStats.windowWorstGapMs) frameStats.windowWorstGapMs = gap;
       }
       lastTickAt = now;
       if (keyLagPending && lastKeyAt > 0) {
@@ -994,6 +1022,9 @@ export function attachScrollWatch(host: HTMLElement): () => void {
         if (lag >= 0 && lag < 5000) {
           if (lag > INPUT_LAG_MS) frameStats.inputLagEvents += 1;
           if (lag > frameStats.worstInputLagMs) frameStats.worstInputLagMs = lag;
+          if (lag > frameStats.windowWorstInputLagMs) {
+            frameStats.windowWorstInputLagMs = lag;
+          }
         }
         keyLagPending = false;
       }
@@ -1319,6 +1350,7 @@ export function attachScrollWatch(host: HTMLElement): () => void {
     }
     host.removeEventListener("wheel", onUserIntent, { capture: true });
     host.removeEventListener("touchstart", onUserIntent, { capture: true });
+    document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("pointerdown", onPointerDown, { capture: true });
     window.removeEventListener("pointermove", onPointerMove, { capture: true });
     window.removeEventListener("pointerup", onPointerUp, { capture: true });

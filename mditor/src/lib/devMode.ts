@@ -28,6 +28,7 @@ import { ensureDir } from "./tauriFs";
 import { sampleMemory, setDiagForced } from "./diagnostics";
 import { annoCounters, annoSubscribe, type AnnoDebugEvent } from "./annoDebug";
 import {
+  resetFrameWindowStats,
   scrollCounters,
   scrollFrameStats,
   scrollSubscribe,
@@ -390,6 +391,11 @@ const onResourceError = (ev: Event): void => {
         (t as HTMLLinkElement).href ||
         ""
     );
+    // 无 URL 的元素 error 事件不可归因也不可行动（style-mod 注入的 <style>
+    // 元素、空 src 的 img 等在此曾以「资源加载失败：style 」空转刷屏——
+    // 2026-09-23 生产日志 27 条 MD-5012 噪声即此来源）。真样式表失败走
+    // <link href>，有 URL，不受影响。
+    if (!src) return;
     sysEmit("res:load-fail", `资源加载失败：${tag} ${src.slice(0, 120)}`, {
       level: "warn",
       data: { tag, src: src.slice(0, 300) },
@@ -417,6 +423,8 @@ function onHeartbeat(): void {
     const fs = scrollFrameStats();
     const frameAnoms = analyzeFrameStatsDelta(prevFrameStats, fs);
     prevFrameStats = fs;
+    // 窗口最坏值已被本次差分消费，复位给下一个心跳窗起算。
+    resetFrameWindowStats();
     const burst = analyzeShiftBurst(warnShiftTs, Date.now());
     eventsBatcher?.append(
       line("heartbeat", {
@@ -435,6 +443,7 @@ function onHeartbeat(): void {
           frames: fs.frames,
           jankFrames: fs.jankFrames,
           worstGapMs: Math.round(fs.worstGapMs),
+          windowWorstGapMs: Math.round(fs.windowWorstGapMs),
           inputLagEvents: fs.inputLagEvents,
           worstInputLagMs: Math.round(fs.worstInputLagMs),
         },

@@ -11,6 +11,7 @@ import {
   decideAction,
   fullPrefixOf,
   isContentEtag,
+  moveFileWithFallback,
   remoteEpochMs,
   resolveRemoteDir,
   sameSecond,
@@ -838,5 +839,60 @@ describe("D1/D2/D4 数据安全回归", () => {
     const r = await syncWorkspace(ROOT, PREFIX, io, HOOKS);
     expect(dec.decode(io.local.get("a.md")!.content)).toBe("用户新建内容");
     expect(r.summary.skipped).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("moveFileWithFallback（trashMove 跨盘回退，2026-09-28 日志修复）", () => {
+  it("同盘 rename 成功直达——copy/remove 不被调用", async () => {
+    const calls: string[] = [];
+    await moveFileWithFallback("E:/a.md", "E:/trash/a.md", {
+      rename: async (a, b) => {
+        calls.push(`rename:${a}->${b}`);
+      },
+      copy: async () => {
+        calls.push("copy");
+      },
+      remove: async () => {
+        calls.push("remove");
+      },
+    });
+    expect(calls).toEqual(["rename:E:/a.md->E:/trash/a.md"]);
+  });
+
+  it("跨盘 rename 失败（EXDEV）→ copy+delete 兜底", async () => {
+    const calls: string[] = [];
+    await moveFileWithFallback("E:/notes/a.md", "C:/appdata/sync/trash/a.md", {
+      rename: async () => {
+        throw new Error("failed to rename old path (cross-device)");
+      },
+      copy: async (a, b) => {
+        calls.push(`copy:${a}->${b}`);
+      },
+      remove: async (a) => {
+        calls.push(`remove:${a}`);
+      },
+    });
+    expect(calls).toEqual([
+      "copy:E:/notes/a.md->C:/appdata/sync/trash/a.md",
+      "remove:E:/notes/a.md",
+    ]);
+  });
+
+  it("copy 也失败 → 抛出且不删源文件（绝不先删后拷）", async () => {
+    const removed: string[] = [];
+    await expect(
+      moveFileWithFallback("E:/notes/a.md", "C:/trash/a.md", {
+        rename: async () => {
+          throw new Error("EXDEV");
+        },
+        copy: async () => {
+          throw new Error("SYNC-999: copy failed");
+        },
+        remove: async (a) => {
+          removed.push(a);
+        },
+      })
+    ).rejects.toThrow("copy failed");
+    expect(removed).toEqual([]);
   });
 });

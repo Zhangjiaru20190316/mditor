@@ -467,7 +467,14 @@ export function analyzeHeartbeats(points: HeartbeatPoint[]): DevAnomaly[] {
         const gain = end.domNodes - first.domNodes;
         const spanMin = spanMs / 60_000;
         const slope = gain / spanMin;
-        if (gain >= DOM_TREND_MIN_GAIN && slope >= DOM_TREND_PER_MIN) {
+        // 尾半窗仍在增长才算「持续增长」（v4.18.1）：一次性台阶（编辑器
+        // 重建/懒渲染整篇上屏）完全落在窗口前半时尾段平稳，此前被连报成
+        // 持续增长——2026-09-25 生产日志同文档 72 连报同一 gain=56650 即
+        // 此假阳性。线性泄漏尾半窗斜率恒为全程一半，远超 1/4 判定线。
+        const mid = withDom[Math.floor(withDom.length / 2)];
+        const tailGain = end.domNodes - mid.domNodes;
+        const tailNeed = (DOM_TREND_PER_MIN / 4) * (spanMs / 2 / 60_000);
+        if (gain >= DOM_TREND_MIN_GAIN && slope >= DOM_TREND_PER_MIN && tailGain >= tailNeed) {
           out.push({
             code: "MD-4011",
             level: "warn",
@@ -500,6 +507,9 @@ export const SHIFT_BURST_MIN = 3;
 /**
  * 相邻两次帧统计快照的差分（心跳调用）：窗口内掉帧/输入延迟超阈值时给出
  * MD-9001 / MD-9003。prev 晚于 cur（面板清空/记录器重开）→ 无异常。
+ * 「最坏」取窗口口径（cur.windowWorstGapMs，采集侧随心跳复位）——
+ * worstGapMs 是会话累计最值，拿它报「本心跳窗内最坏」会把历史最坏
+ * （如挂机暂停的数秒间隔）复读进每个后续窗口。
  */
 export function analyzeFrameStatsDelta(
   prev: ScrollFrameStats | null,
@@ -510,22 +520,24 @@ export function analyzeFrameStatsDelta(
     const out: DevAnomaly[] = [];
     const jank = cur.jankFrames - prev.jankFrames;
     if (jank >= JANK_FRAME_THRESHOLD) {
+      const worst = Math.round(cur.windowWorstGapMs || cur.worstGapMs);
       out.push({
         code: "MD-9001",
         level: "warn",
         title: `持续掉帧（>50ms 间隔 ×${jank}）`,
-        detail: `本心跳窗内 ${jank} 帧间隔超过 50ms，最坏 ${Math.round(cur.worstGapMs)}ms`,
-        data: { jankFrames: jank, worstGapMs: Math.round(cur.worstGapMs) },
+        detail: `本心跳窗内 ${jank} 帧间隔超过 50ms，最坏 ${worst}ms`,
+        data: { jankFrames: jank, worstGapMs: worst },
       });
     }
     const lag = cur.inputLagEvents - prev.inputLagEvents;
     if (lag >= INPUT_LAG_THRESHOLD) {
+      const worst = Math.round(cur.windowWorstInputLagMs || cur.worstInputLagMs);
       out.push({
         code: "MD-9003",
         level: "warn",
         title: `输入响应卡顿（×${lag}）`,
-        detail: `本心跳窗内 ${lag} 次按键→上屏帧延迟超过 100ms，最坏 ${Math.round(cur.worstInputLagMs)}ms`,
-        data: { inputLagEvents: lag, worstInputLagMs: Math.round(cur.worstInputLagMs) },
+        detail: `本心跳窗内 ${lag} 次按键→上屏帧延迟超过 100ms，最坏 ${worst}ms`,
+        data: { inputLagEvents: lag, worstInputLagMs: worst },
       });
     }
     return out;
