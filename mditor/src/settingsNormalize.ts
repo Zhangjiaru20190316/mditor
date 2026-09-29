@@ -59,5 +59,6 @@ export function pickEditorSettings(s: Settings): EditorSettings {
     mathMacros: s.mathMacros,
     bigDocPerformance: s.bigDocPerformance,
     bigDocViewport: s.bigDocViewport,
+    bigDocViewportAuto: s.bigDocViewportAuto,
   };
 }

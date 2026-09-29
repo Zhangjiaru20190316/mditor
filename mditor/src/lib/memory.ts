@@ -88,6 +88,20 @@ export const BIG_DOC_BYTES = 500_000;
  */
 export const BIG_DOC_MATH_DOLLARS = 800;
 
+/**
+ * 体量档阈值（v4.19，proposal-bigdoc-viewport-auto）：字符数（与
+ * BIG_DOC_BYTES 同口径，UTF-16 码元）≥1MB，或顶层块（空行分隔段）≥8000
+ * ——二者的并集即「超大文档」，默认自动开启视口档（无需手动开设置）。
+ * 数据 A（1MB 压测副本，11629 顶层块）：急切渲染打开 12,479ms / 滚动
+ * p95 251-279ms / 点公式 p95 728ms，视口档 5,466ms / 82ms / 88ms——
+ * 三条链路全面占优，唯一代价是滚动中行内公式显示源码占位（静止 ~400ms
+ * 补渲染）。体量档恒为 sizeIsBigDoc 的子集（1MB > 500KB；8000 段 ≥
+ * ~16000 行 > 3000），故只放宽 isBigDocCv 的「开关门」，不放宽体量判定，
+ * 删除 isBigDocCv 里的旁路一行即完全回退。
+ */
+export const BIG_DOC_HUGE_BYTES = 1_000_000;
+export const BIG_DOC_HUGE_BLOCKS = 8000;
+
 // 设置「大文档性能模式」的总开关（useSettings 在设置加载/每次更新时同步
 // 维护，不在 effect 里更新——子组件 effect 先于父组件执行，同步设置才能
 // 保证 useMilkdown 的档位翻转检测读到新值）。初始值与 DEFAULT_SETTINGS
@@ -111,6 +125,20 @@ let bigDocViewportEnabled = false;
 /** 设置「大文档视口渲染」子开关；不影响 isBigDoc（减配档）。 */
 export function setBigDocViewportEnabled(v: boolean): void {
   bigDocViewportEnabled = v;
+}
+
+// 「超大文档自动开启」开关（v4.19，默认开）：体量档（≥1MB / 顶层块
+// ≥8000）文档无需手动开上面的子开关即入视口档。这是
+// proposal-bigdoc-viewport-auto 拍板后的默认行为——布尔设置无法区分
+// 「从未碰过（false）」与「显式关闭（false）」，故显式退回手动模式走
+// 这个独立开关（设置面板「超大文档自动开启」）。初始值与
+// DEFAULT_SETTINGS.bigDocViewportAuto 一致（默认开），由 useSettings 与
+// 另两个开合同点位同步维护。
+let bigDocViewportAutoEnabled = true;
+
+/** 设置「超大文档自动开启」；关掉后体量档旁路失效（回退纯手动模式）。 */
+export function setBigDocViewportAutoEnabled(v: boolean): void {
+  bigDocViewportAutoEnabled = v;
 }
 
 /** Pure size test: big enough to warrant big-doc handling (no setting gate). */
@@ -142,6 +170,35 @@ export function sizeIsMathDenseDoc(content: string | null | undefined): boolean 
   return false;
 }
 
+/** 纯体量档测试：≥1MB 或顶层块 ≥8000（无设置门，早退扫描）。
+ *  顶层块按「空行分隔段」近似：两个换行之间的行全为空白即一段边界。
+ *  fenced code 内的空行会切成多段（多计）；连续多个空行分隔符也按
+ *  每两个换行计一段（同样多计）——误差方向都是更早触发，而体量档只
+ *  开特性保留的视口化，安全侧。块数下界成立：8000 段 ⇒ ≥~16000 行
+ *  > BIG_DOC_LINES，故本谓词为真必为 sizeIsBigDoc 真（体量档 ⊂ 体量
+ *  测试，见 BIG_DOC_HUGE_BYTES 注释）。 */
+export function sizeIsHugeDoc(content: string | null | undefined): boolean {
+  if (!content) return false;
+  if (content.length >= BIG_DOC_HUGE_BYTES) return true;
+  // blankSinceNewline：自上一个 \n 起只见过空白（可能是空行）。
+  let blocks = 1;
+  let blankSinceNewline = false;
+  for (let i = 0; i < content.length; i++) {
+    const c = content.charCodeAt(i);
+    if (c === 10) {
+      if (blankSinceNewline) {
+        if (++blocks >= BIG_DOC_HUGE_BLOCKS) return true;
+        blankSinceNewline = false;
+      } else {
+        blankSinceNewline = true;
+      }
+    } else if (c !== 13 && c !== 32 && c !== 9) {
+      blankSinceNewline = false;
+    }
+  }
+  return false;
+}
+
 /** Is the document large enough to warrant preview degradation?
  *  Gated by the 大文档性能模式 master switch (feature-downgrade tier). */
 export function isBigDoc(content: string | null | undefined): boolean {
@@ -155,10 +212,16 @@ export function isBigDoc(content: string | null | undefined): boolean {
  *  isBigDoc alone. Size test OR math-density test: a 35KB/700-formula
  *  document costs the layout engine as much as a 500KB plain-text one
  *  (KaTeX ≈ tens of nodes per formula) — density alone qualifies it for
- *  the viewport tier (see BIG_DOC_MATH_DOLLARS). */
+ *  the viewport tier (see BIG_DOC_MATH_DOLLARS).
+ *  v4.19 体量档旁路：开关全关时，超大文档（≥1MB / 顶层块 ≥8000，恒为
+ *  体量测试子集）仍自动入视口档（「超大文档自动开启」默认开，可整体
+ *  关掉回退纯手动）——数据 A 里急切渲染打开 12.5s/滚动 p95 251ms 对
+ *  这类文档不可用。 */
 export function isBigDocCv(content: string | null | undefined): boolean {
-  if (!bigDocModeEnabled && !bigDocViewportEnabled) return false;
-  return sizeIsBigDoc(content) || sizeIsMathDenseDoc(content);
+  if (bigDocModeEnabled || bigDocViewportEnabled) {
+    return sizeIsBigDoc(content) || sizeIsMathDenseDoc(content);
+  }
+  return bigDocViewportAutoEnabled && sizeIsHugeDoc(content);
 }
 
 /** Human-readable byte size (B / MB / GB) for status display + logging. */

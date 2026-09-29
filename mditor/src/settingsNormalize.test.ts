@@ -8,7 +8,7 @@
 // provider 归 custom——不抛错、不拒绝，恒返回一份完整合法的 SyncSettings，
 // 且对自身输出幂等。
 // pickEditorSettings 语义（P10）：从完整 Settings 提取 Editor（含
-// useMilkdown）消费的 13 字段窄切片，字段原样直传、不克隆不变换。
+// useMilkdown）消费的 14 字段窄切片，字段原样直传、不克隆不变换。
 
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "./defaults";
@@ -85,7 +85,7 @@ describe("normalizeSyncSettings（v4.12 云同步设置幂等归一）", () => {
 });
 
 describe("pickEditorSettings（P10 Editor 窄切片）", () => {
-  it("提取 EditorSettings 全部 13 个字段，覆盖值与未覆盖默认值都原样直传", () => {
+  it("提取 EditorSettings 全部 14 个字段，覆盖值与未覆盖默认值都原样直传", () => {
     const s: Settings = {
       ...DEFAULT_SETTINGS,
       autosaveIntervalMs: 5_000,
@@ -99,6 +99,7 @@ describe("pickEditorSettings（P10 Editor 窄切片）", () => {
       mathMacros: '{"\\RR": "\\mathbb{R}"}',
       bigDocPerformance: true,
       bigDocViewport: true,
+      bigDocViewportAuto: false,
     };
     expect(pickEditorSettings(s)).toEqual({
       autosaveIntervalMs: 5_000,
@@ -114,16 +115,18 @@ describe("pickEditorSettings（P10 Editor 窄切片）", () => {
       mathMacros: '{"\\RR": "\\mathbb{R}"}',
       bigDocPerformance: true,
       bigDocViewport: true,
+      bigDocViewportAuto: false,
     });
   });
 
-  it("切片恰好 13 键：不含 theme / 侧栏宽度 / AI 等非编辑器字段", () => {
+  it("切片恰好 14 键：不含 theme / 侧栏宽度 / AI 等非编辑器字段", () => {
     const keys = Object.keys(pickEditorSettings(DEFAULT_SETTINGS)).sort();
     expect(keys).toEqual(
       [
         "autosaveIntervalMs",
         "bigDocPerformance",
         "bigDocViewport",
+        "bigDocViewportAuto",
         "fontFamily",
         "fontSize",
         "lineHeight",

@@ -207,9 +207,23 @@ export interface Settings {
    * 动机：选中链路（拖选/三击/点公式）在 154KB KaTeX 密集文档上的 0.7~1.7s
    * 卡顿全部来自全量渲染 DOM（21 万节点）的布局款，视口化实测压到 ≤16ms；
    * 而总开关同时砍掉公式渲染，对公式密集文档不可接受。两者同开时行为与
-   * 总开关单开一致（总开关蕴含视口化）。
+   * 总开关单开一致（总开关蕴含视口化）。超大文档（≥1MB / 8000 段）由
+   * bigDocViewportAuto 默认自动覆盖，无需手动开本开关。
    */
   bigDocViewport: boolean;
+  /**
+   * 超大文档自动开启视口渲染（v4.19，默认开，
+   * proposal-bigdoc-viewport-auto 拍板项）：文档 ≥1MB 或顶层块 ≥8000
+   * （lib/memory.ts BIG_DOC_HUGE_*）时，无需手动开 bigDocViewport 即自动
+   * 入视口档（content-visibility + 行内公式懒渲染，特性全保留）。数据：
+   * 1MB 文档急切渲染打开 12.5s / 滚动 p95 251-279ms，视口档 5.5s / 82ms。
+   * 布尔设置无法区分「从未碰过」与「显式关闭」，故退回手动模式走这个
+   * 独立开关（设置面板「超大文档自动开启」）；bigDocViewport 手动开关
+   * 仍按原阈值（500KB/3000 行/800 `$`）生效。由 useSettings 同步
+   * memory.ts 模块开关（setBigDocViewportAutoEnabled），翻转时
+   * useMilkdown 重估档位并按需重建。
+   */
+  bigDocViewportAuto: boolean;
   /**
    * 公式自动编号（v4.6，默认关）：开启后展示公式（$$...$$ / ```math）在静
    * 态渲染（AI 面板/批注预览）与导出（HTML/PDF/DOCX/复制富文本）中按序自
@@ -395,6 +409,9 @@ export interface EditorSettings {
   mathMacros: string;
   bigDocPerformance: boolean;
   bigDocViewport: boolean;
+  /** 超大文档（≥1MB / 8000 段）自动视口档开关（useMilkdown 档位翻转
+   *  重估的依赖之一；语义见 Settings.bigDocViewportAuto）。 */
+  bigDocViewportAuto: boolean;
 }
 
 /* -------------------------------------------------------------------------- */

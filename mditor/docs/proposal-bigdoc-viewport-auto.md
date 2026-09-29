@@ -1,6 +1,12 @@
 # 提案：大文档自动开启 bigDocViewport（体量档 ≥1MB + 密度档 ≈400 公式）
 
-> 状态：**待拍板**（任务书红线 8：默认设置/产品决策类改动不合入，单独成文）。
+> 状态：**已拍板并实施（v4.19.0，2026-09-29）**——体量档旁路落入
+> `lib/memory.ts`（BIG_DOC_HUGE_BYTES=1MB / BIG_DOC_HUGE_BLOCKS=8000，
+> `isBigDocCv` 开关全关时仍对体量档文档生效）；显式退出口为新增设置
+> `bigDocViewportAuto`（默认开，设置面板「超大文档自动开启」——布尔
+> 设置无法区分「从未碰过」与「显式关闭」，故独立成项）。密度档已于
+> v4.18.1 在代码层实现（用户开启 bigDocViewport 即覆盖）。
+> 原始提案（拍板前）存档于下。
 > 数据来源：`docs/large-doc-perf-report.md`（第三轮，2026-09-24）；
 > 密度档新增证据：生产日志分析（2026-09-28，`%APPDATA%/com.mditor.app/logs/`）。
 
