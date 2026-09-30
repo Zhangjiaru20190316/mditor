@@ -874,9 +874,17 @@ export default function App() {
     // S1：恢复的工作区根先递归授权，再入库（fs scope 已收窄到
     // $APPDATA/$DOCUMENT；工作区是用户此前明确添加过的目录）。
     getWorkspaces()
-      .then((roots) => {
+      .then(async (roots) => {
+        // 递归授权必须 await 再放行工作区列表：FileTree 拿到 roots 即读目录，
+        // 授权 IPC 还在飞时 readDir 会按 scope 拒绝 → 静默空树（「没有
+        // Markdown 文件」，只能 reload 自愈；冷 vite 首启窗口最宽）。
+        // 授权失败不挡开屏——读取会给明确错误，与旧行为一致。
         if (roots.length > 0) {
-          getAdapter().app.grantFsScope?.(roots, true)?.catch(() => undefined);
+          try {
+            await getAdapter().app.grantFsScope?.(roots, true);
+          } catch {
+            /* 授权失败：放行树，让读取报错而不是空树 */
+          }
         }
         return roots;
       })
