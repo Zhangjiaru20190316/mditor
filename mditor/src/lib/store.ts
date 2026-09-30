@@ -265,6 +265,24 @@ export async function clearRecentPath(path: string): Promise<void> {
 // 再次启动直接命中新键。
 
 export async function getWorkspaces(): Promise<string[]> {
+  // 冷启动竞态修复（第三轮报告遗留立项）：tauri-plugin-store 的 LazyStore
+  // 在插件就绪前首次 get 可能拒/读空，App 侧 .catch(() => undefined) 吞掉
+  // 后文件树永久 0 行，只能 reload 自愈（第三轮基准 3 失败 3 成功即此）。
+  // 空结果/异常短退避重试三次再认命；真无工作区只在首启多等 ≤1s。
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const list = await readWorkspacesOnce();
+      if (list.length > 0) return list;
+    } catch {
+      /* 冷启动窗口的拒，退避后重试 */
+    }
+    await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+  }
+  // 末次裸读：真错误按原语义抛给调用方（App 兜底 catch 照旧）。
+  return readWorkspacesOnce();
+}
+
+async function readWorkspacesOnce(): Promise<string[]> {
   const store = getAdapter().store;
   const raw = await store.get<unknown>("workspaces");
   const list = normalizeStoredWorkspaces(raw);
