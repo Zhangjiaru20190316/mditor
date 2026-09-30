@@ -339,6 +339,38 @@ describe("v4.3：心跳 DOM 趋势（MD-4011）", () => {
     );
     expect(analyzeHeartbeats(stepThenFlatDrift).map((a) => a.code)).not.toContain("MD-4011");
   });
+
+  it("C1 复检（第四轮）：打开期单窗大台阶（09-30 无穷级数 +154216）不报——同 docKey 尾段切割 + 尾半窗斜率双保险", () => {
+    // 2026-09-30 02:19 生产日志实测形态（heartbeat-diff 复盘）：02:19:30 单窗
+    // dDom=+154,216（打开 105KB/2355 公式文档），此后 02:20-02:57 domNodes
+    // 恒 154,557（dDom=0）——旧检测器（v4.18.0，无尾半窗过滤）在 02:22-02:25
+    // 连发 MD-4011 ×8。新检测器两道保险：sameDocTail 把切换点切掉 + 尾半窗
+    // 斜率过滤把「打开即走平」的残窗压掉。
+    const base = Date.now() - 14 * 60_000;
+    const openStep: HeartbeatPoint[] = [
+      // 打开前在另一文档（docKey 变化点会被 sameDocTail 切割）
+      { ts: base, used: 30 * 1024 * 1024, prosemirrorViews: 1, domNodes: 35_179, docKey: "E:/notes/解题技巧.md" },
+      // 打开瞬间：首心跳已是全量（154,557），此后恒定
+      ...Array.from({ length: 14 }, (_, i) => ({
+        ts: base + (1 + i) * 60_000,
+        used: 30 * 1024 * 1024,
+        prosemirrorViews: 1,
+        domNodes: 154_557,
+        docKey: "E:/笔记/cmc/02_习题集/无穷级数_习题集.md",
+      })),
+    ];
+    expect(analyzeHeartbeats(openStep).map((a) => a.code)).not.toContain("MD-4011");
+
+    // 对照：同一文档内持续无界增长（nodeview teardown 残留真泄漏形态）仍要报。
+    const leak: HeartbeatPoint[] = Array.from({ length: 10 }, (_, i) => ({
+      ts: base + i * 60_000,
+      used: 30 * 1024 * 1024,
+      prosemirrorViews: 1,
+      domNodes: 154_557 + i * 6_000,
+      docKey: "E:/笔记/cmc/02_习题集/无穷级数_习题集.md",
+    }));
+    expect(analyzeHeartbeats(leak).map((a) => a.code)).toContain("MD-4011");
+  });
 });
 
 describe("v4.3：帧统计差分与位移抖动风暴（MD-9001/9002/9003）", () => {
