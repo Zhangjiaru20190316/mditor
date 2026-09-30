@@ -317,3 +317,51 @@ sv 模式（CodeMirror）天然只渲染可见行。富文本侧 V3.6.5 落地�
   基准轮撞上按「单轮超标不作数」丢弃。
 - **scroll-abab 预热等待上限单位错**（bytes/15000≈105ms）：1MB 档只等 45s；重
   fixture 预热超时不阻塞滚动测量（两臂同条件）。
+
+## 第四轮（2026-09-30）：数学密集中型文档默认路径 + 动效基准
+
+结题报告：`docs/large-doc-perf-motion-report.md`（门禁 P/M/V 全表 / P0-B 证伪
+链 / 动效专项 / 剖面产物）。本节只沉淀**结论与基准口径**。
+
+### 合入的改动（8 commits）
+
+| 技法 | commit | 一句话 |
+| --- | --- | --- |
+| v4.19 回退补全 | 2cdb216 | 自动视口档回退 + 漏改的两处设置清单锚点（套件回绿） |
+| D4 探针修复 | 0b58c7f | 输入延迟探针 e.timeStamp 打点——排队型按键延迟（被长任务排队）从测不到变可测 |
+| D2/D5 基建 | 9021816 | switch-bench（切换/加载动画帧节奏）+ heartbeat-diff（心跳累计字段差分） |
+| 启动竞态 ×2 | 20c37d6 / faf5c7f | getWorkspaces 冷启动退避重试 + fs scope 授权 await——文件树 0 行根治（第三轮遗留立项） |
+| 测量修复 | acc1d1e | switch-bench 壳就绪后 ignoreCache 重载——WebView 磁盘缓存供旧 chunk 毁臂 |
+| D3/C1 | 76e23e8 | ghost-stress 压力脚本 + MD-4011 打开期台阶复检用例 |
+
+### 核心结论（负结果证据链，后续勿重走）
+
+1. **密度档默认路径的秒级阻塞是原生布局墙，JS 侧不可治**：105KB/2,355 公式
+   = 15.4 万 DOM。三项默认档降本尝试全部证伪——toDOM 接 katexCache（缓存
+   100% 命中切回仍 2.4s：墙是 updateStateInner 挂载 1.8s + 原生布局）、解析
+   缓存门槛 200K→50K（命中无效）、分帧挂载（原型可行但实现=视口档本体）。
+   打字剖面：JS ~30ms vs 原生 3.6s（p95 1,456-1,984ms）。**唯一实证杠杆
+   content-visibility** → 提案 `proposal-bigdoc-viewport-auto.md` 数据 C 待拍板。
+2. **MD-1001 ghost 零复发且不可复现**：四阶段压力 anomalies+0；自愈归因 =
+   四层补偿链 + headingStamp 预盖章。守卫 = ghost-stress.mjs。
+3. **MD-1003 切换阻塞完整量化**：switch-bench 20 往返，切往密度档中位
+   2,254ms / >1s LT 10/10 / 动画冻结帧 1,638ms——同墙同源，随提案走。
+4. **MD-4011 打开期台阶假阳性**：09-30 形态（单窗 +154,216 后走平）新检测器
+   不报（sameDocTail + 尾半窗斜率双保险），真泄漏仍报（+1 测试）。
+
+### 基准口径沉淀（新增）
+
+- **密度档 fixture**：`perf/fixtures/无穷级数_密度档压测副本.md`
+  （105KB/2,159 行/2,355 行内公式 = MD-9001 主灾区画像，从
+  `E:/笔记/cmc/02_习题集/无穷级数_习题集.md` 复制；gitignore 本地化）。
+  切换对档 `解题技巧_密度档切换副本.md`（60KB/778 公式）。
+- **切换基准**：`switch-bench.mjs` 两文档往返 N 次，每窗 switchMs + 带时间戳
+  rAF 帧分布 + longtask；arm 自证 data-big 签名；壳就绪后必 ignoreCache 重载
+  （WebView 缓存陷阱）。
+- **打字口径**：g2-typing 支持 `MDITOR_DOC` / `MDITOR_MIN_BLOCKS`（文档选择
+  参数）；密度档打 p95 与 1MB 档不可直接比（DOM 画像不同：公式占比主导）。
+- **跨时段漂移**：本轮整机较第三轮 ~2×（60e3388 对照臂验证）；打开类绝对值
+  达标判定 + 环境声明，禁止跨时段数值直比。
+- **dev 实例 store 手改不生效**：运行中 LazyStore 内存镜像遮蔽盘上改动——
+  自管脚本（scroll-abab 族）必须 app 关闭时改 store；手动实例经页内
+  saveSettings API 改（open-1mb 的 reload 挡不住）。

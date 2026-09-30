@@ -7,6 +7,10 @@ import { dirname, join } from "node:path";
 import { findPageTarget, Cdp, mouse, sleep, typeText, LONGTASK_RECORDER } from "./cdp.mjs";
 
 const label = process.argv[2] ?? "run";
+// 文档选择参数（非口径）：默认 1MB 档；MDITOR_DOC 换文档时稳定判据块数下限
+// 也须随档下调（密度档 940 块 < 1000，否则稳定循环永不通过）。
+const DOC_NAME = process.env.MDITOR_DOC ?? "1MB";
+const MIN_BLOCKS = Number(process.env.MDITOR_MIN_BLOCKS ?? 1000);
 const here = dirname(fileURLToPath(import.meta.url));
 
 const target = await findPageTarget(9223);
@@ -27,7 +31,7 @@ for (let k = 0; k < 40; k++) {
 }
 const r0 = await cdp.eval(`(() => {
   const rows = [...document.querySelectorAll('.ft-row.ft-file')];
-  const hit = rows.find(row => (row.querySelector('.ft-name')?.textContent ?? '').includes('1MB'));
+  const hit = rows.find(row => (row.querySelector('.ft-name')?.textContent ?? '').includes('${DOC_NAME}'));
   if (!hit) return null;
   hit.scrollIntoView({block:'center'});
   const rc = hit.getBoundingClientRect();
@@ -40,7 +44,7 @@ let last = -1, stable = 0;
 while (stable < 4) {
   await sleep(600);
   const b = await cdp.eval(`document.querySelector('.ProseMirror')?.children.length ?? 0`);
-  if (b === last && b > 1000) stable++; else stable = 0;
+  if (b === last && b > MIN_BLOCKS) stable++; else stable = 0;
   last = b;
 }
 

@@ -1,0 +1,144 @@
+{
+ "label": "p2r2",
+ "blocks": 11629,
+ "ev": {
+  "n": 22,
+  "p50": 392,
+  "p95": 408,
+  "max": 416
+ },
+ "longtasks": [
+  {
+   "t": 1,
+   "d": 187,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 189,
+   "d": 478,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 667,
+   "d": 186,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 853,
+   "d": 298,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 1152,
+   "d": 193,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 1346,
+   "d": 468,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 1814,
+   "d": 190,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 2005,
+   "d": 291,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 2296,
+   "d": 191,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 2488,
+   "d": 466,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 2955,
+   "d": 189,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 3145,
+   "d": 301,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 3446,
+   "d": 184,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 3630,
+   "d": 480,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 4111,
+   "d": 189,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 4300,
+   "d": 281,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 4582,
+   "d": 188,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 4770,
+   "d": 476,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 5247,
+   "d": 180,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 5427,
+   "d": 301,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 5729,
+   "d": 189,
+   "name": "self",
+   "attribution": "unknown:window"
+  },
+  {
+   "t": 5918,
+   "d": 481,
+   "name": "self",
+   "attribution": "unknown:window"
+  }
+ ]
+}

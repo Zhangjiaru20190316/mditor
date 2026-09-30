@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased（2026-09-30 第四轮：数学密集默认路径定罪 + 启动竞态根修 + 动效/证据基建）
+
+结题报告 `docs/large-doc-perf-motion-report.md`；提案（待拍板）
+`docs/proposal-bigdoc-viewport-auto.md`（新增数据 C）。
+
+- **v4.19 自动视口档回退补全（用户决策执行）**：移除 bigDocViewportAuto
+  全链路；补齐回退时漏改的设置清单锚点两处（defaults.test /
+  settingsNormalize.test），vitest 942→945 全绿。版本四处对齐回 4.18.0。
+- **启动空树双竞态根修（高，正确性）**：① getWorkspaces 冷启动读空/被拒
+  （LazyStore 就绪窗口）→ 退避重试三次；② fs scope 递归授权未 await →
+  FileTree readDir 在授权落地前被拒 → 静默「没有 Markdown 文件」→ await
+  串行化。文件树 0 行只能 reload 自愈的问题根治（第三轮遗留立项）。
+- **输入延迟探针排队型盲区修复（中，检测器）**：打点从 handler 运行时刻
+  改为 e.timeStamp（输入发生时刻）——按键被长任务排在队尾的真实延迟从
+  测不到（≈0）变为可测（实验 299.8ms；ghost-stress 实测记录 631.8ms）。
+- **P0 定罪（负结果，防重走）**：密度档（105KB/2,355 公式=15.4 万 DOM）
+  默认路径三项降本尝试全部证伪——toDOM 接 katexCache（缓存全命中切回仍
+  2.4s：墙是 updateStateInner 挂载 1.8s+原生布局，KaTeX 仅 138ms）、解析
+  缓存门槛实验（无效）、分帧挂载原型（可行但实现=视口档本体）。打字剖面
+  JS ~30ms vs 原生 3.6s（p95 1,456-1,984ms）。**结论：原生布局墙 JS 侧
+  不可治，唯一杠杆 content-visibility → 提案数据 C 待拍板，默认值零变更。**
+- **动效结论（M2/M3）**：MD-1001 ghost 四阶段压力零复发（自愈=补偿链+
+  headingStamp）；MD-1003 切换阻塞完整量化（switch-bench：中位 2,254ms /
+  >1s LT 10/10 / 动画冻结 1,638ms）——同墙同源随提案走。
+- **MD-4011 打开期台阶假阳性复检（V2）**：09-30 生产形态（单窗 +154,216
+  后走平）新检测器不报、真泄漏仍报（+1 测试）。
+- **基建**：switch-bench（含 WebView 磁盘缓存毁臂修复：壳就绪后 ignoreCache
+  重载）、ghost-stress、heartbeat-diff（心跳累计字段差分，V3）、密度档
+  fixtures、g2-typing 文档参数化、公式下标双路径定案（已修，关闭）。
+- 质量矩阵：vitest 945（+3 重试 +1 台阶复检）；tsc 0 错；eslint 0 错；
+  build 全绿；打包版公式冒烟 katex-error=0。
+
 ## Unreleased（2026-09-28 生产日志驱动优化批：公式密度视口档 + 检测器去噪 + 同步跨盘删除根修）
 
 数据来源：`%APPDATA%/com.mditor.app/logs/` 生产日志（09-22~09-28 六天全量聚合，
