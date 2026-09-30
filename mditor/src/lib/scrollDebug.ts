@@ -878,7 +878,12 @@ export function attachScrollWatch(host: HTMLElement): () => void {
     // 帧统计的输入延迟采样：普通打字键/滚动键记时刻，下一帧 tick 结算
     // 「按键→上屏帧」延迟（输入响应卡顿证据，v4.3）。
     if (e.key.length === 1 || USER_INPUT_KEYS.has(e.key)) {
-      lastKeyAt = performance.now();
+      // e.timeStamp = 输入事件发生时刻（Chromium 与 performance.now() 同源），
+      // 早于 handler 运行时刻——keydown 被长任务排在队尾时，真实
+      // 「按键→上屏」延迟才能被测到（D4 探针盲区修复，2026-09-30）。
+      // 兜底：非 Chromium 或时钟异常（timeStamp 晚于当前时刻）退回旧行为。
+      const ts = e.timeStamp;
+      lastKeyAt = ts > 0 && ts <= performance.now() ? ts : performance.now();
       keyLagPending = true;
     }
   };
