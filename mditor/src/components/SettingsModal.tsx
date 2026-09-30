@@ -610,25 +610,8 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                     或行内公式约 400 个以上时，只对视口外内容跳过布局与
                     绘制（content-visibility），保留代码高亮与公式渲染。
                     适合公式/代码密集的大文档——拖选、三击选段、点击公式
-                    等交互在超大文档上可从秒级卡顿降到无感。超过 1MB
-                    的超大文档已由下方开关自动开启，无需手动勾选。
-                    切换后当前文档会自动重建编辑器（撤销历史清空）。
-                  </span>
-                </Field>
-                <Field label="超大文档自动开启">
-                  <input
-                    type="checkbox"
-                    checked={draft.bigDocViewportAuto}
-                    onChange={(e) => set("bigDocViewportAuto", e.target.checked)}
-                  />
-                  <span className="hint">
-                    超过 1MB 或约 8000 段的超大文档默认自动启用上面的
-                    视口渲染（默认开）。急切渲染在这类文档上打开需 10
-                    秒以上、滚动严重掉帧；视口渲染实测打开快一半以上、
-                    滚动约 80ms 内响应，代价是滚动中行内公式短暂显示
-                    源码（静止后自动渲染）。关闭后超大文档恢复手动模式：
-                    仅在上面「大文档视口渲染」开启时才视口化。切换后
-                    当前文档会自动重建编辑器（撤销历史清空）。
+                    等交互在超大文档上可从秒级卡顿降到无感。切换后当前
+                    文档会自动重建编辑器（撤销历史清空）。
                   </span>
                 </Field>
                 <Field label="内存自动优化">

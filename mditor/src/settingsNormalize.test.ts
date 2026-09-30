@@ -99,7 +99,6 @@ describe("pickEditorSettings（P10 Editor 窄切片）", () => {
       mathMacros: '{"\\RR": "\\mathbb{R}"}',
       bigDocPerformance: true,
       bigDocViewport: true,
-      bigDocViewportAuto: false,
     };
     expect(pickEditorSettings(s)).toEqual({
       autosaveIntervalMs: 5_000,
@@ -115,18 +114,16 @@ describe("pickEditorSettings（P10 Editor 窄切片）", () => {
       mathMacros: '{"\\RR": "\\mathbb{R}"}',
       bigDocPerformance: true,
       bigDocViewport: true,
-      bigDocViewportAuto: false,
     });
   });
 
-  it("切片恰好 14 键：不含 theme / 侧栏宽度 / AI 等非编辑器字段", () => {
+  it("切片恰好 13 键：不含 theme / 侧栏宽度 / AI 等非编辑器字段", () => {
     const keys = Object.keys(pickEditorSettings(DEFAULT_SETTINGS)).sort();
     expect(keys).toEqual(
       [
         "autosaveIntervalMs",
         "bigDocPerformance",
         "bigDocViewport",
-        "bigDocViewportAuto",
         "fontFamily",
         "fontSize",
         "lineHeight",

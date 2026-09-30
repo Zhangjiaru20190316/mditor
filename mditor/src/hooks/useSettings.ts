@@ -18,11 +18,7 @@ import {
 } from "../lib/store";
 import { DEFAULT_SETTINGS } from "../defaults";
 import type { Settings, Theme } from "../types";
-import {
-  setBigDocModeEnabled,
-  setBigDocViewportAutoEnabled,
-  setBigDocViewportEnabled,
-} from "../lib/memory";
+import { setBigDocModeEnabled, setBigDocViewportEnabled } from "../lib/memory";
 import {
   parseMathMacros,
   setMathRenderConfig,
@@ -106,7 +102,6 @@ export function useSettings(): SettingsApi {
         // 晚于此处更新会让 useMilkdown 的档位翻转检测读到旧值。
         setBigDocModeEnabled(s.bigDocPerformance);
         setBigDocViewportEnabled(s.bigDocViewport);
-        setBigDocViewportAutoEnabled(s.bigDocViewportAuto);
         // 数学渲染配置同理（v4.6）：静态管线/导出在渲染时读模块开关。
         setMathRenderConfig({
           autoNumber: s.mathAutoNumber,
@@ -141,7 +136,6 @@ export function useSettings(): SettingsApi {
           // 与初始加载同一顺序：模块开关先于 setSettings 生效。
           setBigDocModeEnabled(s.bigDocPerformance);
           setBigDocViewportEnabled(s.bigDocViewport);
-          setBigDocViewportAutoEnabled(s.bigDocViewportAuto);
           setMathRenderConfig({
             autoNumber: s.mathAutoNumber,
             macros: parseMathMacros(s.mathMacros),
@@ -177,7 +171,6 @@ export function useSettings(): SettingsApi {
       // 与初始加载同理：同步写入模块开关，赶在子组件 effect 之前生效。
       setBigDocModeEnabled(next.bigDocPerformance);
       setBigDocViewportEnabled(next.bigDocViewport);
-      setBigDocViewportAutoEnabled(next.bigDocViewportAuto);
       setMathRenderConfig({
         autoNumber: next.mathAutoNumber,
         macros: parseMathMacros(next.mathMacros),

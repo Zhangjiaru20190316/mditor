@@ -202,7 +202,6 @@ export const DEFAULT_SETTINGS: Settings = {
   devMode: false,
   bigDocPerformance: false,
   bigDocViewport: false,
-  bigDocViewportAuto: true,
   mathAutoNumber: false,
   mathMacros: "",
   memoryGuard: true,

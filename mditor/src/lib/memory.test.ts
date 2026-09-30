@@ -1,25 +1,16 @@
 // 大文档档位判定（lib/memory.ts）：
 //  * 减配档 isBigDoc = 总开关 ∧（>500KB ∨ >3000 行）——公式密度绝不触发
 //    （那会关掉 KaTeX，对公式密集文档不可接受）。
-//  * 视口档 isBigDocCv = 任一开关 ∧（体量 ∨ 公式密度 ≥800 个 `$`）；
-//    v4.19 体量档旁路：开关全关时 ≥1MB / 顶层块 ≥8000 仍自动入视口档
-//    （「超大文档自动开启」默认开，可显式关闭退回手动）。
+//  * 视口档 isBigDocCv = 任一开关 ∧（体量 ∨ 公式密度 ≥800 个 `$`）。
 // 阈值校准依据生产日志（2026-09-26~28）：6KB/170 公式无异常，
 // 35KB/732 公式 1~4.5s 阻塞，104KB/2356 公式掉帧风暴——间隙中段取 800。
-// 体量档依据 docs/proposal-bigdoc-viewport-auto.md 数据 A：1MB 文档急切
-// 渲染打开 12.5s / 滚动 p95 251ms，视口档 5.5s / 82ms。
 import { describe, expect, it, afterEach } from "vitest";
 import {
-  BIG_DOC_HUGE_BLOCKS,
-  BIG_DOC_HUGE_BYTES,
   BIG_DOC_MATH_DOLLARS,
   isBigDoc,
   isBigDocCv,
   setBigDocModeEnabled,
-  setBigDocViewportAutoEnabled,
   setBigDocViewportEnabled,
-  sizeIsBigDocRaw,
-  sizeIsHugeDoc,
   sizeIsMathDenseDoc,
 } from "./memory";
 
@@ -29,8 +20,6 @@ const dollars = (n: number): string => "a $ x".repeat(n);
 afterEach(() => {
   setBigDocModeEnabled(false);
   setBigDocViewportEnabled(false);
-  // auto 初始值 = DEFAULT_SETTINGS.bigDocViewportAuto（默认开）。
-  setBigDocViewportAutoEnabled(true);
 });
 
 describe("sizeIsMathDenseDoc（纯密度测试，无设置门）", () => {
@@ -72,68 +61,6 @@ describe("isBigDocCv（视口档：体量 ∨ 公式密度，受开关门控）"
   it("总开关单开也蕴含视口档（与体量路同语义）", () => {
     setBigDocModeEnabled(true);
     expect(isBigDocCv(dollars(BIG_DOC_MATH_DOLLARS))).toBe(true);
-  });
-});
-
-describe("sizeIsHugeDoc（纯体量档测试：≥1MB ∨ 顶层块 ≥8000，无设置门）", () => {
-  it("字符数 ≥1MB 即真，差一即假", () => {
-    expect(sizeIsHugeDoc("x".repeat(BIG_DOC_HUGE_BYTES))).toBe(true);
-    expect(sizeIsHugeDoc("x".repeat(BIG_DOC_HUGE_BYTES - 1))).toBe(false);
-  });
-
-  it("顶层块（空行分隔段）达标即真（体量远低于 1MB，走块数路）", () => {
-    // 8000 段 × 6 字符 ≈ 48KB——只有块数路可命中。
-    expect(sizeIsHugeDoc("para\n\n".repeat(BIG_DOC_HUGE_BLOCKS - 1) + "para")).toBe(true);
-    expect(sizeIsHugeDoc("para\n\n".repeat(BIG_DOC_HUGE_BLOCKS - 2) + "para")).toBe(false);
-  });
-
-  it("空行含空格/Tab 也是段边界；无空行的长单段只走字节路", () => {
-    // \n \t\n 两个换行间全空白 → 合法边界（10 段远不达标，仅验证不误判）。
-    expect(sizeIsHugeDoc("a\n \t\nb")).toBe(false);
-    expect(sizeIsHugeDoc("x".repeat(BIG_DOC_HUGE_BYTES - 1))).toBe(false);
-  });
-
-  it("空/缺省输入为假", () => {
-    expect(sizeIsHugeDoc(null)).toBe(false);
-    expect(sizeIsHugeDoc(undefined)).toBe(false);
-    expect(sizeIsHugeDoc("")).toBe(false);
-  });
-
-  it("体量档 ⊂ 体量测试：huge ⇒ sizeIsBigDoc（只放宽开关门，不放宽体量判定）", () => {
-    // 1MB > 500KB；8000 段 ⇒ ≥~16000 行 > 3000 行。
-    expect(sizeIsBigDocRaw("x".repeat(BIG_DOC_HUGE_BYTES))).toBe(true);
-    expect(sizeIsBigDocRaw("para\n\n".repeat(BIG_DOC_HUGE_BLOCKS))).toBe(true);
-  });
-});
-
-describe("isBigDocCv 体量档旁路（v4.19：开关全关时超大文档默认视口档）", () => {
-  it("开关全关 + auto 默认开：≥1MB 文档自动入视口档", () => {
-    expect(isBigDocCv("x".repeat(BIG_DOC_HUGE_BYTES))).toBe(true);
-  });
-
-  it("开关全关 + auto 默认开：8000 段文档自动入视口档", () => {
-    expect(isBigDocCv("para\n\n".repeat(BIG_DOC_HUGE_BLOCKS - 1) + "para")).toBe(true);
-  });
-
-  it("auto 关掉后回退急切渲染（显式退出口，尊重用户选择）", () => {
-    setBigDocViewportAutoEnabled(false);
-    expect(isBigDocCv("x".repeat(BIG_DOC_HUGE_BYTES))).toBe(false);
-  });
-
-  it("auto 只覆盖体量档：普通大文档（>500KB <1MB）与密度文档不自动", () => {
-    expect(isBigDocCv("x".repeat(500_001))).toBe(false);
-    expect(isBigDocCv(dollars(5000))).toBe(false);
-  });
-
-  it("auto 关 + 视口子开关开：原语义不变（体量/密度照常触发）", () => {
-    setBigDocViewportAutoEnabled(false);
-    setBigDocViewportEnabled(true);
-    expect(isBigDocCv("x".repeat(500_001))).toBe(true);
-    expect(isBigDocCv(dollars(BIG_DOC_MATH_DOLLARS))).toBe(true);
-  });
-
-  it("减配档不受体量档旁路影响：isBigDoc 恒不自动开启", () => {
-    expect(isBigDoc("x".repeat(BIG_DOC_HUGE_BYTES))).toBe(false);
   });
 });
 

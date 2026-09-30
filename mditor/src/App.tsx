@@ -835,7 +835,6 @@ export default function App() {
     mathMacros,
     bigDocPerformance,
     bigDocViewport,
-    bigDocViewportAuto,
   } = settingsApi.settings;
   const editorSettings: EditorSettings = useMemo(
     () => ({
@@ -852,7 +851,6 @@ export default function App() {
       mathMacros,
       bigDocPerformance,
       bigDocViewport,
-      bigDocViewportAuto,
     }),
     [
       autosaveIntervalMs,
@@ -868,7 +866,6 @@ export default function App() {
       mathMacros,
       bigDocPerformance,
       bigDocViewport,
-      bigDocViewportAuto,
     ]
   );
 
