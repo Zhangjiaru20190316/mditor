@@ -300,6 +300,22 @@ async function main() {
       if (i === 119) { log("失败: 60s 内 .ProseMirror 未出现"); return (closeLog(), 2); }
       await sleep(500);
     }
+
+    // 强制无缓存整页重载（在壳出现后）：vite 预打包 chunk 的 ?v= 哈希不含
+    // 内容指纹，node_modules 打补丁后 URL 不变，WebView 磁盘缓存会把旧
+    // chunk 原样供出来（P0-B#1 首测即栽在此——钩子代码在磁盘上、跑的却是
+    // 没有钩子的缓存块）。重载后重等壳 + 文件树（getWorkspaces 退避重试
+    // 已保证树不空），确保后续测量跑在当前代码上。
+    try {
+      await cdp.send("Page.enable");
+      await cdp.send("Page.reload", { ignoreCache: true });
+      for (let i = 0; i < 120; i++) {
+        if (await cdp.eval(`!!document.querySelector('.ProseMirror')`)) break;
+        if (i === 119) { log("失败: 重载后 60s 内 .ProseMirror 未出现"); return (closeLog(), 2); }
+        await sleep(500);
+      }
+      log("无缓存重载完成，壳就绪");
+    } catch { /* Page 域不可用时按旧流程测（风险自担） */ }
     await cdp.eval(LONGTASK_RECORDER);
     await cdp.eval(TSFR_INSTALL);
 
