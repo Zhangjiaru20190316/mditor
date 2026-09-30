@@ -1,0 +1,170 @@
+{
+ "doc": "1MB",
+ "rounds": [
+  {
+   "round": 1,
+   "openMs": 12848,
+   "stableMs": 12848,
+   "blocks": 11629,
+   "longtasks": 7,
+   "ltMax": 8645,
+   "ltTotal": 12166,
+   "events": [
+    {
+     "t": 114,
+     "d": 8645,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 8768,
+     "d": 3080,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 11902,
+     "d": 72,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 12019,
+     "d": 97,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 12116,
+     "d": 51,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 12341,
+     "d": 51,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 12677,
+     "d": 170,
+     "name": "self",
+     "attribution": "unknown:window"
+    }
+   ]
+  },
+  {
+   "round": 2,
+   "openMs": 12441,
+   "stableMs": 12441,
+   "blocks": 11629,
+   "longtasks": 7,
+   "ltMax": 8384,
+   "ltTotal": 11756,
+   "events": [
+    {
+     "t": 117,
+     "d": 8384,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 8509,
+     "d": 2925,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 11497,
+     "d": 77,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 11632,
+     "d": 89,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 11727,
+     "d": 54,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 11952,
+     "d": 55,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 12269,
+     "d": 172,
+     "name": "self",
+     "attribution": "unknown:window"
+    }
+   ]
+  },
+  {
+   "round": 3,
+   "openMs": 12691,
+   "stableMs": 12691,
+   "blocks": 11629,
+   "longtasks": 8,
+   "ltMax": 8135,
+   "ltTotal": 12072,
+   "events": [
+    {
+     "t": 113,
+     "d": 8135,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 8257,
+     "d": 3423,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 11739,
+     "d": 72,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 11859,
+     "d": 97,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 11957,
+     "d": 55,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 12077,
+     "d": 57,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 12182,
+     "d": 57,
+     "name": "self",
+     "attribution": "unknown:window"
+    },
+    {
+     "t": 12514,
+     "d": 176,
+     "name": "self",
+     "attribution": "unknown:window"
+    }
+   ]
+  }
+ ]
+}
