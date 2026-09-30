@@ -8,7 +8,8 @@ import { findPageTarget, Cdp, mouse, sleep, LONGTASK_RECORDER } from "./cdp.mjs"
 
 const label = process.argv[2] ?? "scr";
 const here = dirname(fileURLToPath(import.meta.url));
-const DOC_NAME = "一元微分学习题集_1MB压测副本";
+// 文档选择参数（非口径）：默认 1MB 档；密度档传 MDITOR_DOC=无穷级数_密度档
+const DOC_NAME = process.env.MDITOR_DOC ?? "一元微分学习题集_1MB压测副本";
 
 const target = await findPageTarget(9223);
 const cdp = await Cdp.connect(target.webSocketDebuggerUrl);

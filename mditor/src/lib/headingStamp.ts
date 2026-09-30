@@ -27,8 +27,7 @@
 
 import type { Ctx } from "@milkdown/ctx";
 import { headingIdGenerator } from "@milkdown/kit/preset/commonmark";
-import type { Node as PMNode } from "@milkdown/prose/model";
-import { Transform } from "@milkdown/prose/transform";
+import { Fragment, type Node as PMNode } from "@milkdown/prose/model";
 
 /** 与 sync-heading-id 相同的 id 计算（生成器 + `-#N` 去重）。导出供单测。 */
 export function computeHeadingIds(
@@ -54,7 +53,15 @@ export function computeHeadingIds(
 }
 
 /** 就地盖章：返回盖好 id 的文档（无变化时原样返回同一引用）。
- *  Transform.setNodeMarkup 与编辑器事务同构，仅在需要时惰性创建。 */
+ *
+ * v4.20 性能：盖在**离线解析产物**上（不经视图、无并发事务），原先走
+ * Transform.setNodeMarkup 逐步机器——每步 resolveCached/validContent/cut 全
+ * 套验证，1MB 文档（1,666 标题）实测 1,047ms（打开窗口剖面：resolve 302 +
+ * validContent 271 + cut 170 + findIndex 156……盖章本体仅 5.6ms）。改为单趟
+ * 直建：只重建含变更的骨架节点（PM 结构共享，未变子树原引用复用），语义与
+ * setNodeMarkup 等价（同 attrs 合并、保 content 与 marks、不做内容校验——
+ * type.create 不校验，setNodeMarkup 的 validContent 对纯 attrs 变更必过，
+ * 差异仅在防御性，而输入是刚解析出的合法文档）。 */
 export function stampHeadingIds(
   doc: PMNode,
   getId: (node: PMNode) => string
@@ -62,17 +69,44 @@ export function stampHeadingIds(
   try {
     const ids = computeHeadingIds(doc, getId);
     if (ids.size === 0) return doc;
-    let tr = new Transform(doc);
-    for (const [pos, id] of ids) {
-      const node = tr.doc.nodeAt(pos);
-      if (!node) continue;
-      tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, id });
-    }
-    return tr.doc;
+    const content = stampFragment(doc.content, 0, ids);
+    if (!content) return doc;
+    return doc.type.create(doc.attrs, content);
   } catch {
     // 预盖章是优化：任何失败回退未盖章文档（行为同旧版，仅保留两次替换）。
     return doc;
   }
+}
+
+/** 单趟重建：basePos 为 frag 首个子节点的文档位置（doc.content 从 0 起，
+ *  嵌套块为父 pos+1——与 computeHeadingIds 的 descendants 位置语义一致）。
+ *  有变更返回新 Fragment，无变更返回 null（外层保留原引用，零拷贝）。 */
+function stampFragment(
+  frag: Fragment,
+  basePos: number,
+  ids: Map<number, string>
+): Fragment | null {
+  let changed = false;
+  const out: PMNode[] = [];
+  let pos = basePos;
+  for (let i = 0; i < frag.childCount; i++) {
+    const child = frag.child(i);
+    let repl = child;
+    const id = ids.get(pos);
+    if (id !== undefined && child.type.name === "heading") {
+      repl = child.type.create({ ...child.attrs, id }, child.content, child.marks);
+      changed = true;
+    } else if (child.isBlock && child.childCount > 0) {
+      const inner = stampFragment(child.content, pos + 1, ids);
+      if (inner) {
+        repl = child.type.create(child.attrs, inner, child.marks);
+        changed = true;
+      }
+    }
+    out.push(repl);
+    pos += child.nodeSize;
+  }
+  return changed ? Fragment.fromArray(out) : null;
 }
 
 /** 从 Milkdown ctx 读当前生成器并盖章（应用内所有整篇应用路径共用）。 */

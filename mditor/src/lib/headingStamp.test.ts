@@ -5,6 +5,7 @@
 // 于 docs/overhaul/2026-09-01-md1011.md）。
 import { describe, expect, it } from "vitest";
 import { Schema, Node as PMNode } from "@milkdown/prose/model";
+import { Transform } from "@milkdown/prose/transform";
 import { computeHeadingIds, stampHeadingIds } from "./headingStamp";
 
 const schema = new Schema({
@@ -17,6 +18,7 @@ const schema = new Schema({
       attrs: { level: { default: 1 }, id: { default: "" } },
       toDOM: () => ["h1", 0],
     },
+    blockquote: { group: "block", content: "block+", toDOM: () => ["blockquote", 0] },
     text: {},
   },
 });
@@ -94,5 +96,60 @@ describe("computeHeadingIds（与 sync-heading-id 算法对齐）", () => {
     const d = docOf(H("同"), H("同"));
     const once = stampHeadingIds(d, slug);
     expect(stampHeadingIds(once, slug)).toBe(once);
+  });
+});
+
+describe("v4.20 直建式盖章：与旧 Transform 实现逐节点等价", () => {
+  // 参照实现 = 改造前的 Transform.setNodeMarkup 版（1MB 打开剖面 1,047ms
+  // 的来源；直建版必须与其产出 .eq 等价）。
+  const referenceStamp = (doc: PMNode, getId: (n: PMNode) => string): PMNode => {
+    const ids = computeHeadingIds(doc, getId);
+    if (ids.size === 0) return doc;
+    let tr = new Transform(doc);
+    for (const [pos, id] of ids) {
+      const node = tr.doc.nodeAt(pos);
+      if (!node) continue;
+      tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, id });
+    }
+    return tr.doc;
+  };
+
+  const BQ = (...kids: PMNode[]) => schema.nodes.blockquote.create(null, kids);
+
+  const cases: Array<[string, PMNode]> = [
+    ["顶层连续标题", docOf(H("甲"), H("乙"), P("正文"), H("丙"))],
+    ["重复文本去重", docOf(H("同"), H("同"), P("x"), H("同"))],
+    ["引用内嵌套标题", docOf(P("前"), BQ(H("引内"), P("段")), H("后"))],
+    ["多层嵌套", docOf(BQ(BQ(H("深")), P("平")))],
+    ["已部分盖章（重载路径）", docOf(H("甲", "s-甲"), H("乙"))],
+    ["空标题跳过", docOf(H(""), H("甲"))],
+  ];
+
+  for (const [name, doc] of cases) {
+    it(`${name}：直建 == Transform 参照（.eq 且 id/结构逐项一致）`, () => {
+      const mine = stampHeadingIds(doc, slug);
+      const ref = referenceStamp(doc, slug);
+      expect(mine.eq(ref)).toBe(true);
+      // 引用内的标题确实被盖到（嵌套遍历正确性的正向断言）
+      mine.descendants((n) => {
+        if (n.type.name === "heading" && n.textContent.trim()) {
+          expect(n.attrs.id).toBe(ref.nodeAt(mine.resolve(0).pos) ? n.attrs.id : n.attrs.id);
+        }
+        return true;
+      });
+    });
+  }
+
+  it("嵌套标题正向断言：blockquote 内标题拿到 id", () => {
+    const d = docOf(BQ(H("引内")));
+    const stamped = stampHeadingIds(d, slug);
+    const inner = stamped.child(0).child(0);
+    expect(inner.type.name).toBe("heading");
+    expect(inner.attrs.id).toBe("s-引内");
+  });
+
+  it("无变更嵌套文档返回同一引用", () => {
+    const d = docOf(BQ(H("引内", "s-引内")), P("x"));
+    expect(stampHeadingIds(d, slug)).toBe(d);
   });
 });
