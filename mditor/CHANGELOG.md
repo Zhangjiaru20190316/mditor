@@ -29,6 +29,20 @@
 - **基建**：switch-bench（含 WebView 磁盘缓存毁臂修复：壳就绪后 ignoreCache
   重载）、ghost-stress、heartbeat-diff（心跳累计字段差分，V3）、密度档
   fixtures、g2-typing 文档参数化、公式下标双路径定案（已修，关闭）。
+- **headingStamp 直建式盖章（高，性能，`01b52ce`，10-01 补遗）**：整篇载入
+  前的 heading id 预盖章从 Transform.setNodeMarkup 逐步机器（每步
+  resolve/validContent/cut 全套验证）改单趟 Fragment 直建——只重建含变更
+  骨架节点，PM 结构共享原引用复用。1MB 档（1,666 标题）打开窗盖章开销剖面
+  **1,047ms → 14ms（75×）**；+8 差分等价单测；墙钟 ABAB 被臂间方差淹没
+  （剖面为准）。异常回退未盖章文档，行为同旧版。
+- **密度档打开归因终局（负结果封案，10-01 补遗）**：stampfix 后打开忙时
+  ~3.9s = 原生布局 2,315ms + PM 挂载 JS（updateStateInner）1,364ms +
+  KaTeX 171ms（2,355 条**全急切渲染**）+ micromark 57ms——直觉嫌疑双双
+  排除，**JS 侧无可治大头**，唯一杠杆 content-visibility（提案待拍板，
+  默认值零变更）。复测（10-01，3 轮）3,396-3,644ms 与 09-30 白天基线同
+  水平，09-30 晚 5.0-5.2s 判环境噪声；P4 ≤3s 门未达、四面（打开/打字/
+  滚动/切换）归一同墙封案。normalizeMathDelimiters 扫描器化放弃（427ms
+  为 1MB 档专属且 P1 门 5s 余量）。
 - 质量矩阵：vitest 945（+3 重试 +1 台阶复检）；tsc 0 错；eslint 0 错；
   build 全绿；打包版公式冒烟 katex-error=0。
 

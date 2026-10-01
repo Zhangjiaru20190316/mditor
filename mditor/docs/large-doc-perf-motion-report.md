@@ -216,3 +216,60 @@ overrides 钉 0.18.4）有效：
 # 公式目检：node perf/formula-subscript-check.mjs
 # 剖面产物：perf/results/profile-switch-deep2 / profile-typing-density / profile-open-vp .cpuprofile
 ```
+
+## 10. 补遗（2026-10-01）：headingStamp 直建盖章 + 密度档打开归因终局
+
+> 结题（§1-§9）后的纯 JS 侧延续。数据：`perf/results/stamp-*.json`、
+> `density-open-{base,stampfix,final}.json`（打开剖面 `profile-open.cpuprofile`
+> 按既有 gitignore 惯例本地留档）。
+
+### 10.1 优化 #1：headingStamp 直建式盖章（`01b52ce`，已合入，v4.20 批）
+
+- 改动：`src/lib/headingStamp.ts` 预盖章从 Transform.setNodeMarkup 逐步机器
+  （每步 resolve/validContent/cut 全套验证）改为**单趟 Fragment 直建**——只
+  重建含变更的骨架节点，PM 结构共享使未变子树原引用复用。
+- 证据：1MB 档（1,666 标题）打开窗剖面盖章开销 **1,047ms → 14ms（75×）**
+  （旧：resolve 302 + validContent 271 + cut 170 + findIndex 156 …，盖章本体
+  仅 5.6ms）；+8 差分等价单测（`headingStamp.test.ts`「v4.20 直建式盖章」
+  组），34 关联用例全绿。
+- 墙钟 ABAB（stamp-a1/a2 旧 vs b1/b2 新）：12.4-12.5s vs 12.7-13.6s——臂间
+  方差 ~1s 淹没信号，判「墙钟不可辨、剖面为准」（省的是长任务内部 1s 纯 JS，
+  不改变挂载+布局主导的墙结构）。
+- 语义护栏：异常回退未盖章文档（行为同旧版）；`type.create` 不做内容校验与
+  setNodeMarkup 对纯 attrs 变更必过的差异仅在防御性（输入是刚解析出的合法
+  文档），等价性由差分单测钉死。
+
+### 10.2 密度档打开：复测 + 3s+ 长任务归因终局
+
+**复测**（`density-open-final`，10-01 干净窗口 3 轮）：3,644 / 3,396 / 3,622ms
+（中位 3,622），ltMax 1,844-2,165。与 09-30 白天基线（3,021-3,537）同水平；
+09-30 晚 stampfix 轮的 5.0-5.2s 随今日复测回落，确认为环境噪声窗。
+**P4 打开门 ≤3s 仍未达（贴线 3.4-3.6s），归因如下，JS 侧已无手段封案。**
+
+**打开期 CPU 剖面**（1ms 采样；reload → 点开 → 15s 稳定窗；实机 DOM 与
+生产签名核对一致：153,929 元素 / .katex 2,355 / katex-error 0），
+忙时 ~3.9s 构成：
+
+| 成分 | self 时间 | 判定 |
+| --- | --- | --- |
+| 原生 `(program)`（样式重算/布局/绘制） | 2,315ms | 主墙（~60%），随 15.4 万 DOM 线性 |
+| `updateStateInner`（prosemirror-view 挂载循环） | 1,364ms | 次墙（~35%），同随 DOM 体量线性 |
+| scrollDebug 探针 tick | 257ms | dev 测量开销，非产品成本 |
+| KaTeX（2,355 条**全急切渲染**，chunk-4VHBHRVV） | 171ms | **直觉嫌疑排除** |
+| micromark 解析（chunk-GI4WUECZ） | 57ms | 嫌疑排除 |
+| GC | 46ms | — |
+
+- 忙窗形态：单个 2,844ms 连续忙窗（栈顶自 micromark compiler 起步，贯通
+  解析→挂载→布局）即 LT1；stampfix 噪声窗轮的第二个 ~1s LT 今日 3 轮均
+  未再现（LT 形态 1 大 2 小，open − ltTotal 差 ~800-900ms），判非稳定成分。
+- **终局结论**：stampfix 后密度档打开已无可治 JS 大头——直觉嫌疑（KaTeX
+  渲染、markdown 解析）实测合计 <230ms；墙 = 原生布局 ~2/3 + PM 挂载 JS
+  ~1/3，皆随急切挂载 DOM 体量线性增长。**唯一杠杆仍是 content-visibility
+  视口档**（`docs/proposal-bigdoc-viewport-auto.md` 待拍板，默认值零变更）。
+  至此打开/打字/滚动/切换四面证据全部归一到同一堵墙。
+
+### 10.3 优化 #2：normalizeMathDelimiters 扫描器化——证据不成立，放弃
+
+1MB 打开剖面 math 定界符 RegExp 427ms：1MB 档专属成分（密度档打开剖面
+micromark 全部 self 仅 57ms，无此成分）且 P1 门有 5s 余量。按「证据不成立
+不动手」不立项，`mathNormalize.ts` 零改动。

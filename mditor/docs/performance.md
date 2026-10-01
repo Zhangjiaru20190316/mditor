@@ -365,3 +365,19 @@ sv 模式（CodeMirror）天然只渲染可见行。富文本侧 V3.6.5 落地�
 - **dev 实例 store 手改不生效**：运行中 LazyStore 内存镜像遮蔽盘上改动——
   自管脚本（scroll-abab 族）必须 app 关闭时改 store；手动实例经页内
   saveSettings API 改（open-1mb 的 reload 挡不住）。
+
+## 第四轮补遗（2026-10-01）：headingStamp 直建 + 密度档打开归因终局——v4.20.0
+
+- **headingStamp 直建式盖章（01b52ce，高）**：整篇载入前的 heading id 预盖章
+  从 Transform.setNodeMarkup 逐步机器（每步 resolve/validContent/cut 全套
+  验证）改单趟 Fragment 直建——只重建含变更骨架节点，PM 结构共享原引用
+  复用。1MB 档（1,666 标题）打开窗盖章开销剖面 **1,047ms → 14ms（75×）**；
+  +8 差分等价单测；墙钟 ABAB 被臂间方差淹没（剖面为准）。
+- **密度档打开归因终局（负结果封案）**：stampfix 后打开忙时 ~3.9s =
+  原生布局 2,315ms + PM 挂载 JS（updateStateInner）1,364ms + 探针 257ms +
+  KaTeX 171ms + micromark 57ms——**2,355 条公式急切渲染与解析双双排除嫌疑，
+  JS 侧无可治大头**，唯一杠杆 content-visibility（提案待拍板）。复测
+  （10-01，3 轮）3,396-3,644ms 与 09-30 白天基线同水平（09-30 晚 5.0-5.2s
+  判环境噪声）；P4 ≤3s 门未达、已归因封案。
+- **normalizeMathDelimiters 扫描器化放弃**：427ms 为 1MB 档专属且 P1 门 5s
+  余量，证据不成立不动手。
