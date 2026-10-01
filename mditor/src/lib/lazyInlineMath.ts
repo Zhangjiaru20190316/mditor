@@ -355,6 +355,41 @@ function enqueueRender(entry: PendingRender): void {
  *  撑住，消除占位（源码文本行高）↔ 真身（KaTeX 行高）切换的行高跳动。 */
 const renderedHeights = new WeakMap<HTMLElement, number>();
 
+/** R5 Fix-B：内容寻址的渲染态高度（公式源码 → 高度，会话级）。WeakMap 键是
+ *  DOM 元素——切标签/整批替换后元素全部重建、逐元素记忆清零，占位回落即
+ *  行高跳动（r5-phase2-f-tabback blockWatch 的弹跳波组成部分）。行内公式
+ *  高度按内容基本稳定（单行为主），会话表让已知公式的占位跨重建保持渲染
+ *  态行高。容量与 katexCache 同量级；超限淘汰最旧一半（Map 插入序近似
+ *  LRU，同 cvMemory 惯例）。只在 demote（本就要量 rect）顺带记录，渲染
+ *  热路径零新增布局读。 */
+const INLINE_HEIGHT_CAP = 8192;
+const inlineHeights = new Map<string, number>();
+
+export function noteInlineHeight(src: string, h: number): void {
+  if (!src || !(h > 0)) return;
+  if (!inlineHeights.has(src) && inlineHeights.size >= INLINE_HEIGHT_CAP) {
+    const drop = inlineHeights.size - (INLINE_HEIGHT_CAP >> 1);
+    let i = 0;
+    for (const k of inlineHeights.keys()) {
+      if (i++ >= drop) break;
+      inlineHeights.delete(k);
+    }
+  }
+  inlineHeights.set(src, h);
+}
+
+export function inlineHeightFor(src: string): number | undefined {
+  return inlineHeights.get(src);
+}
+
+/** 测试常量出口。 */
+export const INLINE_HEIGHT_CAP_FOR_TEST = INLINE_HEIGHT_CAP;
+
+/** 测试钩子。 */
+export function clearInlineHeights(): void {
+  inlineHeights.clear();
+}
+
 function createLazyInlineMathView(node: PMNode): LazyMathView {
   const dom = document.createElement("span");
   dom.dataset.type = "math_inline";
@@ -373,7 +408,9 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
     dom.classList.remove("mditor-math-inline-ready");
     dom.textContent = current;
     // 有渲染态高度记录则撑住原行高（占位文本通常矮于 KaTeX 真身）。
-    const h = renderedHeights.get(dom);
+    // R5 Fix-B：元素级记忆（WeakMap） miss 时查内容寻址会话表——跨重建
+    // 存活，切标签/整批替换后的新元素同样保持渲染态行高。
+    const h = renderedHeights.get(dom) ?? inlineHeightFor(current);
     if (h !== undefined && h > 0) dom.style.minHeight = `${h}px`;
   };
 
@@ -414,7 +451,9 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
     if (!rendered) return;
     rendered = false;
     // 降级前记录渲染态高度：占位撑住原行高，回滚重渲染前不跳行。
-    renderedHeights.set(dom, dom.getBoundingClientRect().height);
+    const h = dom.getBoundingClientRect().height;
+    renderedHeights.set(dom, h);
+    noteInlineHeight(current, h);
     paintPlaceholder();
   };
 

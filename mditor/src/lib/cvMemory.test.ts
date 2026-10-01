@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { Schema, Node as PMNode } from "@milkdown/prose/model";
+import { Schema, Node as PMNode, Slice } from "@milkdown/prose/model";
 import { EditorState } from "@milkdown/prose/state";
 import {
   CV_STORE_CAP,
@@ -250,5 +250,33 @@ describe("prewarmShouldYield（G6 预热让路判定）", () => {
     expect(prewarmShouldYield(1000, 60_000)).toBe(false);
     // lastUserScrollAt 在未来（异常时钟）→ 放行，不无限让出
     expect(prewarmShouldYield(2000, 1000)).toBe(false);
+  });
+});
+
+describe("R5 整批替换的装饰存活（切标签/程序化全文写回路径）", () => {
+  it("R5 Fix-A：tr.replace 全文替换后装饰按内容寻址重放（不再回落 3em）", () => {
+    const st = stateWithDocs(["甲", "乙", "丙"]);
+    const fresh = st.doc; // 同内容同结构（新实例由 slice 重建）
+    const tr = st.tr.replace(0, st.doc.content.size, new Slice(fresh.content, 0, 0));
+    const next = st.apply(tr);
+    // Fix-A：整批替换 → buildDecos 从高度表重放，三块装饰全在
+    expect(decoratedBlockStarts(next)).toEqual([0, 3, 6]);
+  });
+
+  it("R5 Fix-A 判定收窄：小块替换（<50% 文档）仍走增量映射语义", () => {
+    const st = stateWithDocs(["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛"]);
+    // 只替换第 1 块（单步但覆盖极小）——非整批，走 map 路径
+    const oneBlock = st.doc.content.child(0);
+    const tr = st.tr.replace(0, oneBlock.nodeSize, new Slice(st.doc.content.child(1).content, 0, 0));
+    const next = st.apply(tr);
+    // map 语义：其余块装饰随映射保留（起点移动）
+    const starts = decoratedBlockStarts(next);
+    expect(starts.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("EditorState.create 重建（载入路径）：init 从高度表重放，装饰在场", () => {
+    const st = stateWithDocs(["甲", "乙", "丙"]);
+    const rebuilt = EditorState.create({ doc: st.doc, plugins: [createCvIntrinsicPlugin()] });
+    expect(decoratedBlockStarts(rebuilt)).toEqual([0, 3, 6]);
   });
 });

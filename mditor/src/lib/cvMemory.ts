@@ -28,6 +28,8 @@
 // try/catch；预热分块让出主线程；表容量有上限。
 
 import { Plugin, PluginKey } from "@milkdown/prose/state";
+import type { Transaction } from "@milkdown/prose/state";
+import { ReplaceStep } from "@milkdown/prose/transform";
 import { Decoration, DecorationSet } from "@milkdown/prose/view";
 import type { EditorView } from "@milkdown/prose/view";
 import type { Node as PMNode } from "@milkdown/prose/model";
@@ -367,10 +369,18 @@ function learnVisibleSizes(view: EditorView): boolean {
 /** 大文档 c-v 高度记忆插件：decoration 承载 contain-intrinsic-size，随 PM
  *  渲染管线写入（绝不事后直写 PM DOM）。仅在 big 模式注册。
  *  工厂单独导出（createCvIntrinsicPlugin）供单测直接构造 EditorState。 */
+/** R5 Fix-A 判定：单 ReplaceStep 覆盖 >50% 文档的整批替换（tr.replace
+ *  全文——replaceAllStampedDoc 家族）。O(1)：只看步数与首步区间。 */
+function isWholeDocReplace(tr: Transaction): boolean {
+  if (tr.steps.length !== 1) return false;
+  const s = tr.steps[0];
+  if (!(s instanceof ReplaceStep)) return false;
+  return s.from <= 2 && s.to >= tr.before.content.size / 2;
+}
+
 export function createCvIntrinsicPlugin(): Plugin<DecorationSet> {
   return new Plugin<DecorationSet>({
-  key: cvIntrinsicKey,
-  state: {
+  key: cvIntrinsicKey,  state: {
     init: (_, state) => buildDecos(state.doc, null),
     apply(tr, decos, _oldState, newState) {
       const meta = tr.getMeta(cvIntrinsicKey) as CvMeta | undefined;
@@ -392,6 +402,17 @@ export function createCvIntrinsicPlugin(): Plugin<DecorationSet> {
         return buildDecos(newState.doc, null);
       }
       if (tr.docChanged) {
+        // R5 Fix-A（MD-1011 高度塌陷窗）：整批替换（tr.replace 全文——
+        // 程序化整篇写回/批注回退/AI 全文改写）会把旧装饰经 mapping 全部
+        // 丢弃，块高回落 3em 占位直到预热重放——切标签场景实测装饰缺失
+        // ≥12s（tabback blockWatch，r5-phase2-f-tabback）。高度表是内容寻
+        // 址的，同内容块立即按学得值重放，塌陷窗消失。判定条件收窄到「单
+        // ReplaceStep 覆盖 >50% 文档」，打字/粘贴等常规编辑仍走 O(变更)
+        // 增量映射（上方 500ms/键的实测代价不回归）。
+        if (isWholeDocReplace(tr)) {
+          editSinceRebuild = false;
+          return buildDecos(newState.doc, null);
+        }
         // 大文档（1MB/1.16 万块）实测：整树重建 DecorationSet 会让
         // prosemirror-view 对每个键事务做全树装饰对账（takeSpansForNode/
         // forChild/valid 合计 ~500ms/键，占打字剖面 50%）。改为增量映射
