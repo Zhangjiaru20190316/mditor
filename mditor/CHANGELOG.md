@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased（2026-10-02 第五轮：滚动稳定性专项——v5.0.0-beta）
+
+### 2026-10-02 批：滚动乱闪（F）与乱动（J）专项治理
+
+结题报告 `docs/large-doc-scroll-stability-report.md`；定罪书 `perf/results/r5-phase4-indictment.md`。
+
+- **fix(scroll) MD-1011 高度塌陷窗（Fix-A）**：cvMemory 装饰对整批替换
+  （tr.replace 全文——AI 全文写回/批注回退/脚注插入）立即按内容寻址高度表
+  重放，不再回落 3em 占位（此前旧装饰经 mapping 全部丢弃）。
+- **fix(scroll) 占位高度记忆跨重建存活（Fix-B）**：行内公式渲染态高度从
+  逐元素 WeakMap 扩展为内容寻址会话表（cap 8192）——切标签/整批替换后的
+  新占位保持渲染态行高，占位↔真身高度二象性行高跳动消除。
+- **fix(scroll) 预热只学冷块（Fix-C）**：切回已知文档不再全量重预热（此前
+  重测瞬态污染高度表构成弹跳波）——**大文档切换中位 2,254ms → 874-949ms**。
+- **fix(scroll) 视口学习 webfont 门控（Fix-D）**：对齐预热侧 waitForFonts
+  防御，字体窗内的紧凑度量不再写入高度表。
+- **diag(scroll) 观测补点**：写入陷阱（未打标 scrollTop 写入的调用栈捕获，
+  ghost 事件附带）+ 恢复梯子插队计数（J2）+ smoothJump 生命周期计数 +
+  cv.relearn 高度表改写观测。
+- **test(perf) scroll-flash-bench**：F1 占位残留 / F4 滚动帧 / 开档弹跳波
+  窗口三场景 × 双 fixture × on/off 双臂基准（臂自证）。
+- **perf 安全**：ghost-stress/scroll-abab 硬清理从按映像名 taskkill（会误杀
+  用户正在使用的打包版）改为按监听端口 PID 树精确杀。
+- 守卫：npm test 970 全绿（+25 用例）；coverage/lint/build 全过。
+
 ## Unreleased（2026-09-28 ~ 10-01 第四轮两批合并发版——v4.20.0）
 
 ### 2026-09-30 ~ 10-01 批：数学密集默认路径定罪 + 启动竞态根修 + headingStamp 直建

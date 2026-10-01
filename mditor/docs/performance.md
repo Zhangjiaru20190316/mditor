@@ -381,3 +381,16 @@ sv 模式（CodeMirror）天然只渲染可见行。富文本侧 V3.6.5 落地�
   判环境噪声）；P4 ≤3s 门未达、已归因封案。
 - **normalizeMathDelimiters 扫描器化放弃**：427ms 为 1MB 档专属且 P1 门 5s
   余量，证据不成立不动手。
+
+## 第五轮（2026-10-02）：滚动稳定性——乱闪（F）与乱动（J）专项——v5.0.0-beta
+
+结题报告 `docs/large-doc-scroll-stability-report.md`；定罪书 `perf/results/r5-phase4-indictment.md`。
+
+核心结论：
+- **症状 J（乱动）**：MD-1001 在 v4.20.0 生产复发 9 次全部发生在视口档；主犯=块高弹跳波（切标签/开档后高度表学习期内容反复位移，恢复梯子落点被 anchor-comp 确定性回拽 -217px，3/3 复现）。修复后回拽残余 +15px（0.2%）。
+- **症状 F（乱闪）**：与 J 同源（行内公式「源码占位 ↔ KaTeX 真身」高度二象性 + 三个放大器：首开冷表窗 / 每次载入全量重预热 / 事务路径装饰丢失）。
+- 修复四件套（均独立 commit + 单测 + ABAB）：Fix-A 整批替换装饰内容寻址重放；Fix-B 占位高度记忆内容寻址（跨重建存活）；Fix-C 预热只学冷块（切回已知文档瞬时完成，**切换中位 2,254ms → 874-949ms**）；Fix-D 视口学习 webfont 门控。
+- 观测补点：写入陷阱（未打标 scrollTop 写入的调用栈捕获，ghost 事件附带）+ J2 恢复梯子插队计数 + smoothJump 生命周期计数 + cv.relearn 高度表改写观测。
+- 基准口径新增：`perf/scroll-flash-bench.mjs`（upscroll/roundtrip/longread × 双 fixture × on/off，臂自证）；F1=占位残留事件数/p95/峰值并发，F4=滚动帧 p95/over50，开档窗=blockChangeEvents。
+- 新发现：1MB 档「开档即滚」窗口预热争用（on 臂帧 p50 154ms vs off 6ms）；katex-error 双臂对照法判文档内容 vs 管线回归。
+- perf 基建安全：ghost-stress/scroll-abab 硬清理从按映像名 taskkill 改按端口 PID 树（曾误杀用户打包版实例）。
