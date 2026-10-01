@@ -1,9 +1,11 @@
 # Changelog
 
-## Unreleased（2026-09-30 第四轮：数学密集默认路径定罪 + 启动竞态根修 + 动效/证据基建）
+## Unreleased（2026-09-28 ~ 10-01 第四轮两批合并发版——v4.20.0）
 
-结题报告 `docs/large-doc-perf-motion-report.md`；提案（待拍板）
-`docs/proposal-bigdoc-viewport-auto.md`（新增数据 C）。
+### 2026-09-30 ~ 10-01 批：数学密集默认路径定罪 + 启动竞态根修 + headingStamp 直建
+
+结题报告 `docs/large-doc-perf-motion-report.md`（含 10-01 补遗 §10）；提案
+（待拍板）`docs/proposal-bigdoc-viewport-auto.md`（新增数据 C）。
 
 - **v4.19 自动视口档回退补全（用户决策执行）**：移除 bigDocViewportAuto
   全链路；补齐回退时漏改的设置清单锚点两处（defaults.test /
@@ -43,10 +45,14 @@
   水平，09-30 晚 5.0-5.2s 判环境噪声；P4 ≤3s 门未达、四面（打开/打字/
   滚动/切换）归一同墙封案。normalizeMathDelimiters 扫描器化放弃（427ms
   为 1MB 档专属且 P1 门 5s 余量）。
-- 质量矩阵：vitest 945（+3 重试 +1 台阶复检）；tsc 0 错；eslint 0 错；
-  build 全绿；打包版公式冒烟 katex-error=0。
+- 质量矩阵：vitest 954（09-30 批 945 + headingStamp 直建差分等价组）；tsc 0 错；
+  eslint 0 错；build 全绿；打包版公式冒烟 katex-error=0。
+- **发版对齐**：v4.20.0（4.19.0 从未发布且其功能已回退，跳过该号）；版本
+  五处对齐 package.json / Cargo.toml / tauri.conf.json / Cargo.lock /
+  harmony app.json5（versionCode 1002000——补上 v4.19 回退时漏改的
+  versionName/versionCode，当时仍停在 4.19.0/1001900）。
 
-## Unreleased（2026-09-28 生产日志驱动优化批：公式密度视口档 + 检测器去噪 + 同步跨盘删除根修）
+### 2026-09-28 批：生产日志驱动优化（公式密度视口档 + 检测器去噪 + 同步跨盘删除根修）
 
 数据来源：`%APPDATA%/com.mditor.app/logs/` 生产日志（09-22~09-28 六天全量聚合，
 MD-9001 持续掉帧 1,700+ / MD-10002 云同步 517 / MD-4011 DOM 增长 72 /
