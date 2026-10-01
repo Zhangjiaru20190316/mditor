@@ -147,6 +147,8 @@ export function scrollDebugClear(): void {
   events.length = 0;
   counters.clear();
   longtaskLog.length = 0;
+  writeTrap.length = 0;
+  writeTimeline.length = 0;
   frameStats.frames = 0;
   frameStats.jankFrames = 0;
   frameStats.worstGapMs = 0;
@@ -459,15 +461,171 @@ export function stepSession(
  *  来源」；tag 即写入方身份（typewriter / outline-jump / restore …）。 */
 let recentWrite: { tag: string; at: number } | null = null;
 
+/** 写入时间线（J2 观测：恢复梯子窗内他方插队计数）。环形 32 条。 */
+const writeTimeline: { tag: string; at: number }[] = [];
+/** 恢复族写入：切标签/开档/重建后的滚动恢复链（Editor 梯子 + App heal/handoff）。 */
+const RESTORE_FAMILY = new Set([
+  "file-open",
+  "tab-restore",
+  "rebuild-restore",
+  "handoff-restore",
+  "heal-restore",
+]);
+/** 会与恢复梯子竞争的补偿/跟随类写入方（J2 重叠窗口计数对象）。 */
+const OVERLAP_INTRUDERS = new Set(["anchor-comp", "typewriter", "prewarm-comp"]);
+/** 恢复梯子生命周期窗（80ms 首试 + 300ms×8 重试 ≈ 2.5s）。 */
+const OVERLAP_WINDOW_MS = 2500;
+
 /** 在任何写 scrollTop / scrollIntoView 的语句前调用。 */
 export function noteScrollWrite(tag: string): void {
-  recentWrite = { tag, at: performance.now() };
+  const now = performance.now();
+  if (OVERLAP_INTRUDERS.has(tag)) {
+    for (let i = writeTimeline.length - 1; i >= 0; i--) {
+      if (now - writeTimeline[i].at > OVERLAP_WINDOW_MS) break;
+      if (RESTORE_FAMILY.has(writeTimeline[i].tag)) {
+        scrollCount("overlap.restore-intrude");
+        scrollEmit(
+          "write:overlap",
+          `恢复梯子窗内他方写入插队：${writeTimeline[i].tag} 后 ${Math.round(now - writeTimeline[i].at)}ms 由 ${tag} 插入`,
+          {
+            data: {
+              restore: writeTimeline[i].tag,
+              intruder: tag,
+              gapMs: Math.round(now - writeTimeline[i].at),
+            },
+          }
+        );
+        break;
+      }
+    }
+  }
+  recentWrite = { tag, at: now };
+  writeTimeline.push({ tag, at: now });
+  if (writeTimeline.length > 32) writeTimeline.shift();
   scrollCount(`write.${tag}`);
 }
 
 /** 供 ghost 事件附带的归因上下文 / __scrollDebug 出口。 */
 export function lastScrollWrite(): { tag: string; at: number } | null {
   return recentWrite;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 写入陷阱（R5 观测补点）：未打标写入的调用栈捕获                             */
+/* -------------------------------------------------------------------------- */
+
+/** ghost 事件的定罪盲区是「不在 noteScrollWrite 打标范围内的 scrollTop 写入」
+ *  （PM 选区恢复的内部滚动、原生 focus 滚动、scrollIntoView 动画尾巴……）。
+ *  这里在 Element.prototype 上包一层只转发不改行为的钩子，把编辑器滚动容器
+ *  的 JS 写入与 scrollIntoView 调用的调用栈记进环形缓冲；ghost 事件附带
+ *  最近 400ms 内的陷阱记录——打标窗已过期而陷阱有记录 = 写入方可从栈直接
+ *  读出（生产 J-α 类「+32s 整千像素未打标跳变」的定位器）。 */
+export interface WriteTrapRecord {
+  at: number;
+  kind: "set-scrollTop" | "scrollIntoView" | "scrollTo";
+  detail: string;
+  stack: string;
+}
+const writeTrap: WriteTrapRecord[] = [];
+let writeTrapInstalled = false;
+
+function recordWriteTrap(kind: WriteTrapRecord["kind"], detail: string): void {
+  try {
+    const stack = String(new Error().stack ?? "");
+    writeTrap.push({
+      at: performance.now(),
+      kind,
+      detail,
+      stack: stack
+        .split("\n")
+        .slice(2, 6)
+        .map((s) => s.trim())
+        .join(" <= "),
+    });
+    if (writeTrap.length > 12) writeTrap.shift();
+  } catch {
+    /* never throw */
+  }
+}
+
+/** 最近 withinMs 内的陷阱记录（无则 null——原生/用户滚动无 JS 栈）。 */
+export function recentWriteTrap(withinMs = 400): WriteTrapRecord | null {
+  const now = performance.now();
+  for (let i = writeTrap.length - 1; i >= 0; i--) {
+    if (now - writeTrap[i].at <= withinMs) return writeTrap[i];
+  }
+  return null;
+}
+
+/** 全量陷阱快照（__scrollDebug 出口）。 */
+export function writeTrapLog(): readonly WriteTrapRecord[] {
+  return writeTrap;
+}
+
+/** 测试钩子：显式安装陷阱（幂等，重复调用无副作用；生产路径由
+ *  attachScrollDebugGlobal 安装——那里依赖 DOM 就绪时机，测试里直接装）。 */
+export function installWriteTrapForTest(): void {
+  installWriteTrap();
+}
+
+function installWriteTrap(): void {
+  if (writeTrapInstalled || typeof Element === "undefined") return;
+  writeTrapInstalled = true;
+  try {
+    const isHost = (el: unknown): boolean =>
+      el instanceof Element &&
+      ((el as HTMLElement).id === "mditor-editor" ||
+        !!(el as HTMLElement).classList?.contains("mditor-editor-host") ||
+        !!el.closest?.(".mditor-editor-host"));
+    const sif = Element.prototype.scrollIntoView;
+    if (typeof sif === "function") {
+      Element.prototype.scrollIntoView = function (this: Element, ...a: unknown[]) {
+        try {
+          if (isHost(this)) {
+            recordWriteTrap(
+              "scrollIntoView",
+              `${this.tagName} ${JSON.stringify(a[0] ?? null)}`
+            );
+          }
+        } catch {
+          /* never throw */
+        }
+        return (sif as (...x: unknown[]) => void).apply(this, a);
+      };
+    }
+    const d = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+    if (d?.get && d.set) {
+      Object.defineProperty(Element.prototype, "scrollTop", {
+        get: d.get,
+        set(this: Element, v: number) {
+          try {
+            if (isHost(this)) {
+              recordWriteTrap("set-scrollTop", `${d.get!.call(this)} → ${v}`);
+            }
+          } catch {
+            /* never throw */
+          }
+          return d.set!.call(this, v);
+        },
+        configurable: true,
+      });
+    }
+    const sto = Element.prototype.scrollTo;
+    if (typeof sto === "function") {
+      Element.prototype.scrollTo = function (this: Element, ...a: unknown[]) {
+        try {
+          if (isHost(this)) {
+            recordWriteTrap("scrollTo", JSON.stringify(a[0] ?? null));
+          }
+        } catch {
+          /* never throw */
+        }
+        return (sto as (...x: unknown[]) => void).apply(this, a);
+      } as typeof Element.prototype.scrollTo;
+    }
+  } catch {
+    /* never throw */
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -596,6 +754,8 @@ export function attachScrollWatch(host: HTMLElement): () => void {
   let sentinel: { el: Element; docTop: number } | null = null;
   // 位移确认武装：第一帧检出位移时记录 {el, docTop}，下一静止帧复核。
   let compArmed: { el: Element; docTop: number } | null = null;
+  // R5 J2 观测：上一帧 smoothJump 是否在位（生命周期 set/clear 计数）。
+  let prevSmoothJump = false;
   let raf = 0;
   let disposed = false;
 
@@ -1043,6 +1203,15 @@ export function attachScrollWatch(host: HTMLElement): () => void {
       // 的滚动记 resize 会话，ghost 只留给真正不明的滚动。
       const resizeActive =
         lastResize != null && now - lastResize.at < RESIZE_CAUSAL_WINDOW_MS;
+      // R5 J2 观测：smoothJump 生命周期计数——set / clear / 清除时仍在滚动
+      // （1200ms 超时早于滚动结束的实锤计数，红线 13 的数据口径）。
+      const smoothJumpNow = host.dataset.smoothJump !== undefined;
+      if (smoothJumpNow && !prevSmoothJump) scrollCount("smoothjump.set");
+      if (!smoothJumpNow && prevSmoothJump) {
+        scrollCount("smoothjump.clear");
+        if (Math.abs(st - prevSt) > 1) scrollCount("smoothjump.expire-moving");
+      }
+      prevSmoothJump = smoothJumpNow;
       const step = stepSession(
         { tag: sessionTag, stillFrames: sessionStill },
         {
@@ -1137,6 +1306,14 @@ export function attachScrollWatch(host: HTMLElement): () => void {
             resize: resizeActive
               ? `viewport:resize@${Math.round(now - lastResize!.at)}ms前`
               : null,
+            // R5：写入陷阱上下文——打标窗过期而陷阱有记录 = 未打标写入方
+            // 的调用栈（JS 写入可直接定罪；无记录 = 原生滚动/用户输入）。
+            writeTrap: (() => {
+              const t = recentWriteTrap(400);
+              return t
+                ? `${t.kind} ${t.detail} @${Math.round(now - t.at)}ms前 栈:${t.stack.slice(0, 180)}`
+                : "无（原生滚动）";
+            })(),
           },
         };
         events.push(e);
@@ -1368,6 +1545,7 @@ export function attachScrollWatch(host: HTMLElement): () => void {
 /** 控制台出口：window.__scrollDebug（attachScrollDebugGlobal() 注册）。 */
 export function attachScrollDebugGlobal(): void {
   try {
+    installWriteTrap();
     (window as unknown as Record<string, unknown>).__scrollDebug = {
       events: scrollEvents,
       counters: scrollCounters,
@@ -1375,6 +1553,7 @@ export function attachScrollDebugGlobal(): void {
       recent: lastScrollWrite,
       stats: scrollWatchStats,
       frameStats: scrollFrameStats,
+      trap: writeTrapLog,
     };
   } catch {
     /* never throw */

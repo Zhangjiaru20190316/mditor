@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   classifyPmBatch,
   diffBlocks,
   longtaskBlockedSince,
   noteLongtaskSpan,
+  noteScrollWrite,
   pmSampleLabel,
   scrollCount,
   scrollCounters,
@@ -519,5 +520,39 @@ describe("stepSession resize 归因（v4.3 视口尺寸变化）", () => {
     }
     expect(sawResize).toBe(true);
     expect(sawGhost).toBe(false);
+  });
+});
+
+describe("noteScrollWrite J2 重叠计数（R5：恢复梯子窗内他方插队）", () => {
+  it("恢复族写入 2.5s 内的补偿类写入计 overlap.restore-intrude", () => {
+    noteScrollWrite("tab-restore");
+    noteScrollWrite("anchor-comp");
+    expect(scrollCounters()["overlap.restore-intrude"]).toBe(1);
+    // 非补偿类写入不计数
+    noteScrollWrite("tab-restore");
+    noteScrollWrite("outline-jump");
+    expect(scrollCounters()["overlap.restore-intrude"]).toBe(1);
+  });
+
+  it("恢复族写入超窗（2.5s）后补偿类写入不计数", () => {
+    const spy = vi.spyOn(performance, "now");
+    spy.mockReturnValue(10_000);
+    noteScrollWrite("file-open");
+    spy.mockReturnValue(10_000 + 2600);
+    noteScrollWrite("typewriter");
+    spy.mockRestore();
+    expect(scrollCounters()["overlap.restore-intrude"]).toBeUndefined();
+  });
+
+  it("无恢复族在窗内时补偿类写入不计数", () => {
+    noteScrollWrite("outline-jump");
+    noteScrollWrite("prewarm-comp");
+    expect(scrollCounters()["overlap.restore-intrude"]).toBeUndefined();
+  });
+
+  it("写入时间线环形截断到 32 条且打标计数保留", () => {
+    for (let i = 0; i < 40; i++) noteScrollWrite(`tag-${i % 5}`);
+    expect(scrollCounters()["write.tag-1"]).toBe(8);
+    expect(scrollEvents().some((e) => e.kind === "write:overlap")).toBe(false);
   });
 });
