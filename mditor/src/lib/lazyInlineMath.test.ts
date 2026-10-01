@@ -592,22 +592,22 @@ describe("R5 Fix-B：内容寻址渲染态高度（跨重建存活的占位 minH
   it("noteInlineHeight/inlineHeightFor 基本读写与非法值防御", async () => {
     const { noteInlineHeight, inlineHeightFor, clearInlineHeights } = await import("./lazyInlineMath");
     clearInlineHeights();
-    noteInlineHeight("\sum a_n", 24.6);
-    expect(inlineHeightFor("\sum a_n")).toBe(24.6);
+    noteInlineHeight("\\sum a_n", 24.6);
+    expect(inlineHeightFor("\\sum a_n")).toBe(24.6);
     expect(inlineHeightFor("不存在的源码")).toBeUndefined();
     noteInlineHeight("", 30); // 空源码拒绝
     noteInlineHeight("x", 0); // 非正高度拒绝
     expect(inlineHeightFor("x")).toBeUndefined();
     clearInlineHeights();
-    expect(inlineHeightFor("\sum a_n")).toBeUndefined();
+    expect(inlineHeightFor("\\sum a_n")).toBeUndefined();
   });
 
-  it("容量淘汰：超 8192 淘汰最旧一半，新条目仍可写入", async () => {
+  it("容量淘汰：超上限淘汰最旧一半，新条目仍可写入", async () => {
     const { noteInlineHeight, inlineHeightFor, clearInlineHeights, INLINE_HEIGHT_CAP_FOR_TEST } = await import("./lazyInlineMath");
     clearInlineHeights();
     const cap = INLINE_HEIGHT_CAP_FOR_TEST;
     for (let i = 0; i < cap + 100; i++) noteInlineHeight(`src-${i}`, 10 + (i % 50));
-    // 前 4096+ 条被淘汰，尾部存活
+    // 前半最旧条目被淘汰，尾部存活
     expect(inlineHeightFor("src-0")).toBeUndefined();
     expect(inlineHeightFor(`src-${cap + 99}`)).toBeGreaterThan(0);
     clearInlineHeights();
@@ -616,9 +616,9 @@ describe("R5 Fix-B：内容寻址渲染态高度（跨重建存活的占位 minH
   it("demote 后同内容新元素（模拟重建）的占位拿到会话表高度", async () => {
     const { noteInlineHeight, inlineHeightFor, clearInlineHeights } = await import("./lazyInlineMath");
     clearInlineHeights();
-    noteInlineHeight("e^{i\pi}", 19);
+    noteInlineHeight("e^{i\\pi}", 19);
     // 重建后 WeakMap 清零——占位 minHeight 来源只剩会话表
-    expect(inlineHeightFor("e^{i\pi}")).toBe(19);
+    expect(inlineHeightFor("e^{i\\pi}")).toBe(19);
     clearInlineHeights();
   });
 });
