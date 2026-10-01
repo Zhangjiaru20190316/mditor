@@ -17,6 +17,7 @@ import {
   noteCvSize,
   prewarmOrder,
   prewarmShouldYield,
+  unlearnedOrder,
 } from "./cvMemory";
 
 afterEach(() => cvClearStore());
@@ -278,5 +279,39 @@ describe("R5 整批替换的装饰存活（切标签/程序化全文写回路径
     const st = stateWithDocs(["甲", "乙", "丙"]);
     const rebuilt = EditorState.create({ doc: st.doc, plugins: [createCvIntrinsicPlugin()] });
     expect(decoratedBlockStarts(rebuilt)).toEqual([0, 3, 6]);
+  });
+});
+
+describe("R5 Fix-C：unlearnedOrder 只学冷块", () => {
+  const docOf = (texts: string[]) =>
+    PMNode.fromJSON(pluginSchema, {
+      type: "doc",
+      content: texts.map((t) => ({ type: "paragraph", content: t ? [{ type: "text", text: t }] : [] })),
+    });
+
+  it("高度表命中的块被滤掉，段界按剩余块重算", () => {
+    cvClearStore();
+    const doc = docOf(["甲", "乙", "丙", "丁", "戊", "己"]);
+    // 预热序：band=[2,4)（块 2、3 先），带下 4、5，带上 1、0
+    const orderAll = [2, 3, 4, 5, 1, 0];
+    // 块 2、4、0 已学
+    for (const i of [2, 4, 0]) {
+      const n = doc.child(i);
+      noteCvSize(cvHash(n.type.name, n.textContent), 800, 100);
+    }
+    const { order, seg1, seg2 } = unlearnedOrder(doc, orderAll, 2, 4);
+    expect(order).toEqual([3, 5, 1]); // 2/4/0 被滤
+    expect(seg1).toBe(1); // 剩余 band 内：3
+    expect(seg2).toBe(1); // 剩余带下：5
+  });
+
+  it("全部已知 → order 为空（切回已知文档预热瞬时完成）", () => {
+    cvClearStore();
+    const doc = docOf(["甲", "乙", "丙"]);
+    doc.forEach((n) => noteCvSize(cvHash(n.type.name, n.textContent), 800, 100));
+    const { order, seg1, seg2 } = unlearnedOrder(doc, [0, 1, 2], 1, 2);
+    expect(order).toEqual([]);
+    expect(seg1).toBe(0);
+    expect(seg2).toBe(0);
   });
 });

@@ -711,6 +711,27 @@ export function startCvPrewarm(view: EditorView): void {
   }
 }
 
+/** R5 Fix-C 纯逻辑：从全量预热序中滤掉高度表已命中的块，并按原段语义重算
+ *  三段分界（band 内 / 带下 / 带上）。滤后仍保持 prewarmOrder 的段序。 */
+export function unlearnedOrder(
+  doc0: PMNode,
+  orderAll: number[],
+  bandStart: number,
+  bandEnd: number
+): { order: number[]; seg1: number; seg2: number } {
+  const order: number[] = [];
+  let seg1 = 0;
+  let seg2 = 0;
+  for (const i of orderAll) {
+    const node = doc0.child(i);
+    if (node && cvSizeFor(hashNode(node)) != null) continue;
+    if (i >= bandStart && i < bandEnd) seg1++;
+    else if (i >= bandEnd) seg2++;
+    order.push(i);
+  }
+  return { order, seg1, seg2 };
+}
+
 async function runPrewarm(
   view: EditorView,
   gen: number,
@@ -733,11 +754,15 @@ async function runPrewarm(
   }
 
   const band = findViewportBand(view, posOf);
-  const order = prewarmOrder(total, band.start, band.end);
+  const orderAll = prewarmOrder(total, band.start, band.end);
+  // R5 Fix-C：只学冷块——高度表命中的块跳过（跳过=不再强制 visible、不再
+  // 量测）。切标签回已知文档时此前会全量重预热：重测会把过渡瞬态写进表
+  // （tabback blockWatch：81→32→81 反复），装饰随批弹跳构成切回后的高度
+  // 波；跳过后 order 为空、预热瞬时完成。宽度漂移（窗口 resize）的陈旧值
+  // 由视口学习持续修正；内容编辑改变 hash 自然落回冷块。
+  const { order, seg1, seg2 } = unlearnedOrder(doc0, orderAll, band.start, band.end);
   // 三段在 order 里的分界（批不得跨界：down→up 跨界批会把 [带首, 文末]
   // 整段一次性 visible，等于把灾难性大批量重排又请回来）。
-  const seg1 = Math.max(0, band.end - band.start);
-  const seg2 = total - band.end;
 
   const abort = (reason: string): void => {
     try {
