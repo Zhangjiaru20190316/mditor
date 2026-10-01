@@ -64,12 +64,35 @@ function vitePortPids() {
   }
   return [...pids];
 }
+
+/** R5 安全清理：只杀监听 CDP 端口的进程树 + 本脚本 spawn 的子进程树，
+ *  绝不按映像名 taskkill /IM——打包版与 dev 实例同映像名 mditor.exe，
+ *  按名杀会误杀用户正在使用的打包版（第五轮实测事故）。 */
+function portPids(port) {
+  const r = spawnSync("netstat", ["-ano"], { encoding: "utf8", windowsHide: true });
+  const pids = new Set();
+  const lines = String(r.stdout || "").split("\n");
+  for (const line of lines) {
+    const re = new RegExp("TCP\\s+\\S+:" + port + "\\s+\\S+\\s+LISTENING", "i");
+    if (re.test(line)) {
+      const pid = line.trim().split(/\s+/).pop();
+      if (pid && /^\d+$/.test(pid)) pids.add(pid);
+    }
+  }
+  return [...pids];
+}
+function killPortTrees(port, log = () => {}) {
+  for (const pid of portPids(port)) {
+    try { run("taskkill", ["/F", "/T", "/PID", String(pid)]); } catch { /* */ }
+  }
+}
+
 async function hardCleanup(child, log = () => {}) {
   try { if (child && child.pid) run("taskkill", ["/F", "/T", "/PID", String(child.pid)]); } catch { /* */ }
-  run("taskkill", ["/F", "/IM", "mditor.exe"]);
+  killPortTrees(PORT, log);
   for (let i = 0; i < 30; i++) {
     if (await portFree()) return true;
-    if (i === 10) { log("10s 未释放，二次 taskkill"); run("taskkill", ["/F", "/T", "/IM", "mditor.exe"]); }
+    if (i === 10) { log("10s 未释放，二次按端口清杀"); killPortTrees(PORT, log); }
     await sleep(500);
   }
   return false;

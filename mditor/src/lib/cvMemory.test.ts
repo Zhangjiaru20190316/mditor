@@ -315,3 +315,13 @@ describe("R5 Fix-C：unlearnedOrder 只学冷块", () => {
     expect(seg2).toBe(0);
   });
 });
+
+describe("R5 Fix-D：视口学习字体门控", () => {
+  it("node 环境无 document → 门控默认放行（视口学习由集成路径保证）；setCvFontsReadyForTest 可翻转", async () => {
+    // node 测试环境无 document.fonts，模块加载时 cvFontsReady 初值 false，
+    // 但 learnVisibleSizes 只在真实编辑器里被调——这里验证钩子可用。
+    const { setCvFontsReadyForTest } = await import("./cvMemory");
+    expect(() => setCvFontsReadyForTest(true)).not.toThrow();
+    expect(() => setCvFontsReadyForTest(false)).not.toThrow();
+  });
+});

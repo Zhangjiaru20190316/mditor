@@ -61,11 +61,35 @@ export function cvHash(type: string, text: string): string {
 }
 
 /** 记录一条高度。返回 true 表示新增或数值变化（调用方据此重建装饰）。 */
+let lastRelearnEmitAt = 0;
 export function noteCvSize(hash: string, w: number, h: number): boolean {
   try {
     if (!hash || !(w > 0) || !(h >= 0)) return false;
     const prev = store.get(hash);
     if (prev && Math.abs(prev.w - w) < 2 && Math.abs(prev.h - h) < 2) return false;
+    // R5 观测：既有条目被大幅改写（弹跳波定位器——学得值摇摆的写入方与
+    // 时刻）。info 级 + 1s 限流，不弹告警卡。
+    if (prev && Math.abs(prev.h - h) > 10) {
+      const now = performance.now();
+      if (now - lastRelearnEmitAt > 1000) {
+        lastRelearnEmitAt = now;
+        let via = "";
+        try {
+          via = String(new Error().stack ?? "")
+            .split("\n")
+            .slice(2, 5)
+            .map((s) => s.trim().replace(/^at\s+/, ""))
+            .join(" <= ");
+        } catch {
+          /* never throw */
+        }
+        scrollEmit(
+          "cv.relearn",
+          `高度表条目改写 ${Math.round(prev.h)}→${Math.round(h)}px（${hash.slice(0, 8)}，w=${Math.round(w)}）`,
+          { data: { from: Math.round(prev.h), to: Math.round(h), width: Math.round(w), via } }
+        );
+      }
+    }
     if (!prev && store.size >= CV_STORE_CAP) {
       // Map 保持插入序：淘汰最旧一半（重新 set 不刷新顺序，近似 LRU 够用）。
       const drop = store.size - (CV_STORE_CAP >> 1);
@@ -88,6 +112,28 @@ export function cvSizeFor(hash: string): CvSize | undefined {
 
 export function cvStoreSize(): number {
   return store.size;
+}
+
+/** R5 Fix-D：视口学习的 webfont 门控。预热侧早有 waitForFonts 防御
+ *  （fallback 度量会让高度表整批错误——P0-3），但 learnVisibleSizes 没有：
+ *  开档字体加载窗内测得紧凑高度（实测 32px）写入表，预热后测真值（81px）
+ *  再改写——32↔81 乒乓即弹跳波（cv.relearn 观测：learnVisibleSizes 在切回
+ *  scrollTop=0 相位反复改写既有条目）。字体就绪前视口学习让位（高度先由
+ *  等字体的预热供给）。 */
+let cvFontsReady = typeof document !== "undefined" && document.fonts?.status === "loaded";
+try {
+  if (typeof document !== "undefined" && document.fonts?.ready) {
+    void document.fonts.ready.then(() => {
+      cvFontsReady = true;
+    });
+  }
+} catch {
+  /* never throw */
+}
+
+/** 测试钩子：强制字体门控状态。 */
+export function setCvFontsReadyForTest(v: boolean): void {
+  cvFontsReady = v;
 }
 
 /** 清空（测试用）。 */
@@ -333,6 +379,8 @@ function topLevelNodeOf(view: EditorView, el: Element): PMNode | null {
 }
 
 function learnVisibleSizes(view: EditorView): boolean {
+  // R5 Fix-D：字体未就绪不学（紧凑度量会污染高度表，预热侧同款防御）。
+  if (!cvFontsReady) return false;
   const dom = view.dom as HTMLElement;
   const kids = dom.children;
   const n = kids.length;
