@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased（2026-10-02 第六轮：公式渲染及时性与完整性专项）
+
+### 2026-10-02 批：行内公式漏渲染根治 + 上滚补绘提速
+
+结题报告 `docs/large-doc-formula-render-report.md`；定罪书 `perf/results/r6-phase3-4-baseline-indictment.md`。
+
+- **fix(math) 漏渲染根治（Fix-A，M-d'）**：demote 回带竞态——快速长滚中
+  降级顺延链挂起，元素回带后停稳时 timer 到期把**视口内**公式降回源码占位，
+  且 IO 因可见性无变化永不再回调 → 永久占位（超限 fixture 残留 6-9 条、
+  1MB 3 条；微滚验证定罪）。修复：回带撤销挂起 demoteTimer + demote 执行前
+  带内跳过。遍历往返后视口残留三档（超限/1MB/密度）全部归零。
+- **fix(math) demote 后 IO 状态校准（Fix-C）**：降级时 unobserve+observe
+  重置观察，下次交叉计算必按真实位置派发——兜底 IO 状态记录与实际位置
+  失同步的残余漏渲染（1MB 档 2 条，enqueued=rendered 证明从未入队）。
+- **fix(math) 上滚方向带安全直绘（Fix-B，T-c）**：上滚 band 全禁（无锚定
+  补偿约束）连安全的命中直绘也禁了——有渲染态高度预留（占位 minHeight
+  已撑行高）且缓存命中的条目直绘零高度变化、不上移视口。上滚瞬间积压
+  尖峰 21→11 条（-48%），占位停留 p50 457→340ms（-26%）、p95 -13%；
+  冷算/无预留条目照旧留队，上滚安全约束不破。
+- **diag(math) 渲染泵统计**：`window.__mathPumpStats()`——队列深度/最老
+  条目等待/命中直绘与冷算/回插/丢弃/失败计数（「公式不渲染/补绘拖尾」
+  DevTools 直读；本轮归因主取证设施）。
+- **test(perf) 基准扩展**：scroll-flash-bench 占位事件按 wheel 分窗
+  （scrollPhase/quietPhase）+ 滚动中视口未 ready 峰值/时长占比（T2 口径）；
+  新增 >8,192 唯一公式超限 fixture（9,420 唯一，钉死 katexCache LRU 截断档）。
+- 排除定论（勿重查）：预热 LRU 截断不致漏渲染（残留位置均匀非尾部指纹）；
+  泵队列零饥饿；render 零失败；块级公式挂载率 100%。1MB 档占位 p95 剩余
+  长尾=帧饥饿（布局墙第四轮封案+学习窗），泵侧已无积压。
+- **perf 安全**：scroll-flash-bench CDP 未就绪分支补 PID 树清理（防 dev
+  泄漏互抢 WebView2 目录）。
+- 守卫：npm test 970 → **978 全绿**（+8 用例）；coverage/lint/build 全过；
+  R 组零回归（打开 13,181ms ≤ 基线、打字密度档 704ms、切换 2,254ms 持平、
+  ghost anomalies+0、scroll-abab p50 99.9ms）。
+
 ## Unreleased（2026-10-02 第五轮：滚动稳定性专项——v5.0.0-beta）
 
 ### 2026-10-02 批：滚动乱闪（F）与乱动（J）专项治理

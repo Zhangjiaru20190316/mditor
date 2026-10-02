@@ -394,3 +394,15 @@ sv 模式（CodeMirror）天然只渲染可见行。富文本侧 V3.6.5 落地�
 - 基准口径新增：`perf/scroll-flash-bench.mjs`（upscroll/roundtrip/longread × 双 fixture × on/off，臂自证）；F1=占位残留事件数/p95/峰值并发，F4=滚动帧 p95/over50，开档窗=blockChangeEvents。
 - 新发现：1MB 档「开档即滚」窗口预热争用（on 臂帧 p50 154ms vs off 6ms）；katex-error 双臂对照法判文档内容 vs 管线回归。
 - perf 基建安全：ghost-stress/scroll-abab 硬清理从按映像名 taskkill 改按端口 PID 树（曾误杀用户打包版实例）。
+
+## 第六轮（2026-10-02）：公式渲染及时性（T）与完整性（M）专项
+
+结题报告 `docs/large-doc-formula-render-report.md`；基线+定罪书 `perf/results/r6-phase3-4-baseline-indictment.md`。
+
+核心结论：
+- **症状 M（漏渲染）根治**：M-d' demote 回带竞态——快速长滚中 demote 顺延链挂起、元素回带时 visible=true 回调不撤销 timer 且 rendered=true 挡住入队、停稳后 timer 到期把带内/视口内元素降回占位、IO 因状态无变化永不再回调 → 永久源码占位。微滚 ±900px 验证归零定罪。Fix-A（回带撤 timer + demote 带内跳过）后超限/密度档残留清零；Fix-C（demote 后 IO unobserve+observe 校准）兜底 1MB 档残余（IO 状态失同步姊妹形态）。遍历往返 M1 三档全 0。
+- **症状 T（不及时）可修部分定罪**：T-c 上滚方向带全禁（R4-① 无锚定补偿约束）把安全的命中直绘也禁了——有渲染态高度预留（占位 minHeight 已撑行高）且缓存命中的条目直绘零高度变化。Fix-B 放开后上滚瞬间积压尖峰 21→11 条（-48%）、p50 457→340ms（-26%）；p95 5,615→4,896ms（-13%）——剩余长尾由帧间隔 p95 3.5-4.4s 支配（布局墙第四轮封案 + 学习窗 + bench REC 采样器 30-50ms/帧测量放大），泵侧已无积压（__mathPumpStats 轨迹 q 恒 0/cold=0/静止 1-3 帧清空）。
+- 观测出口：`window.__mathPumpStats()`（队列深度/最老条目等待/命中直绘与冷算/回插/丢弃/失败计数）——「公式不渲染/补绘拖尾」DevTools 直读；main.tsx 挂载（__scrollDebug 同款惯例）。
+- 基准口径增补：scroll-flash-bench f1 拆 scrollPhase/quietPhase（wheel ≤450ms 分窗）+ row.t2（滚动中视口未 ready 峰值/源码态时长占比）；>8,192 唯一公式超限 fixture（9,420 唯一）钉死 katexCache LRU 截断档（1MB 副本唯一公式仅 2,368，预热全覆盖不触发截断）。
+- 排除项（勿重查）：M-a 截断不致漏渲染（残留位置均匀非尾部）；M-b 队列零饥饿（oldestWaitPeakMs=0）；M-c 零 render 失败；M-e 块级挂载率 100%（23/23）；1MB 档 T1 剩余长尾=帧饥饿非泵缺陷。
+- 教训：perf 清理必须按 PID 树杀——`taskkill /IM msedgewebview2.exe`（按映像名）在打包版存活时会误杀其 webview（本轮重犯第五轮教训，见报告 §5 事故披露）。
