@@ -781,6 +781,44 @@ describe("R6 Fix-B：上滚 band 安全直绘（有高度预留 && 缓存命中�
   });
 });
 
+describe("R6 Fix-C：demote 后 IO 状态校准（unobserve+observe 重置观察）", () => {
+  it("降级执行时对 sharedIO 做一次 unobserve+observe（IO stub 记录调用对）", async () => {
+    const { noteInlineHeight, clearInlineHeights } = await import("./lazyInlineMath");
+    void noteInlineHeight;
+    clearInlineHeights();
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    const ioCalls: string[] = [];
+    // 包装最后一个观察器实例的 unobserve/observe（demote 用 sharedIO 单例）
+    const obs = observers[observers.length - 1] as unknown as {
+      unobserve: (el: Element) => void;
+      observe: (el: Element) => void;
+      els: Set<Element>;
+    };
+    const rawUn = obs.unobserve.bind(obs);
+    const rawOb = obs.observe.bind(obs);
+    obs.unobserve = (el: Element) => { ioCalls.push("un"); rawUn(el); };
+    obs.observe = (el: Element) => { ioCalls.push("ob"); rawOb(el); };
+    const view = makeView("ioc_1");
+    setVisibility(true);
+    flushFrames(1);
+    expect(view.dom.querySelector(".katex")).toBeTruthy();
+    fireUserInput();
+    setVisibility(false);
+    advance(450);
+    ioCalls.length = 0;
+    advance(2100); // demote 到期（静止）→ 应触发 unobserve+observe 校准
+    expect(view.dom.querySelector(".katex")).toBeFalsy();
+    expect(ioCalls.join(",")).toBe("un,ob"); // 校准对（顺序且恰一次）
+    // 校准后 IO 派发当前状态（带外 → false 回调，无副作用）
+    setVisibility(false);
+    view.destroy();
+    clearInlineHeights();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+});
+
 describe("R5 Fix-B：内容寻址渲染态高度（跨重建存活的占位 minHeight）", () => {
   it("noteInlineHeight/inlineHeightFor 基本读写与非法值防御", async () => {
     const { noteInlineHeight, inlineHeightFor, clearInlineHeights } = await import("./lazyInlineMath");

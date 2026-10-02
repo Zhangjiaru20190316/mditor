@@ -568,6 +568,17 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
     renderedHeights.set(dom, h);
     noteInlineHeight(current, h);
     paintPlaceholder();
+    // R6 Fix-C：降级后校准 IO 状态记录。unobserve+observe 重置观察，下一次
+    // 交叉计算必按元素当前真实位置派发一次回调——兜底 IO 状态记录与实际
+    // 位置失同步（快速长滚中带内↔带外跳变合并）导致的「带内占位永不入
+    // 队」：1MB 档遍历残余 2 条（超限/密度档 Fix-A 后已零）即此形态。demote
+    // 是占位态的起点，起点处校准一次即够；若当前带内会立即重新入队渲染。
+    try {
+      sharedIO?.unobserve(dom);
+      sharedIO?.observe(dom);
+    } catch {
+      /* IO 异常不阻断降级（占位已落） */
+    }
   };
 
   callbacks.set(dom, (visible) => {
