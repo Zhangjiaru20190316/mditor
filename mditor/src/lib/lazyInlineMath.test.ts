@@ -588,6 +588,85 @@ describe("R1 行内公式懒渲染", () => {
   });
 });
 
+describe("R6 泵统计观测（getMathPumpStats/__mathPumpStats：只观测不改行为）", () => {
+  it("入队/命中直绘/冷算/回插/销毁丢弃计数与队列深度快照", async () => {
+    const { getMathPumpStats } = await import("./lazyInlineMath");
+    usePumpTimers(); // 内含 __resetRenderPumpForTest：计数清零
+    setLazyInlineMathEnabled(true);
+    renderToStringCached("stat_warm", false); // 预热
+    const warm = makeView("stat_warm");
+    stubRect(warm.dom, { top: 100, bottom: 120, height: 20 });
+    const cold = makeView("stat_cold");
+    stubRect(cold.dom, { top: 140, bottom: 160, height: 20 });
+    const behind = makeView("stat_behind"); // 视口外（其余组）：滚动中留队
+    stubRect(behind.dom, { top: -300, bottom: -280, height: 20 });
+    fireUserInput(); // 滚动中：warm 命中直绘、cold 预算内冷算（冻结时钟恒足）
+    setVisibility(true); // 三条全部入队
+    flushFrames(1);
+    let s = getMathPumpStats();
+    expect(s.enqueued).toBe(3);
+    expect(s.hitPaints).toBe(1); // warm：命中直绘
+    expect(s.coldRenders).toBe(1); // cold：预算内冷算
+    expect(s.rendered).toBe(2);
+    expect(s.scrollFrames).toBe(1);
+    expect(s.liveQueued).toBe(1); // behind 仍在队
+    expect(s.queueDepth).toBe(1);
+    expect(s.dropped).toBe(0);
+    expect(s.deferred).toBe(0); // band 组为空：band 剩余 0
+    // 静止后 behind 补渲染 → 队列清空
+    advance(450);
+    flushFrames(1);
+    s = getMathPumpStats();
+    expect(s.quietFrames).toBe(1);
+    expect(s.rendered).toBe(3);
+    expect(s.queueDepth).toBe(0);
+    expect(s.liveQueued).toBe(0);
+    for (const v of [warm, cold, behind]) v.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+
+  it("销毁条目在静止帧被静默丢弃并计 dropped；render 异常计 renderFailed", async () => {
+    const { getMathPumpStats } = await import("./lazyInlineMath");
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    const gone = makeView("stat_gone");
+    stubRect(gone.dom, { top: 100, bottom: 120, height: 20 });
+    setVisibility(true); // 入队
+    gone.destroy(); // 元素摘除：队列条目变残留
+    advance(450);
+    flushFrames(1);
+    let s = getMathPumpStats();
+    expect(s.dropped).toBe(1);
+    expect(s.rendered).toBe(0);
+    // render 失败：拦截 katex.renderToString 抛异常（瞬时异常模拟）
+    const katexMod = (await import("katex")).default ?? (await import("katex"));
+    const spy = vi.spyOn(katexMod as { renderToString: unknown }, "renderToString").mockImplementation(() => {
+      throw new Error("transient");
+    });
+    const victim = makeView("stat_fail");
+    stubRect(victim.dom, { top: 100, bottom: 120, height: 20 });
+    setVisibility(true);
+    flushFrames(1); // 从未滚动 → 静止帧全量补绘 → render 抛 → 回占位
+    spy.mockRestore();
+    s = getMathPumpStats();
+    expect(s.renderFailed).toBe(1);
+    expect(s.rendered).toBe(0);
+    expect(victim.dom.textContent).toBe("stat_fail"); // 失败回源码占位
+    victim.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+
+  it("attachMathPumpStatsGlobal 挂载 window.__mathPumpStats 只读出口", async () => {
+    const { attachMathPumpStatsGlobal, getMathPumpStats } = await import("./lazyInlineMath");
+    attachMathPumpStatsGlobal();
+    const w = window as unknown as Record<string, unknown>;
+    expect(typeof w.__mathPumpStats).toBe("function");
+    expect((w.__mathPumpStats as () => unknown)()).toEqual(getMathPumpStats());
+  });
+});
+
 describe("R5 Fix-B：内容寻址渲染态高度（跨重建存活的占位 minHeight）", () => {
   it("noteInlineHeight/inlineHeightFor 基本读写与非法值防御", async () => {
     const { noteInlineHeight, inlineHeightFor, clearInlineHeights } = await import("./lazyInlineMath");

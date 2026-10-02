@@ -5,6 +5,7 @@ import { dismissSplash } from "./lib/splash";
 import { attachActivityTracking } from "./lib/activity";
 import { attachAnnoDebugGlobal } from "./lib/annoDebug";
 import { attachScrollDebugGlobal } from "./lib/scrollDebug";
+import { attachMathPumpStatsGlobal } from "./lib/lazyInlineMath";
 import { attachOpDebugGlobal } from "./lib/opDebug";
 import { attachSysDebugGlobal } from "./lib/sysDebug";
 import { attachDevModeGlobal } from "./lib/devMode";
@@ -63,6 +64,11 @@ attachAnnoDebugGlobal();
 // 写入/ghost）、视口位移哨兵、文档高度突变、长任务——「页面自己动 /
 // 滚动卡顿」排查时在 DevTools 里直接调用。
 attachScrollDebugGlobal();
+
+// 行内公式渲染泵统计出口（window.__mathPumpStats，R6）：队列深度/最老
+// 条目等待时长/命中直绘与冷算计数——「公式不渲染/补绘拖尾」排查时直接
+// 调用（只读观测，不改变泵调度行为）。
+attachMathPumpStatsGlobal();
 
 // 编辑命令遥测出口（window.__opDebug）：被 facade 吞掉的编辑命令异常
 // （v3.9.5 blockCommands 自递归正是这样隐形了数周）——stats/report 直读。

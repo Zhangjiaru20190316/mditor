@@ -143,6 +143,9 @@ type PendingRender = {
    *  isConnected 廉价丢弃已销毁的残留条目（disconnected 元素 rect 全 0，
    *  向上滚动时会被误分类进带内长期占位）。 */
   el: HTMLElement;
+  /** 入队时刻（performance.now）：泵统计（__mathPumpStats）观测最老条目
+   *  等待时长用——只读观测，不参与任何调度决策。 */
+  enqueuedAt: number;
   /** IO 余量带内（800px）可见性（活读——条目在队期间元素可能滚出带再滚
    *  回）：带外条目几何上不可能进真实视口或方向带，免探测直接归「其余」，
    *  探测窗口与滚动历史解耦。 */
@@ -163,13 +166,82 @@ let scrollDir: 0 | 1 | -1 = 0;
 /** 上一次 touchmove 的 Y：touch 无 deltaY，用相邻两次位移符号推方向。 */
 let lastTouchY: number | null = null;
 
-/** 仅供测试：重置渲染泵共享态（队列/输入时间戳/帧调度位/滚动方向）。 */
+// ---- 泵统计（R6 观测补点：只计数不改变任何调度行为；探针经 ---------------
+// ---- window.__mathPumpStats() 轮询，用于 M2 队列饥饿与 T 组归因取证） -----
+const pumpStats = {
+  /** 累计入队次数（enqueueRender）。 */
+  enqueued: 0,
+  /** 累计 run() 执行且真正落绘（含命中直绘与冷算）。 */
+  rendered: 0,
+  /** 累计 render() 抛异常回退占位（M-c 候选的观测点）。 */
+  renderFailed: 0,
+  /** 累计 run() 时元素已销毁被静默丢弃。 */
+  dropped: 0,
+  /** 累计预算耗尽/软上限打满回插队首次数（M-b 饥饿观测）。 */
+  deferred: 0,
+  /** 累计缓存命中直绘条数（绕时钟预算路径）。 */
+  hitPaints: 0,
+  /** 累计冷算渲染条数（KaTeX renderToString 未命中）。 */
+  coldRenders: 0,
+  /** 滚动中帧数（pumpScrollFrame 执行次数）。 */
+  scrollFrames: 0,
+  /** 静止补绘帧数（全量补渲染路径执行次数）。 */
+  quietFrames: 0,
+  /** 观测史内最老活条目等待时长的峰值（ms，会话累计）。 */
+  oldestWaitPeakMs: 0,
+};
+
+/** 泵统计快照（按需 O(队列长度)；探针轮询用，泵帧内不调用）。 */
+export function getMathPumpStats(): {
+  enqueued: number;
+  rendered: number;
+  renderFailed: number;
+  dropped: number;
+  deferred: number;
+  hitPaints: number;
+  coldRenders: number;
+  scrollFrames: number;
+  quietFrames: number;
+  queueDepth: number;
+  liveQueued: number;
+  oldestWaitMs: number;
+  oldestWaitPeakMs: number;
+} {
+  const now = performance.now();
+  let live = 0;
+  let oldest = -1;
+  for (const e of pendingRenders) {
+    if (!e.el.isConnected) continue;
+    live++;
+    const wait = now - e.enqueuedAt;
+    if (wait > oldest) oldest = wait;
+    if (wait > pumpStats.oldestWaitPeakMs) pumpStats.oldestWaitPeakMs = wait;
+  }
+  return {
+    ...pumpStats,
+    queueDepth: pendingRenders.length,
+    liveQueued: live,
+    oldestWaitMs: oldest >= 0 ? Math.round(oldest) : 0,
+  };
+}
+
+/** 控制台出口：window.__mathPumpStats（main.tsx 调用挂载；只读观测）。 */
+export function attachMathPumpStatsGlobal(): void {
+  try {
+    (window as unknown as Record<string, unknown>).__mathPumpStats = getMathPumpStats;
+  } catch {
+    /* never throw */
+  }
+}
+
+/** 仅供测试：重置渲染泵共享态（队列/输入时间戳/帧调度位/滚动方向/统计）。 */
 export function __resetRenderPumpForTest(): void {
   pendingRenders.length = 0;
   pumpScheduled = false;
   lastUserInputAt = -Infinity;
   scrollDir = 0;
   lastTouchY = null;
+  for (const k of Object.keys(pumpStats) as (keyof typeof pumpStats)[]) pumpStats[k] = 0;
 }
 
 /** 用户输入源（wheel/touch/键）标记静止窗口。不监听 scroll 事件：程序化
@@ -256,6 +328,7 @@ function classifyEntry(el: HTMLElement): 0 | 1 | 2 {
  *  在探测前廉价丢弃。读阶段（rect 探测）与写阶段（innerHTML）分离，避免
  *  逐条读写交替触发布局抖动。 */
 function pumpScrollFrame(): void {
+  pumpStats.scrollFrames++;
   const viewport: PendingRender[] = [];
   const band: PendingRender[] = [];
   const rest: PendingRender[] = [];
@@ -282,6 +355,7 @@ function pumpScrollFrame(): void {
   for (const entry of viewport) {
     if (entry.isCached()) {
       if (hitPaints >= SCROLL_HIT_PAINT_CAP) {
+        pumpStats.deferred++;
         deferred.push(entry); // 命中但超软上限：回插队首，下一滚动帧再绘
         continue;
       }
@@ -290,7 +364,10 @@ function pumpScrollFrame(): void {
       continue;
     }
     if (performance.now() - t0 < SCROLL_RENDER_BUDGET_MS) entry.run();
-    else deferred.push(entry); // 预算耗尽：回插队首（最紧迫），下一滚动帧再试
+    else {
+      pumpStats.deferred++;
+      deferred.push(entry); // 预算耗尽：回插队首（最紧迫），下一滚动帧再试
+    }
   }
   // 方向前方带：视口内处理完后时钟仍有富余才动（同一 t0 时钟——富余是
   // band 专属补充预算，视口内 5ms 语义不变）。仅向下滚动：band 在视口下
@@ -317,6 +394,7 @@ function pumpScrollFrame(): void {
       else break; // 剩余预算耗尽
     }
   }
+  pumpStats.deferred += band.length - bandIdx;
   // 出队优先级：视口内未绘完 > 方向前方带剩余 > 其余（各组内保持原序稳定）。
   const next: PendingRender[] = [];
   for (const e of deferred) next.push(e);
@@ -334,6 +412,7 @@ function schedulePump(): void {
     if (!pendingRenders.length) return;
     if (scrollQuiet(performance.now())) {
       // 静止：全量补渲染（原 R1b 行为，帧预算 10ms）。
+      pumpStats.quietFrames++;
       const t0 = performance.now();
       while (pendingRenders.length && performance.now() - t0 < PUMP_FRAME_BUDGET_MS) {
         pendingRenders.shift()!.run();
@@ -433,15 +512,20 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
     }
     const cached = peekCached(current, false);
     if (cached !== undefined) {
+      pumpStats.hitPaints++;
+      pumpStats.rendered++;
       applyRenderedHtml(cached);
       return;
     }
     try {
       applyRenderedHtml(renderToStringCached(current, false));
+      pumpStats.coldRenders++;
+      pumpStats.rendered++;
     } catch {
+      pumpStats.renderFailed++;
       /* 渲染失败退回源码占位（与 toDOM throwOnError 同语义）。ready 类
-       *  的维护全部在 applyRenderedHtml/paintPlaceholder 内——此处不得
-       *  再无条件补加，否则失败占位会带 ready 样式。 */
+       * 的维护全部在 applyRenderedHtml/paintPlaceholder 内——此处不得
+       * 再无条件补加，否则失败占位会带 ready 样式。 */
       paintPlaceholder();
       rendered = false;
     }
@@ -462,13 +546,18 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
     if (visible) {
       if (rendered || queued) return;
       queued = true;
+      pumpStats.enqueued++;
       enqueueRender({
         el: dom,
+        enqueuedAt: performance.now(),
         ioVisible: () => ioVisible,
         isCached: () => peekCached(current, false) !== undefined,
         run: () => {
           queued = false;
-          if (!dom.isConnected) return; // 已销毁：静默丢弃
+          if (!dom.isConnected) {
+            pumpStats.dropped++;
+            return; // 已销毁：静默丢弃
+          }
           render();
         },
       });
