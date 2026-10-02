@@ -18,6 +18,7 @@ import {
   prewarmOrder,
   prewarmShouldYield,
   unlearnedOrder,
+  prewarmAnchorComp,
 } from "./cvMemory";
 
 afterEach(() => cvClearStore());
@@ -323,5 +324,35 @@ describe("R5 Fix-D：视口学习字体门控", () => {
     const { setCvFontsReadyForTest } = await import("./cvMemory");
     expect(() => setCvFontsReadyForTest(true)).not.toThrow();
     expect(() => setCvFontsReadyForTest(false)).not.toThrow();
+  });
+});
+
+describe("R7 Fix-B v2：预热批哨兵差值补偿量（prewarmAnchorComp）", () => {
+  it("上方内容位移多少补多少（正负双向），与位移源无关（断批/混合批天然覆盖）", () => {
+    expect(prewarmAnchorComp(1000, 1122.4, 8000)).toBeCloseTo(122.4, 5);
+    expect(prewarmAnchorComp(1000, 877.6, 8000)).toBeCloseTo(-122.4, 5);
+    expect(prewarmAnchorComp(1000, 1000, 8000)).toBe(0);
+  });
+
+  it("真实大批位移（数百 px）全量补——半屏级阈值会拒补（r7fixb 臂实测 +580px）", () => {
+    expect(prewarmAnchorComp(1000, 1580, 8000)).toBeCloseTo(580, 5);
+  });
+
+  it("亚像素死区（<1px）不补——避免逐批噪声写入", () => {
+    expect(prewarmAnchorComp(1000, 1000.9, 8000)).toBe(0);
+    expect(prewarmAnchorComp(1000, 999.1, 8000)).toBe(0);
+    expect(prewarmAnchorComp(1000, 1001, 8000)).toBe(1);
+  });
+
+  it("哨兵瞬移防护（≥3000px，scrollDebug pickSentinel 同量级）：不补，残差交 anchor-comp 兜底", () => {
+    expect(prewarmAnchorComp(1000, 4000, 8000)).toBe(0);
+    expect(prewarmAnchorComp(4000, 1000, 8000)).toBe(0);
+    expect(prewarmAnchorComp(1000, 3999, 8000)).toBe(2999); // 界内仍全补
+  });
+
+  it("限幅 ±max（防护 3000px 优先于限幅；max < 防护阈值时可观测）", () => {
+    expect(prewarmAnchorComp(1000, 1300, 250)).toBe(250);
+    expect(prewarmAnchorComp(1300, 1000, 250)).toBe(-250);
+    expect(prewarmAnchorComp(1000, 1100, 8000)).toBe(100); // max ≥ 防护时位移全补
   });
 });

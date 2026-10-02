@@ -670,11 +670,6 @@ function findViewportBand(
 /** 预热代际令牌：新一次预热（新文档/新实例）取代旧循环，旧循环静默退出。 */
 let prewarmGen = 0;
 
-const nextFrame = () =>
-  new Promise<void>((r) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => r()))
-  );
-
 /** 批间让出：空闲优先（不与输入/渲染抢主线程），200ms 超时兜底保推进。 */
 const scheduleIdle = (fn: () => void): void => {
   try {
@@ -696,6 +691,26 @@ const scheduleIdle = (fn: () => void): void => {
 // 写入不触发，prewarm-comp 不会自锁）。
 /** 用户滚动静止窗口（ms）：窗口内有 wheel/touch/键 → 预热批次让出。 */
 const PREWARM_USER_YIELD_MS = 500;
+
+/** R7 Fix-B v2：预热批哨兵差值补偿量计算（纯函数供单测）。视口顶块
+ *  docTop 前后差值即本批给视口上方内容带来的净位移（任何来源——批内变现、
+ *  量测断批块、装饰重建——只要推移了视口上方内容都反映在哨兵 docTop 上）。
+ *  返回应补写的 scrollTop 增量；0 表示不补（亚像素死区 / 哨兵瞬移防护 /
+ *  超限幅截断后恰为零）。瞬移防护取 3000px（scrollDebug pickSentinel 失效
+ *  判定同款量级）：真实批位移可达数百 px（r7fixb 臂实测 +580px），半屏级
+ *  阈值会拒补真实位移，只防「哨兵换块/瞬移」级异常。 */
+const PREWARM_SENTINEL_GUARD_PX = 3000;
+
+export function prewarmAnchorComp(
+  anchor0: number,
+  anchor1: number,
+  max: number
+): number {
+  const d = anchor1 - anchor0;
+  if (Math.abs(d) < 1) return 0;
+  if (Math.abs(d) >= PREWARM_SENTINEL_GUARD_PX) return 0;
+  return Math.max(-max, Math.min(max, d));
+}
 
 let lastUserScrollAt = 0;
 let userScrollHooked = false;
@@ -852,9 +867,59 @@ async function runPrewarm(
       }
       if (k >= order.length) {
         const ms = Math.round(performance.now() - t0);
+        // R7 Fix-B v3.1：完成分支同样走哨兵差值补偿——prewarm-end 的装饰
+        // 清场（全部 visible 装饰撤除）会让未学全的块回 cv:auto 占位，高度
+        // 回缩位移若无补偿即残余位移帧（r7fixb31 臂 3-9 帧、恒 8px 级、集中
+        // 于观察窗尾的指纹）。
+        let endAnchor0: number | null = null;
+        let endAnchorEl: Element | null = null;
+        try {
+          const host = dom.closest<HTMLElement>(".mditor-editor-host");
+          if (host && host.dataset.smoothJump === undefined) {
+            const hostTop = host.getBoundingClientRect().top;
+            const st0 = host.scrollTop;
+            for (const el of dom.children) {
+              const r = (el as HTMLElement).getBoundingClientRect();
+              if (r.height > 0 && r.bottom > hostTop + 1) {
+                endAnchor0 = r.top + st0;
+                endAnchorEl = el;
+                break;
+              }
+            }
+          }
+        } catch {
+          /* 量测失败 → 残差由 anchor-comp 兜底 */
+        }
         view.dispatch(
           view.state.tr.setMeta(cvIntrinsicKey, { type: "prewarm-end" })
         );
+        if (endAnchor0 != null) {
+          try {
+            const host = dom.closest<HTMLElement>(".mditor-editor-host");
+            if (host) {
+              const st1 = host.scrollTop;
+              let endAnchor1: number | null = null;
+              if (endAnchorEl && endAnchorEl.isConnected) {
+                const r = endAnchorEl.getBoundingClientRect();
+                if (r.height > 0) endAnchor1 = r.top + st1;
+              }
+              if (endAnchor1 != null) {
+                const comp = prewarmAnchorComp(
+                  endAnchor0,
+                  endAnchor1,
+                  PREWARM_COMP_MAX
+                );
+                if (comp !== 0) {
+                  noteScrollWrite("prewarm-comp");
+                  host.scrollTop += comp;
+                  scrollCount("prewarm.comp");
+                }
+              }
+            }
+          } catch {
+            /* 补偿失败由 anchor-comp 兜底 */
+          }
+        }
         scrollEmit(
           "prewarm.done",
           `预热完成：新学 ${learned} 块 / 覆盖 ${order.length}/${total}，${batches} 批，${ms}ms`,
@@ -867,33 +932,51 @@ async function runPrewarm(
       const segEnd =
         fromK < seg1 ? seg1 : fromK < seg1 + seg2 ? seg1 + seg2 : order.length;
       const toK = Math.min(segEnd, fromK + chunk);
-      const upPhase = fromK >= seg1 + seg2;
       const iLo = Math.min(order[fromK], order[toK - 1]);
       const iHi = Math.max(order[fromK], order[toK - 1]);
       const from = posOf[iLo];
       const to = posOf[iHi] + doc0.child(iHi).nodeSize;
 
-      // up 阶段：dispatch 前记录批内各块的当前渲染高度（布局缓存读取），
-      // 量测后的差值之和即本批给视口内容带来的位移量。
-      let oldH: number[] | null = null;
-      if (upPhase) {
-        oldH = new Array(toK - fromK).fill(-1);
-        for (let j = fromK; j < toK; j++) {
-          try {
-            const el = view.nodeDOM(posOf[order[j]]) as HTMLElement | null;
-            if (el && el.nodeType === 1) {
-              oldH[j - fromK] = el.getBoundingClientRect().height;
+      // R7 Fix-B v2（哨兵差值法）：dispatch 前记录视口顶块的文档坐标 top，
+      // rAF 量测后差值 = 本批给视口上方内容带来的净位移（任何来源——批内
+      // 变现、断批块、装饰重建——只要推移了视口上方内容都会反映在哨兵
+      // docTop 上），同帧补写 scrollTop。取代逐块 oldH 差值：v1 的逐块法
+      // 有两个结构缺陷——①启动时 band 分段在用户滚动后语义漂移（1MB 深
+      // 滚后「带下」批实际全在视口上方却无补偿，r7-phase2-drift-down-fast
+      // -1mb：12 格 +424~+1301px、prewarm.comp=0）；②量测循环 8ms 预算断批
+      // 时，已 dispatch 变现的断批块位移永远无人补偿（r7fixb 臂 6 个无写入
+      // 位移帧的来源）。哨兵法一次 rect 对（前后各一次）覆盖全部块，下方/
+      // 带内变现天然不触发（不改变上方哨兵 docTop）。
+      let anchor0: number | null = null;
+      let anchorEl: Element | null = null;
+      try {
+        const host = dom.closest<HTMLElement>(".mditor-editor-host");
+        if (host) {
+          const hostTop = host.getBoundingClientRect().top;
+          const st = host.scrollTop;
+          for (const el of dom.children) {
+            const r = (el as HTMLElement).getBoundingClientRect();
+            if (r.height > 0 && r.bottom > hostTop + 1) {
+              anchor0 = r.top + st;
+              anchorEl = el;
+              break;
             }
-          } catch {
-            /* 单块旧高读取失败 → 差值缺失，残差由 anchor-comp 兜底 */
           }
         }
+      } catch {
+        /* 哨兵读取失败 → 本批无补偿，残差由 anchor-comp 兜底 */
       }
 
       view.dispatch(
         view.state.tr.setMeta(cvIntrinsicKey, { type: "prewarm", from, to })
       );
-      void nextFrame().then(() => {
+      // R7 Fix-B v3（同步化）：dispatch 后同任务内强制同步布局（读 rect）
+      // 量高度与哨兵差值，立即补写 scrollTop——浏览器只 paint 最终态
+      //（变现+补偿一起提交），零帧可见窗口。v2 的单 rAF 仍不够：rAF 回调
+      // 按注册序执行，探针/其他帧循环先注册先跑，会在补偿前采样到位移
+      //（r7fixb2 臂：位移帧与补偿帧错开 1-3 帧）；同步化彻底消除该竞态。
+      // 布局代价不变（rAF 量测同样强制布局），只是从下一帧挪回本 idle 槽。
+      {
         try {
           if (gen !== prewarmGen) return;
           if (!view.dom.isConnected || view.state.doc !== doc0) {
@@ -902,7 +985,6 @@ async function runPrewarm(
           }
           const tM0 = performance.now();
           let lastDone = fromK - 1;
-          let shiftPx = 0;
           for (let j = fromK; j < toK; j++) {
             lastDone = j; // 不可量测的块（widget/空宽）也算处理过，防游标卡死
             const el = view.nodeDOM(posOf[order[j]]) as HTMLElement | null;
@@ -911,9 +993,6 @@ async function runPrewarm(
             if (r.width === 0) continue;
             const node = doc0.child(order[j]);
             if (noteCvSize(hashNode(node), r.width, el.offsetHeight)) learned++;
-            if (oldH != null && oldH[j - fromK] >= 0) {
-              shiftPx += r.height - oldH[j - fromK];
-            }
             if (
               performance.now() - tM0 > PREWARM_MEASURE_BUDGET_MS &&
               j + 1 < toK
@@ -943,20 +1022,45 @@ async function runPrewarm(
               }
             );
           }
-          // up 阶段预补偿：视口上方块变现把下方内容整体推移 shiftPx，在下一
-          // 帧观察到「位移」之前同步补写 scrollTop，视口画面静止。恢复梯子
-          // （smoothJump）在位期间跳过——由梯子自己的锚块精落地收口。
-          if (oldH != null && Math.abs(shiftPx) >= 1) {
+          // R7 Fix-B v2 哨兵差值补偿：重读视口顶块 docTop，与 anchor0 的差
+          // 即本批上方内容净位移（含断批块与任何装饰引起的上方变化），同帧
+          // 补写 scrollTop，视口画面静止。恢复梯子（smoothJump）在位期间跳过
+          // ——由梯子自己的锚块精落地收口。位移超过半屏视为哨兵失效（块重建
+          // /瞬移），不补——残差由 anchor-comp 两帧确认兜底，防哨兵异常误补偿。
+          if (anchor0 != null) {
             try {
               const host = dom.closest<HTMLElement>(".mditor-editor-host");
               if (host && host.dataset.smoothJump === undefined) {
-                const comp = Math.max(
-                  -PREWARM_COMP_MAX,
-                  Math.min(PREWARM_COMP_MAX, shiftPx)
-                );
-                noteScrollWrite("prewarm-comp");
-                host.scrollTop += comp;
-                scrollCount("prewarm.comp");
+                const st = host.scrollTop;
+                // 同块复测（v3.1）：anchor1 必须量 anchor0 的同一块——重找
+                // 「视口顶块」会在上方块变化后换块，差值掺入块间距离误量。
+                let anchor1: number | null = null;
+                if (anchorEl && anchorEl.isConnected) {
+                  const r = anchorEl.getBoundingClientRect();
+                  if (r.height > 0) anchor1 = r.top + st;
+                }
+                if (anchor1 == null) {
+                  const hostTop = host.getBoundingClientRect().top;
+                  for (const el of dom.children) {
+                    const r = (el as HTMLElement).getBoundingClientRect();
+                    if (r.height > 0 && r.bottom > hostTop + 1) {
+                      anchor1 = r.top + st;
+                      break;
+                    }
+                  }
+                }
+                if (anchor1 != null) {
+                    const comp = prewarmAnchorComp(
+                      anchor0,
+                      anchor1,
+                      PREWARM_COMP_MAX
+                    );
+                    if (comp !== 0) {
+                      noteScrollWrite("prewarm-comp");
+                      host.scrollTop += comp;
+                      scrollCount("prewarm.comp");
+                    }
+                  }
               }
             } catch {
               /* 补偿失败由 anchor-comp 兜底 */
@@ -966,7 +1070,7 @@ async function runPrewarm(
         } catch {
           scheduleIdle(step);
         }
-      });
+      }
     } catch {
       /* 单步失败：预热是尽力而为，视口学习兜底 */
     }
