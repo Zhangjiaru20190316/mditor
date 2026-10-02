@@ -96,10 +96,18 @@ function findDoc(workspaces, sub) {
 const sanitize = (s) => String(s).replace(/[\\/:*?"<>|\s]+/g, "_").slice(0, 60);
 
 // 页内记录器：占位逐条跟踪 + scrollTop 轨迹 + 帧间隔（rAF）
+// R6 扩展（T2 滚动中采样窗，纯观测）：wheel 捕获打点 lastWheelAt，占位事件按
+// 发生时刻距最近 wheel 分窗（<=450ms = 滚动中，对齐泵静止门 400ms 略宽）——
+// f1 拆 scrollPhase/quietPhase，t2 = 滚动中视口内未 ready 峰值与源码态可见
+// 时长占比。
 const REC_INSTALL = `(() => {
   if (window.__sfb) return 'already';
-  const st = { seq: 0, seen: new Map(), phEvents: [], tops: [], gaps: [], running: true, _last: 0, _raf: 0, live: 0, peak: 0 };
+  const st = { seq: 0, seen: new Map(), phEvents: [], tops: [], gaps: [], running: true, _last: 0, _raf: 0, live: 0, peak: 0,
+    scrollLive: 0, scrollPeak: 0, scrollVisibleMs: 0, totalVisibleMs: 0, _scrollAccum: null, _totalAccum: null };
   window.__sfb = st;
+  let lastWheelAt = -1e9;
+  window.addEventListener('wheel', () => { lastWheelAt = performance.now(); }, { capture: true, passive: true });
+  const SCROLL_PHASE_MS = 450;
   const tick = (t) => {
     if (!st.running) return;
     if (st._last) st.gaps.push(Math.round(t - st._last));
@@ -107,9 +115,11 @@ const REC_INSTALL = `(() => {
     try {
       const host = document.querySelector('.mditor-editor-host');
       if (host) {
+        const inScroll = t - lastWheelAt <= SCROLL_PHASE_MS;
         st.tops.push({ t: Math.round(t), top: Math.round(host.scrollTop) });
         if (st.tops.length > 60000) st.tops.splice(0, 20000);
         const vh = host.clientHeight;
+        st.scrollLive = 0;
         for (const el of document.querySelectorAll('.mditor-math-inline-lazy')) {
           const r = el.getBoundingClientRect();
           const vis = r.bottom > 0 && r.top < vh;
@@ -117,21 +127,33 @@ const REC_INSTALL = `(() => {
           const id = el.__sfbid ?? (el.__sfbid = 'f' + ++st.seq);
           const rec = st.seen.get(id);
           if (vis && !ready) {
-            if (!rec) { st.seen.set(id, { id, first: t }); st.live++; if (st.live > st.peak) st.peak = st.live; }
+            if (inScroll) st.scrollLive++;
+            if (!rec) { st.seen.set(id, { id, first: t, firstWd: Math.round(t - lastWheelAt) }); st.live++; if (st.live > st.peak) st.peak = st.live; }
             else rec.lastUnready = t;
           } else if (rec && rec.end == null) {
             rec.end = t; rec.dur = Math.round(t - rec.first); rec.endReason = ready ? 'ready' : 'left';
             st.live--;
-            if (rec.dur >= 30) st.phEvents.push({ ...rec });
+            if (rec.dur >= 30) st.phEvents.push({ id: rec.id, dur: rec.dur, endReason: rec.endReason,
+              ph: rec.firstWd <= SCROLL_PHASE_MS ? 'scroll' : 'quiet' });
           }
         }
+        if (st.scrollLive > st.scrollPeak) st.scrollPeak = st.scrollLive;
+        // 源码态可见时长占比：滚动中/全程累计（按帧间隔归属，滚动窗内帧计入分子）
+        if (st._totalAccum != null) {
+          const dt = t - st._totalAccum;
+          if (st.live > 0 || st.scrollLive > 0) st.totalVisibleMs += dt;
+          if (st._scrollAccum != null && st.scrollLive > 0) st.scrollVisibleMs += dt;
+        }
+        st._totalAccum = t;
+        st._scrollAccum = inScroll ? t : null;
       }
     } catch {}
     st._raf = requestAnimationFrame(tick);
   };
   st._raf = requestAnimationFrame(tick);
   st.stop = () => { st.running = false; cancelAnimationFrame(st._raf);
-    for (const rec of st.seen.values()) if (rec.end == null) st.phEvents.push({ ...rec, dur: Math.round(performance.now() - rec.first), endReason: 'open' });
+    for (const rec of st.seen.values()) if (rec.end == null) st.phEvents.push({ id: rec.id, dur: Math.round(performance.now() - rec.first), endReason: 'open',
+      ph: rec.firstWd <= SCROLL_PHASE_MS ? 'scroll' : 'quiet' });
     return st; };
   return 'installed';
 })()`;
@@ -269,11 +291,26 @@ async function main() {
     const durs = st.phEvents.filter((e) => e.endReason !== "open").map((e) => e.dur).sort((a, b) => a - b);
     const tops = st.tops;
     // 上滚顶偏：wheel 向上时 scrollTop 反向大幅上移（>150px/步之外的非预期）
+    const phaseDurs = (ph) =>
+      st.phEvents.filter((e) => e.endReason !== "open" && e.ph === ph).map((e) => e.dur).sort((a, b) => a - b);
+    const scrollDurs = phaseDurs("scroll");
+    const quietDurs = phaseDurs("quiet");
     row.f1 = {
       events: st.phEvents.length,
       peakConcurrent: st.peak ?? 0,
       durP50: quantile(durs, 0.5), durP95: quantile(durs, 0.95), durMax: durs.length ? durs[durs.length - 1] : 0,
       stillOpen: st.phEvents.filter((e) => e.endReason === "open").length,
+      scrollPhase: { events: scrollDurs.length, p50: quantile(scrollDurs, 0.5), p95: quantile(scrollDurs, 0.95),
+        max: scrollDurs.length ? scrollDurs[scrollDurs.length - 1] : 0 },
+      quietPhase: { events: quietDurs.length, p50: quantile(quietDurs, 0.5), p95: quantile(quietDurs, 0.95),
+        max: quietDurs.length ? quietDurs[quietDurs.length - 1] : 0 },
+    };
+    // T2：滚动中视口内源码占位（峰值与可见时长占比；450ms wheel 分窗口径）
+    row.t2 = {
+      scrollPeakVisible: st.scrollPeak ?? 0,
+      scrollVisibleMs: Math.round(st.scrollVisibleMs ?? 0),
+      totalVisibleMs: Math.round(st.totalVisibleMs ?? 0),
+      scrollRatio: st.totalVisibleMs > 0 ? Math.round((st.scrollVisibleMs / st.totalVisibleMs) * 1000) / 1000 : 0,
     };
     const gaps = st.gaps.filter((g) => g > 0 && g < 5000).sort((a, b) => a - b);
     row.f4 = { frames: gaps.length, p50: quantile(gaps, 0.5), p95: quantile(gaps, 0.95),
