@@ -1,0 +1,49 @@
+{
+  "ts": "2026-10-03T00:20:00+08:00",
+  "head": "9e0e4e9",
+  "headMatchesPrompt": true,
+  "workingTreeNotes": "未跟踪杂物与任务书声明一致（mditor/nul、nul、r6-prod-smoke.png、本任务书）",
+  "npmTestBaseline": { "tests": 978, "files": 89, "result": "all green", "durationSec": 38.9 },
+  "fixtures": {
+    "无穷级数_密度档压测副本.md": 156021,
+    "解题技巧_密度档切换副本.md": 60065,
+    "一元微分学习题集_1MB压测副本.md": 1574112,
+    "无穷级数_唯一公式超限副本.md": 714088
+  },
+  "symptomSourceVersion": {
+    "conclusion": "打包版 v5.0.0-beta（不含 R6 Fix-A/B/C）——10-01 晚至 10-03 00:08 生产会话全部 heartbeat 为 5.0.0-beta；症状 D 的 20 条 layout:shift 证据全部落在 10-02（beta 会话）",
+    "priorSessions": "10-01 白天会话 ver=4.20.0（更旧实例，scroll 观察事件 layout:height×371 / layout:block×264 / font:loaded×16 均来自该会话）",
+    "implication": "R6 Fix-A（demote 顺延链根治）可能已部分收敛漂移，dev/main 复测（阶段二）必须先行钉死残余形态；两版本形态对照见阶段二产物"
+  },
+  "prodLogAnalysis": {
+    "window": "dev-events.log 现卷（10-01 13:00 ~ 10-03 00:08）",
+    "md1001": 0,
+    "md1002": 0,
+    "md1011": 0,
+    "layoutShiftTotal": 20,
+    "layoutShiftAllOn": "2026-10-02",
+    "layoutShiftDeltaHistogram": { "5px": 8, "26px": 4, "7px": 1, "16px": 1, "29px": 1, "31px": 1, "32px": 1, "53px": 1, "61px": 1, "-11px": 1 },
+    "layoutShiftCompensated": 15,
+    "compensationWriters": "anchor-comp（compensated 字段 = 视口内容位移后被 anchor-comp 补回的量）",
+    "formFactor": "阶梯式小步（连续两条 delta:5 间隔 147ms，scrollTop 26339→26343 被程序化推走；深滚位置 scrollTop≈26k/文档高≈131k；非 userInitiated 条目为静止期自漂移实锤）",
+    "whyNoMdCodes": "anchor-comp 补偿带 noteScrollWrite 打标（write:anchor-comp）→ stepSession 归因为 write 而非 ghost → 不触发 MD-1001；单步位移 <24px → 不触发 MD-1002。日志干净但用户可见——症状 D 对现有异常检测器不可见",
+    "rawFile": "perf/results/r7-phase1-prod-layout-shift-raw.jsonl"
+  },
+  "devLogAnalysis": {
+    "window": "com.mditor.app.dev/logs/dev-anomalies.log（至 09-21）",
+    "md1001": 44,
+    "md1003": 7,
+    "formFactor": "4.16.0 时代巨型跳变（delta ±45729/±17842px，lastWrite=file-open@12-18s 前）——R5 J-α 族形态，非本轮症状 D 的小步阶梯；不并入本轮靶",
+    "md1002": "当前 dev 卷无（R6 MD-1002×3 在其结题报告引用的更早窗口）"
+  },
+  "docsOnBetaSessions": [
+    { "tab": "第十二届初赛_引导练习.md", "heartbeats": 289 },
+    { "tab": "AI替代教师-范文与讲解.md", "heartbeats": 196 },
+    { "tab": "题型方法决策树.md", "heartbeats": 37 },
+    { "tab": "未命名.md", "heartbeats": 17 }
+  ],
+  "phase1Verdict": {
+    "symptomDConfirmed": "生产形态与 §2.B D-a 假设链吻合：小步视口内容位移（无 scrollTop 变化）→ anchor-comp 已补偿 → scrollTop 被程序化推进；delta 5px 级与『每格 ≈ 一批异步渲染 + 一次补偿写入』定性一致",
+    "next": "阶段二 dev/main 复现（R6 修复后残余形态）——若 dev/main 仍复现则直接定罪取证；若不复现需归因 R6 Fix 覆盖差异并据实报告（打包版差异）"
+  }
+}
