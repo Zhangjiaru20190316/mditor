@@ -193,7 +193,7 @@ async function main() {
       } catch { /* */ }
       await sleep(500);
     }
-    if (!target) { log("CDP 未就绪"); return (closeLog(), 2); }
+    if (!target) { log("CDP 未就绪"); killChildTree(child); return (closeLog(), 2); }
     cdp = await Cdp.connect(target.webSocketDebuggerUrl);
     const m = mouse(cdp);
     try { await cdp.send("Network.enable"); await cdp.send("Network.setCacheDisabled", { cacheDisabled: true }); } catch { /* */ }
