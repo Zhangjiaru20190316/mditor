@@ -640,8 +640,10 @@ describe("R6 泵统计观测（getMathPumpStats/__mathPumpStats：只观测不�
     expect(s.dropped).toBe(1);
     expect(s.rendered).toBe(0);
     // render 失败：拦截 katex.renderToString 抛异常（瞬时异常模拟）
-    const katexMod = (await import("katex")).default ?? (await import("katex"));
-    const spy = vi.spyOn(katexMod as { renderToString: unknown }, "renderToString").mockImplementation(() => {
+    const katexMod = ((await import("katex")).default ?? (await import("katex"))) as unknown as {
+      renderToString: (src: string, opts?: Record<string, unknown>) => string;
+    };
+    const spy = vi.spyOn(katexMod, "renderToString").mockImplementation(() => {
       throw new Error("transient");
     });
     const victim = makeView("stat_fail");
