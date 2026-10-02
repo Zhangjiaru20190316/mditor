@@ -153,6 +153,10 @@ type PendingRender = {
   /** 缓存命中探测（纯查不绘）：命中走 run() 的直绘路径（绕过滚动门与时
    *  钟预算，受单帧条数软上限约束）。 */
   isCached: () => boolean;
+  /** 有渲染态高度预留（元素级 WeakMap 或 R5 Fix-B 会话表）：上滚 band
+   *  直绘的安全前提——占位 minHeight 已撑住渲染态行高，直绘零高度变化
+   *  （R6 Fix-B）。 */
+  hasReservedHeight: () => boolean;
   run: () => void;
 };
 
@@ -370,12 +374,15 @@ function pumpScrollFrame(): void {
     }
   }
   // 方向前方带：视口内处理完后时钟仍有富余才动（同一 t0 时钟——富余是
-  // band 专属补充预算，视口内 5ms 语义不变）。仅向下滚动：band 在视口下
+  // band 专属补充预算，视口内 5ms 语义不变）。向下滚动：band 在视口下
   // 方，首渲高度变化只向下生长、不影响视口内容；向上滚动的 band 在视口
   // 上方，首渲高度变化会上移视口且没有锚定补偿可依赖（滚动容器刻意关闭
-  // overflow-anchor，见头注释 R4-①），维持留队走静止路径。命中走直绘
-  // （hitPaints 与视口内共用软上限计数）；未命中在剩余预算内冷算 KaTeX；
-  // 预算耗尽或软上限打满即止步，band 剩余回插队首（仍先于其余）。
+  // overflow-anchor，见头注释 R4-①），冷算条目维持留队走静止路径。
+  // R6 Fix-B：上滚 band 的「有渲染态高度预留 && 缓存命中」条目直绘——
+  // 占位 minHeight 已撑住渲染态行高，直绘前后块高零变化，不上移视口
+  // 内容（上滚安全约束不破）；消除上滚尖峰积压与拖尾长尾（T-c 定罪，
+  // pump-trace A-up 尖峰 vpUnready=21/q=9）。命中走直绘（hitPaints 与
+  // 视口内共用软上限计数）；无预留或未命中照旧留队走静止补渲染。
   let bandIdx = 0;
   if (
     scrollDir === 1 &&
@@ -393,6 +400,24 @@ function pumpScrollFrame(): void {
       if (performance.now() - t0 < SCROLL_RENDER_BUDGET_MS) entry.run();
       else break; // 剩余预算耗尽
     }
+  } else if (scrollDir === -1 && band.length > 0) {
+    // 上滚：直绘的条目出队，未直绘的保持 band 原序回插（帧尾与其余 band
+    // 剩余同路），后续帧可再次尝试直绘或等静止补渲染。
+    const remaining: PendingRender[] = [];
+    for (const entry of band) {
+      if (
+        hitPaints < SCROLL_HIT_PAINT_CAP &&
+        entry.hasReservedHeight() &&
+        entry.isCached()
+      ) {
+        hitPaints++;
+        entry.run();
+        continue;
+      }
+      remaining.push(entry);
+    }
+    band.length = 0;
+    for (const e of remaining) band.push(e);
   }
   pumpStats.deferred += band.length - bandIdx;
   // 出队优先级：视口内未绘完 > 方向前方带剩余 > 其余（各组内保持原序稳定）。
@@ -565,6 +590,8 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
         enqueuedAt: performance.now(),
         ioVisible: () => ioVisible,
         isCached: () => peekCached(current, false) !== undefined,
+        hasReservedHeight: () =>
+          renderedHeights.has(dom) || inlineHeightFor(current) !== undefined,
         run: () => {
           queued = false;
           if (!dom.isConnected) {

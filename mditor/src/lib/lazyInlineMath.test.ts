@@ -718,6 +718,69 @@ describe("R6 Fix-A：demote 回带竞态（漏渲染 M-d'）", () => {
   });
 });
 
+describe("R6 Fix-B：上滚 band 安全直绘（有高度预留 && 缓存命中）", () => {
+  it("上滚带内：预留+命中直绘；预留+未命中、无预留+命中均留队走静止", async () => {
+    const { noteInlineHeight, clearInlineHeights } = await import("./lazyInlineMath");
+    clearInlineHeights();
+    usePumpTimers(); // 冻结时钟：若误用富余冷算，带内条目当帧即渲染
+    setLazyInlineMathEnabled(true);
+    renderToStringCached("up_hit", false); // 预热
+    noteInlineHeight("up_hit", 20); // 高度预留
+    noteInlineHeight("up_miss", 20); // 预留但缓存未命中
+    renderToStringCached("up_nores", false); // 命中但无预留
+    const hit = makeView("up_hit");
+    stubRect(hit.dom, { top: -300, bottom: -280, height: 20 }); // 上方带内
+    const miss = makeView("up_miss");
+    stubRect(miss.dom, { top: -350, bottom: -330, height: 20 });
+    const nores = makeView("up_nores");
+    stubRect(nores.dom, { top: -400, bottom: -380, height: 20 });
+    fireWheel(-120); // 向上滚：band = 视口上方
+    setVisibility(true); // 三条入队
+    flushFrames(1);
+    expect(hit.dom.querySelector(".katex")).toBeTruthy(); // 预留+命中：直绘（零高度变化）
+    expect(miss.dom.querySelector(".katex")).toBeFalsy(); // 未命中：留队（冷算仍禁）
+    expect(nores.dom.querySelector(".katex")).toBeFalsy(); // 无预留：留队（高度不可控）
+    advance(450);
+    flushFrames(1);
+    expect(miss.dom.querySelector(".katex")).toBeTruthy(); // 静止后补绘
+    expect(nores.dom.querySelector(".katex")).toBeTruthy();
+    for (const v of [hit, miss, nores]) v.destroy();
+    clearInlineHeights();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+
+  it("上滚带内条目直绘受共用软上限约束（打满即止，剩余下一帧）", async () => {
+    const { noteInlineHeight, clearInlineHeights, SCROLL_HIT_PAINT_CAP } = await import("./lazyInlineMath");
+    clearInlineHeights();
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    renderToStringCached("up_cap", false);
+    noteInlineHeight("up_cap", 20);
+    const views: TestView[] = [];
+    // 软上限先被视口内命中打满（SCROLL_HIT_PAINT_CAP 条），带内命中应全部止步
+    for (let i = 0; i < SCROLL_HIT_PAINT_CAP; i++) {
+      const v = makeView("up_cap");
+      stubRect(v.dom, { top: 100, bottom: 120, height: 20 }); // 视口内
+      views.push(v);
+    }
+    const bandView = makeView("up_cap");
+    stubRect(bandView.dom, { top: -300, bottom: -280, height: 20 }); // 上方带内
+    views.push(bandView);
+    fireWheel(-120);
+    setVisibility(true);
+    flushFrames(1);
+    const painted = views.filter((v) => v.dom.querySelector(".katex")).length;
+    expect(painted).toBe(SCROLL_HIT_PAINT_CAP); // 视口内打满，band 止步
+    flushFrames(1); // 下一帧继续（单帧计数重置）
+    expect(views.filter((v) => v.dom.querySelector(".katex")).length).toBe(views.length);
+    for (const v of views) v.destroy();
+    clearInlineHeights();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+});
+
 describe("R5 Fix-B：内容寻址渲染态高度（跨重建存活的占位 minHeight）", () => {
   it("noteInlineHeight/inlineHeightFor 基本读写与非法值防御", async () => {
     const { noteInlineHeight, inlineHeightFor, clearInlineHeights } = await import("./lazyInlineMath");
