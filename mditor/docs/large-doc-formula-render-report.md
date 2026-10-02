@@ -107,4 +107,4 @@
 - `mditor/docs/dev-anomaly-codes.md`：无新增异常码（观测为纯增量）。
 - `mditor/CHANGELOG.md`：Unreleased 节。
 - `memory/2026-10-02.md`：执行日志。
-- 打包冒烟：tauri release 已重建（含本轮修复，bundle 产出 `Mditor_5.0.0-beta_x64-setup.exe`）；**冒烟执行受阻**——用户打包版实例存活（AppData 安装版），release exe 单实例机制将启动转发给旧实例后退出，CDP 9222 无从挂载；不未经确认杀用户进程（本轮已发生一次误伤，见 §5 事故①），记档豁免。风险分析：本轮全部改动为纯 JS 运行时逻辑（nodeview 泵内），CSP nonce/打包路径零接触；行为已由 dev 实例全量门禁覆盖。待用户侧打包版正常重启后可复跑 `perf/tmp-r6/prod-smoke-r6.mjs`（打开+滚动断言口径，非 typeText）。
+- 打包冒烟：tauri release 重建（bundle `Mditor_5.0.0-beta_x64-setup.exe`）后 **PASS**——`perf/tmp-r6/prod-smoke-r6.mjs`（打开+滚动断言，非 typeText）：真实生产密集文档「题型方法决策树」打开（1,451 行内公式 nodeview）→ 滚动 → 视口未 ready 残留=0、KaTeX 正常渲染、`window.__mathPumpStats` 出口存在（R6 前端在包内的直接证据）。执行要点：① CDP 端口避让 9222（任务书惯例——本轮实测 9222 被用户 Edge 占用致首轮失败，改 9224）；② 生产 store 文件树目录默认折叠需先展开 01_专题笔记；③ 密度旁路激活时 `data-big` 属性可能不出现（Editor.tsx 仅 bigDocViewport 处理器置它），臂判定勿依赖该属性。
