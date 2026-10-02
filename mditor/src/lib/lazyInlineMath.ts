@@ -533,6 +533,10 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
 
   const demote = () => {
     if (!rendered) return;
+    // R6 Fix-A 双保险：仍在 IO 余量带内不降级——demote 顺延链可能在元素
+    // 回带后才到期，带内（尤其视口内）降级会让 IO 因状态无变化不再回调、
+    // 无人再入队，形成永久源码占位（漏渲染，M-d'）。
+    if (ioVisible) return;
     rendered = false;
     // 降级前记录渲染态高度：占位撑住原行高，回滚重渲染前不跳行。
     const h = dom.getBoundingClientRect().height;
@@ -544,6 +548,15 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
   callbacks.set(dom, (visible) => {
     ioVisible = visible;
     if (visible) {
+      // R6 Fix-A：回带撤销挂起的降级意图。demote 顺延链（滚动不静止则
+      // 嵌套重排）可在元素回带后才到期，把带内/视口内元素降回占位；而
+      // IO 因可见性状态无变化不再回调、rendered=false 后无人再入队——
+      // 永久源码占位。回带即取消降级（微滚验证定罪：±900px 扰动后残留
+      // 归零，IO 入队路径存活）。
+      if (demoteTimer != null) {
+        window.clearTimeout(demoteTimer);
+        demoteTimer = null;
+      }
       if (rendered || queued) return;
       queued = true;
       pumpStats.enqueued++;

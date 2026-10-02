@@ -667,6 +667,57 @@ describe("R6 泵统计观测（getMathPumpStats/__mathPumpStats：只观测不�
   });
 });
 
+describe("R6 Fix-A：demote 回带竞态（漏渲染 M-d'）", () => {
+  it("回带撤销降级意图——停稳后顺延 timer 到期不吞带内元素（修复前永久占位）", () => {
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    const view = makeView("dm_1");
+    stubRect(view.dom, { top: 100, bottom: 130, height: 30 });
+    setVisibility(true);
+    flushFrames(1);
+    expect(view.dom.querySelector(".katex")).toBeTruthy(); // 已渲染
+    // 滚动中离带：demoteTimer 排程（快速长滚场景顺延链拉长）
+    fireUserInput(); // t=0
+    setVisibility(false);
+    advance(2400);
+    fireUserInput(); // t=2400：第一轮到期（t=2500）前的新滚动
+    advance(100); // t=2500：到期 → 静止窗未满 → 嵌套重排（t=5000 到期）
+    // 回带（快速往返经过）：rendered=true 挡住入队——修复前 demoteTimer 继续挂起
+    setVisibility(true);
+    expect(view.dom.querySelector(".katex")).toBeTruthy();
+    // 停稳后顺延 timer 到期：修复前 demote 把带内元素降回占位且无人再入队
+    advance(2600);
+    expect(view.dom.querySelector(".katex")).toBeTruthy(); // 修复后：回带已撤 timer，保持渲染态
+    expect(view.dom.textContent).toContain("dm_1");
+    view.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+
+  it("离带降级路径不受影响（回带撤销不破坏正常 demote 与高度预留）", () => {
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    const view = makeView("dm_2");
+    stubRect(view.dom, { top: 100, bottom: 130, height: 30 });
+    setVisibility(true);
+    flushFrames(1);
+    expect(view.dom.querySelector(".katex")).toBeTruthy();
+    fireUserInput();
+    setVisibility(false);
+    advance(450); // 静止窗满足
+    advance(2100); // demoteTimer 到期（静止）→ 降级
+    expect(view.dom.querySelector(".katex")).toBeFalsy(); // 正常降级保留
+    expect(view.dom.style.minHeight).toBe("30px"); // 高度预留保留
+    // 回带：入队重渲染（缓存命中直绘）
+    setVisibility(true);
+    flushFrames(1);
+    expect(view.dom.querySelector(".katex")).toBeTruthy();
+    view.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+});
+
 describe("R5 Fix-B：内容寻址渲染态高度（跨重建存活的占位 minHeight）", () => {
   it("noteInlineHeight/inlineHeightFor 基本读写与非法值防御", async () => {
     const { noteInlineHeight, inlineHeightFor, clearInlineHeights } = await import("./lazyInlineMath");
