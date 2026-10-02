@@ -495,7 +495,7 @@ describe("R1 行内公式懒渲染", () => {
     setLazyInlineMathEnabled(false);
   });
 
-  it("占位高度预留：降级前记录渲染态高度，占位以 minHeight 撑住，重渲染清除", () => {
+  it("占位盒预留：降级前记录渲染态盒（R7 Fix-A 锁盒），重渲染清除", () => {
     usePumpTimers();
     setLazyInlineMathEnabled(true);
     const view = makeView("h_1");
@@ -503,16 +503,19 @@ describe("R1 行内公式懒渲染", () => {
     setVisibility(true);
     flushFrames(1);
     expect(view.dom.querySelector(".katex")).toBeTruthy();
-    expect(view.dom.style.minHeight).toBe(""); // 真渲染：清除预留
+    expect(view.dom.style.width).toBe(""); // 真渲染：锁盒清除
     setVisibility(false);
     advance(2600); // DEMOTE_DELAY 到期且静止 → 降级
     expect(view.dom.querySelector(".katex")).toBeFalsy();
     expect(view.dom.textContent).toBe("h_1");
-    expect(view.dom.style.minHeight).toBe("30px"); // 占位撑住渲染态高度
+    expect(view.dom.style.width).toBe("100px"); // 占位锁盒复刻渲染态盒
+    expect(view.dom.style.height).toBe("30px");
+    expect(view.dom.style.overflow).toBe("hidden");
     setVisibility(true);
     flushFrames(1); // 缓存命中：直绘（无重跑 KaTeX 的二次闪烁）
     expect(view.dom.querySelector(".katex")).toBeTruthy();
-    expect(view.dom.style.minHeight).toBe("");
+    expect(view.dom.style.width).toBe("");
+    expect(view.dom.style.height).toBe("");
     view.destroy();
     useRealPumpTimers();
     setLazyInlineMathEnabled(false);
@@ -709,7 +712,11 @@ describe("R6 Fix-A：demote 回带竞态（漏渲染 M-d'）", () => {
     advance(450); // 静止窗满足
     advance(2100); // demoteTimer 到期（静止）→ 降级
     expect(view.dom.querySelector(".katex")).toBeFalsy(); // 正常降级保留
-    expect(view.dom.style.minHeight).toBe("30px"); // 高度预留保留
+    // R7 Fix-A 锁盒：占位复刻渲染态盒（stubRect width=100/height=30）
+    expect(view.dom.style.width).toBe("100px");
+    expect(view.dom.style.height).toBe("30px");
+    expect(view.dom.style.overflow).toBe("hidden");
+    expect(view.dom.style.verticalAlign).toBe("bottom");
     // 回带：入队重渲染（缓存命中直绘）
     setVisibility(true);
     flushFrames(1);
@@ -722,13 +729,13 @@ describe("R6 Fix-A：demote 回带竞态（漏渲染 M-d'）", () => {
 
 describe("R6 Fix-B：上滚 band 安全直绘（有高度预留 && 缓存命中）", () => {
   it("上滚带内：预留+命中直绘；预留+未命中、无预留+命中均留队走静止", async () => {
-    const { noteInlineHeight, clearInlineHeights } = await import("./lazyInlineMath");
-    clearInlineHeights();
+    const { noteInlineBox, clearInlineBoxes } = await import("./lazyInlineMath");
+    clearInlineBoxes();
     usePumpTimers(); // 冻结时钟：若误用富余冷算，带内条目当帧即渲染
     setLazyInlineMathEnabled(true);
     renderToStringCached("up_hit", false); // 预热
-    noteInlineHeight("up_hit", 20); // 高度预留
-    noteInlineHeight("up_miss", 20); // 预留但缓存未命中
+    noteInlineBox("up_hit", 80, 20); // 盒预留（宽+高）
+    noteInlineBox("up_miss", 80, 20); // 预留但缓存未命中
     renderToStringCached("up_nores", false); // 命中但无预留
     const hit = makeView("up_hit");
     stubRect(hit.dom, { top: -300, bottom: -280, height: 20 }); // 上方带内
@@ -747,18 +754,18 @@ describe("R6 Fix-B：上滚 band 安全直绘（有高度预留 && 缓存命中�
     expect(miss.dom.querySelector(".katex")).toBeTruthy(); // 静止后补绘
     expect(nores.dom.querySelector(".katex")).toBeTruthy();
     for (const v of [hit, miss, nores]) v.destroy();
-    clearInlineHeights();
+    clearInlineBoxes();
     useRealPumpTimers();
     setLazyInlineMathEnabled(false);
   });
 
   it("上滚带内条目直绘受共用软上限约束（打满即止，剩余下一帧）", async () => {
-    const { noteInlineHeight, clearInlineHeights, SCROLL_HIT_PAINT_CAP } = await import("./lazyInlineMath");
-    clearInlineHeights();
+    const { noteInlineBox, clearInlineBoxes, SCROLL_HIT_PAINT_CAP } = await import("./lazyInlineMath");
+    clearInlineBoxes();
     usePumpTimers();
     setLazyInlineMathEnabled(true);
     renderToStringCached("up_cap", false);
-    noteInlineHeight("up_cap", 20);
+    noteInlineBox("up_cap", 80, 20);
     const views: TestView[] = [];
     // 软上限先被视口内命中打满（SCROLL_HIT_PAINT_CAP 条），带内命中应全部止步
     for (let i = 0; i < SCROLL_HIT_PAINT_CAP; i++) {
@@ -777,7 +784,7 @@ describe("R6 Fix-B：上滚 band 安全直绘（有高度预留 && 缓存命中�
     flushFrames(1); // 下一帧继续（单帧计数重置）
     expect(views.filter((v) => v.dom.querySelector(".katex")).length).toBe(views.length);
     for (const v of views) v.destroy();
-    clearInlineHeights();
+    clearInlineBoxes();
     useRealPumpTimers();
     setLazyInlineMathEnabled(false);
   });
@@ -785,9 +792,8 @@ describe("R6 Fix-B：上滚 band 安全直绘（有高度预留 && 缓存命中�
 
 describe("R6 Fix-C：demote 后 IO 状态校准（unobserve+observe 重置观察）", () => {
   it("降级执行时对 sharedIO 做一次 unobserve+observe（IO stub 记录调用对）", async () => {
-    const { noteInlineHeight, clearInlineHeights } = await import("./lazyInlineMath");
-    void noteInlineHeight;
-    clearInlineHeights();
+    const { clearInlineBoxes } = await import("./lazyInlineMath");
+    clearInlineBoxes();
     usePumpTimers();
     setLazyInlineMathEnabled(true);
     const ioCalls: string[] = [];
@@ -815,43 +821,130 @@ describe("R6 Fix-C：demote 后 IO 状态校准（unobserve+observe 重置观察
     // 校准后 IO 派发当前状态（带外 → false 回调，无副作用）
     setVisibility(false);
     view.destroy();
-    clearInlineHeights();
+    clearInlineBoxes();
     useRealPumpTimers();
     setLazyInlineMathEnabled(false);
   });
 });
 
-describe("R5 Fix-B：内容寻址渲染态高度（跨重建存活的占位 minHeight）", () => {
-  it("noteInlineHeight/inlineHeightFor 基本读写与非法值防御", async () => {
-    const { noteInlineHeight, inlineHeightFor, clearInlineHeights } = await import("./lazyInlineMath");
-    clearInlineHeights();
-    noteInlineHeight("\\sum a_n", 24.6);
-    expect(inlineHeightFor("\\sum a_n")).toBe(24.6);
-    expect(inlineHeightFor("不存在的源码")).toBeUndefined();
-    noteInlineHeight("", 30); // 空源码拒绝
-    noteInlineHeight("x", 0); // 非正高度拒绝
-    expect(inlineHeightFor("x")).toBeUndefined();
-    clearInlineHeights();
-    expect(inlineHeightFor("\\sum a_n")).toBeUndefined();
+describe("R5 Fix-B / R7 Fix-A：内容寻址渲染态盒尺寸（跨重建存活的锁盒占位）", () => {
+  it("noteInlineBox/inlineBoxFor 基本读写与非法值防御", async () => {
+    const { noteInlineBox, inlineBoxFor, clearInlineBoxes } = await import("./lazyInlineMath");
+    clearInlineBoxes();
+    noteInlineBox("\\sum a_n", 120.5, 24.6);
+    expect(inlineBoxFor("\\sum a_n")).toEqual({ w: 120.5, h: 24.6 });
+    expect(inlineBoxFor("不存在的源码")).toBeUndefined();
+    noteInlineBox("", 30, 30); // 空源码拒绝
+    noteInlineBox("x", 0, 30); // 非正宽度拒绝
+    noteInlineBox("x", 30, 0); // 非正高度拒绝
+    expect(inlineBoxFor("x")).toBeUndefined();
+    clearInlineBoxes();
+    expect(inlineBoxFor("\\sum a_n")).toBeUndefined();
   });
 
   it("容量淘汰：超上限淘汰最旧一半，新条目仍可写入", async () => {
-    const { noteInlineHeight, inlineHeightFor, clearInlineHeights, INLINE_HEIGHT_CAP_FOR_TEST } = await import("./lazyInlineMath");
-    clearInlineHeights();
-    const cap = INLINE_HEIGHT_CAP_FOR_TEST;
-    for (let i = 0; i < cap + 100; i++) noteInlineHeight(`src-${i}`, 10 + (i % 50));
+    const { noteInlineBox, inlineBoxFor, clearInlineBoxes, INLINE_BOX_CAP_FOR_TEST } = await import("./lazyInlineMath");
+    clearInlineBoxes();
+    const cap = INLINE_BOX_CAP_FOR_TEST;
+    for (let i = 0; i < cap + 100; i++) noteInlineBox(`src-${i}`, 10 + (i % 50), 10 + (i % 30));
     // 前半最旧条目被淘汰，尾部存活
-    expect(inlineHeightFor("src-0")).toBeUndefined();
-    expect(inlineHeightFor(`src-${cap + 99}`)).toBeGreaterThan(0);
-    clearInlineHeights();
+    expect(inlineBoxFor("src-0")).toBeUndefined();
+    expect(inlineBoxFor(`src-${cap + 99}`)!.h).toBeGreaterThan(0);
+    clearInlineBoxes();
   });
 
-  it("demote 后同内容新元素（模拟重建）的占位拿到会话表高度", async () => {
-    const { noteInlineHeight, inlineHeightFor, clearInlineHeights } = await import("./lazyInlineMath");
-    clearInlineHeights();
-    noteInlineHeight("e^{i\\pi}", 19);
-    // 重建后 WeakMap 清零——占位 minHeight 来源只剩会话表
-    expect(inlineHeightFor("e^{i\\pi}")).toBe(19);
-    clearInlineHeights();
+  it("demote 后同内容新元素（模拟重建）的占位拿到会话表盒尺寸", async () => {
+    const { noteInlineBox, inlineBoxFor, clearInlineBoxes } = await import("./lazyInlineMath");
+    clearInlineBoxes();
+    noteInlineBox("e^{i\\pi}", 42, 19);
+    // 重建后 WeakMap 清零——锁盒占位来源只剩会话表
+    expect(inlineBoxFor("e^{i\\pi}")).toEqual({ w: 42, h: 19 });
+    clearInlineBoxes();
+  });
+});
+
+describe("R7 Fix-A：demote 锁盒占位（宽度折行位移根治）", () => {
+  it("demote 后占位锁盒复刻渲染态盒（宽+高+bottom 对齐+裁剪），重渲染清锁盒", async () => {
+    const { clearInlineBoxes } = await import("./lazyInlineMath");
+    clearInlineBoxes();
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    const view = makeView("lock_1");
+    stubRect(view.dom, { top: 100, bottom: 148, height: 48 }); // 渲染态盒 100×48
+    setVisibility(true);
+    flushFrames(1);
+    expect(view.dom.querySelector(".katex")).toBeTruthy();
+    fireUserInput();
+    setVisibility(false);
+    advance(2600); // demote 到期
+    expect(view.dom.querySelector(".katex")).toBeFalsy();
+    // 锁盒四件套：尺寸复刻 + bottom 对齐 + 裁剪 + 放开 max-width
+    expect(view.dom.style.width).toBe("100px");
+    expect(view.dom.style.height).toBe("48px");
+    expect(view.dom.style.verticalAlign).toBe("bottom");
+    expect(view.dom.style.overflow).toBe("hidden");
+    expect(view.dom.style.maxWidth).toBe("none");
+    // 源码文本保留（查找/选区/复制语义不变）
+    expect(view.dom.textContent).toBe("lock_1");
+    // 回带重渲染：锁盒样式全清（恢复默认行内布局）
+    setVisibility(true);
+    flushFrames(1);
+    expect(view.dom.querySelector(".katex")).toBeTruthy();
+    expect(view.dom.style.width).toBe("");
+    expect(view.dom.style.height).toBe("");
+    expect(view.dom.style.overflow).toBe("");
+    expect(view.dom.style.verticalAlign).toBe("");
+    expect(view.dom.style.maxWidth).toBe("");
+    view.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+
+  it("无盒记忆的占位不带锁盒样式（首渲前源码占位保持原样）", async () => {
+    const { clearInlineBoxes } = await import("./lazyInlineMath");
+    clearInlineBoxes();
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    const view = makeView("lock_fresh");
+    stubRect(view.dom, { top: 100, bottom: 120, height: 20 });
+    setVisibility(false); // 未渲染未入队
+    expect(view.dom.style.width).toBe("");
+    expect(view.dom.style.height).toBe("");
+    expect(view.dom.style.overflow).toBe("");
+    expect(view.dom.textContent).toBe("lock_fresh");
+    view.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+
+  it("渲染失败回退占位同样走锁盒路径（此前渲染过、有元素级记忆）", async () => {
+    const { clearInlineBoxes } = await import("./lazyInlineMath");
+    clearInlineBoxes();
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    const view = makeView("lock_fail");
+    stubRect(view.dom, { top: 100, bottom: 130, height: 30 });
+    setVisibility(true);
+    flushFrames(1); // 渲染成功
+    expect(view.dom.querySelector(".katex")).toBeTruthy();
+    // 换值触发失败渲染：update → paintPlaceholder（旧值记忆仍在 WeakMap）→ rAF render 抛 → 回退
+    const katexMod = ((await import("katex")).default ?? (await import("katex"))) as unknown as {
+      renderToString: (src: string, opts?: Record<string, unknown>) => string;
+    };
+    const spy = vi.spyOn(katexMod, "renderToString").mockImplementation(() => {
+      throw new Error("transient");
+    });
+    (view as unknown as { update: (n: { type: { name: string }; attrs: { value: string } }) => boolean }).update({
+      type: { name: "math_inline" }, attrs: { value: "lock_fail_new" },
+    });
+    flushFrames(2);
+    spy.mockRestore();
+    // 失败回退：paintPlaceholder 用新值查会话表（miss）→ 无锁盒，纯源码占位
+    expect(view.dom.querySelector(".katex")).toBeFalsy();
+    expect(view.dom.textContent).toBe("lock_fail_new");
+    expect(view.dom.classList.contains("mditor-math-inline-ready")).toBe(false);
+    view.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
   });
 });

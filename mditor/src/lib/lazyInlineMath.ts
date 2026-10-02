@@ -153,10 +153,10 @@ type PendingRender = {
   /** 缓存命中探测（纯查不绘）：命中走 run() 的直绘路径（绕过滚动门与时
    *  钟预算，受单帧条数软上限约束）。 */
   isCached: () => boolean;
-  /** 有渲染态高度预留（元素级 WeakMap 或 R5 Fix-B 会话表）：上滚 band
-   *  直绘的安全前提——占位 minHeight 已撑住渲染态行高，直绘零高度变化
-   *  （R6 Fix-B）。 */
-  hasReservedHeight: () => boolean;
+  /** 有渲染态盒尺寸预留（元素级 WeakMap 或 R5 Fix-B 会话表）：上滚 band
+   *  直绘的安全前提——锁盒占位已复刻真身行内布局，直绘零折行/行框变化
+   *  （R6 Fix-B + R7 Fix-A 宽度维度）。 */
+  hasReservedBox: () => boolean;
   run: () => void;
 };
 
@@ -407,7 +407,7 @@ function pumpScrollFrame(): void {
     for (const entry of band) {
       if (
         hitPaints < SCROLL_HIT_PAINT_CAP &&
-        entry.hasReservedHeight() &&
+        entry.hasReservedBox() &&
         entry.isCached()
       ) {
         hitPaints++;
@@ -455,43 +455,51 @@ function enqueueRender(entry: PendingRender): void {
   schedulePump();
 }
 
-/** demote 前记录的渲染态高度（border-box）：paintPlaceholder 以 minHeight
- *  撑住，消除占位（源码文本行高）↔ 真身（KaTeX 行高）切换的行高跳动。 */
-const renderedHeights = new WeakMap<HTMLElement, number>();
-
-/** R5 Fix-B：内容寻址的渲染态高度（公式源码 → 高度，会话级）。WeakMap 键是
- *  DOM 元素——切标签/整批替换后元素全部重建、逐元素记忆清零，占位回落即
- *  行高跳动（r5-phase2-f-tabback blockWatch 的弹跳波组成部分）。行内公式
- *  高度按内容基本稳定（单行为主），会话表让已知公式的占位跨重建保持渲染
- *  态行高。容量与 katexCache 同量级；超限淘汰最旧一半（Map 插入序近似
- *  LRU，同 cvMemory 惯例）。只在 demote（本就要量 rect）顺带记录，渲染
- *  热路径零新增布局读。 */
-const INLINE_HEIGHT_CAP = 8192;
-const inlineHeights = new Map<string, number>();
-
-export function noteInlineHeight(src: string, h: number): void {
-  if (!src || !(h > 0)) return;
-  if (!inlineHeights.has(src) && inlineHeights.size >= INLINE_HEIGHT_CAP) {
-    const drop = inlineHeights.size - (INLINE_HEIGHT_CAP >> 1);
-    let i = 0;
-    for (const k of inlineHeights.keys()) {
-      if (i++ >= drop) break;
-      inlineHeights.delete(k);
-    }
-  }
-  inlineHeights.set(src, h);
+/** 渲染态盒尺寸（border-box 宽高，R7 Fix-A 锁盒占位用）。 */
+interface InlineBox {
+  w: number;
+  h: number;
 }
 
-export function inlineHeightFor(src: string): number | undefined {
-  return inlineHeights.get(src);
+/** demote 前记录的渲染态盒尺寸（border-box）：锁盒占位复刻渲染态的行内
+ * 布局角色（原子 inline 盒，同宽同高，bottom 对齐），消除占位（源码文本
+ * 宽）↔ 真身（KaTeX 宽）切换的**折行变化**——minHeight 只能撑高，锁不住
+ * 水平宽度，demote 潮批量降级时段落重新折行会推移视口内容（R7 D-e 定罪，
+ * r7-phase2-drift-down-slow：21 位移帧 4 次 anchor-comp 补偿）。 */
+const renderedBoxes = new WeakMap<HTMLElement, InlineBox>();
+
+/** R5 Fix-B（R7 Fix-A 升级为盒尺寸）：内容寻址的渲染态盒尺寸（公式源码 →
+ * {w,h}，会话级）。WeakMap 键是 DOM 元素——切标签/整批替换后元素全部重建、
+ * 逐元素记忆清零，占位回落即折行跳动。行内公式盒尺寸按内容基本稳定（单行
+ * 为主），会话表让已知公式的占位跨重建保持渲染态盒布局。容量与 katexCache
+ * 同量级；超限淘汰最旧一半（Map 插入序近似 LRU，同 cvMemory 惯例）。只在
+ * demote（本就要量 rect）顺带记录，渲染热路径零新增布局读。 */
+const INLINE_BOX_CAP = 8192;
+const inlineBoxes = new Map<string, InlineBox>();
+
+export function noteInlineBox(src: string, w: number, h: number): void {
+  if (!src || !(w > 0) || !(h > 0)) return;
+  if (!inlineBoxes.has(src) && inlineBoxes.size >= INLINE_BOX_CAP) {
+    const drop = inlineBoxes.size - (INLINE_BOX_CAP >> 1);
+    let i = 0;
+    for (const k of inlineBoxes.keys()) {
+      if (i++ >= drop) break;
+      inlineBoxes.delete(k);
+    }
+  }
+  inlineBoxes.set(src, { w, h });
+}
+
+export function inlineBoxFor(src: string): InlineBox | undefined {
+  return inlineBoxes.get(src);
 }
 
 /** 测试常量出口。 */
-export const INLINE_HEIGHT_CAP_FOR_TEST = INLINE_HEIGHT_CAP;
+export const INLINE_BOX_CAP_FOR_TEST = INLINE_BOX_CAP;
 
 /** 测试钩子。 */
-export function clearInlineHeights(): void {
-  inlineHeights.clear();
+export function clearInlineBoxes(): void {
+  inlineBoxes.clear();
 }
 
 function createLazyInlineMathView(node: PMNode): LazyMathView {
@@ -508,21 +516,42 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
    *  PendingRender.ioVisible）。 */
   let ioVisible = false;
 
+  /** 清锁盒内联样式（占位 → 真身切换时恢复默认行内布局）。 */
+  const clearLockbox = () => {
+    dom.style.width = "";
+    dom.style.height = "";
+    dom.style.minHeight = "";
+    dom.style.maxWidth = "";
+    dom.style.overflow = "";
+    dom.style.verticalAlign = "";
+  };
+
   const paintPlaceholder = () => {
     dom.classList.remove("mditor-math-inline-ready");
     dom.textContent = current;
-    // 有渲染态高度记录则撑住原行高（占位文本通常矮于 KaTeX 真身）。
-    // R5 Fix-B：元素级记忆（WeakMap） miss 时查内容寻址会话表——跨重建
-    // 存活，切标签/整批替换后的新元素同样保持渲染态行高。
-    const h = renderedHeights.get(dom) ?? inlineHeightFor(current);
-    if (h !== undefined && h > 0) dom.style.minHeight = `${h}px`;
+    clearLockbox();
+    // 有渲染态盒记忆则锁盒复刻真身布局（R7 Fix-A）：inline-block 原子盒，
+    // 同宽同高 + vertical-align:bottom 对齐——折行与行框计算均与真身一致
+    //（原型 r7-phase5-proto-lockbox-C：32/32 样本段落块高零差）。源码文本
+    // 保留在 DOM 内（查找/选区语义不变），视觉上被 overflow:hidden 裁剪
+    // ——锁盒态只存在于 IO 带外（demote 条件），滚回带内即重渲染真身。
+    // max-width 显式放开：基础规则的 max-width:100% 会把长公式盒钳到行宽，
+    // 折行随之改变。无记忆时保持源码文本占位（首次渲染前无从预知真身盒）。
+    const box = renderedBoxes.get(dom) ?? inlineBoxFor(current);
+    if (box && box.w > 0 && box.h > 0) {
+      dom.style.width = `${box.w}px`;
+      dom.style.height = `${box.h}px`;
+      dom.style.maxWidth = "none";
+      dom.style.overflow = "hidden";
+      dom.style.verticalAlign = "bottom";
+    }
   };
 
-  /** 落绘真身 HTML：清占位文本与高度预留，写 innerHTML，维护 ready 类名。
+  /** 落绘真身 HTML：清占位文本与锁盒样式，写 innerHTML，维护 ready 类名。
    *  缓存命中路径的全部 DOM 成本集中在此（katexCache 直复用 HTML 字符串）。 */
   const applyRenderedHtml = (html: string): void => {
     dom.textContent = "";
-    dom.style.minHeight = "";
+    clearLockbox();
     dom.innerHTML = html;
     dom.classList.add("mditor-math-inline-ready");
   };
@@ -563,10 +592,12 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
     // 无人再入队，形成永久源码占位（漏渲染，M-d'）。
     if (ioVisible) return;
     rendered = false;
-    // 降级前记录渲染态高度：占位撑住原行高，回滚重渲染前不跳行。
-    const h = dom.getBoundingClientRect().height;
-    renderedHeights.set(dom, h);
-    noteInlineHeight(current, h);
+    // 降级前记录渲染态盒尺寸：锁盒复刻真身行内布局（宽+高），回滚重渲染
+    // 前折行/行框零变化（R7 Fix-A；此前只记高度的 minHeight 预留锁不住
+    // 水平宽度，demote 潮批量折行位移是停滚自漂移的主源）。
+    const r = dom.getBoundingClientRect();
+    renderedBoxes.set(dom, { w: r.width, h: r.height });
+    noteInlineBox(current, r.width, r.height);
     paintPlaceholder();
     // R6 Fix-C：降级后校准 IO 状态记录。unobserve+observe 重置观察，下一次
     // 交叉计算必按元素当前真实位置派发一次回调——兜底 IO 状态记录与实际
@@ -601,8 +632,8 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
         enqueuedAt: performance.now(),
         ioVisible: () => ioVisible,
         isCached: () => peekCached(current, false) !== undefined,
-        hasReservedHeight: () =>
-          renderedHeights.has(dom) || inlineHeightFor(current) !== undefined,
+        hasReservedBox: () =>
+          renderedBoxes.has(dom) || inlineBoxFor(current) !== undefined,
         run: () => {
           queued = false;
           if (!dom.isConnected) {
