@@ -36,11 +36,11 @@
 
 | # | 实验 | 判据 | 状态 |
 |---|---|---|---|
-| exp1 | 深位 down 对照（--start-depth 0.6，同位置同距离） | 深位 down p95 仍 ≪ up 则方向差确证；否则位置混杂 | 待跑 |
-| exp2 | Performance.getMetrics 差分（Layout/RecalcStyle/TaskDuration） | up 段 Layout/Style 时长占比定位管线环节 | 待跑 |
-| exp3 | cv 关停对照（页内注入 content-visibility:visible） | 掉帧归零 → U-b/cv 变现定罪 | 待跑 |
-| exp4 | demote 关停对照（DEMOTE_DELAY→1h patch） | 掉帧归零 → U-d 定罪 | 待跑 |
-| exp5 | 上滚直绘关停对照（R6 Fix-B band 直绘 patch） | 更差 → 直绘在救命；更好 → 直绘是掉帧源 | 待跑 |
+| exp1 | 深位 down 对照（--start-depth 0.6，同位置同距离，1MB+密度档各两轮） | 深位 down p95 仍 ≪ up 则方向差确证；否则位置混杂 | **完成：同位置上下对称（1MB p95 比 1.02/1.15、jank 比 0.97/1.00；密度档 1.05/1.04）——方向差不成立，位置混杂定罪** |
+| exp2 | Performance.getMetrics 差分（Layout/RecalcStyle/TaskDuration） | up 段 Layout/Style 时长占比定位管线环节 | **完成：up 段 layout +1.078s/16 帧=67ms/帧全树 layout；task 满载、script 小——首渲布局墙定罪** |
+| exp3 | cv 关停对照（页内注入 content-visibility:visible） | 掉帧归零 → U-b/cv 变现定罪 | 未跑（exp2 已定位首渲布局成分，cv 变现在预热完成后非主成分；留档不阻塞） |
+| exp4 | demote 关停对照（DEMOTE_DELAY→1h patch） | 掉帧归零 → U-d 定罪 | **完成：p95 199→133（-34%）、占比 -29%——demote 回带=1/3 强度成分定罪；剩余=首渲布局+布局墙底** |
+| exp5 | 上滚直绘关停对照（R6 Fix-B band 直绘 patch） | 更差 → 直绘在救命；更好 → 直绘是掉帧源 | 未跑（hitPaints 轨迹已证直绘在清队；关停违反 §3 最高危禁区方向，不留档价值低） |
 
 ## 4. 定罪结论（实验后填写）
 
