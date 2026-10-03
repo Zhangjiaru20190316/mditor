@@ -163,3 +163,4 @@
 - 文档：CHANGELOG Unreleased、`docs/performance.md` R8 节、`docs/dev-anomaly-codes.md` MD-9001 局限注记、memory 日记
 - 发版：按任务书 §11 本轮不发版；安装包已重建并通过冒烟（V5.0.0-beta 同版本号重打，版本号变更/正式发版由用户决定）。
 - **「完成后打包V5.0.0」裁决**：goal 尾句的"打包V5.0.0"按任务书 §11（"本轮不发版；阶段六打包冒烟安装包重建后验完即弃或留用由用户定，发版节奏由用户另行决定"）执行为**重建 V5.0.0 系列安装包并实机冒烟**——5.0.0-beta 即 V5.0.0 的当前交付序列（t virtually 同一 release 线）。将版本号从 5.0.0-beta 改为 5.0.0 正式版属发版决策（改 CHANGELOG 版本节/官网口径/预发布后缀），任务书明文留待用户拍板，本轮不越权执行。
+- **正式版打包（用户拍板后补记，commit e840d26）**：版本号 5.0.0-beta → **5.0.0**（tauri.conf.json/Cargo.toml/Cargo.lock/package.json 四处，CHANGELOG R8 批次转 5.0.0 发版节）；`npm run tauri build` 产出 **`Mditor_5.0.0_x64-setup.exe`**（15:17），exe ProductVersion 实测 5.0.0；打包冒烟重跑 **PASS**（r6 vpUnready 0/泵出口在包内 + r7 停滚漂移 0 + r8 上下滚 jank32 双零、p95 比 0.63）。
