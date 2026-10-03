@@ -406,3 +406,40 @@ sv 模式（CodeMirror）天然只渲染可见行。富文本侧 V3.6.5 落地�
 - 基准口径增补：scroll-flash-bench f1 拆 scrollPhase/quietPhase（wheel ≤450ms 分窗）+ row.t2（滚动中视口未 ready 峰值/源码态时长占比）；>8,192 唯一公式超限 fixture（9,420 唯一）钉死 katexCache LRU 截断档（1MB 副本唯一公式仅 2,368，预热全覆盖不触发截断）。
 - 排除项（勿重查）：M-a 截断不致漏渲染（残留位置均匀非尾部）；M-b 队列零饥饿（oldestWaitPeakMs=0）；M-c 零 render 失败；M-e 块级挂载率 100%（23/23）；1MB 档 T1 剩余长尾=帧饥饿非泵缺陷。
 - 教训：perf 清理必须按 PID 树杀——`taskkill /IM msedgewebview2.exe`（按映像名）在打包版存活时会误杀其 webview（本轮重犯第五轮教训，见报告 §5 事故披露）。
+
+## 第七轮（2026-10-03）：停滚自漂移（D）专项
+
+结题报告 `docs/large-doc-scroll-drift-report.md`；归因定罪书 `perf/results/r7-phase4-attribution.md`。
+
+核心结论：
+- **症状 D（停滚自漂移）双源定罪**：①D-e demote 潮宽度折行——占位源码文本宽 ≠
+  KaTeX 渲染宽，demote 批量降级时段落重折行推移视口（minHeight 只锁垂直锁不住
+  水平），停滚后 ~2.5s 阶梯位移即生产「一格一格自己动」（密度档 down-slow 21
+  位移帧/4 补偿；禁 demote 对照 0/1708）；②D-b 预热分段陈旧——三段分界按启动
+  时视口一次性计算，1MB 预热 >45s 期间深滚后「带下」批实际全在视口上方、变现
+  无补偿（prewarm.comp 零增长），anchor-comp 逐格兜底（12 格 +424~+1301px；
+  等预热完成对照 0/367）。D-c 打字机（用户环境 typewriterMode=false）与 D-d
+  裸源排除（11+ 轮 MD1001=0、writeTrap 无未打标写入）。
+- **Fix-A demote 锁盒占位**：{w,h} 双记忆（元素 WeakMap + 会话表 8192 LRU）+
+  inline-block 锁宽高 + overflow:hidden + vertical-align:bottom +
+  max-width:none——占位复刻渲染态行内布局（原型 32/32 段落块高零差；无 bottom
+  校正 +2px/条）。源码文本保留 DOM（查找/选区/复制语义不变），锁盒态仅存在于
+  IO 带外 800px+。密度档四场景（下滚/上滚×快/慢）位移帧/程序化写入/补偿全零。
+- **Fix-B 预热哨兵差值同帧补偿**：视口顶块 docTop 前后差值取代静态 upPhase 分
+  段（覆盖断批/混合批一切位移源）+ dispatch 后同任务强制布局量测、补偿与变现
+  同帧提交（浏览器只 paint 最终态）+ 哨兵同块复测 + prewarm-end 清场补偿。
+  prewarmAnchorComp 纯函数：死区 1px/瞬移防护 3000px（pickSentinel 同量级）/
+  限幅 ±8000。1MB 位移帧 72→3~9（-87~96%）；预热完成后 10s 窗全零。
+- **补偿时序新参数**（R7 引入）：`prewarmAnchorComp(anchor0, anchor1, max)`
+  纯函数（cvMemory.ts）——亚像素死区 1px（10px 死区负结果：中小批真实位移
+  10-40px 被放过反而劣化 15 帧）；哨兵瞬移防护 3000px（半屏级阈值会拒补真实
+  大批位移 +580px，负结果留档）；量测断批预算 8ms 只影响 learned 学习、不再
+  影响补偿完整性（哨兵差值天然覆盖）。
+- 探针口径沉淀：r7 停滚漂移探针（rAF 三哨兵 + 250ms 公式 ready/unready 轨迹
+  + counters/pump 差分）；**探针 rAF 注册序陷阱**——采样循环先注册先跑，会在
+  补偿前采样到位移，补偿必须同步（dispatch 后同任务）才能对探针与用户同时
+  零可见。
+- M3 口径勘误：块级公式挂载率探查须用「解题技巧_密度档」（23 个 ```latex 块）
+  ——「无穷级数_密度档」为纯行内公式文档（```latex 块 0 个）。
+- 遗留（R8 候选）：1MB 预热推进期残余 3~9 位移帧（8px 级浏览器 scroll/layout
+  亚帧差，每 run 预热进度不同导致波动）；P3（预热批学渲染态盒尺寸）待拍板。

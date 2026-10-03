@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased（2026-10-03 第七轮：大文档停滚自漂移专项）
+
+### 2026-10-03 批：症状 D（滚动停止后页面自我漂移）根治
+
+结题报告 `docs/large-doc-scroll-drift-report.md`；归因定罪书 `perf/results/r7-phase4-attribution.md`。
+
+- **fix(math) R7 Fix-A——demote 锁盒占位（宽度折行位移根治，D-e）**：demote
+  潮批量降级时段落重新折行推移视口内容——minHeight 高度记忆只锁垂直锁不住
+  水平（占位源码文本宽 ≠ KaTeX 渲染宽），停滚后 2.5s 阶梯位移 + anchor-comp
+  逐格补偿即生产「页面一格一格自己动」（密度档 down-slow 21 位移帧 4 补偿；
+  禁 demote 对照 0/1708 归零定罪）。修复：占位锁盒复刻渲染态行内布局
+  （{w,h} 双记忆 + overflow:hidden + vertical-align:bottom + max-width:none，
+  源码文本保留 DOM 内、查找/选区/复制语义不变，锁盒态仅存在于 IO 带外）。
+  原型 32/32 样本段落块高零差。密度档四场景（下滚/上滚 × 快/慢）位移帧、
+  程序化写入、补偿计数全部归零。
+- **fix(cv) R7 Fix-B——预热批哨兵差值同帧补偿（D-b，1MB 档 12 格巨移根治）**：
+  预热三段分界按启动时视口一次性计算，1MB 预热 >45s 未完成期间深滚后「带下」
+  批实际全在用户视口上方，变现推移视口内容却无 prewarm-comp（计数零增长），
+  残差全落 anchor-comp（12 格 +424~+1301px、scrollHeight 单窗 +46k px；等
+  预热完成对照归零定罪）。修复四件套：视口顶块 docTop 哨兵差值（覆盖断批/
+  混合批一切位移源）+ dispatch 后同任务强制布局量测同帧补偿（浏览器只 paint
+  最终态）+ 哨兵同块复测（防换块误量）+ prewarm-end 清场同款补偿。1MB 位移帧
+  72→3~9（-87~96%）、写入从 14 次逐格回拉降至 1-3 次同帧；预热完成后 10s 窗
+  全零。负结果留档：死区 10px（滤噪声反劣化）、单 rAF（注册序竞态）、逐块
+  oldH（断批不完备）、锁盒无 bottom 校正（+2px/条）。
+- **diag(perf) r7 停滚漂移探针**：`perf/tmp-r7/probe-drift.mjs`（rAF 级三哨兵
+  采样 + 250ms 公式 ready/unready 轨迹 + scrollDebug/pump 差分 + writeTrap 栈）
+  + 三项可证伪对照实验脚本；产物 `perf/results/r7-*` 25 份。
+- **M/T/R 门禁全过**：M1 三档残留 0、M2 队列 0、M3 挂载率 100%（23/23，
+  勘误：须用解题技巧档——无穷级数档本无 ```latex 块）；T 组 durP95 40ms vs
+  基线 38（+5%<10%）、上滚峰值 10≤11、quietPhase 占位 0；R 组见报告 §④。
+- 守卫：npm test 978 → **986 全绿**（+8 用例：锁盒应用/清除/无记忆/失败回退、
+  哨兵差值双向/大批/死区/瞬移防护/限幅）；tsc/lint/build 全过。
+- 遗留（R8 候选）：1MB 预热推进期残余 3~9 位移帧（8px 级，浏览器 scroll/layout
+  亚帧差）；P3（预热学渲染态盒尺寸）待用户拍板——首渲方向宽度跳变的根治项。
+
 ## Unreleased（2026-10-02 第六轮：公式渲染及时性与完整性专项）
 
 ### 2026-10-02 批：行内公式漏渲染根治 + 上滚补绘提速
