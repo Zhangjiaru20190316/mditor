@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 5.0.0 (2026-10-03)（5.0.0-beta 转正：R8 上滚掉帧归因专项收口）
+
+版本号 5.0.0-beta → 5.0.0（tauri.conf.json / Cargo.toml / Cargo.lock / package.json）。
+代码与本页 Unreleased 的 R8 批次一致（beta 后零 src 改动，仅版本号与文档），
+发版级安装包 `Mditor_5.0.0_x64-setup.exe` 重建并过打包冒烟三断言。
 
 ### 2026-10-03 批（第八轮）：症状 U（上滚掉帧/丝滑度不对称）归因专项
 
