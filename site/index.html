@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mditor — 本地优先的 Markdown 编辑器</title>
-  <meta name="description" content="Mditor：免费开源的本地优先 Markdown 编辑器，体验对标 Typora。所见即所得、AI 助手、批注与大纲、七套主题、多格式导出。无云端、无遥测、无广告，你的文件始终保存在自己的电脑上。">
+  <meta name="description" content="Mditor：免费开源的本地优先 Markdown 编辑器，体验对标 Typora。七轮性能专项实测：1.5MB 大文档流畅不卡、停滚零漂移、公式零漏渲染、选中交互快至 88ms。所见即所得、AI 助手、批注与大纲、七套主题、多格式导出。无云端、无遥测、无广告，你的文件始终保存在自己的电脑上。">
   <link rel="canonical" href="https://Zhangjiaru20190316.github.io/mditor/">
   <meta property="og:title" content="Mditor — 本地优先的 Markdown 编辑器">
-  <meta property="og:description" content="Mditor：免费开源的本地优先 Markdown 编辑器，体验对标 Typora。所见即所得、AI 助手、批注与大纲、七套主题、多格式导出。无云端、无遥测、无广告，你的文件始终保存在自己的电脑上。">
+  <meta property="og:description" content="Mditor：免费开源的本地优先 Markdown 编辑器，体验对标 Typora。七轮性能专项实测：1.5MB 大文档流畅不卡、停滚零漂移、公式零漏渲染、选中交互快至 88ms。无云端、无遥测、无广告，你的文件始终保存在自己的电脑上。">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://Zhangjiaru20190316.github.io/mditor/">
   <meta property="og:image" content="https://Zhangjiaru20190316.github.io/mditor/assets/icon.png">
@@ -43,6 +43,7 @@
       <div class="nav-links" id="nav-links">
         <a href="#try">在线试用</a>
         <a href="#features">功能</a>
+        <a href="#performance">性能</a>
         <a href="#guide">操作说明</a>
         <a href="#shortcuts">快捷键</a>
         <a href="#faq">常见问题</a>
@@ -83,12 +84,12 @@
         <p class="tagline">本地优先的 Markdown 编辑器，体验对标 Typora</p>
         <p class="sub">免费 · 开源 · 无云端 · 无遥测 · 无广告 —— 你的文件始终保存在自己的电脑上</p>
         <div class="cta">
-          <a class="btn btn-primary" href="https://github.com/Zhangjiaru20190316/mditor/releases/latest/download/Mditor_4.17.0_x64-setup.exe">下载 Windows 版</a>
+          <a class="btn btn-primary" href="https://github.com/Zhangjiaru20190316/mditor/releases/latest/download/Mditor_5.0.0-beta_x64-setup.exe">下载 Windows 版</a>
           <a class="btn btn-ghost" href="#try">在线试用</a>
           <a class="btn btn-ghost" href="https://github.com/Zhangjiaru20190316/mditor">查看源码</a>
         </div>
         <div class="hero-badges">
-          <span class="hb-new"><i></i>v4.17.0</span><span>Windows 10/11</span><span>5 MB 安装包</span><span>MIT 开源</span>
+          <span class="hb-new"><i></i>v5.0.0-beta</span><span>Windows 10/11</span><span>5 MB 安装包</span><span>MIT 开源</span>
         </div>
       </div>
       <div class="hero-visual" aria-hidden="true">
@@ -122,10 +123,25 @@
       <div class="wn-list">
         <article class="wn-item wn-star reveal">
           <div class="wn-head">
+            <span class="wn-ver">v5.0.0-beta</span>
+            <span class="wn-date">2026-10-03</span>
+            <span class="wn-tag">性能</span>
+            <span class="wn-latest"><i></i>本次亮点</span>
+          </div>
+          <h3>性能极值版：停滚零漂移 · 公式零漏渲染</h3>
+          <p>连续三轮大文档专项（滚动稳定性 / 公式渲染 / 停滚自漂移），全部以 <b>1.5MB · 2.5 万行 · 1.5 万行内公式</b>的真实压测文档同窗口 ABAB 实测：停滚位移帧密度档 <b>0/1704 帧全零</b>（1MB 档 -87~96%）、公式漏渲染<b>三档归零</b>、拖选 p95 <b>-79%</b>、点公式 <b>-88%</b>、Ctrl+S 保存 <b>694ms 阻塞清零</b>、公式补绘 p50 <b>-26%</b>、1.5MB 打开 <b>-13%</b>。</p>
+          <div class="wn-star-foot">
+            <span class="wn-pill">✦ 停滚零漂移</span>
+            <span class="wn-pill">公式零漏渲染</span>
+            <span class="wn-pill">选中 -88%</span>
+            <span class="wn-pill">保存零阻塞</span>
+          </div>
+        </article>
+        <article class="wn-item reveal">
+          <div class="wn-head">
             <span class="wn-ver">v4.17.0</span>
             <span class="wn-date">2026-09-13</span>
             <span class="wn-tag">云同步</span>
-            <span class="wn-latest"><i></i>本次亮点</span>
           </div>
           <h3>云同步上线，图片与公式连环根修</h3>
           <p>自带 S3 兼容对象存储的<b>双向云同步</b>（v4.12）；本地图片显示与公式渲染根修（v4.12.1）；Typora <b>$$ 公式块解析根修</b>，图片不再被吞进公式节点（v4.12.2）；编辑器图片裂图终修——docPath 同步窗口（v4.12.3）。</p>
@@ -209,6 +225,70 @@
         </article>
       </div>
       <p class="wn-more reveal"><a href="https://github.com/Zhangjiaru20190316/mditor/blob/main/mditor/CHANGELOG.md">查看完整更新日志 →</a></p>
+    </section>
+
+    <!-- ============ Performance ============ -->
+    <section class="perf" id="performance">
+      <div class="section-title">
+        <p class="kicker">Performance</p>
+        <h2>极致性能，实测说话</h2>
+        <p class="subtitle">压测基准：1.5MB · 2.5 万行 · 1.5 万行内公式的真实笔记文档——同窗口 ABAB 交错、中位数口径、可证伪对照实验定罪，每个数字都有测量产物留档</p>
+      </div>
+      <div class="perf-board">
+        <div class="pf-card reveal">
+          <span class="pf-num">0<i>/1704</i></span>
+          <span class="pf-label">停滚位移帧</span>
+          <span class="pf-sub">密度档四场景全零；1MB 档 -87~96%</span>
+        </div>
+        <div class="pf-card reveal">
+          <span class="pf-num">0</span>
+          <span class="pf-label">公式漏渲染</span>
+          <span class="pf-sub">三档残留全部归零 · 块级挂载率 100%</span>
+        </div>
+        <div class="pf-card reveal">
+          <span class="pf-num">-88%</span>
+          <span class="pf-label">点公式选中 p95</span>
+          <span class="pf-sub">728ms → 88ms（1.5MB 压测文档）</span>
+        </div>
+        <div class="pf-card reveal">
+          <span class="pf-num">-79%</span>
+          <span class="pf-label">拖选 p95</span>
+          <span class="pf-sub">648ms → 136ms</span>
+        </div>
+        <div class="pf-card reveal">
+          <span class="pf-num">0</span>
+          <span class="pf-label">Ctrl+S 长任务</span>
+          <span class="pf-sub">694ms 全文序列化阻塞 → 增量序列化</span>
+        </div>
+        <div class="pf-card reveal">
+          <span class="pf-num">-26%</span>
+          <span class="pf-label">公式补绘 p50</span>
+          <span class="pf-sub">457ms → 340ms；上滚积压 -48%</span>
+        </div>
+        <div class="pf-card reveal">
+          <span class="pf-num">5.5s</span>
+          <span class="pf-label">打开 1.5MB 文档</span>
+          <span class="pf-sub">视口档中位；默认档 11.5s（-13%）</span>
+        </div>
+        <div class="pf-card reveal">
+          <span class="pf-num">986</span>
+          <span class="pf-label">自动化测试全绿</span>
+          <span class="pf-sub">打包冒烟：静置 6s / 360 帧位移 0</span>
+        </div>
+      </div>
+      <div class="perf-rounds reveal">
+        <h3>七轮大文档专项治理</h3>
+        <ol class="pr-list">
+          <li><i>R1</i><b>聚焦与光标治理</b><span>聚焦切换 762ms → 0；虚拟光标 rect 读 rAF 合并</span></li>
+          <li><i>R2</i><b>视口档（content-visibility）</b><span>选中交互 0.7~1.7s → 24~96ms，大文档不卡的地基</span></li>
+          <li><i>R3</i><b>1.5MB 系统性卡顿</b><span>增量序列化 + 视口档：保存/搜索 0 长任务，选中 -79%~-88%</span></li>
+          <li><i>R4</i><b>数学密集掉帧</b><span>密度档滚动帧 p95 6ms，渲染泵零积压</span></li>
+          <li><i>R5</i><b>滚动稳定性</b><span>乱闪/乱动异常 0；打字 p95 448→304ms；切文档 -60%</span></li>
+          <li><i>R6</i><b>公式渲染及时性/完整性</b><span>漏渲染三档归零；补绘 p50 -26%、上滚积压 -48%</span></li>
+          <li><i>R7</i><b>停滚自漂移</b><span>停滚位移帧密度档 0/1704；1.5MB 打开 -13%</span></li>
+        </ol>
+      </div>
+      <p class="perf-note reveal">测法与全部原始数据公开：<a href="https://github.com/Zhangjiaru20190316/mditor/tree/main/mditor/docs">七轮结题报告</a> · <a href="https://github.com/Zhangjiaru20190316/mditor/tree/main/mditor/perf/results">测量产物</a>（探针与可证伪对照实验随附，均可复现）</p>
     </section>
 
     <!-- ============ Features ============ -->
@@ -338,29 +418,29 @@
           <div class="de-content">
             <div class="de-mode" data-mode-view="wysiwyg">
               <h2>会议纪要</h2>
-              <p><strong>本周重点</strong>：Mditor <code>v4.18.0</code> 正式发布，<mark>数学公式全链路增强</mark>。</p>
+              <p><strong>本周重点</strong>：Mditor <code>v5.0.0-beta</code> 发布，<mark>停滚零漂移 · 公式零漏渲染</mark>。</p>
               <ul>
-                <li>\(…\) 与 ```math 定界符全支持</li>
-                <li>导出 Word / PDF 公式完整渲染</li>
+                <li>公式漏渲染三档归零</li>
+                <li>选中交互 p95 快至 88ms</li>
               </ul>
               <blockquote><p>本地优先，无遥测。</p></blockquote>
             </div>
             <div class="de-mode" data-mode-view="ir" hidden>
               <h2><span class="de-mark">##</span> 会议纪要</h2>
-              <p><span class="de-mark">**</span><strong>本周重点</strong><span class="de-mark">**</span>：Mditor <span class="de-mark">`</span><code>v4.18.0</code><span class="de-mark">`</span> 正式发布，<span class="de-mark">==</span><mark>数学公式全链路增强</mark><span class="de-mark">==</span>。</p>
+              <p><span class="de-mark">**</span><strong>本周重点</strong><span class="de-mark">**</span>：Mditor <span class="de-mark">`</span><code>v5.0.0-beta</code><span class="de-mark">`</span> 发布，<span class="de-mark">==</span><mark>停滚零漂移 · 公式零漏渲染</mark><span class="de-mark">==</span>。</p>
               <ul>
-                <li><span class="de-mark">-</span> \(…\) 与 ```math 定界符全支持</li>
-                <li><span class="de-mark">-</span> 导出 Word / PDF 公式完整渲染</li>
+                <li><span class="de-mark">-</span> 公式漏渲染三档归零</li>
+                <li><span class="de-mark">-</span> 选中交互 p95 快至 88ms</li>
               </ul>
               <blockquote><p><span class="de-mark">&gt;</span> 本地优先，无遥测。</p></blockquote>
             </div>
             <div class="de-mode" data-mode-view="sv" hidden>
               <pre>## 会议纪要
-**本周重点**：Mditor `v4.18.0` 正式发布，
-==数学公式全链路增强==。
+**本周重点**：Mditor `v5.0.0-beta` 发布，
+==停滚零漂移 · 公式零漏渲染==。
 
-- \(…\) 与 ```math 定界符全支持
-- 导出 Word / PDF 公式完整渲染
+- 公式漏渲染三档归零
+- 选中交互 p95 快至 88ms
 
 &gt; 本地优先，无遥测。</pre>
             </div>
@@ -426,7 +506,7 @@
           <li><b>本地优先</b>，文件永远属于你</li>
           <li><b>零遥测</b>，无广告无上报</li>
           <li><b>AI 助手</b>，自带多模型预设</li>
-          <li><b>大文档不卡</b>，滚动零漂移</li>
+          <li><b>大文档不卡</b>：选中 -88% · 停滚零漂移</li>
           <li><b>完全开源</b>，MIT 协议</li>
         </ul>
       </div>
@@ -537,8 +617,10 @@
       <div class="feature-band reveal">
         <h3>9 · 大文档性能与安全</h3>
         <div class="feature-grid">
-          <div class="feature-item"><b>滚动零漂移</b>：内容寻址高度记忆 + 分块预热，跳转落点精确到 48px 内</div>
-          <div class="feature-item"><b>大文档性能模式</b>：超过阈值自动关闭代码高亮与公式渲染，打字依旧流畅</div>
+          <div class="feature-item"><b>停滚零漂移</b>：内容寻址高度记忆 + 分块预热 + 哨兵差值同帧补偿——跳转落点 48px 内，停滚位移帧密度档 0/1704 帧</div>
+          <div class="feature-item"><b>大文档视口档</b>：content-visibility + 懒公式渲染泵——拖选 p95 -79%、点公式 -88%，打字滚动全程流畅</div>
+          <div class="feature-item"><b>保存零阻塞</b>：顶层块增量序列化——Ctrl+S 从 694ms 全文阻塞降为 0 长任务</div>
+          <div class="feature-item"><b>公式零漏渲染</b>：渲染泵队列三档归零，块级挂载率 100%；补绘 p50 -26%</div>
           <div class="feature-item"><b>内存守护</b>：软重建 + 会话快照自愈，异常后自动恢复文档</div>
           <div class="feature-item"><b>严格 CSP</b>：无 unsafe-eval，AI 请求全部经 Rust 侧代理</div>
           <div class="feature-item"><b>HTML 消毒</b>：AI 回复与批注渲染管线内置 rehype-sanitize</div>
@@ -616,7 +698,7 @@
         </details>
         <details aria-expanded="false">
           <summary>大文档会卡吗？</summary>
-          <p>不会。超过阈值自动进入性能模式（关闭代码高亮与公式渲染）；v4.1.1 起大文档滚动零漂移——3894 行实测文档中，大纲跳转落点偏差仅 48px，长时间编辑无可感知掉帧。</p>
+          <p>不会。七轮性能专项（v5.0.0-beta 收官）以 1.5MB / 2.5 万行 / 1.5 万行内公式压测文档实测：拖选 p95 快至 136ms（-79%）、点公式 88ms（-88%）、Ctrl+S 保存 0 长任务、公式漏渲染三档归零、停滚位移帧密度档 0/1704 帧全零（1MB 档 -87~96%）。大文档自动进入视口档与性能模式，打字、滚动、跳转、保存全程流畅。</p>
         </details>
         <details aria-expanded="false">
           <summary>如何参与或支持这个项目？</summary>

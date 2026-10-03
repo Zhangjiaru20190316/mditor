@@ -67,9 +67,9 @@ jobs:
           # VER 已带 v 前缀（如 v4.14.0）：徽章/wn-ver 替换串直接用 ${VER}，
           # 文件名用去掉 v 的 ${VER_NOV}——两种形态勿混。
           sed -i -E \
-            -e "s/Mditor_[0-9][0-9.]*_x64-setup\.exe/Mditor_${VER_NOV}_x64-setup.exe/g" \
-            -e "s/(<span class=\"hb-new\"><i><\/i>)v[0-9][0-9.]*/\1${VER}/" \
-            -e "0,/<span class=\"wn-ver\">/s/(<span class=\"wn-ver\">)v[0-9][0-9.]*/\1${VER}/" \
+            -e "s/Mditor_[0-9][0-9A-Za-z.-]*_x64-setup\.exe/Mditor_${VER_NOV}_x64-setup.exe/g" \
+            -e "s/(<span class=\"hb-new\"><i><\/i>)v[0-9][0-9A-Za-z.-]*/\1${VER}/" \
+            -e "0,/<span class=\"wn-ver\">/s/(<span class=\"wn-ver\">)v[0-9][0-9A-Za-z.-]*/\1${VER}/" \
             site/index.html
           # 软校验：最新 Release 缺少对应安装包资产时告警（不阻断部署，
           # 提示去 Releases 核对产物命名；fallback 路径不查）。
