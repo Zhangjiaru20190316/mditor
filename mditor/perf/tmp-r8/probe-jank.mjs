@@ -33,7 +33,7 @@ const STORE_PATH = join(process.env.APPDATA ?? ".", "com.mditor.app.dev", "mdito
 
 function parseArgs(argv) {
   const a = { scenario: "up-fast", doc: "无穷级数_密度档", tag: "r8p1", phase: 1, run: 1,
-    upPx: 5000, depth: 0.6, prewarmWait: false, quietSecs: 10 };
+    upPx: 5000, depth: 0.6, startDepth: 0, prewarmWait: false, quietSecs: 10 };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const next = () => (i + 1 < argv.length ? argv[++i] : null);
@@ -44,6 +44,7 @@ function parseArgs(argv) {
     else if (k === "--run") a.run = Number(next() ?? 1);
     else if (k === "--up-px") a.upPx = Number(next() ?? 5000);
     else if (k === "--depth") a.depth = Number(next() ?? 0.6);
+    else if (k === "--start-depth") a.startDepth = Number(next() ?? 0);
     else if (k === "--prewarm-wait") a.prewarmWait = true;
     else if (k === "--quiet-secs") a.quietSecs = Number(next() ?? 10);
   }
@@ -65,6 +66,18 @@ function vitePortPids() {
   return [...pids];
 }
 function killChildTree(child) { try { if (child && child.pid) run("taskkill", ["/F", "/T", "/PID", String(child.pid)]); } catch { /* */ } }
+/** 兜底清理：vite(1420)/WebView2(9223) 偶发脱离 cmd 树存活，预检端口惯例
+ *  自证——只杀本次 run 期间确认存在（自 spawn）的监听 PID，不碰其他窗口的
+ *  进程（本探针预检保证起跑前两端口空闲，见 main 预检分支）。 */
+function killStalePorts() {
+  const r = spawnSync("netstat", ["-ano"], { encoding: "utf8", windowsHide: true });
+  for (const line of String(r.stdout || "").split("\n")) {
+    if (/TCP\s+\S+:(1420|9223)\s+\S+\s+LISTENING/i.test(line)) {
+      const pid = line.trim().split(/\s+/).pop();
+      if (pid && /^\d+$/.test(pid)) run("taskkill", ["/F", "/T", "/PID", pid]);
+    }
+  }
+}
 function editStore() {
   const raw = JSON.parse(readFileSync(STORE_PATH, "utf8"));
   const holder = raw.settings ? raw : raw.value;
@@ -74,6 +87,13 @@ function editStore() {
   if ("typewriterMode" in holder.settings) holder.settings.typewriterMode = false;
   writeFileSync(STORE_PATH, JSON.stringify(raw, null, 2), "utf8");
   return { workspaces: raw.workspaces ?? [] };
+}
+/** cargo watch 残留防呆：watcher 被复用时 tauri dev 起的 WebView2 不带
+ *  CDP 环境变量（spawn 树外的旧 watcher 未知端口意图），CDP 永不就绪——
+ *  预检即失败退出并提示，不自动杀（避免误伤其他工作区编译）。 */
+function cargoResidue() {
+  const r = spawnSync("tasklist", ["/FI", "IMAGENAME eq cargo.exe", "/FO", "CSV"], { encoding: "utf8", windowsHide: true });
+  return String(r.stdout || "").split("\n").filter((l) => /cargo\.exe/i.test(l)).length;
 }
 function findDoc(workspaces, sub) {
   for (const ws of workspaces) {
@@ -190,6 +210,7 @@ async function main() {
     if (!(await portFree())) { log("预检失败: 9223 被占"); return (closeLog(), 2); }
     const stale = vitePortPids();
     if (stale.length) { log(`预检失败: vite 残留 PID ${stale.join(",")}`); return (closeLog(), 2); }
+    if (cargoResidue() > 0) { log("预检失败: cargo watch 残留（复用 watcher 会丢 CDP 端口），请先 taskkill cargo/mditor dev 树"); return (closeLog(), 2); }
     const { workspaces } = editStore();
     const docPath = findDoc(workspaces, args.doc);
     if (!docPath) { log(`找不到文档 ${args.doc}`); return (closeLog(), 2); }
@@ -268,8 +289,16 @@ async function main() {
     await cdp.eval(mark("probe-begin"));
     const targetTop = Math.round((s.h - s.vh) * args.depth);
     if (dir === "down") {
-      // 对照臂：从顶部下滚 upPx（与 up 臂上滚段同强度）
-      const dist = Math.min(args.upPx, targetTop - s.top);
+      // 对照臂：默认从顶部下滚 upPx（与 up 臂上滚段同强度）；
+      // --start-depth>0 时先下滚到该深度（预备段，分析窗排除）再下滚 upPx
+      // ——深位 down 对照（exp1）：与 up 臂同文档位置，控位置混杂变量。
+      if (args.startDepth > 0) {
+        await cdp.eval(mark("down-leg"));
+        await fast(targetTop - s.top);
+        await sleep(1200);
+        s = await readScroll();
+      }
+      const dist = Math.min(args.upPx, (s.h - s.vh) - s.top);
       await cdp.eval(mark("drive-begin"));
       if (spd === "fast") await fast(dist); else await slow(dist);
       await cdp.eval(mark("drive-end"));
@@ -373,6 +402,7 @@ async function main() {
     try { cdp.close(); } catch { /* */ }
     cdp = null;
     killChildTree(child);
+    killStalePorts();
     child = null;
     const fixtureShort = args.doc.includes("1MB") ? "1mb" : args.doc.includes("无穷级数") ? "density" : args.doc.includes("解题技巧") ? "switch" : "other";
     const out = join(RESULTS_DIR, `r8-phase${args.phase}-jank-${args.scenario}-${fixtureShort}-${args.tag}-${args.run}.json`);
@@ -383,6 +413,7 @@ async function main() {
     log("异常: " + (e?.stack || e));
     try { cdp && cdp.close(); } catch { /* */ }
     killChildTree(child);
+    killStalePorts();
     return (closeLog(), 1);
   }
   function closeLog() { try { closeSync(logFd); } catch { /* */ } }

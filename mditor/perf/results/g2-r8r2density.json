@@ -1,0 +1,11 @@
+{
+ "label": "r8r2density",
+ "blocks": 940,
+ "ev": {
+  "n": 26,
+  "p50": 24,
+  "p95": 112,
+  "max": 112
+ },
+ "longtasks": []
+}
