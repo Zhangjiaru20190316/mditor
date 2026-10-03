@@ -1,8 +1,11 @@
 # Changelog
 
-## Unreleased（2026-10-03 第七轮：大文档停滚自漂移专项）
+## 5.0.0-beta (2026-10-03)（第五~七轮合并发版：滚动稳定 · 公式渲染 · 停滚漂移）
 
-### 2026-10-03 批：症状 D（滚动停止后页面自我漂移）根治
+发版事务：官网（site/）新增性能专区（七轮实测数据卡）并同步 v5.0.0-beta 实测口径；
+pages.yml N30 版本注入正则支持预发布后缀（-beta）。
+
+### 2026-10-03 批（第七轮）：症状 D（滚动停止后页面自我漂移）根治
 
 结题报告 `docs/large-doc-scroll-drift-report.md`；归因定罪书 `perf/results/r7-phase4-attribution.md`。
 
@@ -36,9 +39,7 @@
 - 遗留（R8 候选）：1MB 预热推进期残余 3~9 位移帧（8px 级，浏览器 scroll/layout
   亚帧差）；P3（预热学渲染态盒尺寸）待用户拍板——首渲方向宽度跳变的根治项。
 
-## Unreleased（2026-10-02 第六轮：公式渲染及时性与完整性专项）
-
-### 2026-10-02 批：行内公式漏渲染根治 + 上滚补绘提速
+### 2026-10-02 批（第六轮）：行内公式漏渲染根治 + 上滚补绘提速
 
 结题报告 `docs/large-doc-formula-render-report.md`；定罪书 `perf/results/r6-phase3-4-baseline-indictment.md`。
 
@@ -70,9 +71,7 @@
   R 组零回归（打开 13,181ms ≤ 基线、打字密度档 704ms、切换 2,254ms 持平、
   ghost anomalies+0、scroll-abab p50 99.9ms）。
 
-## Unreleased（2026-10-02 第五轮：滚动稳定性专项——v5.0.0-beta）
-
-### 2026-10-02 批：滚动乱闪（F）与乱动（J）专项治理
+### 2026-10-02 批（第五轮）：滚动乱闪（F）与乱动（J）专项治理
 
 结题报告 `docs/large-doc-scroll-stability-report.md`；定罪书 `perf/results/r5-phase4-indictment.md`。
 
