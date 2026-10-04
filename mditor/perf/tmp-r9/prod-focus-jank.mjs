@@ -39,7 +39,7 @@ const EXE_CANDIDATES = [
 
 function parseArgs(argv) {
   const a = { scenario: "down-slow", doc: "1MB压测", tag: "r9p2p", run: 1,
-    depth: 0.6, upPx: 5000, arms: 3, prewarmMax: 180, quietSecs: 10, settleMs: 2000, firstArm: "normal", stridePx: 0 };
+    depth: 0.6, upPx: 5000, arms: 3, prewarmMax: 180, quietSecs: 10, settleMs: 2000, firstArm: "normal", stridePx: 0, widthCtrl: false, widthPx: 0, exp: null };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const next = () => (i + 1 < argv.length ? argv[++i] : null);
@@ -55,6 +55,9 @@ function parseArgs(argv) {
     else if (k === "--settle-ms") a.settleMs = Number(next() ?? 2000);
     else if (k === "--first-arm") a.firstArm = next();
     else if (k === "--stride-px") a.stridePx = Number(next() ?? 0);
+    else if (k === "--width-ctrl") a.widthCtrl = true;
+    else if (k === "--width-px") a.widthPx = Number(next() ?? 0);
+    else if (k === "--exp") a.exp = next();
   }
   return a;
 }
@@ -233,12 +236,15 @@ const ANALYZE_EXPR = (armMetasJson) => `(() => {
   const pickArm = (mode, field) => arms.filter((x) => x.mode === mode && x.scroll && !x.error).map((x) => x.scroll[field]);
   const fJ = pickArm('focus', 'jank32'), nJ = pickArm('normal', 'jank32');
   const fP = pickArm('focus', 'gapP95'), nP = pickArm('normal', 'gapP95');
+  const wJ = pickArm('wctrl', 'jank32'), wP = pickArm('wctrl', 'gapP95');
   const symmetry = {
     jank32Median: { focus: med(fJ), normal: med(nJ) },
     jank32Ratio: (med(nJ) ?? 0) > 0 ? +(med(fJ) / med(nJ)).toFixed(3) : (med(fJ) ? 'inf(normal=0)' : 1),
     p95Median: { focus: med(fP), normal: med(nP) },
     p95Ratio: (med(nP) ?? 0) > 0 ? +(med(fP) / med(nP)).toFixed(3) : null,
+    wctrlJank32Median: { wctrl: med(wJ) }, wctrlP95Median: { wctrl: med(wP) },
     width: { focus: med(arms.filter((x) => x.mode === 'focus' && x.scroll).map((x) => x.scroll.pwStart)),
+      wctrl: med(arms.filter((x) => x.mode === 'wctrl' && x.scroll).map((x) => x.scroll.pwStart)),
       normal: med(arms.filter((x) => x.mode === 'normal' && x.scroll).map((x) => x.scroll.pwStart)) },
   };
   return { arms, symmetry, totalFrames: frames.length, longtasksTotal: (rec.longtasks ?? []).length,
@@ -287,41 +293,50 @@ async function main() {
     const m = mouse(cdp);
     for (let i = 0; i < 40; i++) { if (await cdp.eval(`!!document.querySelector('.ProseMirror')`)) break; await sleep(1000); }
 
-    // 打开目标文档（prod 文件树，候选名匹配 + 目录展开）
+    // 打开目标文档（prod 文件树）。run2~4 实测 CDP 坐标点击在 prod 窗口对
+    // ft-row 不生效（dpr 1.75 坐标换算疑点）——改 DOM el.click() 直接触发
+    // React onClick（handleRowClick → onToggle/onOpen），行为等价受信点击。
     const expandDir = async (dirName) => {
-      const p = await cdp.eval(`(() => {
-        const hit = [...document.querySelectorAll('.ft-row')].find(r => {
+      const ok = await cdp.eval(`(() => {
+        const hit = [...document.querySelectorAll('.ft-row.ft-dir')].find(r => {
           const n = r.querySelector('.ft-name')?.textContent ?? '';
-          return n.includes(${JSON.stringify(dirName)}) && !n.endsWith('.md');
+          return n.includes(${JSON.stringify(dirName)});
         });
-        if (!hit) return null; const r = hit.getBoundingClientRect();
-        if (r.width === 0) return null;
-        return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+        if (!hit) return false;
+        hit.click();
+        return true;
       })()`);
-      if (!p) return false;
-      await m.click(p.x, p.y);
-      await sleep(1200);
+      console.log(`expandDir(${dirName}): ${ok ? "clicked" : "miss"}`);
+      if (!ok) return false;
+      await sleep(1500);
       return true;
     };
     const openDoc = async (sub) => {
       for (let i = 0; i < 12; i++) {
-        const p = await cdp.eval(`(() => {
+        const ok = await cdp.eval(`(() => {
           const hit = [...document.querySelectorAll('.ft-row.ft-file')].find(r => (r.querySelector('.ft-name')?.textContent ?? '').includes(${JSON.stringify(sub)}));
-          if (!hit) return null;
-          const r = hit.getBoundingClientRect();
-          if (r.width === 0) return null;
-          return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+          if (!hit) return false;
+          hit.click();
+          return true;
         })()`);
-        if (p) { await m.click(p.x, p.y); return true; }
+        if (ok) { console.log(`openDoc(${sub}): clicked (try ${i})`); return true; }
+        if (i === 11) console.log(`openDoc(${sub}): 12 tries miss; ftRows=${await cdp.eval(`document.querySelectorAll(".ft-row").length`)}`);
         await sleep(800);
       }
       return false;
     };
     let opened = false;
+    // 侧栏可能收起（上次会话残留）——.ft-row 不可见时先开侧栏（el.click 同款）
+    for (let i = 0; i < 3; i++) {
+      const vis = await cdp.eval(`(() => { const r = document.querySelector(".ft-row"); if (!r) return false; return r.getBoundingClientRect().width > 0; })()`);
+      if (vis) break;
+      await cdp.eval(`document.querySelector(".sidebar-opener")?.click()`);
+      await sleep(1200);
+    }
     // 候选序列：先试文件名直配（用户库或已添加的 fixtures 工作区），失败展开常见目录
     if (await openDoc(args.doc)) opened = true;
     if (!opened) {
-      for (const d of ["perf", "fixtures", "01_专题笔记", "02_习题集", "cmc"]) {
+      for (const d of ["01_专题笔记", "02_习题集", "cmc", "perf", "fixtures"]) {
         if (await expandDir(d) && await openDoc(args.doc)) { opened = true; break; }
       }
     }
@@ -393,7 +408,28 @@ async function main() {
 
     const first = args.firstArm === "focus" ? "focus" : "normal";
     const other = first === "focus" ? "normal" : "focus";
-    const seq = [first, other, other, first, first, other];
+    let seq = [first, other, other, first, first, other];
+    // width-ctrl 臂（F-b 隔离实验）：normal 模式下窗口加宽至 .ProseMirror ≈
+    // focus 宽度（先切 focus 量差再回），臂序 N W N W N W——与 focus run 数据
+    // 跨 run 对比（wctrl ≈ focus → 宽度定罪；wctrl ≈ normal → 模式特有机制）。
+    let winId = null, winW0 = 0, widthPx = args.widthPx;
+    if (args.widthCtrl) {
+      seq = ["normal", "wctrl", "normal", "wctrl", "normal", "wctrl"];
+      const { windowId } = await cdp.send("Browser.getWindowForTarget");
+      const { bounds } = await cdp.send("Browser.getWindowBounds", { windowId });
+      winId = windowId; winW0 = bounds.width;
+      if (!widthPx) {
+        const gn = await cdp.eval(READ_GEO);
+        const gf = await setMode(true);
+        await sleep(800);
+        const g1 = await cdp.eval(READ_GEO);
+        widthPx = Math.max(0, (g1?.pw ?? 0) - (gn?.pw ?? 0));
+        await setMode(false);
+        await sleep(800);
+      }
+      row.widthPx = widthPx;
+      console.log(`width-ctrl 增量: ${widthPx}px（窗口 ${winW0}→${winW0 + widthPx}）`);
+    }
     row.armSeq = seq;
     console.log(`臂序: ${seq.join(",")}`);
 
@@ -403,8 +439,30 @@ async function main() {
       const mode = seq[ai];
       const armLabel = `arm-${ai}-${mode}`;
       await cdp.eval(mark(`${armLabel}-switch-begin`));
-      const g0 = await setMode(mode === "focus");
-      if (!g0) throw new Error(`切 ${mode} 失败`);
+      if (args.widthCtrl) {
+        // 全程 normal 模式；wctrl 臂拉宽窗口、normal 臂还原
+        const g0 = await setMode(false);
+        if (!g0) throw new Error("切 normal 失败");
+        await cdp.send("Browser.setWindowBounds", { windowId: winId,
+          bounds: { width: winW0 + (mode === "wctrl" ? widthPx : 0) } });
+        await sleep(600);
+      } else {
+        const g0 = await setMode(mode === "focus");
+        if (!g0) throw new Error(`切 ${mode} 失败`);
+      }
+      // 原型实验（--exp，跑完即恢复，不合入）：focus 臂上隔离 focus 特有
+      // 常驻元素——F-d 定罪实验（display:none 临时注入 style，arm 末移除）。
+      if (args.exp && mode === "focus") {
+        const inject = args.exp === "no-hover-zone"
+          ? `.focus-hover-zone{display:none!important}`
+          : args.exp === "no-toolbar"
+            ? `.focus-toolbar{display:none!important}`
+            : null;
+        if (inject) {
+          await cdp.eval(`(() => { let s = document.getElementById("r9-exp-style"); if (!s) { s = document.createElement("style"); s.id = "r9-exp-style"; document.head.appendChild(s); } s.textContent = ${JSON.stringify(inject)}; })()`);
+          console.log(`${armLabel}: exp=${args.exp} 注入`);
+        }
+      }
       await cdp.eval(mark(`${armLabel}-switched`));
       await sleep(args.settleMs);
       await cdp.eval(mark(`${armLabel}-settle-end`));
@@ -440,6 +498,8 @@ async function main() {
         await withTimeout(cdp.eval(`window.__r9focus ? 1 : 0`), 8000);
       }
       await cdp.eval(mark(`${armLabel}-arm-end`));
+      // 原型 style 清场（exp 注入的 focus 臂结束即恢复原样式）
+      await cdp.eval(`(() => { const s = document.getElementById("r9-exp-style"); if (s) s.textContent = ""; })()`);
     }
     await cdp.eval(mark("probe-end"));
 
@@ -472,8 +532,11 @@ async function main() {
     row.pumpEnd = pumpEnd ?? { skipped: "export-timeout" };
     console.log(`对称汇总: ${JSON.stringify(analysis.symmetry)}`);
     row.ok = true;
-    // focusMode 归位（prod 用户设置不残留）
+    // focusMode 归位 + 窗口宽度还原（prod 用户环境不残留）
     await setMode(false).catch(() => {});
+    if (args.widthCtrl && winId != null) {
+      try { await cdp.send("Browser.setWindowBounds", { windowId: winId, bounds: { width: winW0 } }); } catch { /* */ }
+    }
     try { cdp.close(); } catch { /* */ }
     cdp = null;
     kill();
