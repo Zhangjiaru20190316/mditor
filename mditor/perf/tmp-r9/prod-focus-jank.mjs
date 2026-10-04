@@ -237,14 +237,17 @@ const ANALYZE_EXPR = (armMetasJson) => `(() => {
   const fJ = pickArm('focus', 'jank32'), nJ = pickArm('normal', 'jank32');
   const fP = pickArm('focus', 'gapP95'), nP = pickArm('normal', 'gapP95');
   const wJ = pickArm('wctrl', 'jank32'), wP = pickArm('wctrl', 'gapP95');
+  const hJ = pickArm('vhctrl', 'jank32'), hP = pickArm('vhctrl', 'gapP95');
   const symmetry = {
     jank32Median: { focus: med(fJ), normal: med(nJ) },
     jank32Ratio: (med(nJ) ?? 0) > 0 ? +(med(fJ) / med(nJ)).toFixed(3) : (med(fJ) ? 'inf(normal=0)' : 1),
     p95Median: { focus: med(fP), normal: med(nP) },
     p95Ratio: (med(nP) ?? 0) > 0 ? +(med(fP) / med(nP)).toFixed(3) : null,
     wctrlJank32Median: { wctrl: med(wJ) }, wctrlP95Median: { wctrl: med(wP) },
+    vhctrlJank32Median: { vhctrl: med(hJ) }, vhctrlP95Median: { vhctrl: med(hP) },
     width: { focus: med(arms.filter((x) => x.mode === 'focus' && x.scroll).map((x) => x.scroll.pwStart)),
       wctrl: med(arms.filter((x) => x.mode === 'wctrl' && x.scroll).map((x) => x.scroll.pwStart)),
+      vhctrl: med(arms.filter((x) => x.mode === 'vhctrl' && x.scroll).map((x) => x.scroll.pwStart)),
       normal: med(arms.filter((x) => x.mode === 'normal' && x.scroll).map((x) => x.scroll.pwStart)) },
   };
   return { arms, symmetry, totalFrames: frames.length, longtasksTotal: (rec.longtasks ?? []).length,
@@ -406,13 +409,14 @@ async function main() {
     const spd = args.scenario.split("-")[1];
     const drive = async (dist) => { if (spd === "fast") await fast(dist); else await slow(dist); };
 
-    const first = args.firstArm === "focus" ? "focus" : "normal";
+    const isNafExp = () => /^naf-/.test(args.exp);
+        const first = args.firstArm === "focus" ? "focus" : "normal";
     const other = first === "focus" ? "normal" : "focus";
     let seq = [first, other, other, first, first, other];
     // width-ctrl 臂（F-b 隔离实验）：normal 模式下窗口加宽至 .ProseMirror ≈
     // focus 宽度（先切 focus 量差再回），臂序 N W N W N W——与 focus run 数据
     // 跨 run 对比（wctrl ≈ focus → 宽度定罪；wctrl ≈ normal → 模式特有机制）。
-    let winId = null, winW0 = 0, widthPx = args.widthPx;
+    let winId = null, winW0 = 0, winH0 = 0, widthPx = args.widthPx, vhDelta = 0;
     if (args.widthCtrl) {
       seq = ["normal", "wctrl", "normal", "wctrl", "normal", "wctrl"];
       const { windowId } = await cdp.send("Browser.getWindowForTarget");
@@ -429,6 +433,20 @@ async function main() {
       }
       row.widthPx = widthPx;
       console.log(`width-ctrl 增量: ${widthPx}px（窗口 ${winW0}→${winW0 + widthPx}）`);
+    } else if (args.exp === "vh-align" || args.exp === "wh-align" || args.exp === "normal-as-focus" || isNafExp()) {
+      // vh 对齐对照：normal 模式 + 窗口加高（wh-align 再加宽）至 host 几何 ≈ focus
+      seq = ["normal", "vhctrl", "normal", "vhctrl", "normal", "vhctrl"];
+      const { windowId } = await cdp.send("Browser.getWindowForTarget");
+      const { bounds } = await cdp.send("Browser.getWindowBounds", { windowId });
+      winId = windowId; winW0 = bounds.width; winH0 = bounds.height;
+      const gn = await cdp.eval(READ_GEO);
+      await setMode(true); await sleep(800);
+      const gf = await cdp.eval(READ_GEO);
+      await setMode(false); await sleep(800);
+      vhDelta = Math.max(0, (gf?.vh ?? 0) - (gn?.vh ?? 0));
+      if (!widthPx) widthPx = Math.max(0, (gf?.pw ?? 0) - (gn?.pw ?? 0));
+      row.vhDelta = vhDelta; row.widthPx = (args.exp === "wh-align" || args.exp === "normal-as-focus" || isNafExp()) ? widthPx : 0;
+      console.log(`${args.exp} 增量: vh+${vhDelta}px pw+${args.exp === "wh-align" ? widthPx : 0}px（normal ${gn?.pw}×${gn?.vh} → focus ${gf?.pw}×${gf?.vh}）`);
     }
     row.armSeq = seq;
     console.log(`臂序: ${seq.join(",")}`);
@@ -446,21 +464,51 @@ async function main() {
         await cdp.send("Browser.setWindowBounds", { windowId: winId,
           bounds: { width: winW0 + (mode === "wctrl" ? widthPx : 0) } });
         await sleep(600);
+      } else if (args.exp === "vh-align" || args.exp === "wh-align" || args.exp === "normal-as-focus" || isNafExp()) {
+        // 全程 normal 模式；vhctrl 臂加高（wh-align 同时加宽）、normal 臂还原
+        const g0 = await setMode(false);
+        if (!g0) throw new Error("切 normal 失败");
+        const dW = mode === "vhctrl" && (args.exp === "wh-align" || args.exp === "normal-as-focus" || isNafExp()) ? widthPx : 0;
+        await cdp.send("Browser.setWindowBounds", { windowId: winId,
+          bounds: { width: winW0 + dW, height: winH0 + (mode === "vhctrl" ? vhDelta : 0) } });
+        await sleep(600);
       } else {
         const g0 = await setMode(mode === "focus");
         if (!g0) throw new Error(`切 ${mode} 失败`);
       }
       // 原型实验（--exp，跑完即恢复，不合入）：focus 臂上隔离 focus 特有
-      // 常驻元素——F-d 定罪实验（display:none 临时注入 style，arm 末移除）。
-      if (args.exp && mode === "focus") {
-        const inject = args.exp === "no-hover-zone"
-          ? `.focus-hover-zone{display:none!important}`
-          : args.exp === "no-toolbar"
-            ? `.focus-toolbar{display:none!important}`
-            : null;
-        if (inject) {
-          await cdp.eval(`(() => { let s = document.getElementById("r9-exp-style"); if (!s) { s = document.createElement("style"); s.id = "r9-exp-style"; document.head.appendChild(s); } s.textContent = ${JSON.stringify(inject)}; })()`);
+      // 差异——CSS 二分定罪（临时注入 style，arm 末移除）。
+      // normal-as-focus（挂在 vhctrl 臂）：normal 模式 + is-focus 等效 CSS
+      //（chrome display:none + padding/border 归零 + sidebar 塌缩）+ 双维
+      // 几何对齐——分离「CSS 视觉层效应」vs「React 卸载差异」（Sidebar/
+      // Opener/AiPanel 卸载与 hover-zone 挂载只存在于真 focus）。
+      const INJECTS = {
+        "no-hover-zone": `.focus-hover-zone{display:none!important}`,
+        "no-toolbar": `.focus-toolbar{display:none!important}`,
+        "restore-main": `.is-focus .main{border:1px solid var(--border);border-radius:var(--radius-l);box-shadow:var(--shadow)}`,
+        "restore-main-radius": `.is-focus .main{border-radius:var(--radius-l)}`,
+        "restore-main-shadow": `.is-focus .main{box-shadow:var(--shadow)}`,
+        "restore-app-pad": `.is-focus .app{padding:var(--frame-pad)}`,
+        "normal-as-focus": `.titlebar,.tabbar,.sb-status,.resizer,.sidebar-opener,.ai-fab{display:none!important}` +
+          `.app{padding:0}.main{border:none;border-radius:0;box-shadow:none}` +
+          `.sidebar{width:0;opacity:0;border:none;pointer-events:none;transform:translateX(-12px)}`,
+        // normal-as-focus 分组二分（判定哪一组是触发面；几何对齐同 naf-*）
+        "naf-titlebar": `.titlebar{display:none!important}`,
+        "naf-tabbar": `.tabbar{display:none!important}`,
+        "naf-status": `.sb-status{display:none!important}`,
+        "naf-sidebar": `.sidebar{width:0;opacity:0;border:none;pointer-events:none;transform:translateX(-12px)}`,
+        "naf-chrome-rest": `.resizer,.sidebar-opener,.ai-fab{display:none!important}`,
+      };
+      const isNaf = /^naf-/.test(args.exp);
+      const injectFor = args.exp === "normal-as-focus" || isNaf
+        ? (mode === "vhctrl" ? INJECTS[args.exp] : "")
+        : (mode === "focus" ? INJECTS[args.exp] : null);
+      if (injectFor != null) {
+        if (injectFor) {
+          await cdp.eval(`(() => { let s = document.getElementById("r9-exp-style"); if (!s) { s = document.createElement("style"); s.id = "r9-exp-style"; document.head.appendChild(s); } s.textContent = ${JSON.stringify(injectFor)}; })()`);
           console.log(`${armLabel}: exp=${args.exp} 注入`);
+        } else {
+          await cdp.eval(`(() => { const s = document.getElementById("r9-exp-style"); if (s) s.textContent = ""; })()`);
         }
       }
       await cdp.eval(mark(`${armLabel}-switched`));
@@ -532,10 +580,10 @@ async function main() {
     row.pumpEnd = pumpEnd ?? { skipped: "export-timeout" };
     console.log(`对称汇总: ${JSON.stringify(analysis.symmetry)}`);
     row.ok = true;
-    // focusMode 归位 + 窗口宽度还原（prod 用户环境不残留）
+    // focusMode 归位 + 窗口尺寸还原（prod 用户环境不残留）
     await setMode(false).catch(() => {});
-    if (args.widthCtrl && winId != null) {
-      try { await cdp.send("Browser.setWindowBounds", { windowId: winId, bounds: { width: winW0 } }); } catch { /* */ }
+    if ((args.widthCtrl || args.exp === "vh-align") && winId != null) {
+      try { await cdp.send("Browser.setWindowBounds", { windowId: winId, bounds: { width: winW0, height: winH0 } }); } catch { /* */ }
     }
     try { cdp.close(); } catch { /* */ }
     cdp = null;
