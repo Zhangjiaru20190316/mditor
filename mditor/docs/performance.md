@@ -443,3 +443,37 @@ sv 模式（CodeMirror）天然只渲染可见行。富文本侧 V3.6.5 落地�
   ——「无穷级数_密度档」为纯行内公式文档（```latex 块 0 个）。
 - 遗留（R8 候选）：1MB 预热推进期残余 3~9 位移帧（8px 级浏览器 scroll/layout
   亚帧差，每 run 预热进度不同导致波动）；P3（预热批学渲染态盒尺寸）待拍板。
+
+## R8：上滚掉帧/丝滑度不对称（第八轮，2026-10-03）
+
+结题报告 `docs/large-doc-upscroll-jank-report.md`、归因定罪书 `perf/results/r8-phase4-attribution.md`。
+
+- **症状 U 判别口径**：掉帧（rAF 帧间隔 >32ms，scrollPhase 窗=滚轮驱动期+静止
+  门 400ms 生效前）vs 内容跳位（三哨兵残差 |Δrect.top+ΔscrollTop|>4px）必须
+  分采分判——R8 全部 run 残差为 0，症状 U 全部为真掉帧。
+- **位置效应主导（本轮核心发现）**：滚动帧稳定性的第一变量是**文档位置**
+  （预热覆盖区 vs 冷区），不是滚动方向。1MB 头部（预热补绘完成区）滚动
+  p95 104~119ms，冷区（未渲染公式密集区）无论上下滚 p95 199~353ms、掉帧
+  帧占比 ~80%；同位置上下对照完全对称（1MB 1.02、密度档 1.05）。**测量
+  陷阱**：以「头部下滚」为对照臂测「中部上滚」会得出伪不对称（比 1.67~5.5），
+  对照臂必须同位置（`--start-depth` 深位下滚）。
+- **冷区首渲布局墙机制**：视口内条目 5ms 预算（SCROLL_RENDER_BUDGET_MS）首渲
+  ——预算时钟只测 KaTeX render 的同步 JS（1-2ms/条），**布局成本不计入**；
+  首渲改行框/块高 → 全树强制 layout ~67ms/帧（1MB 实测 getMetrics
+  LayoutDuration 差分）。冷区滚动队列膨胀至 3,000+（直绘受 SCROLL_HIT_PAINT_CAP
+  限流+冷条目留队），布局循环持续整个滚动期。密度档全树 layout 便宜 ~8 倍，
+  绝对量健康（p95 ≤13ms）。
+- **demote 回带成本**：回带重挂（取消挂起 demote+重新入队+nodeview 重挂）占
+  冷区滚动掉帧强度 ~1/3（禁 demote 对照 p95 -34%）；R7 Fix-A 锁盒使回带直绘
+  零位移，但重挂 DOM 重建本身不可省（DEMOTE_DELAY 红线锁死）。
+- **观测出口**：`window.__mathPumpStats().queueDepth`（队列深度——冷区滚动
+  积压的直接信号，健康值 0~数百、劣化 >1500）；`window.__scrollDebug()`
+  counters 的 `prewarm.chunk/prewarm.comp/anchor.comp`（预热尾巴与补偿轨迹）。
+- **P3 拍板材料**（待用户确认后立项）：预热批从 katexCache 渲染态测高 →
+  hasReservedBox 全覆盖 → 冷区条目滚动中安全直绘（R6 Fix-B 条件全通）→
+  队列清空+首渲零位移，预期 1MB 冷区 p95 199→~130（布局墙底 104~119）、
+  密度档 11→~7，同步改善停滚补绘墙。原型：R7 锁盒 32/32 零差。
+- 探针口径沉淀：probe-jank（r8）——驱动期逐帧 rAF 间隔+Longtask Observer+
+  三哨兵残差+250ms 四路快照+marks 分窗；**快滚 5000px 窗内仅 16~30 帧，
+  对称比判定以慢滚大样本为准**；PerformanceObserver longtask 在「布局/渲染
+  管线掉帧」形态下恒 0（无 >50ms JS 任务），不能作为帧稳定性的充分判据。
