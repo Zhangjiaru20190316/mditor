@@ -576,6 +576,32 @@ body.is-resizing .sidebar {
   border-radius: 0;
   box-shadow: none;
 }
+/* R9 Fix-A 专注模式合成器保温：普通模式的 .ai-fab 呼吸动画（fab-pulse）
+   逐 vsync 驱动合成器产帧，DXGISwapChain 常热；专注模式 display:none 掉
+   fab 后滚轮间隙（数百 ms）零产帧 → swapchain/DWM 冷却 → 下一滚动帧
+   Present 阻塞 40~124ms（打包版实测 jank32 8~12 vs 0，trace：每个掉帧
+   gap 与一次 DXGISwapChainImageBacking::Present 停摆严格同长）。修复 =
+   专注模式给 .main 挂 translateZ 亚像素无限动画：transform 逐帧更新驱动
+   合成器连续重组呈现，而 translateZ 无 2D 位移（无 perspective 祖先）——
+   视觉零变化、光栅零成本（层纹理复用）。窗口隐藏由 .app-idle 暂停（与
+   fab-pulse 同纪律）；动效「无」档/reduced-motion 的 B12 kill switch 会
+   连带停掉本动画——该档位下 fab-pulse 同停，两模式对称承受呈现间歇，
+   属用户显式偏好，不豁免。 */
+.is-focus .main {
+  animation: focus-keepwarm 2.4s linear infinite;
+}
+.app-idle .main {
+  animation-play-state: paused;
+}
+@keyframes focus-keepwarm {
+  0%,
+  100% {
+    transform: translateZ(0);
+  }
+  50% {
+    transform: translateZ(0.001px);
+  }
+}
 
 /* 最大化保留浮岛（v4.2.1）：不再回退直角平铺，普通/最大化窗口全程
    圆角一致（用户确认）。TitleBar 仍把最大化状态落到
