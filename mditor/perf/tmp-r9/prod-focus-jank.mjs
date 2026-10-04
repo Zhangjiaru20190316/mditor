@@ -1,0 +1,493 @@
+// prod-focus-jank.mjs —— R9 阶段二/三：打包版（用户安装 v5.0.0）症状 F 复现探针
+// （一次性，不入库）
+//
+// 用法：node perf/tmp-r9/prod-focus-jank.mjs --scenario down-slow|down-fast
+//        [--doc 1MB压测|密度档压测|题型方法] [--tag r9p2p] [--run 1]
+//        [--depth 0.6] [--up-px 5000] [--arms 3] [--prewarm-max 180]
+//        [--quiet-secs 10] [--settle-ms 2000] [--first-arm normal|focus]
+//
+// 背景：dev 探针（probe-focus-jank）六 run 全部复现失败——focus 不劣于
+// normal（p95 比 0.58~1.05）。环境归因：dev 构建预热 1 块/26ms 爬行死锁，
+// 1MB 表冷（F-a「表满载×布局贵」条件不成立）；密度档布局便宜。用户症状在
+// 打包 v5.0.0 正式版——release 构建预热 20~60s 可完成 → F-a 全条件在场。
+// 本探针 = 唯一接近用户环境的路径。
+//
+// 与 dev 探针的差异：
+//  - 启动 %LOCALAPPDATA%/Mditor/mditor.exe（用户安装版，= 症状版本），
+//    CDP 9224（避让惯例）；**prod store 只读**（不 editStore——用户真实库）。
+//  - 打开文档走 prod 文件树（递归展开目录），候选名列表匹配。
+//  - 预热等待强化：轮询 prewarm.done 事件上限 180s（release 可完成）；
+//    若超时则记录 prewarmTimeot 继续测（冷表态也有价值——用户早期会话态）。
+//  - 采样/分析/切换与 dev 版同款（页内分析 + 大导出超时兜底）。
+// 红线：只读观测 + 滚轮驱动 + focus 切换（用户日常操作）；不改设置默认值
+//（focusMode 退出时归位 false）；不改任何 src/。
+
+import { spawn, spawnSync } from "node:child_process";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join, resolve } from "node:path";
+import { Cdp, mouse, sleep } from "../cdp.mjs";
+
+const PORT = 9224;
+const here = dirname(fileURLToPath(import.meta.url));
+const MDITOR_DIR = resolve(here, "..", "..");
+const RESULTS_DIR = join(MDITOR_DIR, "perf", "results");
+const EXE_CANDIDATES = [
+  resolve(process.env.LOCALAPPDATA ?? "", "Mditor", "mditor.exe"),
+  resolve(MDITOR_DIR, "src-tauri", "target", "release", "mditor.exe"),
+];
+
+function parseArgs(argv) {
+  const a = { scenario: "down-slow", doc: "1MB压测", tag: "r9p2p", run: 1,
+    depth: 0.6, upPx: 5000, arms: 3, prewarmMax: 180, quietSecs: 10, settleMs: 2000, firstArm: "normal", stridePx: 0 };
+  for (let i = 0; i < argv.length; i++) {
+    const k = argv[i];
+    const next = () => (i + 1 < argv.length ? argv[++i] : null);
+    if (k === "--scenario") a.scenario = next();
+    else if (k === "--doc") a.doc = next();
+    else if (k === "--tag") a.tag = next();
+    else if (k === "--run") a.run = Number(next() ?? 1);
+    else if (k === "--depth") a.depth = Number(next() ?? 0.6);
+    else if (k === "--up-px") a.upPx = Number(next() ?? 5000);
+    else if (k === "--arms") a.arms = Number(next() ?? 3);
+    else if (k === "--prewarm-max") a.prewarmMax = Number(next() ?? 180);
+    else if (k === "--quiet-secs") a.quietSecs = Number(next() ?? 10);
+    else if (k === "--settle-ms") a.settleMs = Number(next() ?? 2000);
+    else if (k === "--first-arm") a.firstArm = next();
+    else if (k === "--stride-px") a.stridePx = Number(next() ?? 0);
+  }
+  return a;
+}
+
+// 采样器（与 dev 版 probe-focus-jank 同款）
+const JANK_SAMPLER = `(() => {
+  const host = document.querySelector('.mditor-editor-host');
+  const pm = host && host.querySelector('.ProseMirror');
+  if (!host || !pm) return 'no-host';
+  const hr = host.getBoundingClientRect();
+  const pick = (yFrac) => {
+    const y = hr.top + hr.height * yFrac;
+    let fallback = null;
+    for (const el of pm.children) {
+      const r = el.getBoundingClientRect();
+      if (r.height < 8) continue;
+      if (!fallback && r.top <= y && r.bottom >= y) fallback = el;
+      if (r.top >= y - 4 && r.top <= y + hr.height * 0.3) return el;
+    }
+    return fallback;
+  };
+  const sentinels = [];
+  const names = ['top', 'mid', 'bot'];
+  const fracs = [0.12, 0.5, 0.85];
+  for (let i = 0; i < 3; i++) { const el = pick(fracs[i]); if (el) sentinels.push({ name: names[i], el }); }
+  const rec = { perf0: performance.now(), wall0: Date.now(), frames: 0, framesList: [], marks: [], longtasks: [],
+    snap: [], sentinelInfo: sentinels.map((s) => ({ name: s.name, tag: s.el.tagName,
+      text: (s.el.textContent || '').slice(0, 24) })), stop: false, done: false, err: null };
+  window.__r9focus = rec;
+  try {
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        const a = (e.attribution && e.attribution[0]) || {};
+        rec.longtasks.push({ t: Math.round(e.startTime), dur: Math.round(e.duration * 10) / 10,
+          name: e.name, ct: a.containerType || '', cn: (a.containerName || '').slice(0, 40) });
+      }
+    }).observe({ entryTypes: ['longtask'] });
+  } catch (e) { rec.ltErr = String(e); }
+  let prev = null;
+  const snapOnce = () => {
+    try {
+      let math = null;
+      try {
+        let ready = 0, unready = 0;
+        for (const el of pm.querySelectorAll('.mditor-math-inline-lazy')) {
+          if (el.classList.contains('mditor-math-inline-ready')) ready++; else unready++;
+        }
+        math = { ready, unready };
+      } catch { /* */ }
+      let pump = null;
+      try { pump = typeof window.__mathPumpStats === 'function' ? window.__mathPumpStats() : null; } catch { /* */ }
+      let counters = null;
+      try {
+        const sd = window.__scrollDebug;
+        const c = sd ? (typeof sd.counters === 'function' ? sd.counters() : sd.counters) : null;
+        if (c) { const o = {}; for (const [k, v] of Object.entries(c)) { if (v) o[k] = v; } counters = o; }
+      } catch { /* */ }
+      const pickCtr = {};
+      if (counters) {
+        for (const k of Object.keys(counters)) {
+          if (/^(prewarm\\.|anchor\\.|write\\.|demote|io\\.|cv\\.|layout:|block\\.|session\\.|pm\\.|ghost)/.test(k)) pickCtr[k] = counters[k];
+        }
+      }
+      rec.snap.push({ t: Math.round(performance.now() - rec.perf0), w: Date.now(), math, pump, ctr: pickCtr });
+    } catch { /* */ }
+  };
+  let lastSnapAt = 0;
+  const tick = () => {
+    try {
+      if (rec.stop) { snapOnce(); rec.done = true; return; }
+      const now = performance.now();
+      const t = Math.round(now - rec.perf0);
+      const row = { t, w: Date.now(), st: Math.round(host.scrollTop * 10) / 10,
+        sh: Math.round(host.scrollHeight), pw: Math.round(pm.clientWidth) };
+      for (const s of sentinels) {
+        row[s.name] = s.el.isConnected ? Math.round(s.el.getBoundingClientRect().top * 10) / 10 : null;
+      }
+      if (prev) row.gap = Math.round((now - prev.at) * 10) / 10;
+      row.at = now;
+      rec.frames++;
+      rec.framesList.push(row);
+      prev = row;
+      if (now - lastSnapAt >= 250) { lastSnapAt = now; snapOnce(); }
+      requestAnimationFrame(tick);
+    } catch (e) { rec.err = String(e); rec.done = true; }
+  };
+  requestAnimationFrame(tick);
+  return 'started:' + sentinels.length;
+})()`;
+
+const mark = (label) => `window.__r9focus && window.__r9focus.marks.push({ t: Math.round(performance.now() - window.__r9focus.perf0), w: Date.now(), label: ${JSON.stringify(label)} }), 'ok'`;
+
+const ANALYZE_EXPR = (armMetasJson) => `(() => {
+  const armMetas = ${armMetasJson};
+  const rec = window.__r9focus;
+  if (!rec) return { error: 'no-rec' };
+  const frames = rec.framesList ?? [];
+  const marks = rec.marks ?? [];
+  const findMark = (label) => { const hit = [...marks].reverse().find((x) => x.label === label); return hit ? hit.t : null; };
+  const inWin = (t, w) => w && t >= w[0] && t < w[1];
+  const quantile = (arr, q) => { if (!arr.length) return null; const a = [...arr].sort((x, y) => x - y); return Math.round(a[Math.min(a.length - 1, Math.floor(arr.length * q))] * 10) / 10; };
+  const variance = (arr) => { if (!arr.length) return null; const mu = arr.reduce((s, x) => s + x, 0) / arr.length; return Math.round(arr.reduce((s, x) => s + (x - mu) * (x - mu), 0) / arr.length); };
+  const arms = [];
+  for (const meta of armMetas) {
+    const lab = 'arm-' + meta.i + '-' + meta.mode;
+    const swB = findMark(lab + '-switch-begin'), swE = findMark(lab + '-settle-end');
+    const dB = findMark(lab + '-drive-begin'), dE = findMark(lab + '-drive-end'), aE = findMark(lab + '-arm-end');
+    if (swB == null || dB == null || dE == null || aE == null) { arms.push({ i: meta.i, mode: meta.mode, error: 'marks-missing' }); continue; }
+    const QUIET_GATE = 400;
+    const switchWin = [swB, swE], scrollWin = [dB, dE + QUIET_GATE], quietWin = [dE + QUIET_GATE, aE];
+    const scrollFrames = frames.filter((f) => inWin(f.t, scrollWin));
+    const quietFrames = frames.filter((f) => inWin(f.t, quietWin));
+    const swFrames = frames.filter((f) => inWin(f.t, switchWin));
+    const scrollGaps = scrollFrames.map((f) => f.gap).filter((g) => g != null);
+    const jankScroll = scrollFrames.filter((f) => f.gap > 32);
+    const ltScroll = (rec.longtasks ?? []).filter((e) => inWin(e.t, scrollWin) || inWin(e.t + e.dur, scrollWin));
+    const shiftScroll = [], shiftQuiet = [];
+    let prevF = null;
+    for (const f of frames) {
+      if (prevF) {
+        if (inWin(f.t, scrollWin)) {
+          const stD = Math.round((f.st - prevF.st) * 10) / 10;
+          for (const nm of ['top', 'mid', 'bot']) {
+            const a = prevF[nm], b = f[nm];
+            if (a == null || b == null) continue;
+            const d = Math.round((b - a) * 10) / 10;
+            const residual = Math.round((d + stD) * 10) / 10;
+            if (Math.abs(residual) > 4) { shiftScroll.push({ t: f.t, s: nm, d, stD, residual, gap: f.gap }); break; }
+          }
+        } else if (inWin(f.t, quietWin)) {
+          for (const nm of ['top', 'mid', 'bot']) {
+            const a = prevF[nm], b = f[nm];
+            if (a == null || b == null) continue;
+            const d = Math.round((b - a) * 10) / 10;
+            if (Math.abs(d) > 4) { shiftQuiet.push({ t: f.t, s: nm, d, st: f.st, gap: f.gap }); break; }
+          }
+        }
+      }
+      prevF = f;
+    }
+    const snapIn = (rec.snap ?? []).filter((x) => inWin(x.t, scrollWin) || inWin(x.t, quietWin));
+    const ctrDelta = {};
+    if (snapIn.length >= 2) {
+      const a = snapIn[0].ctr ?? {}, b = snapIn[snapIn.length - 1].ctr ?? {};
+      for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+        const d = (b[k] ?? 0) - (a[k] ?? 0);
+        if (d) ctrDelta[k] = d;
+      }
+    }
+    const shSeries = scrollFrames.map((f) => f.sh);
+    const pwSeries = scrollFrames.map((f) => f.pw).filter((p) => p != null);
+    const mathScroll = snapIn.filter((x) => x.math);
+    arms.push({
+      i: meta.i, mode: meta.mode, meta,
+      switchWin, scrollWin, quietWin,
+      switch: { frames: swFrames.length, jank32: swFrames.filter((f) => f.gap > 32).length,
+        gapMax: quantile(swFrames.map((f) => f.gap).filter((g) => g != null), 1) },
+      scroll: { frames: scrollFrames.length, jank32: jankScroll.length,
+        jank32Ratio: scrollFrames.length ? +(jankScroll.length / scrollFrames.length).toFixed(5) : null,
+        gapP50: quantile(scrollGaps, 0.5), gapP95: quantile(scrollGaps, 0.95), gapMax: quantile(scrollGaps, 1),
+        longtask50: ltScroll.length, ltDurSumMs: Math.round(ltScroll.reduce((s, e) => s + e.dur, 0)),
+        shiftFrames: shiftScroll.length, shiftDetail: shiftScroll.slice(0, 20),
+        shVar: variance(shSeries), shMin: shSeries.length ? Math.min(...shSeries) : null,
+        shMax: shSeries.length ? Math.max(...shSeries) : null,
+        pwStart: pwSeries[0] ?? null, pwEnd: pwSeries[pwSeries.length - 1] ?? null,
+        mathUnreadyMax: mathScroll.length ? Math.max(...mathScroll.map((x) => x.math.unready)) : null },
+      quiet: { frames: quietFrames.length, jank32: quietFrames.filter((f) => f.gap > 32).length,
+        gapP95: quantile(quietFrames.map((f) => f.gap).filter((g) => g != null), 0.95),
+        longtask50: (rec.longtasks ?? []).filter((e) => inWin(e.t, quietWin)).length,
+        driftShift: shiftQuiet.length, driftDetail: shiftQuiet.slice(0, 12),
+        stStart: quietFrames[0]?.st ?? null, stEnd: quietFrames[quietFrames.length - 1]?.st ?? null },
+      ctrDelta,
+    });
+  }
+  const med = (arr) => { const a = arr.filter((x) => x != null).sort((x, y) => x - y); return a.length ? a[Math.floor(a.length / 2)] : null; };
+  const pickArm = (mode, field) => arms.filter((x) => x.mode === mode && x.scroll && !x.error).map((x) => x.scroll[field]);
+  const fJ = pickArm('focus', 'jank32'), nJ = pickArm('normal', 'jank32');
+  const fP = pickArm('focus', 'gapP95'), nP = pickArm('normal', 'gapP95');
+  const symmetry = {
+    jank32Median: { focus: med(fJ), normal: med(nJ) },
+    jank32Ratio: (med(nJ) ?? 0) > 0 ? +(med(fJ) / med(nJ)).toFixed(3) : (med(fJ) ? 'inf(normal=0)' : 1),
+    p95Median: { focus: med(fP), normal: med(nP) },
+    p95Ratio: (med(nP) ?? 0) > 0 ? +(med(fP) / med(nP)).toFixed(3) : null,
+    width: { focus: med(arms.filter((x) => x.mode === 'focus' && x.scroll).map((x) => x.scroll.pwStart)),
+      normal: med(arms.filter((x) => x.mode === 'normal' && x.scroll).map((x) => x.scroll.pwStart)) },
+  };
+  return { arms, symmetry, totalFrames: frames.length, longtasksTotal: (rec.longtasks ?? []).length,
+    marks, sentinelInfo: rec.sentinelInfo, wall0: rec.wall0 };
+})()`;
+
+const READ_GEO = `(() => {
+  const host = document.querySelector('.mditor-editor-host');
+  const pm = document.querySelector('.mditor-editor-host .ProseMirror');
+  return host ? { top: Math.round(host.scrollTop), h: Math.round(host.scrollHeight), vh: host.clientHeight,
+    pw: pm ? Math.round(pm.clientWidth) : null,
+    isFocus: document.querySelector('.app').classList.contains('is-focus') } : null;
+})()`;
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  mkdirSync(RESULTS_DIR, { recursive: true });
+  const fs = await import("node:fs");
+  const EXE = EXE_CANDIDATES.find((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } });
+  if (!EXE) { console.log("FAIL: 找不到打包版 exe"); process.exit(2); }
+  console.log(`exe: ${EXE}`);
+  const row = { ts: new Date().toISOString(), tag: args.tag, phase: 2, scenario: args.scenario,
+    doc: args.doc, depth: args.depth, upPx: args.upPx, arms: args.arms, settleMs: args.settleMs,
+    prewarmMax: args.prewarmMax, run: args.run, exe: EXE, ok: false };
+
+  let child = null, cdp = null;
+  const kill = () => { try { if (child?.pid) spawnSync("taskkill", ["/F", "/T", "/PID", String(child.pid)], { stdio: "ignore" }); } catch { /* */ } };
+  process.on("exit", kill);
+  try {
+    child = spawn(EXE, [], {
+      env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${PORT}` },
+      stdio: "ignore", windowsHide: true,
+    });
+    let target = null;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 60_000) {
+      try {
+        const res = await fetch(`http://127.0.0.1:${PORT}/json`, { signal: AbortSignal.timeout(700) });
+        const page = (await res.json()).find((t) => t.type === "page" && t.webSocketDebuggerUrl);
+        if (page) { target = page; break; }
+      } catch { /* */ }
+      await sleep(1000);
+    }
+    if (!target) { console.log("FAIL: CDP 9224 未就绪"); process.exit(2); }
+    cdp = await Cdp.connect(target.webSocketDebuggerUrl);
+    const m = mouse(cdp);
+    for (let i = 0; i < 40; i++) { if (await cdp.eval(`!!document.querySelector('.ProseMirror')`)) break; await sleep(1000); }
+
+    // 打开目标文档（prod 文件树，候选名匹配 + 目录展开）
+    const expandDir = async (dirName) => {
+      const p = await cdp.eval(`(() => {
+        const hit = [...document.querySelectorAll('.ft-row')].find(r => {
+          const n = r.querySelector('.ft-name')?.textContent ?? '';
+          return n.includes(${JSON.stringify(dirName)}) && !n.endsWith('.md');
+        });
+        if (!hit) return null; const r = hit.getBoundingClientRect();
+        if (r.width === 0) return null;
+        return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+      })()`);
+      if (!p) return false;
+      await m.click(p.x, p.y);
+      await sleep(1200);
+      return true;
+    };
+    const openDoc = async (sub) => {
+      for (let i = 0; i < 12; i++) {
+        const p = await cdp.eval(`(() => {
+          const hit = [...document.querySelectorAll('.ft-row.ft-file')].find(r => (r.querySelector('.ft-name')?.textContent ?? '').includes(${JSON.stringify(sub)}));
+          if (!hit) return null;
+          const r = hit.getBoundingClientRect();
+          if (r.width === 0) return null;
+          return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+        })()`);
+        if (p) { await m.click(p.x, p.y); return true; }
+        await sleep(800);
+      }
+      return false;
+    };
+    let opened = false;
+    // 候选序列：先试文件名直配（用户库或已添加的 fixtures 工作区），失败展开常见目录
+    if (await openDoc(args.doc)) opened = true;
+    if (!opened) {
+      for (const d of ["perf", "fixtures", "01_专题笔记", "02_习题集", "cmc"]) {
+        if (await expandDir(d) && await openDoc(args.doc)) { opened = true; break; }
+      }
+    }
+    if (!opened) { console.log(`FAIL: prod 文件树找不到「${args.doc}」`); process.exit(2); }
+    console.log(`文档已开: ${args.doc}`);
+    await sleep(8000);
+    const big = await cdp.eval(`(() => { const h = document.querySelector('.mditor-editor-host'); return h ? h.dataset.big !== undefined : null; })()`);
+    let s = await cdp.eval(READ_GEO);
+    console.log(`big=${big} geo=${JSON.stringify(s)}`);
+    row.big = big;
+
+    // 预热等待（release 应可完成；超时记录后继续 = 用户早期会话态）
+    const t1 = Date.now();
+    let prewarmDone = false;
+    while (Date.now() - t1 < args.prewarmMax * 1000) {
+      const done = await cdp.eval(`(() => { const sd = window.__scrollDebug; if (!sd) return false; const es = typeof sd.events === 'function' ? sd.events() : sd.events; return (es ?? []).some(e => e.kind === 'prewarm.done'); })()`);
+      if (done) { prewarmDone = true; break; }
+      await sleep(3000);
+    }
+    row.prewarmDone = prewarmDone;
+    row.prewarmWaitMs = Date.now() - t1;
+    console.log(`预热${prewarmDone ? "完成" : "超时"}（${row.prewarmWaitMs}ms）`);
+    s = await cdp.eval(READ_GEO);
+
+    // 切换器（同 dev 版）
+    const focusBtnPos = async () => cdp.eval(`(() => {
+      const b = document.querySelector('button.sb-icon-btn[title="焦点模式"]');
+      if (!b) return null;
+      const r = b.getBoundingClientRect();
+      if (r.width === 0) return null;
+      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    })()`);
+    const sendEsc = async () => {
+      for (const type of ["keyDown", "keyUp"]) {
+        await cdp.send("Input.dispatchKeyEvent", { type, key: "Escape", code: "Escape",
+          windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+      }
+    };
+    const setMode = async (wantFocus) => {
+      let geo = await cdp.eval(READ_GEO);
+      if (geo.isFocus === wantFocus) return geo;
+      if (wantFocus) {
+        const p = await focusBtnPos();
+        if (!p) return null;
+        await m.click(p.x, p.y);
+      } else {
+        await sendEsc();
+      }
+      for (let i = 0; i < 30; i++) {
+        await sleep(100);
+        geo = await cdp.eval(READ_GEO);
+        if (geo.isFocus === wantFocus) return geo;
+      }
+      return null;
+    };
+
+    const startRes = await cdp.eval(JANK_SAMPLER);
+    console.log(`采样器: ${startRes}`);
+    if (!String(startRes).startsWith("started")) process.exit(2);
+
+    const cx = 640, cy = 400;
+    const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r(null), ms))]);
+    const wheel = async (dy, pause) => { await m.wheel(cx, cy, 0, dy); await sleep(pause); };
+    const fast = async (px) => { const n = Math.ceil(Math.abs(px) / 1200); for (let i = 0; i < n; i++) await wheel(Math.sign(px) * 1200, 90); };
+    const slow = async (px) => { const n = Math.ceil(Math.abs(px) / 220); for (let i = 0; i < n; i++) await wheel(Math.sign(px) * 220, 450); };
+    const dir = args.scenario.split("-")[0];
+    const spd = args.scenario.split("-")[1];
+    const drive = async (dist) => { if (spd === "fast") await fast(dist); else await slow(dist); };
+
+    const first = args.firstArm === "focus" ? "focus" : "normal";
+    const other = first === "focus" ? "normal" : "focus";
+    const seq = [first, other, other, first, first, other];
+    row.armSeq = seq;
+    console.log(`臂序: ${seq.join(",")}`);
+
+    await cdp.eval(mark("probe-begin"));
+    const armMetas = [];
+    for (let ai = 0; ai < seq.length; ai++) {
+      const mode = seq[ai];
+      const armLabel = `arm-${ai}-${mode}`;
+      await cdp.eval(mark(`${armLabel}-switch-begin`));
+      const g0 = await setMode(mode === "focus");
+      if (!g0) throw new Error(`切 ${mode} 失败`);
+      await cdp.eval(mark(`${armLabel}-switched`));
+      await sleep(args.settleMs);
+      await cdp.eval(mark(`${armLabel}-settle-end`));
+      let g = await cdp.eval(READ_GEO);
+      const stride = args.stridePx > 0 ? args.stridePx : args.upPx + 5000;
+      const maxStart = Math.max(0, (g.h - g.vh) - args.upPx - 200);
+      let startTop;
+      if (dir === "down") {
+        startTop = Math.round((g.h - g.vh) * args.depth) + ai * stride;
+      } else {
+        const downStart = Math.round((g.h - g.vh) * args.depth) + ai * stride;
+        startTop = Math.min(g.h - g.vh, downStart + Math.min(args.upPx, (g.h - g.vh) - downStart));
+      }
+      if (startTop > maxStart) startTop = maxStart;
+      await cdp.eval(mark(`${armLabel}-leg-begin`));
+      if (Math.abs(startTop - g.top) > 10) await fast(startTop - g.top);
+      await sleep(1200);
+      g = await cdp.eval(READ_GEO);
+      const dist = dir === "down"
+        ? Math.max(100, Math.min(args.upPx, (g.h - g.vh) - g.top))
+        : Math.max(100, Math.min(args.upPx, g.top));
+      await cdp.eval(mark(`${armLabel}-drive-begin`));
+      await drive(dir === "down" ? dist : -dist);
+      await cdp.eval(mark(`${armLabel}-drive-end`));
+      g = await cdp.eval(READ_GEO);
+      armMetas.push({ i: ai, mode, startTop, dist, endTop: g.top, h: g.h, pw: g.pw });
+      console.log(`${armLabel}: start=${startTop} dist=${dist} end=${g.top} h=${g.h} pw=${g.pw}`);
+      await sleep(400);
+      // quiet 观察窗（D1）：rAF 采样器在页面里自跑；这里每 5s 一次轻量 eval
+      // 保活 CDP ws（run1 实测长空闲后 ws 死链——eval 永久挂起）
+      for (let q = 0; q < args.quietSecs; q += 5) {
+        await sleep(Math.min(5000, (args.quietSecs - q) * 1000));
+        await withTimeout(cdp.eval(`window.__r9focus ? 1 : 0`), 8000);
+      }
+      await cdp.eval(mark(`${armLabel}-arm-end`));
+    }
+    await cdp.eval(mark("probe-end"));
+
+    // 收尾（全 eval 带 8~30s 超时保护——run1 实测 CDP 死链会永久挂起无超时的 eval）
+    await withTimeout(cdp.eval(`window.__r9focus.stop = true`), 8000);
+    const tw = Date.now();
+    while (Date.now() - tw < 5000) {
+      const st = await withTimeout(cdp.eval(`window.__r9focus ? { done: window.__r9focus.done } : null`), 8000);
+      if (!st) break; // eval 超时：不再等，直接尝试分析
+      if (st.done) break;
+      await sleep(300);
+    }
+    const analysis = await withTimeout(cdp.eval(ANALYZE_EXPR(JSON.stringify(armMetas))), 30_000);
+    if (!analysis || analysis.error) {
+      console.log("FAIL: 页内分析失败/超时: " + JSON.stringify(analysis));
+      kill();
+      process.exit(2);
+    }
+    const jankBig = await withTimeout(cdp.eval(`JSON.parse(JSON.stringify(window.__r9focus))`), 90_000);
+    const eventsInWindow = await withTimeout(cdp.eval(`(() => { const sd = window.__scrollDebug; if (!sd) return []; const es = typeof sd.events === 'function' ? sd.events() : sd.events; return (es ?? []).slice(-160).map(e => ({ ts: e.ts, level: e.level, kind: e.kind, msg: (e.msg || '').slice(0, 160) })); })()`), 30_000);
+    const trapLog = await withTimeout(cdp.eval(`window.__scrollDebug && window.__scrollDebug.trap ? window.__scrollDebug.trap() : []`), 30_000);
+    const pumpEnd = await withTimeout(cdp.eval(`typeof window.__mathPumpStats === 'function' ? window.__mathPumpStats() : null`), 30_000);
+
+    row.analysis = { arms: analysis.arms, symmetry: analysis.symmetry };
+    row.jank = jankBig
+      ? { framesList: jankBig.framesList, marks: analysis.marks, longtasks: jankBig.longtasks, snap: jankBig.snap, sentinelInfo: analysis.sentinelInfo, wall0: analysis.wall0 }
+      : { skipped: "export-timeout", marks: analysis.marks, sentinelInfo: analysis.sentinelInfo, wall0: analysis.wall0 };
+    row.eventsInWindow = eventsInWindow ?? { skipped: "export-timeout" };
+    row.trap = trapLog ?? { skipped: "export-timeout" };
+    row.pumpEnd = pumpEnd ?? { skipped: "export-timeout" };
+    console.log(`对称汇总: ${JSON.stringify(analysis.symmetry)}`);
+    row.ok = true;
+    // focusMode 归位（prod 用户设置不残留）
+    await setMode(false).catch(() => {});
+    try { cdp.close(); } catch { /* */ }
+    cdp = null;
+    kill();
+    child = null;
+    const fixtureShort = args.doc.includes("1MB") ? "1mb" : args.doc.includes("密度档") ? "density" : "other";
+    const out = join(RESULTS_DIR, `r9-phase2-prod-jank-abab-${args.scenario}-${fixtureShort}-${args.tag}-${args.run}.json`);
+    writeFileSync(out, JSON.stringify(row), "utf8");
+    console.log(`证据落盘 ${out}`);
+    process.exit(0);
+  } catch (e) {
+    console.log("异常: " + (e?.stack || e));
+    try { cdp && cdp.close(); } catch { /* */ }
+    kill();
+    process.exit(1);
+  }
+}
+main().then((c) => process.exit(c ?? 0), (e) => { console.error(e?.stack || e); process.exit(2); });

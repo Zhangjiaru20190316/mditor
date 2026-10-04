@@ -3,7 +3,7 @@
 // 用法：node perf/tmp-r9/probe-focus-jank.mjs --scenario down-slow|down-fast|up-slow|up-fast
 //        [--doc 无穷级数_密度档|1MB] [--tag r9p2] [--phase 2] [--run 1]
 //        [--depth 0.6] [--up-px 5000] [--arms 3] [--prewarm-wait] [--quiet-secs 10]
-//        [--settle-ms 2000] [--width-ctrl]
+//        [--settle-ms 2000] [--width-ctrl] [--first-arm normal|focus] [--stride-px 0]
 //
 // 蓝本 perf/tmp-r8/probe-jank.mjs（同款起 dev(9223)/开档/滚轮驱动/PID 清理）。
 // 本轮（R9）新增——模式对称性口径（任务书 §5）：
@@ -45,7 +45,8 @@ const STORE_PATH = join(process.env.APPDATA ?? ".", "com.mditor.app.dev", "mdito
 
 function parseArgs(argv) {
   const a = { scenario: "down-slow", doc: "无穷级数_密度档", tag: "r9p2", phase: 2, run: 1,
-    depth: 0.6, upPx: 5000, arms: 3, prewarmWait: false, quietSecs: 10, settleMs: 2000, widthCtrl: false, widthPx: 0 };
+    depth: 0.6, upPx: 5000, arms: 3, prewarmWait: false, quietSecs: 10, settleMs: 2000, widthCtrl: false, widthPx: 0,
+    firstArm: "normal", stridePx: 0 };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const next = () => (i + 1 < argv.length ? argv[++i] : null);
@@ -62,6 +63,8 @@ function parseArgs(argv) {
     else if (k === "--settle-ms") a.settleMs = Number(next() ?? 2000);
     else if (k === "--width-ctrl") a.widthCtrl = true;
     else if (k === "--width-px") a.widthPx = Number(next() ?? 0);
+    else if (k === "--first-arm") a.firstArm = next();
+    else if (k === "--stride-px") a.stridePx = Number(next() ?? 0);
   }
   return a;
 }
@@ -110,6 +113,7 @@ function findDoc(workspaces, sub) {
     try {
       for (const e of readdirSync(ws, { recursive: true })) {
         const n = basename(String(e));
+        if (n.startsWith(".")) continue; // .pristine-* 镜像不入口径
         if (n.toLowerCase().includes(sub.toLowerCase()) && n.endsWith(".md")) return join(ws, String(e));
       }
     } catch { /* */ }
@@ -206,6 +210,114 @@ const JANK_SAMPLER = `(() => {
 })()`;
 
 const mark = (label) => `window.__r9focus && window.__r9focus.marks.push({ t: Math.round(performance.now() - window.__r9focus.perf0), w: Date.now(), label: ${JSON.stringify(label)} }), 'ok'`;
+
+// 页内分臂分析（R9 v3：收尾卡死防御——run5 实测大对象 CDP 导出可无限挂起，
+// 分析移入浏览器端轻量返回；帧明细大导出退化为 best-effort，超时即弃——
+// 摘要含全部门禁指标，明细仅诊断用）。
+const ANALYZE_EXPR = (armMetasJson, optsJson) => `(() => {
+  const armMetas = ${armMetasJson};
+  const opts = ${optsJson};
+  const rec = window.__r9focus;
+  if (!rec) return { error: 'no-rec' };
+  const frames = rec.framesList ?? [];
+  const marks = rec.marks ?? [];
+  const findMark = (label) => { const hit = [...marks].reverse().find((x) => x.label === label); return hit ? hit.t : null; };
+  const inWin = (t, w) => w && t >= w[0] && t < w[1];
+  const quantile = (arr, q) => { if (!arr.length) return null; const a = [...arr].sort((x, y) => x - y); return Math.round(a[Math.min(a.length - 1, Math.floor(a.length * q))] * 10) / 10; };
+  const variance = (arr) => { if (!arr.length) return null; const mu = arr.reduce((s, x) => s + x, 0) / arr.length; return Math.round(arr.reduce((s, x) => s + (x - mu) * (x - mu), 0) / arr.length); };
+  const arms = [];
+  for (const meta of armMetas) {
+    const lab = 'arm-' + meta.i + '-' + meta.mode;
+    const swB = findMark(lab + '-switch-begin'), swE = findMark(lab + '-settle-end');
+    const legB = findMark(lab + '-leg-begin'), dB = findMark(lab + '-drive-begin'), dE = findMark(lab + '-drive-end'), aE = findMark(lab + '-arm-end');
+    if (swB == null || dB == null || dE == null || aE == null) { arms.push({ i: meta.i, mode: meta.mode, error: 'marks-missing' }); continue; }
+    const QUIET_GATE = 400;
+    const switchWin = [swB, swE], scrollWin = [dB, dE + QUIET_GATE], quietWin = [dE + QUIET_GATE, aE];
+    const scrollFrames = frames.filter((f) => inWin(f.t, scrollWin));
+    const quietFrames = frames.filter((f) => inWin(f.t, quietWin));
+    const swFrames = frames.filter((f) => inWin(f.t, switchWin));
+    const scrollGaps = scrollFrames.map((f) => f.gap).filter((g) => g != null);
+    const quietGaps = quietFrames.map((f) => f.gap).filter((g) => g != null);
+    const jankScroll = scrollFrames.filter((f) => f.gap > 32);
+    const ltScroll = (rec.longtasks ?? []).filter((e) => inWin(e.t, scrollWin) || inWin(e.t + e.dur, scrollWin));
+    const shiftScroll = [], shiftQuiet = [];
+    let prevF = null;
+    for (const f of frames) {
+      if (prevF) {
+        if (inWin(f.t, scrollWin)) {
+          const stD = Math.round((f.st - prevF.st) * 10) / 10;
+          for (const nm of ['top', 'mid', 'bot']) {
+            const a = prevF[nm], b = f[nm];
+            if (a == null || b == null) continue;
+            const d = Math.round((b - a) * 10) / 10;
+            const residual = Math.round((d + stD) * 10) / 10;
+            if (Math.abs(residual) > 4) { shiftScroll.push({ t: f.t, s: nm, d, stD, residual, gap: f.gap }); break; }
+          }
+        } else if (inWin(f.t, quietWin)) {
+          for (const nm of ['top', 'mid', 'bot']) {
+            const a = prevF[nm], b = f[nm];
+            if (a == null || b == null) continue;
+            const d = Math.round((b - a) * 10) / 10;
+            if (Math.abs(d) > 4) { shiftQuiet.push({ t: f.t, s: nm, d, st: f.st, gap: f.gap }); break; }
+          }
+        }
+      }
+      prevF = f;
+    }
+    const snapIn = (rec.snap ?? []).filter((x) => inWin(x.t, scrollWin) || inWin(x.t, quietWin));
+    const ctrDelta = {};
+    if (snapIn.length >= 2) {
+      const a = snapIn[0].ctr ?? {}, b = snapIn[snapIn.length - 1].ctr ?? {};
+      for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+        const d = (b[k] ?? 0) - (a[k] ?? 0);
+        if (d) ctrDelta[k] = d;
+      }
+    }
+    const shSeries = scrollFrames.map((f) => f.sh);
+    const pwSeries = scrollFrames.map((f) => f.pw).filter((p) => p != null);
+    const mathScroll = snapIn.filter((x) => x.math);
+    arms.push({
+      i: meta.i, mode: meta.mode, meta,
+      switchWin, scrollWin, quietWin,
+      switch: { frames: swFrames.length, jank32: swFrames.filter((f) => f.gap > 32).length,
+        gapMax: quantile(swFrames.map((f) => f.gap).filter((g) => g != null), 1) },
+      scroll: { frames: scrollFrames.length, jank32: jankScroll.length,
+        jank32Ratio: scrollFrames.length ? +(jankScroll.length / scrollFrames.length).toFixed(5) : null,
+        gapP50: quantile(scrollGaps, 0.5), gapP95: quantile(scrollGaps, 0.95), gapMax: quantile(scrollGaps, 1),
+        longtask50: ltScroll.length, ltDurSumMs: Math.round(ltScroll.reduce((s, e) => s + e.dur, 0)),
+        shiftFrames: shiftScroll.length, shiftDetail: shiftScroll.slice(0, 20),
+        shVar: variance(shSeries), shMin: shSeries.length ? Math.min(...shSeries) : null,
+        shMax: shSeries.length ? Math.max(...shSeries) : null,
+        pwStart: pwSeries[0] ?? null, pwEnd: pwSeries[pwSeries.length - 1] ?? null,
+        mathUnreadyMax: mathScroll.length ? Math.max(...mathScroll.map((x) => x.math.unready)) : null },
+      quiet: { frames: quietFrames.length, jank32: quietFrames.filter((f) => f.gap > 32).length,
+        gapP95: quantile(quietGaps, 0.95), longtask50: (rec.longtasks ?? []).filter((e) => inWin(e.t, quietWin)).length,
+        driftShift: shiftQuiet.length, driftDetail: shiftQuiet.slice(0, 12),
+        stStart: quietFrames[0]?.st ?? null, stEnd: quietFrames[quietFrames.length - 1]?.st ?? null },
+      ctrDelta,
+    });
+  }
+  const med = (arr) => { const a = arr.filter((x) => x != null).sort((x, y) => x - y); return a.length ? a[Math.floor(a.length / 2)] : null; };
+  const pickArm = (mode, field) => arms.filter((x) => x.mode === mode && x.scroll && !x.error).map((x) => x.scroll[field]);
+  const symmetry = {};
+  if (!opts.widthCtrl) {
+    const fJ = pickArm('focus', 'jank32'), nJ = pickArm('normal', 'jank32');
+    const fP = pickArm('focus', 'gapP95'), nP = pickArm('normal', 'gapP95');
+    symmetry.jank32Median = { focus: med(fJ), normal: med(nJ) };
+    symmetry.jank32Ratio = (med(nJ) ?? 0) > 0 ? +(med(fJ) / med(nJ)).toFixed(3) : (med(fJ) ? 'inf(normal=0)' : 1);
+    symmetry.p95Median = { focus: med(fP), normal: med(nP) };
+    symmetry.p95Ratio = (med(nP) ?? 0) > 0 ? +(med(fP) / med(nP)).toFixed(3) : null;
+    symmetry.width = { focus: med(arms.filter((x) => x.mode === 'focus' && x.scroll).map((x) => x.scroll.pwStart)),
+      normal: med(arms.filter((x) => x.mode === 'normal' && x.scroll).map((x) => x.scroll.pwStart)) };
+  } else {
+    symmetry.wctrlJank32Median = { wctrl: med(pickArm('wctrl', 'jank32')), normal: med(pickArm('normal', 'jank32')) };
+    symmetry.wctrlP95Median = { wctrl: med(pickArm('wctrl', 'gapP95')), normal: med(pickArm('normal', 'gapP95')) };
+    symmetry.width = { wctrl: med(arms.filter((x) => x.mode === 'wctrl' && x.scroll).map((x) => x.scroll.pwStart)),
+      normal: med(arms.filter((x) => x.mode === 'normal' && x.scroll).map((x) => x.scroll.pwStart)) };
+  }
+  return { arms, symmetry, totalFrames: frames.length, longtasksTotal: (rec.longtasks ?? []).length,
+    marks, sentinelInfo: rec.sentinelInfo, wall0: rec.wall0 };
+})()`;
 
 const READ_GEO = `(() => {
   const host = document.querySelector('.mditor-editor-host');
@@ -353,13 +465,21 @@ async function main() {
     const spd = args.scenario.split("-")[1];
     const drive = async (dist) => { if (spd === "fast") await fast(dist); else await slow(dist); };
 
-    // 臂序：普通 A B B A A B（3 对 AB）；width-ctrl A W A W A W
+    // 臂序（R9 修正案）：普通 run 用 X Y Y X X Y（X=first-arm，Y=另一臂，
+    // 3 对 XY）；1MB 冷区上「重复滚同区间」会因 KaTeX 缓存/变现态持久化产生
+    // 单调加热曲线（r9p2-2 实测 arm0 8fps → arm5 82fps），对称比被臂序混杂
+    // 污染——改为每臂滚独立相邻区间（stride，默认 upPx+5000 不重叠），两 run
+    // 交换 first-arm 抵消预热进度偏差（后臂略热的方向性）。
+    const first = args.firstArm === "focus" ? "focus" : "normal";
+    const other = first === "focus" ? "normal" : "focus";
     const seq = [];
     if (args.widthCtrl) {
-      for (let i = 0; i < args.arms; i++) { seq.push("normal"); seq.push("wctrl"); }
+      const w = first === "focus" ? "wctrl" : "normal"; // width-ctrl 通常以 normal 先
+      const o = w === "normal" ? "wctrl" : "normal";
+      for (let i = 0; i < args.arms; i++) { seq.push(w); seq.push(o); }
     } else {
-      seq.push("normal", "focus", "focus", "normal", "normal", "focus");
-      if (args.arms > 3) for (let i = 3; i < args.arms; i++) seq.push("focus", "normal");
+      seq.push(first, other, other, first, first, other);
+      if (args.arms > 3) for (let i = 3; i < args.arms; i++) seq.push(other, first);
     }
     row.armSeq = seq;
     log(`臂序: ${seq.join(",")}`);
@@ -400,15 +520,22 @@ async function main() {
       // 切换段（F5）：settle 期内持续采帧
       await sleep(args.settleMs);
       await cdp.eval(mark(`${armLabel}-settle-end`));
-      // 回位（leg 段排除）：按深度比例重算目标（模式切换后 scrollHeight 已变）
+      // 回位（leg 段排除）：按深度比例重算目标（模式切换后 scrollHeight 已变）。
+      // 每臂独立区间：base + ai×stride（默认 upPx+5000 不重叠），消除 1MB 冷区
+      // 「重复滚同区间」的加热曲线混杂；越界夹取（密度档短文档配小 stride）。
       let g = await cdp.eval(READ_GEO);
+      const stride = args.stridePx > 0 ? args.stridePx : args.upPx + 5000;
+      const maxStart = Math.max(0, (g.h - g.vh) - args.upPx - 200);
       let startTop;
       if (dir === "down") {
-        startTop = Math.round((g.h - g.vh) * args.depth);
+        startTop = Math.round((g.h - g.vh) * args.depth) + ai * stride;
       } else {
-        // up 臂起点 = down 臂终点再下探 upPx（同区间反向）
-        const downStart = Math.round((g.h - g.vh) * args.depth);
+        const downStart = Math.round((g.h - g.vh) * args.depth) + ai * stride;
         startTop = Math.min(g.h - g.vh, downStart + Math.min(args.upPx, (g.h - g.vh) - downStart));
+      }
+      if (startTop > maxStart) {
+        log(`${armLabel}: 区间越界夹取 ${startTop}→${maxStart}（与其他臂可能重叠，减 stride）`);
+        startTop = maxStart;
       }
       await cdp.eval(mark(`${armLabel}-leg-begin`));
       if (Math.abs(startTop - g.top) > 10) await fast(startTop - g.top);
@@ -436,128 +563,29 @@ async function main() {
       if (st && st.done) break;
       await sleep(300);
     }
-    const jank = await cdp.eval(`JSON.parse(JSON.stringify(window.__r9focus))`);
-    const eventsInWindow = await cdp.eval(`(() => { const sd = window.__scrollDebug; if (!sd) return []; const es = typeof sd.events === 'function' ? sd.events() : sd.events; return (es ?? []).slice(-160).map(e => ({ ts: e.ts, level: e.level, kind: e.kind, msg: (e.msg || '').slice(0, 160) })); })()`);
-    const trapLog = await cdp.eval(`window.__scrollDebug && window.__scrollDebug.trap ? window.__scrollDebug.trap() : []`);
-    const pumpEnd = await cdp.eval(`typeof window.__mathPumpStats === 'function' ? window.__mathPumpStats() : null`);
+    // ① 页内分析（轻量，必得——防大导出挂死丢全部数据）
+    const analysis = await cdp.eval(ANALYZE_EXPR(JSON.stringify(armMetas), JSON.stringify({ widthCtrl: args.widthCtrl })));
+    if (!analysis || analysis.error) throw new Error("页内分析失败: " + JSON.stringify(analysis));
+    // ② 帧明细大导出 best-effort（90s 超时即弃，摘要已保住）
+    const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r(null), ms))]);
+    const jankBig = await withTimeout(cdp.eval(`JSON.parse(JSON.stringify(window.__r9focus))`), 90_000);
+    const eventsInWindow = await withTimeout(cdp.eval(`(() => { const sd = window.__scrollDebug; if (!sd) return []; const es = typeof sd.events === 'function' ? sd.events() : sd.events; return (es ?? []).slice(-160).map(e => ({ ts: e.ts, level: e.level, kind: e.kind, msg: (e.msg || '').slice(0, 160) })); })()`), 30_000);
+    const trapLog = await withTimeout(cdp.eval(`window.__scrollDebug && window.__scrollDebug.trap ? window.__scrollDebug.trap() : []`), 30_000);
+    const pumpEnd = await withTimeout(cdp.eval(`typeof window.__mathPumpStats === 'function' ? window.__mathPumpStats() : null`), 30_000);
 
-    // ---- node 侧分臂分窗分析 ----
-    const frames = jank.framesList ?? [];
-    const marks = jank.marks ?? [];
-    const findMark = (label) => { const hit = [...marks].reverse().find((x) => x.label === label); return hit ? hit.t : null; };
-    const inWin = (t, w) => w && t >= w[0] && t < w[1];
-    const quantile = (arr, q) => { if (!arr.length) return null; const a = [...arr].sort((x, y) => x - y); return Math.round(a[Math.min(a.length - 1, Math.floor(a.length * q))] * 10) / 10; };
-    const variance = (arr) => { if (!arr.length) return null; const mu = arr.reduce((s, x) => s + x, 0) / arr.length; return Math.round(arr.reduce((s, x) => s + (x - mu) * (x - mu), 0) / arr.length); };
-    const armAnalysis = [];
-    for (const meta of armMetas) {
-      const lab = `arm-${meta.i}-${meta.mode}`;
-      const swB = findMark(`${lab}-switch-begin`), swE = findMark(`${lab}-settle-end`);
-      const legB = findMark(`${lab}-leg-begin`), dB = findMark(`${lab}-drive-begin`), dE = findMark(`${lab}-drive-end`), aE = findMark(`${lab}-arm-end`);
-      if (swB == null || dB == null || dE == null || aE == null) { armAnalysis.push({ i: meta.i, mode: meta.mode, error: "marks-missing" }); continue; }
-      const QUIET_GATE = 400;
-      const switchWin = [swB, swE];
-      const scrollWin = [dB, dE + QUIET_GATE];
-      const quietWin = [dE + QUIET_GATE, aE];
-      const legWin = [legB ?? swE, dB];
-      const scrollFrames = frames.filter((f) => inWin(f.t, scrollWin));
-      const quietFrames = frames.filter((f) => inWin(f.t, quietWin));
-      const swFrames = frames.filter((f) => inWin(f.t, switchWin));
-      const scrollGaps = scrollFrames.map((f) => f.gap).filter((g) => g != null);
-      const quietGaps = quietFrames.map((f) => f.gap).filter((g) => g != null);
-      const jankScroll = scrollFrames.filter((f) => f.gap > 32);
-      const ltScroll = (jank.longtasks ?? []).filter((e) => inWin(e.t, scrollWin) || inWin(e.t + e.dur, scrollWin));
-      // 位移帧：滚动期残差（Δrect.top + ΔscrollTop >4px = 内容跳位）；
-      // quiet 期 R7 D1 口径 rawShift（|Δrect.top|>4px 静止帧）。
-      const shiftScroll = [];
-      const shiftQuiet = [];
-      let prevF = null;
-      for (const f of frames) {
-        if (prevF) {
-          if (inWin(f.t, scrollWin)) {
-            const stD = Math.round((f.st - prevF.st) * 10) / 10;
-            for (const nm of ["top", "mid", "bot"]) {
-              const a = prevF[nm], b = f[nm];
-              if (a == null || b == null) continue;
-              const d = Math.round((b - a) * 10) / 10;
-              const residual = Math.round((d + stD) * 10) / 10;
-              if (Math.abs(residual) > 4) { shiftScroll.push({ t: f.t, s: nm, d, stD, residual, gap: f.gap }); break; }
-            }
-          } else if (inWin(f.t, quietWin)) {
-            for (const nm of ["top", "mid", "bot"]) {
-              const a = prevF[nm], b = f[nm];
-              if (a == null || b == null) continue;
-              const d = Math.round((b - a) * 10) / 10;
-              if (Math.abs(d) > 4) { shiftQuiet.push({ t: f.t, s: nm, d, st: f.st, gap: f.gap }); break; }
-            }
-          }
-        }
-        prevF = f;
-      }
-      // counters 差分（scrollPhase 窗内首尾快照）
-      const snapIn = (jank.snap ?? []).filter((x) => inWin(x.t, scrollWin) || inWin(x.t, quietWin));
-      const ctrDelta = {};
-      if (snapIn.length >= 2) {
-        const a = snapIn[0].ctr ?? {}, b = snapIn[snapIn.length - 1].ctr ?? {};
-        for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-          const d = (b[k] ?? 0) - (a[k] ?? 0);
-          if (d) ctrDelta[k] = d;
-        }
-      }
-      const shSeries = scrollFrames.map((f) => f.sh);
-      const pwSeries = scrollFrames.map((f) => f.pw).filter((p) => p != null);
-      const mathScroll = snapIn.filter((x) => x.math);
-      armAnalysis.push({
-        i: meta.i, mode: meta.mode, meta,
-        switchWin, scrollWin, quietWin,
-        switch: { frames: swFrames.length, jank32: swFrames.filter((f) => f.gap > 32).length,
-          gapMax: quantile(swFrames.map((f) => f.gap).filter((g) => g != null), 1) },
-        scroll: { frames: scrollFrames.length, jank32: jankScroll.length,
-          jank32Ratio: scrollFrames.length ? +(jankScroll.length / scrollFrames.length).toFixed(5) : null,
-          gapP50: quantile(scrollGaps, 0.5), gapP95: quantile(scrollGaps, 0.95), gapMax: quantile(scrollGaps, 1),
-          longtask50: ltScroll.length, ltDurSumMs: Math.round(ltScroll.reduce((s, e) => s + e.dur, 0)),
-          shiftFrames: shiftScroll.length, shiftDetail: shiftScroll.slice(0, 20),
-          shVar: variance(shSeries), shMin: shSeries.length ? Math.min(...shSeries) : null,
-          shMax: shSeries.length ? Math.max(...shSeries) : null,
-          pwStart: pwSeries[0] ?? null, pwEnd: pwSeries[pwSeries.length - 1] ?? null,
-          mathUnreadyMax: mathScroll.length ? Math.max(...mathScroll.map((x) => x.math.unready)) : null },
-        quiet: { frames: quietFrames.length, jank32: quietFrames.filter((f) => f.gap > 32).length,
-          gapP95: quantile(quietGaps, 0.95), longtask50: (jank.longtasks ?? []).filter((e) => inWin(e.t, quietWin)).length,
-          driftShift: shiftQuiet.length, driftDetail: shiftQuiet.slice(0, 12),
-          stStart: quietFrames[0]?.st ?? null, stEnd: quietFrames[quietFrames.length - 1]?.st ?? null },
-        ctrDelta,
-      });
-    }
-    // 对称比（中位）
-    const med = (arr) => { const a = arr.filter((x) => x != null).sort((x, y) => x - y); return a.length ? a[Math.floor(a.length / 2)] : null; };
-    const pickArm = (mode, field) => armAnalysis.filter((x) => x.mode === mode && x.scroll && !x.error).map((x) => x.scroll[field]);
-    const symmetry = {};
-    if (!args.widthCtrl) {
-      const fJ = pickArm("focus", "jank32"), nJ = pickArm("normal", "jank32");
-      const fP = pickArm("focus", "gapP95"), nP = pickArm("normal", "gapP95");
-      symmetry.jank32Median = { focus: med(fJ), normal: med(nJ) };
-      symmetry.jank32Ratio = (med(nJ) ?? 0) > 0 ? +(med(fJ) / med(nJ)).toFixed(3) : (med(fJ) ? "inf(normal=0)" : 1);
-      symmetry.p95Median = { focus: med(fP), normal: med(nP) };
-      symmetry.p95Ratio = (med(nP) ?? 0) > 0 ? +(med(fP) / med(nP)).toFixed(3) : null;
-      symmetry.width = { focus: med(armAnalysis.filter((x) => x.mode === "focus" && x.scroll).map((x) => x.scroll.pwStart)),
-        normal: med(armAnalysis.filter((x) => x.mode === "normal" && x.scroll).map((x) => x.scroll.pwStart)) };
-    } else {
-      const wJ = pickArm("wctrl", "jank32"), nJ = pickArm("normal", "jank32");
-      const wP = pickArm("wctrl", "gapP95"), nP = pickArm("normal", "gapP95");
-      symmetry.wctrlJank32Median = { wctrl: med(wJ), normal: med(nJ) };
-      symmetry.wctrlP95Median = { wctrl: med(wP), normal: med(nP) };
-      symmetry.width = { wctrl: med(armAnalysis.filter((x) => x.mode === "wctrl" && x.scroll).map((x) => x.scroll.pwStart)),
-        normal: med(armAnalysis.filter((x) => x.mode === "normal" && x.scroll).map((x) => x.scroll.pwStart)) };
-    }
-    row.analysis = { arms: armAnalysis, symmetry };
-    row.jank = { framesList: frames, marks, longtasks: jank.longtasks, snap: jank.snap, sentinelInfo: jank.sentinelInfo, wall0: jank.wall0 };
-    row.eventsInWindow = eventsInWindow;
-    row.trap = trapLog;
-    row.pumpEnd = pumpEnd;
-    const a0 = armAnalysis.find((x) => !x.error);
+    row.analysis = { arms: analysis.arms, symmetry: analysis.symmetry };
+    row.jank = jankBig
+      ? { framesList: jankBig.framesList, marks: analysis.marks, longtasks: jankBig.longtasks, snap: jankBig.snap, sentinelInfo: analysis.sentinelInfo, wall0: analysis.wall0 }
+      : { skipped: "export-timeout", marks: analysis.marks, sentinelInfo: analysis.sentinelInfo, wall0: analysis.wall0 };
+    row.eventsInWindow = eventsInWindow ?? { skipped: "export-timeout" };
+    row.trap = trapLog ?? { skipped: "export-timeout" };
+    row.pumpEnd = pumpEnd ?? { skipped: "export-timeout" };
+    const a0 = analysis.arms.find((x) => !x.error);
     if (a0) {
       log(`臂0 (${a0.mode}) scroll: frames=${a0.scroll.frames} jank32=${a0.scroll.jank32}(${a0.scroll.jank32Ratio}) p95=${a0.scroll.gapP95} shVar=${a0.scroll.shVar} lt=${a0.scroll.longtask50}`);
     }
-    log(`对称汇总: ${JSON.stringify(symmetry)}`);
+    if (!jankBig) log("警告: 帧明细大导出超时，仅落盘摘要");
+    log(`对称汇总: ${JSON.stringify(analysis.symmetry)}`);
     row.ok = true;
 
     try { cdp.close(); } catch { /* */ }
