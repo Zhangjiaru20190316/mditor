@@ -477,3 +477,44 @@ sv 模式（CodeMirror）天然只渲染可见行。富文本侧 V3.6.5 落地�
   三哨兵残差+250ms 四路快照+marks 分窗；**快滚 5000px 窗内仅 16~30 帧，
   对称比判定以慢滚大样本为准**；PerformanceObserver longtask 在「布局/渲染
   管线掉帧」形态下恒 0（无 >50ms JS 任务），不能作为帧稳定性的充分判据。
+
+## R9：专注模式滚动掉帧/丝滑度不对称（第九轮，2026-10-04）
+
+结题报告 `docs/large-doc-focus-mode-scroll-smoothness-report.md`、归因定罪书 `perf/results/r9-phase4-attribution.md`。
+
+- **症状 F 只在打包版复现（本轮最大方法论事件）**：dev 环境 8 run 全部
+  复现失败（focus 不劣于 normal，p95 比 0.51~1.05 方向不一致）。环境归因：
+  dev 构建预热 1 块/26ms 爬行死锁（prewarm meta 走全量 buildDecos，9639 块
+  需 ~36min；release 瞬时完成）、密度档布局便宜（p95 6~9ms）、dev 无
+  Present 停摆形态。**打包版 + 用户症状文档「题型方法决策树」（224KB cv
+  档）+ release 预热完成态 = 复现三要素**：focus 臂 j32=8~12 / normal 恒 0
+  （ABAB ×多 run）。
+- **任务书五候选（F-a 高度表宽度陈旧 / F-b 宽度面积 / F-c 诊断走查税 /
+  F-d hover-zone / F-f 打字机）全部实验排除**——几何三要素控制臂
+  （width/vh/wh 对齐，normal 模式窗口拉至 focus 几何 1256×884 仍 0 掉帧）、
+  .main 样式恢复、app padding 恢复、hover-zone 隐藏、layout 事件对齐率
+  （normal 事件更多却零掉帧）逐项定罪排除。F-a 机制代码事实成立（宽度
+  突变 985→1249 坐实、cv.relearn=0 无重学路径）但未转化为本症状——留档
+  潜在风险。
+- **真凶 F-g（清单外新源）：ai-fab 呼吸动画的合成器保温效应丢失**。
+  机制：normal 模式 `.ai-fab:not(.active)::after` 的 fab-pulse 无限合成器
+  动画逐 vsync 驱动产帧（trace：12s 内 2008 次 Present ≈ 每 vsync），
+  DXGISwapChain 常热；专注模式 `display:none` 掉 fab 连带消灭动画 →
+  滚轮间隙（450ms）零产帧 → swapchain/DWM 冷却 → 下一滚动帧
+  `DXGISwapChainImageBacking::Present` 阻塞 40~124ms（gpu trace：每个
+  掉帧 gap 与一次 Present 停摆严格同长；同期主线程空闲、光栅 max 5.2ms）。
+  单元素二分矩阵定罪：仅藏 fab 复现（j32=7）、仅藏 resizer/titlebar/
+  status/tabbar/sidebar 塌缩全 0；fab 可见+动画停也复现（8/8）→ 保护
+  因子是动画；fab opacity:0+动画续跑无效 → 需有效可见帧输出。
+- **Fix-A（零视觉修复）**：`.is-focus .main` 挂 `focus-keepwarm 2.4s
+  linear infinite`（keyframes 只动 translateZ 0↔0.001px——无 2D 位移，
+  层纹理复用零光栅）保温呈现管线；`.app-idle`（窗口隐藏）暂停与
+  fab-pulse 同纪律；动效「无」档 B12 kill switch 连带停用（两模式对称
+  承受，用户显式偏好不豁免）。原型矩阵：main-jitter 与 fab-ghost（5%
+  幽灵）双治愈（j32→0），取零视觉版。守卫测试 focusKeepwarm.test.ts ×4。
+- **测量口径沉淀**：①「模式对称」实验必须**同位置同序列**且防**重复滚
+  同区间加热曲线**（1MB 冷区同区间 6 滚 8fps→82fps）——每臂独立相邻
+  区间 + 双 run 臂序互换；②文档位置效应在本轮再现（晚段 run 末臂文末区
+  恒 0 掉帧）——对照臂必须同区间序；③CDP 大对象导出会挂死（无超时），
+  收尾 eval 全带超时 + 页内分析优先；④CDP 坐标点击对打包版 .ft-row 无效
+  （dpr 1.75），DOM el.click() 直触 React onClick 是可靠替代。

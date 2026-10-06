@@ -1,5 +1,35 @@
 # Changelog
 
+## 5.0.1-beta（2026-10-06）：第九轮 专注模式滚动掉帧修复（Fix-A 合成器保温动画）
+
+结题报告 `docs/large-doc-focus-mode-scroll-smoothness-report.md`；归因定罪书 `perf/results/r9-phase4-attribution.md`。修复验证（r9fix2 批，打包版 8 run：down-slow ×4 臂序双向 / down-fast ×2 / up-slow ×2）：focus j32 8~10 → **0**、normal 恒 0、p95 比 0.98~1.08、D1 双臂漂移全零、focus 臂 `focus-keepwarm/running` 逐臂实证。
+
+- **fix(perf) R9 Fix-A 专注模式滚动掉帧**：打包版专注模式慢滚大文档
+  「一顿一顿」（scrollPhase 掉帧 8~12 帧 vs 正常模式 0，ABAB ×多 run 方向
+  稳定）。定罪（任务书候选 F-a~F-f 全部实验排除，新源 **F-g** 定罪）：
+  正常模式的 `.ai-fab` 呼吸动画（fab-pulse，合成器动画）逐 vsync 驱动
+  合成器产帧、DXGISwapChain 常热；专注模式 `display:none` 掉 fab 时该动画
+  一并消失 → 滚轮间隙零产帧 → swapchain/DWM 冷却 → 下一滚动帧
+  `DXGISwapChainImageBacking::Present` 阻塞 40~124ms（CDP gpu trace：每个
+  掉帧 gap 与一次 Present 停摆严格同长；正常模式同文档更大几何 Present
+  max 仅 0.4ms）。修复：`.is-focus .main` 挂 `focus-keepwarm` translateZ
+  亚像素 infinite 动画（无 2D 位移 → 视觉零变化、层纹理复用零光栅），
+  恢复连续呈现保温；`.app-idle`（窗口隐藏）暂停。动效「无」档
+  B12 kill switch 连带停用（该档 fab-pulse 同停、两模式对称，属用户显式
+  偏好，不豁免）。守卫测试 `src/lib/focusKeepwarm.test.ts` ×4。
+- **diag(perf) r9 专注模式掉帧探针族**：`perf/tmp-r9/probe-focus-jank.mjs`
+  （dev，ABAB 同会话运行时切臂 + 独立滚动区间防加热曲线混杂 + 双 run 臂序
+  互换）+ `prod-focus-jank.mjs`（打包版，prod store 只读，el.click 开档，
+  width/vh/wh 对齐控制臂 + naf-* CSS 分组二分 + 原型 exp 注入通道）+
+  `trace-focus-jank.mjs` / `trace-gpu-jank.mjs`（CDP Tracing 渲染管线与
+  GPU/DXGI 环节定位）；产物 `perf/results/r9-*` 26+ 份。
+- **归因负结果留档（防重走）**：dev 环境 8 run 复现失败（dev 构建预热
+  1 块/26ms 爬行死锁致 1MB 高度表冷 + 密度档布局便宜 + dev 无 Present
+  停摆形态）——症状 F 只在 release 呈现路径复现；几何三要素（宽度/高度/
+  双维对齐）与 .main 样式、.app padding、hover-zone、titlebar/tabbar/
+  statusbar/sidebar 塌缩全部排除；F-a 高度表宽度陈旧机制代码事实成立但
+  未在本症状中转化（cv.relearn=0、掉帧帧 dsh=0）。
+
 ## 5.0.0 (2026-10-03)（5.0.0-beta 转正：R8 上滚掉帧归因专项收口）
 
 版本号 5.0.0-beta → 5.0.0（tauri.conf.json / Cargo.toml / Cargo.lock / package.json）。
