@@ -209,9 +209,10 @@ async function main() {
         if (!hit) return null;
         const r = hit.getBoundingClientRect();
         if (r.width === 0) return null;
-        return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+        hit.click(); // R9 复检：CDP 坐标点击对 .ft-row 无效（dpr 1.75），el.click() 直触 React onClick
+        return true;
       })()`);
-      if (p) { await m.click(p.x, p.y); opened = true; }
+      if (p) opened = true;
       else await sleep(500);
     }
     if (!opened) { log("文件树找不到目标"); return (closeLog(), 2); }

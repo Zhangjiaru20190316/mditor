@@ -58,6 +58,8 @@ function parseArgs(argv) {
     else if (k === "--width-ctrl") a.widthCtrl = true;
     else if (k === "--width-px") a.widthPx = Number(next() ?? 0);
     else if (k === "--exp") a.exp = next();
+    else if (k === "--exe") a.exePath = next();
+    else if (k === "--expect-keepwarm") a.expectKeepwarm = true;
   }
   return a;
 }
@@ -266,9 +268,15 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   mkdirSync(RESULTS_DIR, { recursive: true });
   const fs = await import("node:fs");
+  if (args.exePath) EXE_CANDIDATES.unshift(args.exePath);
   const EXE = EXE_CANDIDATES.find((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } });
   if (!EXE) { console.log("FAIL: 找不到打包版 exe"); process.exit(2); }
   console.log(`exe: ${EXE}`);
+  // 预清理：杀掉所有残留 mditor 实例（run27/28 教训——single-instance 插件
+  // 把新 spawn 转发给旧实例后自退，CDP 9224 连上的是旧进程 = 测错代码）
+  const prekill = spawnSync("taskkill", ["/F", "/T", "/IM", "mditor.exe"], { stdio: "pipe", encoding: "utf8" });
+  console.log(prekill.status === 0 ? `预清理: ${String(prekill.stdout || "").trim()}` : "预清理: 无残留实例");
+  await sleep(2500);
   const row = { ts: new Date().toISOString(), tag: args.tag, phase: 2, scenario: args.scenario,
     doc: args.doc, depth: args.depth, upPx: args.upPx, arms: args.arms, settleMs: args.settleMs,
     prewarmMax: args.prewarmMax, run: args.run, exe: EXE, ok: false };
@@ -292,9 +300,22 @@ async function main() {
       await sleep(1000);
     }
     if (!target) { console.log("FAIL: CDP 9224 未就绪"); process.exit(2); }
+    // 转发劫持检测：spawn 的进程若已退出，说明 single-instance 转发给了残留
+    // 实例（其 WebView2 占着 9224），CDP 连接对象不可信
+    if (child.exitCode !== null) {
+      console.log(`FAIL: spawn 进程已退出(exitCode=${child.exitCode})——疑似 single-instance 转发给残留实例，连接不可信`);
+      kill(); process.exit(2);
+    }
+    row.childPid = child.pid;
     cdp = await Cdp.connect(target.webSocketDebuggerUrl);
     const m = mouse(cdp);
     for (let i = 0; i < 40; i++) { if (await cdp.eval(`!!document.querySelector('.ProseMirror')`)) break; await sleep(1000); }
+    // exe 身份钉：主样式表应含 focus-keepwarm keyframes（Fix-A 构建才有；
+    // exp 注入的 style 元素此时还不存在，不会误报）
+    const hasKw = await cdp.eval(`(() => { try { for (const sh of document.styleSheets) { let rr; try { rr = sh.cssRules; } catch { continue; } for (const r of rr) { if (r instanceof CSSKeyframesRule && r.name === "focus-keepwarm") return true; } } } catch { /* */ } return false; })()`);
+    row.hasKeepwarmCSS = !!hasKw;
+    console.log(`focus-keepwarm CSS: ${hasKw ? "存在" : "缺失"}`);
+    if (args.expectKeepwarm && !hasKw) { console.log("FAIL: --expect-keepwarm 但样式表无 focus-keepwarm（exe 不含修复？）"); kill(); process.exit(2); }
 
     // 打开目标文档（prod 文件树）。run2~4 实测 CDP 坐标点击在 prod 窗口对
     // ft-row 不生效（dpr 1.75 坐标换算疑点）——改 DOM el.click() 直接触发
@@ -497,6 +518,18 @@ async function main() {
         "naf-tabbar": `.tabbar{display:none!important}`,
         "naf-status": `.sb-status{display:none!important}`,
         "naf-sidebar": `.sidebar{width:0;opacity:0;border:none;pointer-events:none;transform:translateX(-12px)}`,
+        "naf-chrome-all": `.titlebar,.tabbar,.sb-status,.resizer,.sidebar-opener,.ai-fab{display:none!important}`,
+        "naf-chrome-pair-ts": `.titlebar,.sb-status{display:none!important}`,
+        "naf-chrome-tts": `.titlebar,.tabbar,.sb-status{display:none!important}`,
+        "fab-noanim": `.ai-fab:not(.active)::after{animation:none!important}`,
+        "keepwarm2": `.focus-hover-zone::after{content:"";position:absolute;left:0;top:0;width:1px;height:1px;pointer-events:none;animation:focus-keepwarm2 1.2s linear infinite}@keyframes focus-keepwarm2{0%,100%{opacity:0}50%{opacity:0.02}}`,
+        "fab-invisible": `.is-focus .ai-fab{display:flex!important;opacity:0!important;pointer-events:none!important}`,
+        "fab-ghost": `.is-focus .ai-fab{display:flex!important;opacity:0.05!important;pointer-events:none!important}`,
+        "main-jitter": `.is-focus .main{animation:r9jitter 2.4s linear infinite!important}@keyframes r9jitter{0%,100%{transform:translateZ(0)}50%{transform:translateZ(0.001px)}}`,
+        "keepwarm": `.focus-hover-zone::after{content:"";position:absolute;left:0;top:0;width:1px;height:1px;pointer-events:none;opacity:0;animation:focus-keepwarm 2.4s linear infinite}@keyframes focus-keepwarm{0%,100%{transform:translateZ(0)}50%{transform:translateZ(0.001px)}}`,
+        "naf-fab-noanim": `.ai-fab:not(.active)::after{animation:none!important}`,
+        "naf-resizer": `.resizer{display:none!important}`,
+        "naf-fab": `.ai-fab{display:none!important}`,
         "naf-chrome-rest": `.resizer,.sidebar-opener,.ai-fab{display:none!important}`,
       };
       const isNaf = /^naf-/.test(args.exp);
@@ -515,6 +548,10 @@ async function main() {
       await sleep(args.settleMs);
       await cdp.eval(mark(`${armLabel}-settle-end`));
       let g = await cdp.eval(READ_GEO);
+      // 保温动画活性（focus 臂实测）：证明测量期间 Fix-A 动画真的挂在 .main 上
+      const kwLive = mode === "focus"
+        ? await cdp.eval(`(() => { const el = document.querySelector('.main'); if (!el) return null; const cs = getComputedStyle(el); return { name: cs.animationName, ps: cs.animationPlayState }; })()`)
+        : null;
       const stride = args.stridePx > 0 ? args.stridePx : args.upPx + 5000;
       const maxStart = Math.max(0, (g.h - g.vh) - args.upPx - 200);
       let startTop;
@@ -536,8 +573,8 @@ async function main() {
       await drive(dir === "down" ? dist : -dist);
       await cdp.eval(mark(`${armLabel}-drive-end`));
       g = await cdp.eval(READ_GEO);
-      armMetas.push({ i: ai, mode, startTop, dist, endTop: g.top, h: g.h, pw: g.pw });
-      console.log(`${armLabel}: start=${startTop} dist=${dist} end=${g.top} h=${g.h} pw=${g.pw}`);
+      armMetas.push({ i: ai, mode, startTop, dist, endTop: g.top, h: g.h, pw: g.pw, kw: kwLive });
+      console.log(`${armLabel}: start=${startTop} dist=${dist} end=${g.top} h=${g.h} pw=${g.pw}${kwLive ? ` kw=${kwLive.name}/${kwLive.ps}` : ""}`);
       await sleep(400);
       // quiet 观察窗（D1）：rAF 采样器在页面里自跑；这里每 5s 一次轻量 eval
       // 保活 CDP ws（run1 实测长空闲后 ws 死链——eval 永久挂起）
@@ -580,19 +617,21 @@ async function main() {
     row.pumpEnd = pumpEnd ?? { skipped: "export-timeout" };
     console.log(`对称汇总: ${JSON.stringify(analysis.symmetry)}`);
     row.ok = true;
-    // focusMode 归位 + 窗口尺寸还原（prod 用户环境不残留）
-    await setMode(false).catch(() => {});
+    // 证据先落盘（r9fix2-run29 教训：归位收尾挂起会吞掉整 run 数据）
+    const fixtureShort = args.doc.includes("1MB") ? "1mb" : args.doc.includes("密度档") ? "density" : "other";
+    const out = join(RESULTS_DIR, `r9-phase2-prod-jank-abab-${args.scenario}-${fixtureShort}-${args.tag}-${args.run}.json`);
+    writeFileSync(out, JSON.stringify(row), "utf8");
+    console.log(`证据落盘 ${out}`);
+    // focusMode 归位 + 窗口尺寸还原（prod 用户环境不残留；best-effort 8s 超时
+    // ——run29 实测此处无超时 eval 在 CDP 慢死链上永久挂起，故数据已先行落盘）
+    await withTimeout(setMode(false), 8000);
     if ((args.widthCtrl || args.exp === "vh-align") && winId != null) {
-      try { await cdp.send("Browser.setWindowBounds", { windowId: winId, bounds: { width: winW0, height: winH0 } }); } catch { /* */ }
+      try { await withTimeout(cdp.send("Browser.setWindowBounds", { windowId: winId, bounds: { width: winW0, height: winH0 } }), 8000); } catch { /* */ }
     }
     try { cdp.close(); } catch { /* */ }
     cdp = null;
     kill();
     child = null;
-    const fixtureShort = args.doc.includes("1MB") ? "1mb" : args.doc.includes("密度档") ? "density" : "other";
-    const out = join(RESULTS_DIR, `r9-phase2-prod-jank-abab-${args.scenario}-${fixtureShort}-${args.tag}-${args.run}.json`);
-    writeFileSync(out, JSON.stringify(row), "utf8");
-    console.log(`证据落盘 ${out}`);
     process.exit(0);
   } catch (e) {
     console.log("异常: " + (e?.stack || e));

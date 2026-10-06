@@ -191,7 +191,8 @@ const TSFR_INSTALL = `(() => {
   return 'installed';
 })()`;
 
-/** 找到目标文件行并滚到可见，返回点击坐标；找不到返回 null。 */
+/** 找到目标文件行并滚到可见，直接 el.click()（R9 复检：CDP 坐标点击对
+ * .ft-row 无效——dpr 1.75 疑点，el.click() 直触 React onClick）。 */
 const rowPosOf = (wantPath, wantName) => `(() => {
   const rows = [...document.querySelectorAll('.ft-row.ft-file')];
   const hit = rows.find(r => {
@@ -202,7 +203,9 @@ const rowPosOf = (wantPath, wantName) => `(() => {
   if (!hit) return null;
   hit.scrollIntoView({ block: 'center' });
   const r = hit.getBoundingClientRect();
-  return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+  if (r.width === 0) return null;
+  hit.click();
+  return true;
 })()`;
 
 /** 切换进行中标志 + 当前激活行 + PM 块数（一次 evaluate，轮询用）。 */
@@ -330,7 +333,6 @@ async function main() {
           if (!pos) await sleep(500);
         }
         if (!pos) { log(`${label} 尝试 ${attempt}/3: 文件树找不到 ${doc.name}`); continue; }
-        await m.click(pos.x, pos.y);
         const t0 = Date.now();
         let lastCount = -1, stable = 0, settled = false;
         while (Date.now() - t0 < capMs) {
@@ -375,7 +377,7 @@ async function main() {
       await cdp.eval("window.__ltRecorder.start()");
       await cdp.eval("window.__tsfr.start()");
       const t0 = Date.now();
-      await m.click(pos.x, pos.y);
+      // 点击已在 rowPosOf 内完成（el.click()）
       // 切换完成：UI 类消失 + 激活行是目标 + PM 块数稳定（上限 90s）
       let lastCount = -1, stable = 0, done = false, state = null;
       while (Date.now() - t0 < 90_000) {

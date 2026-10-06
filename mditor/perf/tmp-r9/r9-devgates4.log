@@ -1,0 +1,199 @@
+=== R5a scroll-abab round 1 ===
+预检: 端口 9223 空闲
+store 已改并回读校验: devMode=false bigDocViewport=true bigDocPerformance=false
+目标文档: 一元微分学习题集_1MB压测副本.md lines=25356 bytes=1574112 过线=true（阈值 >3000 行或 >500000B）
+tauri dev 已启动 pid=50424，等待 CDP 9223（上限 120s）
+CDP 就绪 bootS=5.1 target=about:blank
+文档已打开并稳定: openS=6.3（尝试 1）
+预热等待: 超时 waitS=45.5（上限 45s）
+arm 自证: dataBig=true 顶层块=11628 远处=11597 采样=120 farVisible=0 farAuto=120 intrinsic=4838 → PASS
+密度统计: bands=849 katex=0 code=21 密集带(k)=[] 代码带=[119,240,483,604,725,1,122,243,361,362,364,485,607,728,846,847]
+指标: frame={"frames":822,"p50":62.4,"p90":141.9,"p95":166.5,"p99":195.8,"max":354.1,"over32":699,"over100":181} longtask={"n":433,"totalMs":30445,"maxMs":232,"over200":7,"top":[{"t":40780,"d":232},{"t":20663,"d":227},{"t":21943,"d":223},{"t":42689,"d":223},{"t":41576,"d":222}]} ticks=273 dense=0 rt=2 actualS=60.2
+收尾: 进程已杀，端口已释放
+结果已落盘: C:\Users\hh\Desktop\Tp\mditor\perf\results\scroll-abab.jsonl armValidated=true
+=== R5a scroll-abab round 2 ===
+预检: 端口 9223 空闲
+store 已改并回读校验: devMode=false bigDocViewport=true bigDocPerformance=false
+目标文档: 一元微分学习题集_1MB压测副本.md lines=25356 bytes=1574112 过线=true（阈值 >3000 行或 >500000B）
+tauri dev 已启动 pid=6812，等待 CDP 9223（上限 120s）
+CDP 就绪 bootS=5.2 target=about:blank
+文档已打开并稳定: openS=6.3（尝试 1）
+预热等待: 超时 waitS=46.1（上限 45s）
+arm 自证: dataBig=true 顶层块=11628 远处=11597 采样=120 farVisible=0 farAuto=120 intrinsic=4845 → PASS
+密度统计: bands=849 katex=0 code=21 密集带(k)=[] 代码带=[119,240,361,604,725,846,1,122,243,364,482,483,485,607,728]
+指标: frame={"frames":842,"p50":58.3,"p90":141.7,"p95":166.7,"p99":212.7,"max":358.4,"over32":693,"over100":186} longtask={"n":438,"totalMs":30151,"maxMs":241,"over200":7,"top":[{"t":20758,"d":241},{"t":40931,"d":231},{"t":42770,"d":226},{"t":21670,"d":224},{"t":74,"d":220}]} ticks=276 dense=0 rt=2 actualS=60.3
+收尾: 进程已杀，端口已释放
+结果已落盘: C:\Users\hh\Desktop\Tp\mditor\perf\results\scroll-abab.jsonl armValidated=true
+=== R5a scroll-abab round 3 ===
+预检: 端口 9223 空闲
+store 已改并回读校验: devMode=false bigDocViewport=true bigDocPerformance=false
+目标文档: 一元微分学习题集_1MB压测副本.md lines=25356 bytes=1574112 过线=true（阈值 >3000 行或 >500000B）
+tauri dev 已启动 pid=45992，等待 CDP 9223（上限 120s）
+CDP 就绪 bootS=5.7 target=http://127.0.0.1:1420/
+文档已打开并稳定: openS=6.3（尝试 1）
+预热等待: 超时 waitS=45.3（上限 45s）
+arm 自证: dataBig=true 顶层块=11628 远处=11597 采样=120 farVisible=0 farAuto=120 intrinsic=4810 → PASS
+密度统计: bands=849 katex=0 code=21 密集带(k)=[] 代码带=[119,240,362,483,604,726,847,1,122,243,364,486,607,728]
+指标: frame={"frames":819,"p50":62.4,"p90":145.9,"p95":170.8,"p99":212.5,"max":358.4,"over32":693,"over100":183} longtask={"n":437,"totalMs":30461,"maxMs":227,"over200":7,"top":[{"t":20694,"d":227},{"t":41023,"d":227},{"t":42999,"d":223},{"t":22001,"d":221},{"t":41817,"d":217}]} ticks=273 dense=0 rt=2 actualS=60.2
+收尾: 进程已杀，端口已释放
+结果已落盘: C:\Users\hh\Desktop\Tp\mditor\perf\results\scroll-abab.jsonl armValidated=true
+=== R5b ghost-stress ===
+阶段 scroll-read: {"frames":11733,"p50":4,"p95":5,"max":179,"over50":8} Δ{"layout:shift":0,"block.rebase":0,"session.user":344}
+阶段 scroll+sidebar: {"frames":19194,"p50":4,"p95":5,"max":117,"over50":19} Δ{"layout:shift":0,"block.rebase":0,"session.user":246}
+阶段 structural-tsunami: {"frames":2056,"p50":4,"p95":4,"max":42,"over50":0} Δ{"session.ghost":11,"layout:shift":0,"block.rebase":0,"session.user":1}
+阶段 type+scroll: {"frames":11723,"p50":4,"p95":5,"max":617,"over50":67} Δ{"session.ghost":0,"layout:shift":0,"block.rebase":0,"session.user":271}
+判定: ghost=11 anomalies+0 finalStats={"frames":54133,"jankFrames":49,"worstGapMs":1844.3999999761581,"windowWorstGapMs":1844.3999999761581,"inputLagEvents":2,"worstInputLagMs":572.8999999761581,"windowWorstInputLagMs":572.8999999761581}
+结果落盘 C:\Users\hh\Desktop\Tp\mditor\perf\results\ghost-stress.jsonl
+=== R5c r8probe 1MB压测 up-slow ===
+目标文档: C:\Users\hh\Desktop\Tp\mditor\perf\fixtures\一元微分学习题集_1MB压测副本.md
+文档已开 big=true scroll={"top":0,"h":920716,"vh":805}
+采样器: started:3
+滚动完成 top=505139 h=827420
+U 汇总 scrollPhase: frames=193 jank32=151(0.78238) p95=204.4 max=427.3 lt50=0 shift=0
+U 汇总 quietPhase: frames=100 jank32=55 p95=331.1 lt50=0 unreadyEnd=19792
+证据落盘 C:\Users\hh\Desktop\Tp\mditor\perf\results\r8-phase1-jank-up-slow-1mb-r9r5-1.json
+=== R5c r8probe 1MB压测 down-slow ===
+目标文档: C:\Users\hh\Desktop\Tp\mditor\perf\fixtures\一元微分学习题集_1MB压测副本.md
+文档已开 big=true scroll={"top":0,"h":908457,"vh":790}
+采样器: started:3
+滚动完成 top=5060 h=850240
+U 汇总 scrollPhase: frames=462 jank32=55(0.11905) p95=54.8 max=89.7 lt50=0 shift=0
+U 汇总 quietPhase: frames=166 jank32=52 p95=294.5 lt50=0 unreadyEnd=25234
+证据落盘 C:\Users\hh\Desktop\Tp\mditor\perf\results\r8-phase1-jank-down-slow-1mb-r9r5-2.json
+=== R5c r8probe 无穷级数_密度档 up-slow ===
+目标文档: C:\Users\hh\Desktop\Tp\mditor\perf\fixtures\无穷级数_密度档压测副本.md
+文档已开 big=true scroll={"top":0,"h":78355,"vh":805}
+预热已完成
+采样器: started:3
+滚动完成 top=41870 h=80794
+U 汇总 scrollPhase: frames=2475 jank32=0(0) p95=6.6 max=25.7 lt50=0 shift=0
+U 汇总 quietPhase: frames=2397 jank32=0 p95=4.5 lt50=0 unreadyEnd=2338
+证据落盘 C:\Users\hh\Desktop\Tp\mditor\perf\results\r8-phase1-jank-up-slow-density-r9r5-1.json
+=== R5c r8probe 无穷级数_密度档 down-slow ===
+目标文档: C:\Users\hh\Desktop\Tp\mditor\perf\fixtures\无穷级数_密度档压测副本.md
+文档已开 big=true scroll={"top":0,"h":78355,"vh":805}
+预热已完成
+采样器: started:3
+滚动完成 top=5060 h=78602
+U 汇总 scrollPhase: frames=2604 jank32=0(0) p95=4.8 max=31.1 lt50=0 shift=0
+U 汇总 quietPhase: frames=2400 jank32=0 p95=4.5 lt50=0 unreadyEnd=2325
+证据落盘 C:\Users\hh\Desktop\Tp\mditor\perf\results\r8-phase1-jank-down-slow-density-r9r5-2.json
+=== T flash-bench round 1 ===
+臂自证通过: {"A":true,"off":928,"offNonVisible":928,"withIntrinsic":928}
+f1={"events":9,"peakConcurrent":15,"durP50":33,"durP95":33,"durMax":33,"stillOpen":0,"scrollPhase":{"events":9,"p50":33,"p95":33,"max":33},"quietPhase":{"events":0,"p50":0,"p95":0,"max":0}} f4={"frames":8583,"p50":4,"p95":8,"max":421,"over50":1} openWindow={"seconds":25,"blockChangeEvents":891}
+结果落盘 C:\Users\hh\Desktop\Tp\mditor\perf\results\scroll-flash-bench.jsonl
+=== T flash-bench round 2 ===
+臂自证通过: {"A":true,"off":928,"offNonVisible":928,"withIntrinsic":928}
+f1={"events":19,"peakConcurrent":15,"durP50":33,"durP95":34,"durMax":34,"stillOpen":0,"scrollPhase":{"events":19,"p50":33,"p95":34,"max":34},"quietPhase":{"events":0,"p50":0,"p95":0,"max":0}} f4={"frames":8673,"p50":4,"p95":5,"max":425,"over50":1} openWindow={"seconds":25,"blockChangeEvents":858}
+结果落盘 C:\Users\hh\Desktop\Tp\mditor\perf\results\scroll-flash-bench.jsonl
+=== T flash-bench round 3 ===
+臂自证通过: {"A":true,"off":928,"offNonVisible":928,"withIntrinsic":928}
+f1={"events":9,"peakConcurrent":15,"durP50":33,"durP95":33,"durMax":33,"stillOpen":0,"scrollPhase":{"events":9,"p50":33,"p95":33,"max":33},"quietPhase":{"events":0,"p50":0,"p95":0,"max":0}} f4={"frames":8502,"p50":4,"p95":8,"max":404,"over50":1} openWindow={"seconds":25,"blockChangeEvents":863}
+结果落盘 C:\Users\hh\Desktop\Tp\mditor\perf\results\scroll-flash-bench.jsonl
+=== M1/M2 formula traverse ===
+文档已开 big=true
+初始 scroll: top=0 h=78355 vh=805
+到底 top=83375 h=84199（115 步）
+回顶 top=0（115 步）
+M1: vpUnready=0 bandUnready=0 total=2355 ready=2 pump.queue=0 katexErrors=0
+posBuckets=[234,235,236,235,236,235,236,235,236,235]
+证据落盘 C:\Users\hh\Desktop\Tp\mditor\perf\results\r6-phase2-traverse-r9m.json
+=== M3 formula blocks ===
+文档已开 big=true
+blocks: {"latex":23,"latexK":23,"plain":2,"neverK":[],"mountRate":1}
+证据落盘 C:\Users\hh\Desktop\Tp\mditor\perf\results\r6-phase2-blocks-r9m.json
+=== R1 open-1mb ===
+file:///C:/Users/hh/Desktop/Tp/mditor/perf/cdp.mjs:22
+  throw new Error(`CDP ${port} 上没有可用的 page 目标`);
+        ^
+
+Error: CDP 9223 上没有可用的 page 目标
+    at findPageTarget (file:///C:/Users/hh/Desktop/Tp/mditor/perf/cdp.mjs:22:9)
+    at async file:///C:/Users/hh/Desktop/Tp/mditor/perf/open-1mb.mjs:18:16
+
+Node.js v24.15.0
+R1 EXIT=1
+=== R2 typing density ===
+file:///C:/Users/hh/Desktop/Tp/mditor/perf/cdp.mjs:22
+  throw new Error(`CDP ${port} 上没有可用的 page 目标`);
+        ^
+
+Error: CDP 9223 上没有可用的 page 目标
+    at findPageTarget (file:///C:/Users/hh/Desktop/Tp/mditor/perf/cdp.mjs:22:9)
+    at async file:///C:/Users/hh/Desktop/Tp/mditor/perf/g2-typing.mjs:16:16
+
+Node.js v24.15.0
+R2d EXIT=1
+=== R2 typing 1mb ===
+file:///C:/Users/hh/Desktop/Tp/mditor/perf/cdp.mjs:22
+  throw new Error(`CDP ${port} 上没有可用的 page 目标`);
+        ^
+
+Error: CDP 9223 上没有可用的 page 目标
+    at findPageTarget (file:///C:/Users/hh/Desktop/Tp/mditor/perf/cdp.mjs:22:9)
+    at async file:///C:/Users/hh/Desktop/Tp/mditor/perf/g2-typing.mjs:16:16
+
+Node.js v24.15.0
+R2m EXIT=1
+=== R3 switch ===
+store 已改并回读校验: devMode=false bigDocViewport=false bigDocPerformance=false
+docA: 无穷级数_密度档压测副本.md lines=2159 bytes=156021 $=4713
+docB: 解题技巧_密度档切换副本.md lines=1073 bytes=60065 $=1556
+tauri dev 已启动 pid=4452，等待 CDP 9223（上限 120s）
+CDP 就绪 bootS=5.1
+无缓存重载完成，壳就绪
+docA 已打开并稳定 (3469ms)
+arm 自证: viewport=off dataBig=false → PASS
+switch 1 (无穷级数_密度档压测副本.md→解题技巧_密度档切换副本.md): done 617ms 帧={"frames":146,"p50":4.2,"p90":4.3,"p95":4.3,"max":12.5,"over32":0,"over50":0} LT=0个 max=0ms
+switch 2 (解题技巧_密度档切换副本.md→无穷级数_密度档压测副本.md): done 645ms 帧={"frames":152,"p50":4.2,"p90":4.3,"p95":4.4,"max":16.8,"over32":0,"over50":0} LT=1个 max=60ms
+switch 3 (无穷级数_密度档压测副本.md→解题技巧_密度档切换副本.md): done 622ms 帧={"frames":149,"p50":4.2,"p90":4.3,"p95":4.3,"max":4.7,"over32":0,"over50":0} LT=0个 max=0ms
+switch 4 (解题技巧_密度档切换副本.md→无穷级数_密度档压测副本.md): done 620ms 帧={"frames":150,"p50":4.2,"p90":4.3,"p95":4.3,"max":8.5,"over32":0,"over50":0} LT=1个 max=63ms
+switch 5 (无穷级数_密度档压测副本.md→解题技巧_密度档切换副本.md): done 625ms 帧={"frames":150,"p50":4.2,"p90":4.3,"p95":4.4,"max":4.7,"over32":0,"over50":0} LT=0个 max=0ms
+switch 6 (解题技巧_密度档切换副本.md→无穷级数_密度档压测副本.md): done 627ms 帧={"frames":151,"p50":4.2,"p90":4.3,"p95":4.4,"max":8.4,"over32":0,"over50":0} LT=1个 max=61ms
+switch 7 (无穷级数_密度档压测副本.md→解题技巧_密度档切换副本.md): done 635ms 帧={"frames":153,"p50":4.2,"p90":4.3,"p95":4.3,"max":8.4,"over32":0,"over50":0} LT=0个 max=0ms
+switch 8 (解题技巧_密度档切换副本.md→无穷级数_密度档压测副本.md): done 629ms 帧={"frames":152,"p50":4.2,"p90":4.3,"p95":4.3,"max":12.6,"over32":0,"over50":0} LT=1个 max=64ms
+switch 9 (无穷级数_密度档压测副本.md→解题技巧_密度档切换副本.md): done 624ms 帧={"frames":150,"p50":4.2,"p90":4.3,"p95":4.4,"max":4.5,"over32":0,"over50":0} LT=0个 max=0ms
+switch 10 (解题技巧_密度档切换副本.md→无穷级数_密度档压测副本.md): done 644ms 帧={"frames":150,"p50":4.2,"p90":4.4,"p95":5.1,"max":12.5,"over32":0,"over50":0} LT=1个 max=61ms
+switch 11 (无穷级数_密度档压测副本.md→解题技巧_密度档切换副本.md): done 627ms 帧={"frames":151,"p50":4.2,"p90":4.3,"p95":4.3,"max":4.4,"over32":0,"over50":0} LT=0个 max=0ms
+switch 12 (解题技巧_密度档切换副本.md→无穷级数_密度档压测副本.md): done 628ms 帧={"frames":152,"p50":4.2,"p90":4.4,"p95":4.5,"max":8.2,"over32":0,"over50":0} LT=1个 max=64ms
+switch 13 (无穷级数_密度档压测副本.md→解题技巧_密度档切换副本.md): done 621ms 帧={"frames":149,"p50":4.2,"p90":4.3,"p95":4.4,"max":4.4,"over32":0,"over50":0} LT=0个 max=0ms
+switch 14 (解题技巧_密度档切换副本.md→无穷级数_密度档压测副本.md): done 644ms 帧={"frames":152,"p50":4.2,"p90":4.3,"p95":4.3,"max":12.4,"over32":0,"over50":0} LT=1个 max=63ms
+switch 15 (无穷级数_密度档压测副本.md→解题技巧_密度档切换副本.md): done 622ms 帧={"frames":149,"p50":4.2,"p90":4.3,"p95":4.3,"max":4.6,"over32":0,"over50":0} LT=0个 max=0ms
+switch 16 (解题技巧_密度档切换副本.md→无穷级数_密度档压测副本.md): done 627ms 帧={"frames":150,"p50":4.2,"p90":4.3,"p95":4.6,"max":8.3,"over32":0,"over50":0} LT=1个 max=62ms
+switch 17 (无穷级数_密度档压测副本.md→解题技巧_密度档切换副本.md): done 626ms 帧={"frames":151,"p50":4.2,"p90":4.4,"p95":4.5,"max":4.9,"over32":0,"over50":0} LT=0个 max=0ms
+switch 18 (解题技巧_密度档切换副本.md→无穷级数_密度档压测副本.md): done 624ms 帧={"frames":149,"p50":4.2,"p90":4.3,"p95":4.5,"max":12.6,"over32":0,"over50":0} LT=1个 max=61ms
+switch 19 (无穷级数_密度档压测副本.md→解题技巧_密度档切换副本.md): done 621ms 帧={"frames":149,"p50":4.2,"p90":4.4,"p95":4.5,"max":4.9,"over32":0,"over50":0} LT=0个 max=0ms
+switch 20 (解题技巧_密度档切换副本.md→无穷级数_密度档压测副本.md): done 629ms 帧={"frames":152,"p50":4.2,"p90":4.3,"p95":4.4,"max":8.4,"over32":0,"over50":0} LT=1个 max=61ms
+聚合: {
+ "无穷级数_密度档压测副本.md": {
+  "to": "无穷级数_密度档压测副本.md",
+  "n": 10,
+  "switchMsMedian": 629,
+  "switchMsMax": 645,
+  "frameP95Median": 4.4,
+  "frameMax": 16.8,
+  "framesTotal": 1510,
+  "over32": 0,
+  "over50": 0,
+  "longtaskN": 10,
+  "longtaskMaxMs": 64,
+  "longtaskOver1000": 0
+ },
+ "解题技巧_密度档切换副本.md": {
+  "to": "解题技巧_密度档切换副本.md",
+  "n": 10,
+  "switchMsMedian": 623,
+  "switchMsMax": 635,
+  "frameP95Median": 4.4,
+  "frameMax": 12.5,
+  "framesTotal": 1497,
+  "over32": 0,
+  "over50": 0,
+  "longtaskN": 0,
+  "longtaskMaxMs": 0,
+  "longtaskOver1000": 0
+ }
+}
+收尾: 进程已杀，端口已释放
+结果已落盘: C:\Users\hh\Desktop\Tp\mditor\perf\results\switch-bench.jsonl
+=== dev gates batch done ===

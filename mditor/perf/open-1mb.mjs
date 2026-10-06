@@ -47,7 +47,9 @@ const rowPos = () =>
     if (!hit) return null;
     hit.scrollIntoView({ block: 'center' });
     const rc = hit.getBoundingClientRect();
-    return { x: Math.round(rc.x + 80), y: Math.round(rc.y + rc.height / 2) };
+    if (rc.width === 0) return null;
+    hit.click(); // R9 复检：CDP 坐标点击对 .ft-row 无效（dpr 1.75），el.click() 直触 React onClick
+    return true;
   })()`);
 
 const blocksNow = () =>
@@ -90,7 +92,6 @@ for (let i = 0; i < rounds; i++) {
   if (!r) throw new Error("file row not found: " + DOC_NAME);
   await lt.start();
   const t0 = Date.now();
-  await m.click(r.x, r.y);
   let stable = 0;
   let last = -1;
   let stableMs = 0;

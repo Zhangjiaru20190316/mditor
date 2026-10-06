@@ -35,10 +35,11 @@ const r0 = await cdp.eval(`(() => {
   if (!hit) return null;
   hit.scrollIntoView({block:'center'});
   const rc = hit.getBoundingClientRect();
-  return {x: Math.round(rc.x+80), y: Math.round(rc.y+rc.height/2)};
+  if (rc.width === 0) return null;
+  hit.click(); // R9 复检：CDP 坐标点击对 .ft-row 无效（dpr 1.75），el.click() 直触 React onClick
+  return true;
 })()`);
 if (!r0) throw new Error("no row");
-await m.click(r0.x, r0.y);
 // 等稳定
 let last = -1, stable = 0;
 while (stable < 4) {

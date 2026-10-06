@@ -428,13 +428,14 @@ async function main() {
           });
           if (!hit) return null;
           const r = hit.getBoundingClientRect();
-          return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), name: hit.querySelector('.ft-name')?.textContent };
+          if (r.width === 0) return null;
+          hit.click(); // R9 复检：CDP 坐标点击对 .ft-row 无效（dpr 1.75），el.click() 直触 React onClick
+          return { name: hit.querySelector('.ft-name')?.textContent };
         })()`);
         if (!rowPos) await sleep(500);
       }
       if (!rowPos) { log(`打开尝试 ${attempt}/3: 文件树找不到 ${docInfo.name}`); continue; }
       const t0 = Date.now();
-      await m.click(rowPos.x, rowPos.y);
       // 稳定判据：PM 子元素数连续 2s 不变（4×500ms 轮询）且 ≥30 块，且目标行 ft-active
       let lastCount = -1, stable = 0, settled = false;
       while (Date.now() - t0 < settleTimeoutMs) {
