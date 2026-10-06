@@ -57,7 +57,7 @@ F 组口径适配说明（报告留档）：症状 F 仅在「打包版 × 题�
 | R3 | 切换中位 20 往返 | 2,010ms | **629/623ms**（双方向各 10 次，armValidated） | **-69% 方向为优 ✓** |
 | R4 | 全量守卫 | 990 绿 | **test:coverage 990/990（90 文件，含 focusKeepwarm ×4）；lint 0 错；build ✓ 13.0s** | ✓ |
 | R5 | scroll-abab 1MB on ×3 / ghost 5min / R8 对称比 | p95 中位 165 / ghost 11+0+0 / 两档 ≤1.25 | abab **166.5/166.7/170.8（中位 166.7，+1.0%）**；ghost **11/+0/rebase=0 完全一致**；对称比：**up 绝对值持平**（1MB up-slow 204.4/161.2 vs R8 199.1/202.7——R8 修复目标无回归）；比值 1MB 3.53 / 密度 1.38 为 down 对照臂环境性变优（R8 down 115~119 → 本轮 54.8/57.9，runtime .53）与亚阈（密度 j32 双零、p95 4.7~6.6ms）伪象 | abab ✓ / ghost ✓ / 对称比：**up 无回归 ✓，比值劣化归因分母变优（留档）** |
-| 阶六 | 打包冒烟双断言（重建安装包实机）：focus scrollPhase j32=0 + 停滚 6s 窗漂移 0 | — | 【待填】 | 【待判定】 |
+| 阶六 | 打包冒烟双断言（重建安装包实机）：focus scrollPhase j32=0 + 停滚 6s 窗漂移 0 | — | 安装包 `Mditor_5.0.1-beta_x64-setup.exe`（14:52 重建，exe ProductVersion 实测 **5.0.1-beta**）；冒烟探针 r9smoke-1：**focus j32=0（3/3 臂）+ 停滚 10s quiet 窗 driftShift=0/Δst=0（双臂 6/6 臂，≥6s 口径）**；`--expect-keepwarm` 身份钉过 + kw=focus-keepwarm/running 3/3 | **双断言 PASS ✓** |
 
 **T1/T2 环境漂移归因注（R8 T2 同款方法论）**：①本轮测量环境已变——WebView2 runtime **154.0.4258.48 → 154.0.4258.53**（注册表实证，10-04 后自动更新；同一变更并致 CDP 坐标点击失效，见 ⑤）；②修复为零可达性——`focus-keepwarm` 规则作用域 `.is-focus`，normal 臂（T1/T2 场景）该选择器不匹配任何元素，src 该链路零改动；③R8 自己已记录 T2/durP50 受会话状态强污染（跨轮方差 3.4×）。结论：字面偏差不构成修复回归，按 R8 T2 先例留档。
 
