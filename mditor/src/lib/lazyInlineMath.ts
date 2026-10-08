@@ -193,6 +193,12 @@ const pumpStats = {
   quietFrames: 0,
   /** 观测史内最老活条目等待时长的峰值（ms，会话累计）。 */
   oldestWaitPeakMs: 0,
+  /** R10 观测：IO 回调进带累计（与 ioLeave 对读区分回调到达 vs 泵消费）。 */
+  ioEnter: 0,
+  /** R10 观测：IO 回调离带累计。 */
+  ioLeave: 0,
+  /** R10 观测：最近一次进带回调时刻（performance.now，探针对齐换装触发链）。 */
+  lastIoEnterAt: 0,
 };
 
 /** 泵统计快照（按需 O(队列长度)；探针轮询用，泵帧内不调用）。 */
@@ -210,6 +216,9 @@ export function getMathPumpStats(): {
   liveQueued: number;
   oldestWaitMs: number;
   oldestWaitPeakMs: number;
+  ioEnter: number;
+  ioLeave: number;
+  lastIoEnterAt: number;
 } {
   const now = performance.now();
   let live = 0;
@@ -614,6 +623,12 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
 
   callbacks.set(dom, (visible) => {
     ioVisible = visible;
+    if (visible) {
+      pumpStats.ioEnter++;
+      pumpStats.lastIoEnterAt = performance.now();
+    } else {
+      pumpStats.ioLeave++;
+    }
     if (visible) {
       // R6 Fix-A：回带撤销挂起的降级意图。demote 顺延链（滚动不静止则
       // 嵌套重排）可在元素回带后才到期，把带内/视口内元素降回占位；而

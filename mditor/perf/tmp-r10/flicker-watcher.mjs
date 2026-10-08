@@ -65,11 +65,18 @@ export const FLICKER_WATCHER = `(() => {
     st.events.push(Object.assign({
       t: Math.round(now - st.perf0), el: rec.id, type: rec.type,
       lang: rec.lang, from, to, vis, bucket: vis ? bucketOf(r, hTop) : -1,
+      lagMs: Math.round(now - (rec.watchedT ?? rec.seenT ?? now)),
     }, extra || {}));
   };
   // 状态完成度归一：mnt-latex 未完成（KaTeX 未出），mnt-code/done/ready 完成
   const io = new IntersectionObserver((es) => {
-    for (const e of es) { if (e.isIntersecting) st.watch.add(e.target); else st.watch.delete(e.target); }
+    for (const e of es) {
+      if (e.isIntersecting) {
+        st.watch.add(e.target);
+        const rec = st.els.get(e.target);
+        if (rec && rec.watchedT == null) rec.watchedT = Math.round(performance.now());
+      } else st.watch.delete(e.target);
+    }
   }, { root: host, rootMargin: '1600px 0px 1600px 0px' });
   let seq = 0;
   const reg = (el) => {
@@ -80,6 +87,7 @@ export const FLICKER_WATCHER = `(() => {
       id: (isInline ? 'i' : 'b') + (++seq), type: isInline ? 'inline' : 'block',
       lang: el.dataset.lang || '', state: isInline ? inlineState(el) : blockState(el),
       doneOnce: false, tearedOnce: false, demotedOnce: false, phH: 0,
+      seenT: Math.round(performance.now()),
     };
     st.els.set(el, rec);
     st.counts.reg++;
@@ -205,9 +213,11 @@ export function summarizeFlicker(flicker, marks, quietSecs) {
   }
   const inWin = (t, w) => t >= w[0] && t < w[1];
   // 事件分类：kind ∈ inline-render/block-mount/block-done/block-teardown/inline-demote
+  // 块挂载可在单帧间隙完成整链（ph→done 一帧跳变，帧粒度巡视只见首尾）——
+  // block-mount 事件 to=done/mnt-code 同样是"换装完成时刻"。
   const isS1Done = (e) =>
     (e.kind === "inline-render" || e.kind === "block-done" ||
-      (e.kind === "block-mount" && e.to === "mnt-code")) && e.vis;
+      (e.kind === "block-mount" && (e.to === "done" || e.to === "mnt-code"))) && e.vis;
   const isS1Fresh = (e) => isS1Done(e) && !e.reflash && !e.remount;
   const windows = drives.map((d) => {
     const s1win = [d.begin, d.end + 2400];

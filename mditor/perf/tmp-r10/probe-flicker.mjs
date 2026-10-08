@@ -37,7 +37,7 @@ const STORE_PATH = join(process.env.APPDATA ?? ".", "com.mditor.app.dev", "mdito
 
 function parseArgs(argv) {
   const a = { scenario: "down-slow", doc: "无穷级数_密度档", tag: "r10p2", phase: 2, run: 1,
-    depth: 0.6, upPx: 5000, holdSecs: 17, quietSecs: 10, prewarmWait: false, mode: "normal" };
+    depth: 0.6, upPx: 5000, holdSecs: 17, quietSecs: 10, prewarmWait: false, mode: "normal", exp: null };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     const next = () => (i + 1 < argv.length ? argv[++i] : null);
@@ -52,8 +52,32 @@ function parseArgs(argv) {
     else if (k === "--quiet-secs") a.quietSecs = Number(next() ?? 10);
     else if (k === "--prewarm-wait") a.prewarmWait = true;
     else if (k === "--mode") a.mode = next() ?? "normal";
+    else if (k === "--exp") a.exp = next();
   }
   return a;
+}
+
+// 原型实验开关（阶段四可证伪实验；文件型改动 spawn 前应用、退出恢复——
+// 只换字面量、git diff 自证、跑完必须还原；CSS 型注入 style 不改文件）。
+const EXPS = {
+  "io1600": { file: "src/lib/lazyInlineMath.ts", from: 'const IO_MARGIN = "800px";', to: 'const IO_MARGIN = "1600px";' },
+  "io2400": { file: "src/lib/lazyInlineMath.ts", from: 'const IO_MARGIN = "800px";', to: 'const IO_MARGIN = "2400px";' },
+  "no-demote": { file: "src/lib/lazyInlineMath.ts", from: "const DEMOTE_DELAY = 2500;", to: "const DEMOTE_DELAY = 1e9;" },
+  "budget12": { file: "src/lib/lazyInlineMath.ts", from: "const SCROLL_RENDER_BUDGET_MS = 5;", to: "const SCROLL_RENDER_BUDGET_MS = 12;" },
+  "cap128": { file: "src/lib/lazyInlineMath.ts", from: "export const SCROLL_HIT_PAINT_CAP = 64;", to: "export const SCROLL_HIT_PAINT_CAP = 128;" },
+  "no-teardown": { file: "node_modules/@milkdown/components/lib/code-block/index.js", from: "_CodeMirrorBlock.TEARDOWN_DELAY = 15e3;", to: "_CodeMirrorBlock.TEARDOWN_DELAY = 1e9;" },
+  "trans-off": { css: "span.mditor-math-inline-lazy{transition:none!important}" },
+};
+/** 应用文件型 exp（返回恢复函数）；未命中返回 null。 */
+function applyExpFiles(exp) {
+  const cfg = exp ? EXPS[exp] : null;
+  if (!cfg || !cfg.file) return null;
+  const p = join(MDITOR_DIR, cfg.file);
+  const orig = readFileSync(p, "utf8");
+  if (!orig.includes(cfg.from)) throw new Error(`exp ${exp}: 源锚点未找到（${cfg.from}）——文件已变？`);
+  writeFileSync(p, orig.replace(cfg.from, cfg.to), "utf8");
+  console.log(`[exp] ${exp}: ${cfg.file} 已临时改动（退出恢复）`);
+  return () => writeFileSync(p, orig, "utf8");
 }
 async function portFree(port = PORT) {
   try { await fetch(`http://127.0.0.1:${port}/json`, { signal: AbortSignal.timeout(700) }); return false; } catch { return true; }
@@ -116,8 +140,11 @@ async function main() {
   let child = null, cdp = null;
   const row = { ts: new Date().toISOString(), tag: args.tag, phase: args.phase, scenario: args.scenario,
     doc: args.doc, depth: args.depth, upPx: args.upPx, holdSecs: args.holdSecs, mode: args.mode,
-    prewarmWait: args.prewarmWait, run: args.run, env: "dev", ok: false };
+    prewarmWait: args.prewarmWait, run: args.run, env: "dev", exp: args.exp, ok: false };
+  let restoreExp = null;
   try {
+    restoreExp = applyExpFiles(args.exp);
+    if (restoreExp) process.on("exit", () => { try { restoreExp(); } catch { /* */ } });
     if (!(await portFree())) { log("预检失败: 9223 被占"); return (closeLog(), 2); }
     const stale = vitePortPids();
     if (stale.length) { log(`预检失败: vite 残留 PID ${stale.join(",")}`); return (closeLog(), 2); }
@@ -218,10 +245,39 @@ async function main() {
       s = await readScroll();
     }
 
-    // 巡视器安装（一次性全量注册 + IO 关注集）
+    // 巡视器安装（一次性全量注册 + IO 关注集）；CSS 型 exp 先注入
+    const expCfg = args.exp ? EXPS[args.exp] : null;
+    if (expCfg && expCfg.css) {
+      await cdp.eval(`(() => { let s = document.getElementById('r10-exp-style'); if (!s) { s = document.createElement('style'); s.id = 'r10-exp-style'; document.head.appendChild(s); } s.textContent = ${JSON.stringify(expCfg.css)}; })()`);
+      log(`[exp] ${args.exp}: CSS 已注入`);
+    }
     const inst = await cdp.eval(FLICKER_WATCHER);
     log(`巡视器: ${inst}`);
     if (!String(inst).startsWith("installed")) return (closeLog(), 2);
+
+    // 机制直接验证（E-mech slow）：复刻慢滚步进（220px/450ms）×6 步，每步后
+    // 100ms 统计巡视器 ±1600px 关注集内 unready 行内数（classList 零布局）与
+    // __mathPumpStats.ioEnter——若 unready 随步累积而 ioEnter 不增 = IO 回调
+    // 未派发（换装触发滞后坐实）；若 ioEnter 同步增而 unready 不累积 = IO
+    // 正常、卡点在泵下游。
+    const mechSteps = [];
+    for (let k = 0; k < 6; k++) {
+      await m.wheel(640, 400, 0, 220);
+      await cdp.eval(`new Promise((r) => setTimeout(r, 320))`);
+      const snap = await cdp.eval(`(() => {
+        let unready = 0;
+        const w = window.__r10flicker;
+        if (w) for (const el of w.watch) {
+          if (el.classList.contains('mditor-math-inline-lazy') && !el.classList.contains('mditor-math-inline-ready')) unready++;
+        }
+        const pump = typeof window.__mathPumpStats === 'function' ? window.__mathPumpStats() : null;
+        return { unready, ioEnter: pump ? pump.ioEnter : null, queue: pump ? pump.queueDepth : null };
+      })()`);
+      mechSteps.push(snap);
+    }
+    row.mech = { steps: mechSteps };
+    log(`E-mech slow: unready=${mechSteps.map((x) => x.unready).join("/")} ioEnter=${mechSteps.map((x) => x.ioEnter).join("/")} queue=${mechSteps.map((x) => x.queue).join("/")}`);
+    s = await readScroll(); // mech 滚动改变位置，场景深度基准重读
 
     const cx = 640, cy = 400;
     const wheel = async (dy, pause) => { await m.wheel(cx, cy, 0, dy); await sleep(pause); };
@@ -323,7 +379,8 @@ async function main() {
     killStalePorts();
     child = null;
     const fixtureShort = args.doc.includes("1MB") ? "1mb" : args.doc.includes("无穷级数") ? "density" : args.doc.includes("解题技巧") ? "switch" : "other";
-    const out = join(RESULTS_DIR, `r10-phase${args.phase}-flicker-dev-${args.scenario}-${fixtureShort}-${args.tag}-${args.run}.json`);
+    const modeShort = args.mode === "focus" ? "-focus" : "";
+    const out = join(RESULTS_DIR, `r10-phase${args.phase}-flicker-dev-${args.scenario}-${fixtureShort}${modeShort}-${args.tag}-${args.run}.json`);
     writeFileSync(out, JSON.stringify(row), "utf8");
     log(`证据落盘 ${out}`);
     return (closeLog(), 0);

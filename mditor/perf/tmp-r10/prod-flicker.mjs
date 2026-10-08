@@ -288,7 +288,8 @@ async function main() {
     row.ok = true;
     // 证据先落盘（R9 run29 教训）
     const fixtureShort = args.doc.includes("1MB") ? "1mb" : args.doc.includes("密度档") ? "density" : args.doc.includes("解题技巧") ? "switch" : "other";
-    const out = join(RESULTS_DIR, `r10-phase${args.phase}-flicker-prod-${args.scenario}-${fixtureShort}-${args.tag}-${args.run}.json`);
+    const modeShort = args.mode === "focus" ? "-focus" : "";
+    const out = join(RESULTS_DIR, `r10-phase${args.phase}-flicker-prod-${args.scenario}-${fixtureShort}${modeShort}-${args.tag}-${args.run}.json`);
     writeFileSync(out, JSON.stringify(row), "utf8");
     console.log(`证据落盘 ${out}`);
     // focusMode 归位（prod 用户环境不残留）
