@@ -1,5 +1,5 @@
 diff --git a/node_modules/@milkdown/components/lib/code-block/index.js b/node_modules/@milkdown/components/lib/code-block/index.js
-index 7e1baef..9eb0403 100644
+index 7e1baef..d555a51 100644
 --- a/node_modules/@milkdown/components/lib/code-block/index.js
 +++ b/node_modules/@milkdown/components/lib/code-block/index.js
 @@ -581,7 +581,7 @@ function getSharedObserver() {
@@ -11,17 +11,50 @@ index 7e1baef..9eb0403 100644
      );
    }
    return sharedObserver;
-@@ -746,6 +746,9 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+@@ -725,6 +725,19 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+       }
+     });
+     this.renderPlaceholder();
++    // mditor observation (R10): read-only mount/teardown event tap for the
++    // flicker probes (window.__blockMountStats). Pure counting — no behavior,
++    // no layout: dataset tag for language classification + a bounded ring of
++    // lifecycle timestamps the probes align against DOM sweep frames.
++    try {
++      this.dom.dataset.lang = String(this.language.value ?? "");
++      const ms = window.__blockMountStats ?? (window.__blockMountStats = {
++        mounts: 0, teardowns: 0, remounts: 0, events: []
++      });
++      ms.events.push({ t: Math.round(performance.now()), k: "create", lang: this.dom.dataset.lang });
++      if (ms.events.length > 600) ms.events.splice(0, 200);
++    } catch {
++    }
+     visibilityCallbacks.set(this.dom, (isIntersecting) => {
+       if (isIntersecting) {
+         this.cancelTeardown();
+@@ -746,6 +759,22 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
    initializeCodeMirror() {
      if (this.initialized) return;
      this.initialized = true;
++    // mditor observation (R10): mount/remount tap, read-only.
++    try {
++      const ms = window.__blockMountStats;
++      if (ms) {
++        const remount = this.dom.dataset.mnt === "1";
++        this.dom.dataset.mnt = "1";
++        ms.mounts++;
++        if (remount) ms.remounts++;
++        ms.events.push({ t: Math.round(performance.now()), k: remount ? "remount" : "mount", lang: this.dom.dataset.lang });
++        if (ms.events.length > 600) ms.events.splice(0, 200);
++      }
++    } catch {
++    }
 +    // Lift the teardown height freeze before mounting the real editor.
 +    this.dom.style.height = "";
 +    this.dom.style.overflow = "";
      this.cm = new EditorView({
        doc: this.node.textContent,
        root: this.view.root,
-@@ -773,7 +776,21 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+@@ -773,7 +802,31 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
    }
    teardownCodeMirror() {
      if (!this.initialized) return;
@@ -36,6 +69,16 @@ index 7e1baef..9eb0403 100644
 +      this.scheduleTeardown();
 +      return;
 +    }
++    // mditor observation (R10): teardown tap, read-only.
++    try {
++      const ms = window.__blockMountStats;
++      if (ms) {
++        ms.teardowns++;
++        ms.events.push({ t: Math.round(performance.now()), k: "teardown", lang: this.dom.dataset.lang });
++        if (ms.events.length > 600) ms.events.splice(0, 200);
++      }
++    } catch {
++    }
 +    let frozenHeight = 0;
 +    try {
 +      frozenHeight = this.dom.offsetHeight;
@@ -44,7 +87,7 @@ index 7e1baef..9eb0403 100644
      this.app.unmount();
      this.cm.destroy();
      this.initialized = false;
-@@ -782,6 +799,13 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+@@ -782,6 +835,13 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
        this.dom.removeChild(this.dom.firstChild);
      }
      this.renderPlaceholder();
@@ -58,7 +101,7 @@ index 7e1baef..9eb0403 100644
    }
    scheduleTeardown() {
      this.cancelTeardown();
-@@ -853,9 +877,10 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+@@ -853,9 +913,10 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
        try {
          this.cm.dispatch({
            changes: { from: change.from, to: change.to, insert: change.text },
@@ -72,7 +115,7 @@ index 7e1baef..9eb0403 100644
          });
        } finally {
          this.updating = false;
-@@ -888,7 +913,7 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+@@ -888,7 +949,7 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
    }
  };
  /** Delay before tearing down an off-screen CodeMirror instance. */
