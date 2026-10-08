@@ -153,6 +153,10 @@ type PendingRender = {
   /** 缓存命中探测（纯查不绘）：命中走 run() 的直绘路径（绕过滚动门与时
    *  钟预算，受单帧条数软上限约束）。 */
   isCached: () => boolean;
+  /** R10 Fix-A：预测式激活条目跳过 ioVisible 预过滤（IO 回调对 cv-skip
+   *  子树滞后，预测条目激活时 ioVisible 仍为 false——几何归属判定交给
+   *  classifyEntry 真判据：实际离带/离视口自动归 rest，无探测滥用）。 */
+  probe?: boolean;
   /** 有渲染态盒尺寸预留（元素级 WeakMap 或 R5 Fix-B 会话表）：上滚 band
    *  直绘的安全前提——锁盒占位已复刻真身行内布局，直绘零折行/行框变化
    *  （R6 Fix-B + R7 Fix-A 宽度维度）。 */
@@ -199,6 +203,10 @@ const pumpStats = {
   ioLeave: 0,
   /** R10 观测：最近一次进带回调时刻（performance.now，探针对齐换装触发链）。 */
   lastIoEnterAt: 0,
+  /** R10 Fix-A 观测：预测式扫描执行次数。 */
+  proactiveSweeps: 0,
+  /** R10 Fix-A 观测：预测式扫描激活（入队）的行内条数。 */
+  proactiveActivated: 0,
 };
 
 /** 泵统计快照（按需 O(队列长度)；探针轮询用，泵帧内不调用）。 */
@@ -219,6 +227,8 @@ export function getMathPumpStats(): {
   ioEnter: number;
   ioLeave: number;
   lastIoEnterAt: number;
+  proactiveSweeps: number;
+  proactiveActivated: number;
 } {
   const now = performance.now();
   let live = 0;
@@ -275,6 +285,8 @@ function hookUserInputOnce(): void {
       mark();
       if (e.deltaY > 0) scrollDir = 1;
       else if (e.deltaY < 0) scrollDir = -1;
+      // R10 Fix-A：滚动输入驱动预测扫描（rAF 合并、幂等游标）。
+      scheduleProactiveSweep();
     },
     { capture: true, passive: true }
   );
@@ -286,6 +298,7 @@ function hookUserInputOnce(): void {
       if (y === undefined) return;
       if (lastTouchY !== null && y !== lastTouchY) scrollDir = lastTouchY > y ? 1 : -1;
       lastTouchY = y;
+      scheduleProactiveSweep();
     },
     { capture: true, passive: true }
   );
@@ -348,7 +361,7 @@ function pumpScrollFrame(): void {
   let probes = 0;
   for (const entry of pendingRenders) {
     if (!entry.el.isConnected) continue; // 已销毁残留：出队丢弃
-    if (entry.ioVisible() && probes < MAX_RECT_PROBES_PER_FRAME) {
+    if ((entry.probe || entry.ioVisible()) && probes < MAX_RECT_PROBES_PER_FRAME) {
       probes++;
       const cls = classifyEntry(entry.el);
       if (cls === 2) {
@@ -462,6 +475,124 @@ function schedulePump(): void {
 function enqueueRender(entry: PendingRender): void {
   pendingRenders.push(entry);
   schedulePump();
+}
+
+// ---- R10 Fix-A：预测式主动预渲染（症状 S 根因 S-g 的对冲路径）------------
+//
+// 机制背景（perf/results/r10-phase4-attribution.md S-g，E-mech slow/E1 定罪）：
+// cv 档 content-visibility:auto 跳过视口外块的布局，IntersectionObserver 交叉
+// 计算对无布局几何的目标不报进带（与 rootMargin 无关——io1600 原型 S1 一字
+// 不差），直到块进入浏览器预渲染窗（实测 ≈视口外 0~400px）被布局，IO 下一
+// 帧才派发回调——换装因此系统性落在视口内（底部三桶 99.8%），120ms 过渡
+// 放大为可见闪刷。
+//
+// 对冲思路：不依赖"IO 发现元素进带"，改为滚动输入驱动的**预测式扫描**——
+// 每次 wheel/touch 打点在下一 rAF 用块框几何（c-v:auto 块框位置随滚动即时
+// 平移，读取不强制子树布局）增量游标定位预测带（滚动方向前方
+// FORWARD_BAND_PX），对带内块中未渲染的行内直接 activate 入队。入队后仍由
+// 泵按既有规则消费（下滚带内=富余预算渲染；上滚带内=盒预留+命中才直绘的
+// R6 Fix-B 安全语义原样保持），IO 回调保留为兜底（先到者幂等）。渲染管线/
+// 预算/上限/完整性零改动——只把"发现时机"从浏览器变现帧提前到滚动输入帧。
+
+/** 预测带内未渲染行内的激活句柄（nodeview 闭包 -> 模块可达；元素销毁随
+ *  WeakMap 自动回收）。返回是否产生新入队（幂等：已渲染/已排队返回 false）。 */
+const activateFns = new WeakMap<HTMLElement, (probe?: boolean) => boolean>();
+
+interface SweepState {
+  host: HTMLElement;
+  pm: Element;
+  blocks: HTMLElement[];
+  /** 游标：预测带顶沿所在块的下标（gBCR 增量修正，步进式移动）。 */
+  cursor: number;
+  /** 下滚已激活前沿的块下标（增量 querySelector 只做新进带块）。 */
+  aheadIdx: number;
+}
+
+let sweepState: SweepState | null = null;
+let sweepScheduled = false;
+
+function getSweepState(): SweepState | null {
+  if (sweepState && sweepState.host.isConnected) {
+    if (sweepState.pm.childElementCount !== sweepState.blocks.length) {
+      sweepState.blocks = [...(sweepState.pm.children as HTMLCollectionOf<HTMLElement>)];
+    }
+    return sweepState;
+  }
+  const host = document.querySelector<HTMLElement>(".mditor-editor-host");
+  const pm = host?.querySelector(".ProseMirror") ?? null;
+  if (!host || !pm) return null;
+  sweepState = {
+    host,
+    pm,
+    blocks: [...(pm.children as HTMLCollectionOf<HTMLElement>)],
+    cursor: 0,
+    aheadIdx: -1,
+  };
+  return sweepState;
+}
+
+/** 仅供测试：重置预测扫描共享态。 */
+export function __resetProactiveSweepForTest(): void {
+  sweepState = null;
+  sweepScheduled = false;
+}
+
+/** 预测式扫描：激活滚动方向前方预测带（视口沿 + FORWARD_BAND_PX）内块中
+ *  未渲染的行内（幂等：IO 先到则 queued/rendered 门跳过）。返回激活条数。
+ *  块框 gBCR 随滚动即时平移（c-v:auto 只跳过内容布局，块框位置/估算高一直
+ *  有效），游标增量修正使每次扫描 O(步进块数 + 新进带块数)，与文档规模无关。 */
+export function proactiveSweep(): number {
+  const st = getSweepState();
+  if (!st || st.blocks.length === 0) return 0;
+  pumpStats.proactiveSweeps++;
+  const hostRect = st.host.getBoundingClientRect();
+  // 预测带：滚动方向前方（下滚=视口底以下；上滚=视口顶以上）。方向未知
+  //（键盘滚动）按向下处理（多数翻页向下；幂等安全）。
+  const up = scrollDir === -1;
+  const bandNear = up ? hostRect.top + 40 : hostRect.bottom - 40;
+  const bandFar = up ? hostRect.top - FORWARD_BAND_PX : hostRect.bottom + FORWARD_BAND_PX;
+  const lo = Math.min(bandNear, bandFar), hi = Math.max(bandNear, bandFar);
+  // 游标修正：带近沿附近的块（步进式，通常每扫描 ≤2~3 步）
+  while (
+    st.cursor < st.blocks.length - 1 &&
+    st.blocks[st.cursor].getBoundingClientRect().bottom < lo
+  )
+    st.cursor++;
+  while (
+    st.cursor > 0 &&
+    st.blocks[st.cursor - 1].getBoundingClientRect().bottom >= lo
+  )
+    st.cursor--;
+  let activated = 0;
+  for (let i = st.cursor; i < st.blocks.length; i++) {
+    const b = st.blocks[i];
+    const r = b.getBoundingClientRect();
+    if (r.top > hi) break;
+    if (r.bottom <= lo) continue;
+    if (!up && i <= st.aheadIdx) continue; // 下滚已处理过的新前沿游标
+    for (const el of b.querySelectorAll<HTMLElement>(
+      ".mditor-math-inline-lazy:not(.mditor-math-inline-ready)"
+    )) {
+      const fn = activateFns.get(el);
+      if (fn && fn(true)) {
+        activated++;
+        pumpStats.proactiveActivated++;
+      }
+    }
+    if (!up && i > st.aheadIdx) st.aheadIdx = i;
+  }
+  return activated;
+}
+
+/** 滚动输入驱动的扫描排程（rAF 合并；静止门内不扫——静止补绘路径已全量）。 */
+function scheduleProactiveSweep(): void {
+  if (sweepScheduled) return;
+  sweepScheduled = true;
+  window.requestAnimationFrame(() => {
+    sweepScheduled = false;
+    if (scrollQuiet(performance.now())) return;
+    proactiveSweep();
+  });
 }
 
 /** 渲染态盒尺寸（border-box 宽高，R7 Fix-A 锁盒占位用）。 */
@@ -621,6 +752,32 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
     }
   };
 
+  /** 进带激活（IO 回调与 R10 Fix-A 预测扫描共用；幂等，返回是否新入队）。 */
+  const activate = (probe = false): boolean => {
+    if (rendered || queued) return false;
+    queued = true;
+    pumpStats.enqueued++;
+    enqueueRender({
+      el: dom,
+      enqueuedAt: performance.now(),
+      ioVisible: () => ioVisible,
+      isCached: () => peekCached(current, false) !== undefined,
+      hasReservedBox: () =>
+        renderedBoxes.has(dom) || inlineBoxFor(current) !== undefined,
+      probe,
+      run: () => {
+        queued = false;
+        if (!dom.isConnected) {
+          pumpStats.dropped++;
+          return; // 已销毁：静默丢弃
+        }
+        render();
+      },
+    });
+    return true;
+  };
+  activateFns.set(dom, activate);
+
   callbacks.set(dom, (visible) => {
     ioVisible = visible;
     if (visible) {
@@ -639,25 +796,7 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
         window.clearTimeout(demoteTimer);
         demoteTimer = null;
       }
-      if (rendered || queued) return;
-      queued = true;
-      pumpStats.enqueued++;
-      enqueueRender({
-        el: dom,
-        enqueuedAt: performance.now(),
-        ioVisible: () => ioVisible,
-        isCached: () => peekCached(current, false) !== undefined,
-        hasReservedBox: () =>
-          renderedBoxes.has(dom) || inlineBoxFor(current) !== undefined,
-        run: () => {
-          queued = false;
-          if (!dom.isConnected) {
-            pumpStats.dropped++;
-            return; // 已销毁：静默丢弃
-          }
-          render();
-        },
-      });
+      activate();
     } else if (rendered) {
       // 远离：延迟降级（快速滚动往返不抖动）。降级改变块高会触发回流
       // （无 cv 档是全文档级），滚动进行中不执行，静止后再降。

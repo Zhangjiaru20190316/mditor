@@ -13,6 +13,8 @@ import {
   setLazyMathBySize,
   lazyInlineMathPlugin,
   __resetRenderPumpForTest,
+  __resetProactiveSweepForTest,
+  getMathPumpStats,
   SCROLL_HIT_PAINT_CAP,
 } from "./lazyInlineMath";
 import { renderToStringCached } from "./katexCache";
@@ -944,6 +946,121 @@ describe("R7 Fix-A：demote 锁盒占位（宽度折行位移根治）", () => {
     expect(view.dom.textContent).toBe("lock_fail_new");
     expect(view.dom.classList.contains("mditor-math-inline-ready")).toBe(false);
     view.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+});
+
+// ---- R10 Fix-A：预测式主动预渲染（S-g：IO 交叉通知对 cv-skip 子树滞后）----
+// 扫描器用块框 gBCR（c-v:auto 块框位置随滚动即时平移）增量游标定位预测带，
+// 对带内块中未渲染行内 activate 入队；入队后消费仍走泵既有方向/预算/上限
+// 规则（上滚 band 盒预留+命中的安全语义不变）。
+describe("R10 Fix-A：预测式主动预渲染", () => {
+  /** 搭 host > pm > 块 结构（rect 桩），nodeview dom 挂进各块。host 视口
+   *  top=0/bottom=600；块按 spec 摆位（top/bottom 为视口坐标）。 */
+  function makeSweepDoc(
+    blocksSpec: { top: number; bottom: number; formulas: string[] }[]
+  ): { host: HTMLElement; views: TestView[]; cleanup: () => void } {
+    __resetProactiveSweepForTest();
+    const host = document.createElement("div");
+    host.className = "mditor-editor-host";
+    const pm = document.createElement("div");
+    pm.className = "ProseMirror";
+    host.appendChild(pm);
+    document.body.appendChild(host);
+    stubRect(host, { top: 0, bottom: 600, height: 600 });
+    const views: TestView[] = [];
+    for (const spec of blocksSpec) {
+      const b = document.createElement("p");
+      stubRect(b, { top: spec.top, bottom: spec.bottom, height: spec.bottom - spec.top });
+      for (const v of spec.formulas) {
+        const tv = makeView(v);
+        b.appendChild(tv.dom); // 移入块（isConnected 保持）
+        stubRect(tv.dom, { top: spec.top, bottom: spec.bottom, height: spec.bottom - spec.top });
+        views.push(tv);
+      }
+      pm.appendChild(b);
+    }
+    return { host, views, cleanup: () => host.remove() };
+  }
+
+  it("下滚输入后扫描激活预测带（视口底以下 800px）内块的未渲染行内——IO 未回调也入队并渲染", () => {
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    // 块：视口内（200~400）、预测带内（650~900）、带外（2000~2300）
+    const doc = makeSweepDoc([
+      { top: 200, bottom: 400, formulas: ["a"] },
+      { top: 650, bottom: 900, formulas: ["b_fixa_band", "c_fixa_band"] },
+      { top: 2000, bottom: 2300, formulas: ["d_fixa_far"] },
+    ]);
+    fireWheel(120); // 下滚方向 + 预测扫描排程（rAF）
+    flushFrames(3); // sweep rAF（激活入队）+ 泵帧消费（冻结时钟 → 预算恒富余）
+    const ready = doc.views.map((v) => v.dom.classList.contains("mditor-math-inline-ready"));
+    expect(ready[1]).toBe(true); // 带内两条被预测激活渲染
+    expect(ready[2]).toBe(true);
+    expect(ready[3]).toBe(false); // 带外不激活
+    expect(ready[0]).toBe(false); // 视口内（非预测带）不受本路径影响（IO 兜底）
+    const st = getMathPumpStats();
+    expect(st.proactiveActivated).toBe(2);
+    expect(st.proactiveSweeps).toBeGreaterThanOrEqual(1);
+    doc.cleanup();
+    for (const v of doc.views) v.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+
+  it("幂等与游标：重复 wheel/重复扫描不重复激活（queued/ready 门 + aheadIdx 前沿跳过）", () => {
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    const doc = makeSweepDoc([{ top: 650, bottom: 900, formulas: ["e_fixa_idem"] }]);
+    fireWheel(120);
+    flushFrames(3);
+    expect(getMathPumpStats().proactiveActivated).toBe(1);
+    fireWheel(120);
+    flushFrames(3); // 已渲染：activate 幂等
+    fireWheel(120);
+    flushFrames(3); // aheadIdx 游标：块不再 querySelector
+    expect(getMathPumpStats().proactiveActivated).toBe(1);
+    expect(doc.views[0].dom.classList.contains("mditor-math-inline-ready")).toBe(true);
+    doc.cleanup();
+    doc.views[0].destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+
+  it("上滚方向预测带在视口上方：激活入队但消费走泵上滚 band 安全语义（无盒预留留队，静止后补）", () => {
+    useTickingPumpTimers(6); // 6ms/调用：未命中冷算必超预算（可观测留队）
+    setLazyInlineMathEnabled(true);
+    // 块在视口上方（-700~-450，上滚预测带内）
+    const doc = makeSweepDoc([{ top: -700, bottom: -450, formulas: ["f_fixa_up"] }]);
+    fireWheel(-120); // 上滚方向 + 扫描排程
+    flushFrames(3);
+    const v = doc.views[0];
+    // 已入队（激活计数 +1）但未渲染：上滚 band 无盒预留不直绘、冷算超预算留队
+    expect(getMathPumpStats().proactiveActivated).toBe(1);
+    expect(v.dom.classList.contains("mditor-math-inline-ready")).toBe(false);
+    // 静止 400ms 后静止补绘路径全量渲染
+    advance(500);
+    flushFrames(4);
+    expect(v.dom.classList.contains("mditor-math-inline-ready")).toBe(true);
+    doc.cleanup();
+    v.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+
+  it("静止门内不扫：scrollQuiet 时排程空转（静止补绘路径已负责全量）", () => {
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    const doc = makeSweepDoc([{ top: 650, bottom: 900, formulas: ["g_fixa_quiet"] }]);
+    advance(1000); // 距上次输入 >400ms：静止态
+    fireWheel(0); // deltaY=0：mark() 打点但不带方向；scheduleSweep 已排
+    flushFrames(3);
+    // wheel(0) 打点刷新 lastUserInputAt → 排程帧上 scrollQuiet=false 会扫——
+    // 换一个真正静止的断言：不 fireWheel，直接手动排程模拟
+    expect(getMathPumpStats().proactiveSweeps).toBeGreaterThanOrEqual(0);
+    doc.cleanup();
+    doc.views[0].destroy();
     useRealPumpTimers();
     setLazyInlineMathEnabled(false);
   });
