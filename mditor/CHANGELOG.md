@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased（2026-10-09 批，第十轮）：大文档滚动视口底部闪刷/换装可见修复（Fix-A'/Fix-B）
+
+结题报告 `docs/large-doc-bottom-flicker-report.md`。S1 换装可见事件（dev 密度档
+down-slow/down-fast/revisit：1173/906/103 → **1/1/0**；prod 真实文档
+down-slow/down-fast/revisit：1795/884/222 → **1/1/0**，S2 密度档 164→**0**）；
+1MB 档 1565→1；帧代价无回归（1MB 快滚 p50 205→209ms 噪声级）；npm test
+997 绿；R9 双断言沿承全过（focus j32=0 ×3 臂 + 停滚漂移全臂 0 + keepwarm
+身份钉）。S5 用户观感复核待用户执行。
+
+- **fix(perf) R10 Fix-A' 快滚同步微扫三件套**（`src/lib/lazyInlineMath.ts`）：
+  wheel/touch 事件内 `proactiveSweepSync` 同步微扫（滚动位移发生前把 jump
+  组换装完成——快滚单步 1200px 可一步穿越整个预测带，事后 rAF 扫描原理上
+  无法覆盖"本步将跳入视口"的条目）+ 对称 jumpSpan（双侧 stepPx×2，覆盖
+  revisit 反侧遗留带）+ `activate("now")` 插队消费（已入队条目摘除立即
+  run，消灭"入队早、渲染晚于步进瞬跳"窗口）+ 预测条目跳过几何判定直接
+  消费（上滚维持 R4-①/R6 Fix-B 安全语义）。守卫用例 +3（41 绿）。
+- **fix(perf) R10 Fix-B 移除 EMA 布局墙 gate（revisit 真凶）**：Fix-A' 的
+  `frameGapEma` gate（帧间隔 EMA>50ms 判墙态跳过同步微扫）存在静置毒化
+  ——静置 3s 后首帧 gap ~3000ms 直接打爆 EMA 且无衰减路径，revisit
+  「滚→静置→回滚」整段 sync sweep 全被跳过（106 个 jump 元素无人消费，
+  s1=103）。完全移除（gap<250 过滤版同证伪）。移除后 revisit 103→0 /
+  prod 222→0；帧代价复测无回归——gate 无帧保护实效、纯害（两遍法读写
+  分离已独立吸收同步布局成本）。临时诊断观测字段（dbg*/syncQueued）一并
+  清理。
+
 ## 5.0.1-beta（2026-10-06）：第九轮 专注模式滚动掉帧修复（Fix-A 合成器保温动画）
 
 结题报告 `docs/large-doc-focus-mode-scroll-smoothness-report.md`；归因定罪书 `perf/results/r9-phase4-attribution.md`。修复验证（r9fix2 批，打包版 8 run：down-slow ×4 臂序双向 / down-fast ×2 / up-slow ×2）：focus j32 8~10 → **0**、normal 恒 0、p95 比 0.98~1.08、D1 双臂漂移全零、focus 臂 `focus-keepwarm/running` 逐臂实证。

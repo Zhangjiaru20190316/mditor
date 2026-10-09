@@ -518,3 +518,35 @@ sv 模式（CodeMirror）天然只渲染可见行。富文本侧 V3.6.5 落地�
   恒 0 掉帧）——对照臂必须同区间序；③CDP 大对象导出会挂死（无超时），
   收尾 eval 全带超时 + 页内分析优先；④CDP 坐标点击对打包版 .ft-row 无效
   （dpr 1.75），DOM el.click() 直触 React onClick 是可靠替代。
+
+## R10：大文档滚动视口底部闪刷/换装可见（第十轮，2026-10-09）
+
+结题报告 `docs/large-doc-bottom-flicker-report.md`、任务书
+`docs/prompts/large-doc-bottom-flicker-optimization-prompt.md`（a7ad946）。
+
+- **症状口径（S1）**：换装可见事件——占位态曾在视口内被观察（phSeenVis）
+  且随后完成换装；分元素类型（inline/blockMath/blockCode）、分形态
+  （fresh 进带首渲 / teardown 重挂 / demote 重绘）、十桶位置。S2=已渲染
+  重闪（视口内可见的 teardown→重挂/demote→重绘）。
+- **归因三案（行内公式 S1/S2 全灭）**：S-a 预测带覆盖不足（Fix-A，
+  `baebce2`：rAF 合并 proactiveSweep 提前入队，密度档 1173→1）；S-b 快滚
+  单步穿越预测带（Fix-A'：wheel/touch 内 `proactiveSweepSync` 同步微扫
+  + 对称 jumpSpan + `activate("now")` 插队消费 + 预测条目跳过几何判定
+  直接消费——上滚维持 R4-①/R6 Fix-B 安全语义）；S-c **EMA 布局墙 gate
+  静置毒化（revisit 真凶，Fix-B 完全移除）**：帧间隔 EMA>50ms 判墙态跳过
+  同步微扫的 gate，静置 3s 后首帧 gap ~3000ms 直接打爆且无衰减路径——
+  「滚→静置→回滚」整段 sync sweep 全跳过（106 个 jump 元素无人消费，
+  s1=103）。移除后 revisit 103→0 / prod 222→0。
+- **关键权衡（EMA gate 移除的安全性）**：当初加 gate 因 1MB 冷开快滚
+  wheel 内 gBCR 帧代价 p50 165→205ms；移除后复测 p50 209/p95 255 vs
+  gate 在场 205/249——差 4~6ms 噪声级，**帧保护实效证伪**（proactiveSweepSync
+  的两遍法——第一遍纯读收集、第二遍统一写——已独立吸收同步布局成本）。
+  防重走教训：**任何"按帧间隔跳过 wheel 内同步工作"的 gate 必须考虑
+  静置后首帧 gap 无界**（rAF 停摆期间 gap=静置时长）。
+- **终值**：dev 密度档 1/1/0（down-slow/down-fast/revisit，残余均为
+  blockCode）；1MB 1565→1；切换档 407→9（blockMath）；prod 真实文档
+  1795/884/222 → 1/1/0、S2 164→0；R9 双断言沿承全过（focus j32=0 ×3
+  臂、对称比 1、D1 全臂 0、keepwarm 身份钉）；npm test 997 绿。
+- **遗留**：blockCode/blockMath 残余（1~9 次/场景）属块级 nodeview 拍板
+  项（TEARDOWN_DELAY/IO 频带半径，红线 19）范围外；S5 用户观感复核待
+  用户执行。
