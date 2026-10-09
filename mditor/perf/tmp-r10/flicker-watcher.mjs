@@ -87,6 +87,10 @@ export const FLICKER_WATCHER = `(() => {
       id: (isInline ? 'i' : 'b') + (++seq), type: isInline ? 'inline' : 'block',
       lang: el.dataset.lang || '', state: isInline ? inlineState(el) : blockState(el),
       doneOnce: false, tearedOnce: false, demotedOnce: false, phH: 0,
+      /** 占位态曾在视口内被观察到（S1 真闪判据：用户先看到占位、后换真身。
+       *  同步渲染（wheel 事件内位移前完成）的元素占位从未在视口内 paint 过
+       *  ——不计 S1，只记 paintInVis 供分析）。 */
+      phSeenVis: false,
       seenT: Math.round(performance.now()),
     };
     st.els.set(el, rec);
@@ -96,6 +100,10 @@ export const FLICKER_WATCHER = `(() => {
     const r = el.getBoundingClientRect();
     if (r.bottom > hTop0 - 1700 && r.top < hTop0 + host.clientHeight + 1700) st.watch.add(el);
     if (rec.state === 'ph') rec.phH = Math.round(el.offsetHeight);
+    // 安装时已在视口内的占位态（开档首屏）
+    if (!isInline ? rec.state === 'ph' : rec.state === 'lazy') {
+      if (r.bottom > hTop0 && r.top < hTop0 + host.clientHeight) rec.phSeenVis = true;
+    }
   };
   for (const el of pm.querySelectorAll('.mditor-math-inline-lazy, .milkdown-code-block')) reg(el);
   const mo = new MutationObserver((muts) => {
@@ -135,10 +143,20 @@ export const FLICKER_WATCHER = `(() => {
       st.tops.push({ t, top: Math.round(host.scrollTop) });
       st.sh.push({ t, sh: host.scrollHeight });
       if (st.tops.length > 30000) { st.tops.splice(0, 10000); st.sh.splice(0, 10000); st.gaps.splice(0, 10000); }
+      // 视口沿（本帧一次，供状态判定复用）
+      const hTop = hostTop();
+      const vh = host.clientHeight;
       for (const el of st.watch) {
         const rec = st.els.get(el);
         if (!rec || !el.isConnected) continue;
         const s = rec.type === 'inline' ? inlineState(el) : blockState(el);
+        // 占位态视口内可见标记（每帧 tick 更新——S1 真闪判据：占位先被 paint）
+        if ((rec.type === 'inline' && s === 'lazy') || (rec.type === 'block' && s === 'ph')) {
+          if (!rec.phSeenVis) {
+            const r = el.getBoundingClientRect();
+            if (r.bottom > hTop && r.top < hTop + vh) rec.phSeenVis = true;
+          }
+        }
         if (s === rec.state) continue;
         const from = rec.state;
         rec.state = s;
@@ -147,7 +165,8 @@ export const FLICKER_WATCHER = `(() => {
             const reflash = rec.doneOnce || rec.demotedOnce;
             rec.doneOnce = true; rec.demotedOnce = false;
             st.counts.inlineFlip++;
-            push(el, rec, from, s, now, { kind: 'inline-render', reflash: !!reflash });
+            push(el, rec, from, s, now, { kind: 'inline-render', reflash: !!reflash, phSeenVis: rec.phSeenVis });
+            rec.phSeenVis = false;
           } else if (from === 'ready' && s === 'lazy') {
             st.counts.inlineDemote++;
             rec.demotedOnce = true;
@@ -156,19 +175,21 @@ export const FLICKER_WATCHER = `(() => {
         } else {
           if (from === 'ph' && s !== 'ph') {
             st.counts.blockMount++;
-            push(el, rec, from, s, now, { kind: 'block-mount', remount: rec.tearedOnce });
+            push(el, rec, from, s, now, { kind: 'block-mount', remount: rec.tearedOnce, phSeenVis: rec.phSeenVis });
+            rec.phSeenVis = false;
           } else if (from !== 'ph' && s === 'ph') {
             st.counts.blockTeardown++;
             rec.tearedOnce = true;
             push(el, rec, from, s, now, { kind: 'block-teardown' });
           } else if ((s === 'done' || s === 'mnt-code') && from !== s) {
             st.counts.blockDone++;
-            const extra = { kind: 'block-done', remount: rec.tearedOnce };
+            const extra = { kind: 'block-done', remount: rec.tearedOnce, phSeenVis: rec.phSeenVis };
             if (rec.phH > 0) {
               const h1 = Math.round(el.offsetHeight);
               if (Math.abs(h1 - rec.phH) > 8) { st.counts.blockHdelta++; extra.hdelta = h1 - rec.phH; }
             }
             push(el, rec, from, s, now, extra);
+            rec.phSeenVis = false;
           }
         }
       }
@@ -215,9 +236,11 @@ export function summarizeFlicker(flicker, marks, quietSecs) {
   // 事件分类：kind ∈ inline-render/block-mount/block-done/block-teardown/inline-demote
   // 块挂载可在单帧间隙完成整链（ph→done 一帧跳变，帧粒度巡视只见首尾）——
   // block-mount 事件 to=done/mnt-code 同样是"换装完成时刻"。
+  // S1 真闪判据 = 完成于视口内（vis）且占位态曾在视口内被观察到（phSeenVis）
+  // ——wheel 事件内位移前同步完成的换装（用户从未 paint 过占位态）不计。
   const isS1Done = (e) =>
     (e.kind === "inline-render" || e.kind === "block-done" ||
-      (e.kind === "block-mount" && (e.to === "done" || e.to === "mnt-code"))) && e.vis;
+      (e.kind === "block-mount" && (e.to === "done" || e.to === "mnt-code"))) && e.vis && e.phSeenVis !== false;
   const isS1Fresh = (e) => isS1Done(e) && !e.reflash && !e.remount;
   const windows = drives.map((d) => {
     const s1win = [d.begin, d.end + 2400];
