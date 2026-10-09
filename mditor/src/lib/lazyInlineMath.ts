@@ -173,6 +173,18 @@ let userInputHooked = false;
 let scrollDir: 0 | 1 | -1 = 0;
 /** 上一次 touchmove 的 Y：touch 无 deltaY，用相邻两次位移符号推方向。 */
 let lastTouchY: number | null = null;
+/** R10 Fix-A：最近滚轮/触摸步进幅度（px，取近 5 次最大值）——快滚步进可
+ *  一步穿越整个预测带（1200px 步进 vs 800px 带），带前沿按步进自适应外扩
+ *  让元素提前一步入队（泵在进带/进视口帧渲染，几何上仍视口外完成）。 */
+const recentSteps: number[] = [];
+let stepMargin = 0;
+
+function noteScrollStep(px: number): void {
+  if (px <= 0) return;
+  recentSteps.push(px);
+  if (recentSteps.length > 5) recentSteps.shift();
+  stepMargin = Math.min(2400, Math.max(...recentSteps));
+}
 
 // ---- 泵统计（R6 观测补点：只计数不改变任何调度行为；探针经 ---------------
 // ---- window.__mathPumpStats() 轮询，用于 M2 队列饥饿与 T 组归因取证） -----
@@ -207,6 +219,10 @@ const pumpStats = {
   proactiveSweeps: 0,
   /** R10 Fix-A 观测：预测式扫描激活（入队）的行内条数。 */
   proactiveActivated: 0,
+  /** R10 Fix-A' 观测：jump 组同步直绘成功次数。 */
+  syncNow: 0,
+  /** R10 Fix-A' 观测：jump 组命中但降级（未命中缓存/上滚无盒/超上限）。 */
+  syncDefer: 0,
 };
 
 /** 泵统计快照（按需 O(队列长度)；探针轮询用，泵帧内不调用）。 */
@@ -264,6 +280,8 @@ export function __resetRenderPumpForTest(): void {
   lastUserInputAt = -Infinity;
   scrollDir = 0;
   lastTouchY = null;
+  recentSteps.length = 0;
+  stepMargin = 0;
   for (const k of Object.keys(pumpStats) as (keyof typeof pumpStats)[]) pumpStats[k] = 0;
 }
 
@@ -283,9 +301,12 @@ function hookUserInputOnce(): void {
     "wheel",
     (e: WheelEvent) => {
       mark();
+      const step = Math.abs(e.deltaY);
       if (e.deltaY > 0) scrollDir = 1;
       else if (e.deltaY < 0) scrollDir = -1;
-      // R10 Fix-A：滚动输入驱动预测扫描（rAF 合并、幂等游标）。
+      noteScrollStep(step);
+      // R10 Fix-A'：滚动应用前同步微扫（jump 组同步直绘）+ rAF 兜底扫描。
+      proactiveSweepSync(step);
       scheduleProactiveSweep();
     },
     { capture: true, passive: true }
@@ -297,6 +318,11 @@ function hookUserInputOnce(): void {
       const y = e.touches[0]?.clientY;
       if (y === undefined) return;
       if (lastTouchY !== null && y !== lastTouchY) scrollDir = lastTouchY > y ? 1 : -1;
+      if (lastTouchY !== null) {
+        const step = Math.abs(y - lastTouchY);
+        noteScrollStep(step);
+        proactiveSweepSync(step);
+      }
       lastTouchY = y;
       scheduleProactiveSweep();
     },
@@ -363,7 +389,14 @@ function pumpScrollFrame(): void {
     if (!entry.el.isConnected) continue; // 已销毁残留：出队丢弃
     if ((entry.probe || entry.ioVisible()) && probes < MAX_RECT_PROBES_PER_FRAME) {
       probes++;
-      const cls = classifyEntry(entry.el);
+      // 预测激活条目（非上滚）跳过几何判定：c-v:auto 未布局块的 gBCR 是
+      // 估算位置（偏差可达 2k px 且朝远离视口方向偏——S-g 同源），classify
+      // 会把"即将进视口"的条目错判 rest 拖到真实布局后才渲染（快滚真闪残
+      // 余来源）。预测激活本身已含"即将进入"语义，直接按视口内优先级消费
+      // ——渲染发生在元素真实贴近视口之前（视口外完成）。上滚方向维持几何
+      // 判定（R4-①/R6 Fix-B：视口上方渲染的高度变化会上移视口内容，必须等
+      // 元素真实贴近视口由既有安全规则择机）。
+      const cls = entry.probe && scrollDir !== -1 ? 2 : classifyEntry(entry.el);
       if (cls === 2) {
         viewport.push(entry);
         continue;
@@ -496,7 +529,7 @@ function enqueueRender(entry: PendingRender): void {
 
 /** 预测带内未渲染行内的激活句柄（nodeview 闭包 -> 模块可达；元素销毁随
  *  WeakMap 自动回收）。返回是否产生新入队（幂等：已渲染/已排队返回 false）。 */
-const activateFns = new WeakMap<HTMLElement, (probe?: boolean) => boolean>();
+const activateFns = new WeakMap<HTMLElement, (mode?: "probe" | "now") => boolean>();
 
 interface SweepState {
   host: HTMLElement;
@@ -535,9 +568,7 @@ function getSweepState(): SweepState | null {
 export function __resetProactiveSweepForTest(): void {
   sweepState = null;
   sweepScheduled = false;
-}
-
-/** 预测式扫描：激活滚动方向前方预测带（视口沿 + FORWARD_BAND_PX）内块中
+}/** 预测式扫描：激活滚动方向前方预测带（视口沿 + FORWARD_BAND_PX）内块中
  *  未渲染的行内（幂等：IO 先到则 queued/rendered 门跳过）。返回激活条数。
  *  块框 gBCR 随滚动即时平移（c-v:auto 只跳过内容布局，块框位置/估算高一直
  *  有效），游标增量修正使每次扫描 O(步进块数 + 新进带块数)，与文档规模无关。 */
@@ -550,7 +581,11 @@ export function proactiveSweep(): number {
   //（键盘滚动）按向下处理（多数翻页向下；幂等安全）。
   const up = scrollDir === -1;
   const bandNear = up ? hostRect.top + 40 : hostRect.bottom - 40;
-  const bandFar = up ? hostRect.top - FORWARD_BAND_PX : hostRect.bottom + FORWARD_BAND_PX;
+  // 带前沿按最近步进自适应外扩（快滚步进可一步穿越基础带——提前一步入队，
+  // 泵的 classifyEntry 仍在既有几何带内择机渲染，语义不变）。
+  const bandFar = up
+    ? hostRect.top - FORWARD_BAND_PX - stepMargin
+    : hostRect.bottom + FORWARD_BAND_PX + stepMargin;
   const lo = Math.min(bandNear, bandFar), hi = Math.max(bandNear, bandFar);
   // 游标修正：带近沿附近的块（步进式，通常每扫描 ≤2~3 步）
   while (
@@ -574,7 +609,7 @@ export function proactiveSweep(): number {
       ".mditor-math-inline-lazy:not(.mditor-math-inline-ready)"
     )) {
       const fn = activateFns.get(el);
-      if (fn && fn(true)) {
+      if (fn && fn("probe")) {
         activated++;
         pumpStats.proactiveActivated++;
       }
@@ -593,6 +628,85 @@ function scheduleProactiveSweep(): void {
     if (scrollQuiet(performance.now())) return;
     proactiveSweep();
   });
+}
+
+/** R10 Fix-A'：wheel/touch 事件同步微扫（滚动应用前的"旧位置"视角）。
+ *  快滚单步（如 1200px）可一步穿越整个预测带——事后扫描（rAF，新位置视角）
+ *  原理上无法覆盖"本步将跳入视口"的条目（实测 revisit-down/开档快滚的残余
+ *  事件全在 wheel 后首帧同刻爆发、十桶均匀分布即此指纹）。同步微扫在滚动
+ *  位移发生**前**把 jump 组（视口沿 ~ 沿+stepPx）换装完成：位移后用户看到
+ *  的一步已是真身。同步渲染只做缓存命中直绘（innerHTML <0.5ms/条）且限
+ *  JUMP_SYNC_CAP 条/事件（输入延迟保护），未命中/超限降级入队走泵帧预算；
+ *  上滚方向同步渲染仅限盒预留+缓存命中（零高度变化安全条件，R6 Fix-B 同
+ *  语义），fresh 条目留泵/静止补绘。band 组（stepPx ~ stepPx+band）照常
+ *  入队（泵在新位置帧渲染，仍在视口外）。 */
+const JUMP_SYNC_CAP = 48;
+
+function proactiveSweepSync(stepPx: number): void {
+  if (stepPx <= 0) return;
+  const st = getSweepState();
+  if (!st || st.blocks.length === 0) return;
+  pumpStats.proactiveSweeps++;
+  const hostRect = st.host.getBoundingClientRect();
+  const up = scrollDir === -1;
+  const edge = up ? hostRect.top : hostRect.bottom;
+  // jump 组判定带宽加倍：c-v:auto 未布局块的 gBCR 是估算位置（与 IO 交叉
+  // 滞后同源），估算偏差可达一个步进——双倍余量让"真实位置将跳入视口"的
+  // 元素在估算视角下仍落进 jump 组（CAP 上限内，多同步的部分只是更早的
+  // 带内直绘，无额外风险）。**双侧对称**：反方向遗留带（刚滚过、已被
+  // demote 的元素在视口反侧 0~2000px）回访第一步即跳入视口——revisit 场
+  // 景 S2 残余实测此带深达一步以上，反方向同样按 jumpSpan 覆盖（对称扫描，
+  // 幂等成本）。
+  const jumpSpan = stepPx * 2;
+  const jumpLo = edge - jumpSpan;
+  const jumpHi = edge + jumpSpan;
+  const far = up
+    ? edge - stepPx - FORWARD_BAND_PX
+    : edge + stepPx + FORWARD_BAND_PX;
+  const lo = Math.min(jumpLo, far);
+  const hi = Math.max(jumpHi, far);
+  // 两遍法：第一遍纯读（游标修正 + 定位收集，批内共享一次布局），第二遍
+  // 统一激活（写）——读写交替会让每次写后的下一次 gBCR 重新强制布局。
+  while (
+    st.cursor < st.blocks.length - 1 &&
+    st.blocks[st.cursor].getBoundingClientRect().bottom < lo
+  )
+    st.cursor++;
+  while (
+    st.cursor > 0 &&
+    st.blocks[st.cursor - 1].getBoundingClientRect().bottom >= lo
+  )
+    st.cursor--;
+  const hits: { el: HTMLElement; inJump: boolean }[] = [];
+  for (let i = st.cursor; i < st.blocks.length; i++) {
+    const b = st.blocks[i];
+    const r = b.getBoundingClientRect();
+    if (r.top > hi) break;
+    if (r.bottom <= lo) continue;
+    const inJump = r.bottom > jumpLo && r.top < jumpHi;
+    // 不受 aheadIdx 前沿限制：rAF sweep（步后新位置视角）已推进的前沿会让
+    // 下一步 sync sweep（步前同位置）整带 continue——jump 组块被跳过即真闪
+    //（幂等激活 + 插队消费要求 jump 组每步必检）。
+    for (const el of b.querySelectorAll<HTMLElement>(
+      ".mditor-math-inline-lazy:not(.mditor-math-inline-ready)"
+    )) {
+      hits.push({ el, inJump });
+    }
+    if (!up && i > st.aheadIdx) st.aheadIdx = i;
+  }
+  let syncN = 0;
+  for (const hit of hits) {
+    const fn = activateFns.get(hit.el);
+    if (!fn) continue;
+    if (hit.inJump && syncN < JUMP_SYNC_CAP) {
+      if (fn("now")) {
+        syncN++;
+        pumpStats.proactiveActivated++;
+      }
+    } else if (fn("probe")) {
+      pumpStats.proactiveActivated++;
+    }
+  }
 }
 
 /** 渲染态盒尺寸（border-box 宽高，R7 Fix-A 锁盒占位用）。 */
@@ -651,6 +765,8 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
   let current = node.attrs.value as string;
   let rendered = false;
   let queued = false;
+  /** 当前在队列中的活条目（jump 组插队消费用）。 */
+  let liveEntry: PendingRender | null = null;
   let demoteTimer: number | null = null;
   /** 当前是否在 IO 余量带（800px）内：滚动帧只探测带内条目（见
    *  PendingRender.ioVisible）。 */
@@ -752,28 +868,56 @@ function createLazyInlineMathView(node: PMNode): LazyMathView {
     }
   };
 
-  /** 进带激活（IO 回调与 R10 Fix-A 预测扫描共用；幂等，返回是否新入队）。 */
-  const activate = (probe = false): boolean => {
-    if (rendered || queued) return false;
+  /** 进带激活（IO 回调与 R10 Fix-A 预测扫描共用；幂等，返回是否新入队）。
+   *  mode="now"：同步直绘——仅缓存命中且满足上滚零高度变化安全条件（盒
+   *  预留，R6 Fix-B 同语义），否则降级入队走泵帧预算。已入队未渲染的条目
+   *  （早前 probe 激活、泵帧因几何带外归 rest）在 jump 组命中时插队消费：
+   *  从队列摘除立即 run——等价泵帧 cls=2 直绘路径，避免"入队早、渲染晚于
+   *  步进瞬跳"的窗口（快滚真闪残余的来源）。 */
+  const activate = (mode?: "probe" | "now"): boolean => {
+    if (rendered) return false;
+    const syncOk = (): boolean =>
+      !!peekCached(current, false) &&
+      (scrollDir !== -1 ||
+        renderedBoxes.has(dom) ||
+        inlineBoxFor(current) !== undefined);
+    if (queued && liveEntry) {
+      if (mode === "now" && syncOk()) {
+        const idx = pendingRenders.indexOf(liveEntry);
+        if (idx >= 0) pendingRenders.splice(idx, 1);
+        liveEntry.run();
+        return true;
+      }
+      return false;
+    }
     queued = true;
     pumpStats.enqueued++;
-    enqueueRender({
+    const entry: PendingRender = {
       el: dom,
       enqueuedAt: performance.now(),
       ioVisible: () => ioVisible,
       isCached: () => peekCached(current, false) !== undefined,
       hasReservedBox: () =>
         renderedBoxes.has(dom) || inlineBoxFor(current) !== undefined,
-      probe,
+      probe: mode != null,
       run: () => {
         queued = false;
+        liveEntry = null;
         if (!dom.isConnected) {
           pumpStats.dropped++;
           return; // 已销毁：静默丢弃
         }
         render();
       },
-    });
+    };
+    liveEntry = entry;
+    if (mode === "now" && syncOk()) {
+      pumpStats.syncNow++;
+      entry.run();
+      return true;
+    }
+    if (mode === "now") pumpStats.syncDefer++;
+    enqueueRender(entry);
     return true;
   };
   activateFns.set(dom, activate);

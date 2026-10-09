@@ -999,9 +999,9 @@ describe("R10 Fix-A：预测式主动预渲染", () => {
     expect(ready[1]).toBe(true); // 带内两条被预测激活渲染
     expect(ready[2]).toBe(true);
     expect(ready[3]).toBe(false); // 带外不激活
-    expect(ready[0]).toBe(false); // 视口内（非预测带）不受本路径影响（IO 兜底）
+    expect(ready[0]).toBe(true); // 视口内下部（对称 jumpSpan 覆盖）同步渲染——占位在视口内本就该立即换装
     const st = getMathPumpStats();
-    expect(st.proactiveActivated).toBe(2);
+    expect(st.proactiveActivated).toBe(3); // 带内 2 + 视口内 1（对称 jump 覆盖）
     expect(st.proactiveSweeps).toBeGreaterThanOrEqual(1);
     doc.cleanup();
     for (const v of doc.views) v.destroy();
@@ -1061,6 +1061,100 @@ describe("R10 Fix-A：预测式主动预渲染", () => {
     expect(getMathPumpStats().proactiveSweeps).toBeGreaterThanOrEqual(0);
     doc.cleanup();
     doc.views[0].destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+});
+
+describe("R10 Fix-A 补：快滚步进自适应带宽", () => {
+  it("步进 1200px 时带前沿外扩：-2000px 的块被提前激活（步进后仍在视口外入队）", () => {
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    __resetProactiveSweepForTest();
+    const host = document.createElement("div");
+    host.className = "mditor-editor-host";
+    const pm = document.createElement("div");
+    pm.className = "ProseMirror";
+    host.appendChild(pm);
+    document.body.appendChild(host);
+    stubRect(host, { top: 0, bottom: 600, height: 600 });
+    // 基础带外（视口下 2000~2250，带宽 800 覆盖不到）但步进 1200 外扩后带内
+    const b = document.createElement("p");
+    stubRect(b, { top: 2000, bottom: 2250, height: 250 });
+    const tv = makeView("h_fixa_faststep");
+    b.appendChild(tv.dom);
+    stubRect(tv.dom, { top: 2000, bottom: 2250, height: 250 });
+    pm.appendChild(b);
+    fireWheel(1200); // 快滚大步进：noteScrollStep(1200) → stepMargin=1200
+    flushFrames(3);
+    expect(getMathPumpStats().proactiveActivated).toBe(1); // 提前一步入队
+    // 预测条目（非上滚）跳过几何判定直接按视口内优先消费（c-v 估算位置
+    // 偏差不再拖慢渲染时机）——激活即渲染（元素真实位置仍在视口外 2000px）
+    expect(tv.dom.classList.contains("mditor-math-inline-ready")).toBe(true);
+    host.remove();
+    tv.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+});
+
+describe("R10 Fix-A'：wheel 同步微扫（jump 组同步直绘）", () => {
+  it("步进将跳入视口的条目在 wheel 事件内同步渲染（无需等泵帧）", () => {
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    __resetProactiveSweepForTest();
+    const host = document.createElement("div");
+    host.className = "mditor-editor-host";
+    const pm = document.createElement("div");
+    pm.className = "ProseMirror";
+    host.appendChild(pm);
+    document.body.appendChild(host);
+    stubRect(host, { top: 0, bottom: 600, height: 600 });
+    // 视口下 700~900（视口底 600 之下）：步进 1200 的 jump 组（滚动应用前视角）
+    const b = document.createElement("p");
+    stubRect(b, { top: 700, bottom: 900, height: 200 });
+    const tv = makeView("i_fixa_jump");
+    b.appendChild(tv.dom);
+    stubRect(tv.dom, { top: 700, bottom: 900, height: 200 });
+    pm.appendChild(b);
+    // 预热缓存（同步直绘只做命中路径）
+    renderToStringCached("i_fixa_jump", false);
+    fireWheel(1200); // listener 内同步微扫：jump 组 isCached → run() 同步渲染
+    expect(tv.dom.classList.contains("mditor-math-inline-ready")).toBe(true);
+    expect(getMathPumpStats().proactiveActivated).toBe(1);
+    host.remove();
+    tv.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+
+  it("jump 组未命中缓存不阻塞输入：降级入队走泵帧预算", () => {
+    useTickingPumpTimers(6);
+    setLazyInlineMathEnabled(true);
+    __resetProactiveSweepForTest();
+    const host = document.createElement("div");
+    host.className = "mditor-editor-host";
+    const pm = document.createElement("div");
+    pm.className = "ProseMirror";
+    host.appendChild(pm);
+    document.body.appendChild(host);
+    stubRect(host, { top: 0, bottom: 600, height: 600 });
+    const b = document.createElement("p");
+    stubRect(b, { top: 700, bottom: 900, height: 200 });
+    const tv = makeView("j_fixa_cold_+unique_1"); // 未预热（未命中）
+    b.appendChild(tv.dom);
+    stubRect(tv.dom, { top: 700, bottom: 900, height: 200 });
+    pm.appendChild(b);
+    fireWheel(1200);
+    // 未命中：wheel 事件内不渲染（防输入延迟），已入队
+    expect(tv.dom.classList.contains("mditor-math-inline-ready")).toBe(false);
+    expect(getMathPumpStats().proactiveActivated).toBe(1);
+    flushFrames(2); // 泵帧消费（滚动中带内/视口内按预算）
+    advance(500);
+    flushFrames(4); // 静止补绘兜底
+    expect(tv.dom.classList.contains("mditor-math-inline-ready")).toBe(true);
+    host.remove();
+    tv.destroy();
     useRealPumpTimers();
     setLazyInlineMathEnabled(false);
   });
