@@ -255,7 +255,7 @@ if (section === "rc5") {
     };
   })()`);
 
-  // UI 驱动开总开关：帮助菜单 → 设置… → 性能与诊断 → 大文档性能模式 → 关闭。
+  // UI 驱动开总开关：帮助菜单 → 设置… → 性能与诊断 → 大文档性能模式 → 应用。
   const menus = await cdp.eval(`JSON.stringify([...document.querySelectorAll('nav.mb [role=button],nav.mb button,[class*=mb-btn]')].map(b=>({t:b.textContent.trim(), r:(()=>{const x=b.getBoundingClientRect();return {x:Math.round(x.x+x.width/2),y:Math.round(x.y+x.height/2)}})()})))`);
   console.log("menus:", menus);
 
@@ -280,9 +280,11 @@ if (section === "rc5") {
     if (!perfToggle) return 'no-checkbox';
     if (!perfToggle.checked) perfToggle.click();
     await new Promise(r => setTimeout(r, 400));
-    // 应用 + 关闭（设置即存：onChange 走 set → saveSettings；关闭钮）
-    const closeBtn = [...document.querySelectorAll('button')].find(b => /关闭|完成|完成/.test(b.textContent) && b.closest('.modal, [class*=modal]'));
-    if (closeBtn) { closeBtn.click(); await new Promise(r => setTimeout(r, 400)); }
+    // draft 制：点「应用」（btn-primary/applyAll）才落盘并关窗；取消/关闭丢弃。
+    const apply = [...document.querySelectorAll('.modal button, [class*=modal] button')].find(b => b.textContent.trim() === '应用');
+    if (!apply) return 'no-apply-btn';
+    apply.click();
+    await new Promise(r => setTimeout(r, 400));
     return 'toggled:' + perfToggle.checked;
   })()`);
   console.log("toggle:", toggled);
@@ -310,7 +312,7 @@ if (section === "rc5") {
              afterKatex: (r.html.match(/katex/g) || []).length };
   })()`);
 
-  // 还原：总开关拨回 OFF（不改变用户长期设置）。
+  // 还原：总开关拨回 OFF 并「应用」（不改变用户长期设置）。
   const restore = await cdp.eval(`(async () => {
     const btns = [...document.querySelectorAll('nav.mb button, nav.mb [role=button]')];
     const help = btns.find(b => b.textContent.trim() === '帮助');
@@ -327,8 +329,9 @@ if (section === "rc5") {
     const perfToggle = [...document.querySelectorAll('.settings-pane input[type=checkbox]')][0];
     if (perfToggle?.checked) perfToggle.click();
     await new Promise(r => setTimeout(r, 400));
-    const closeBtn = [...document.querySelectorAll('button')].find(b => /关闭|完成/.test(b.textContent) && b.closest('.modal, [class*=modal]'));
-    closeBtn?.click();
+    const apply = [...document.querySelectorAll('.modal button, [class*=modal] button')].find(b => b.textContent.trim() === '应用');
+    apply?.click();
+    await new Promise(r => setTimeout(r, 400));
     return perfToggle ? 'restored:' + !perfToggle.checked : 'no-toggle';
   })()`);
   console.log("restore:", restore);

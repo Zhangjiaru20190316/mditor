@@ -1,0 +1,24 @@
+{
+  "when": "2026-10-10T06:32:06.179Z",
+  "doc": "无穷级数_密度档压测副本_减配触发.md（3061 行 > BIG_DOC_LINES）",
+  "before": {
+    "katexNodes": 231,
+    "dollarTexts": 3,
+    "htmlDollars": 3,
+    "htmlKatex": 19689,
+    "htmlPreLatex": 0
+  },
+  "after": {
+    "katexNodes": 0,
+    "dollarTexts": 4713,
+    "htmlDollars": 4713,
+    "htmlKatex": 0,
+    "htmlPreLatex": 0
+  },
+  "exported": {
+    "rawDollars": 4713,
+    "afterDollars": 4713,
+    "afterKatex": 0
+  },
+  "restore": "restored:true"
+}
