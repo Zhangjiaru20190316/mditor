@@ -35,23 +35,87 @@ const DOCX_FILTER = [{ name: "Word", extensions: ["docx"] }];
 const TEX_FILTER = [{ name: "LaTeX", extensions: ["tex"] }];
 
 /** 单张图片内联上限（过大直接保留引用，防止内存爆掉）。 */
-const INLINE_IMG_MAX_BYTES = 10 * 1024 * 1024;
+export const INLINE_IMG_MAX_BYTES = 10 * 1024 * 1024;
 /** 内联总预算（超出后剩余图片保留原引用）。 */
 const INLINE_IMG_TOTAL_BUDGET = 64 * 1024 * 1024;
+/** 远程图单张抓取的 JS 侧等待上限（Rust 侧另有 30s 硬上限；超时即放弃并
+ *  入显式清单——替代旧打印路径「5s 盲等后照打不误」的静默行为）。 */
+const REMOTE_IMG_TIMEOUT_MS = 15_000;
+/** 远程图并发抓取数（带宽友好；本地图读盘仍串行）。 */
+const REMOTE_IMG_CONCURRENCY = 3;
 
 const IMG_SRC_RE = /<img\b[^>]*\bsrc="([^"]*)"/gi;
 
 /**
- * 把 HTML 里引用的 LOCAL 图片（相对路径 / 绝对路径，非 http(s) / data:）
- * 读出来替换为 base64 data URL。`docPath` 用于解析相对引用。远程 URL 与
- * 读取失败/超限的图片保留原样。单次遍历 + 预算控制，失败静默降级。
+ * 单图在导出内联中的结局（C2 显式报告的分类面）。除 inlined /
+ * remote-skip（HTML「保留引用」模式的文档化语义）外，一切未进产物的
+ * 图片都会出现在 ImageInlineResult.missing 里，由导出 UI 列报——
+ * 「静默裂图」是 E-1 的直接根源（阶段一定罪 ex-phase1-e1e2）。
  */
-export async function inlineLocalImages(
+export type ExportImageStatus =
+  | "inlined" // 读取成功且预算内，已换装 data URL（本地或远程）
+  | "oversize" // 超单图上限 INLINE_IMG_MAX_BYTES
+  | "sniff-fail" // 魔数嗅探失败（未知/转换器死循环格式）
+  | "budget" // 内联总预算耗尽
+  | "read-error" // 读盘失败 / 相对引用无 docPath 可解析
+  | "remote-error" // 远程抓取失败（网络/HTTP 错）
+  | "remote-timeout" // 远程抓取超时（REMOTE_IMG_TIMEOUT_MS）
+  | "remote-skip"; // 策略性不抓（HTML 保留引用模式，文档化语义非缺陷）
+
+export interface ExportImageReportItem {
+  src: string;
+  status: ExportImageStatus;
+  /** 已知字节数（inlined/oversize/budget）。 */
+  bytes?: number;
+  /** 失败原因摘要（read-error/remote-*）。 */
+  detail?: string;
+}
+
+export interface ImageInlineResult {
+  html: string;
+  /** 文档内每张参与内联决策的图片的结局（data:/asset:/blob: 不参与）。 */
+  report: ExportImageReportItem[];
+  /** 未进产物的图片（一切非 inlined 且非 remote-skip）——UI 列报源。 */
+  missing: ExportImageReportItem[];
+}
+
+/** 字节 → base64 data URL（分块，避开 apply 栈溢出）。 */
+function bytesToDataUrl(bytes: Uint8Array, mime: string): string {
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return `data:${mime};base64,${btoa(bin)}`;
+}
+
+export interface InlineExportImagesOptions {
+  /** 远程 http(s) 图策略：fetch = 抓取内联（PDF/DOCX/HTML 内联模式）；
+   *  skip = 保留引用（HTML「保留引用」模式默认，remote-skip 不列报）。 */
+  remote?: "fetch" | "skip";
+  /** 远程单图等待上限（默认 REMOTE_IMG_TIMEOUT_MS）。 */
+  remoteTimeoutMs?: number;
+}
+
+/**
+ * 导出图片内联的全量决策面（EX 轮 Fix-C2）：把 HTML 里参与内联的图片逐张
+ * 读取/抓取、按魔数与预算门换装 data URL，并对每张给出显式结局。
+ *
+ * - 本地图（相对/绝对路径）：与旧 inlineLocalImages 逐字节同语义（含
+ *   v4.10.1 的引用清洗/归一化与 v4.6.2 魔数门），只是不再静默。
+ * - 远程图（D-5）：remote:"fetch" 时经平台 fetchImage（Tauri=应用自身
+ *   Rust http，带 SSRF 防线与 20MB 硬顶；鸿蒙同语义桥接）抓取，并发
+ *   REMOTE_IMG_CONCURRENCY，单图 JS 侧超时 remoteTimeoutMs；失败/超时
+ *   入显式清单，绝不静默。
+ * - data:/asset:/blob: 引用不参与（asset: 在应用内可加载，历史语义）。
+ */
+export async function inlineExportImages(
   html: string,
-  docPath?: string | null
-): Promise<string> {
-  if (!docPath) return html;
-  const dir = docPath.replace(/[\\/][^\\/]+$/, "");
+  docPath: string | null | undefined,
+  opts: InlineExportImagesOptions = {}
+): Promise<ImageInlineResult> {
+  const remoteMode = opts.remote ?? "skip";
+  const dir = docPath ? docPath.replace(/[\\/][^\\/]+$/, "") : null;
   // v4.10.1：与编辑器 resolveImgSrc 同一份解析语义——HTML 属性先做实体解码，
   // 再清洗引用（file:// / ?# / percent 编码）、归一化 `.`/`..` 段。此前导出端
   // 裸拼接，Typora 风格的 `assets/my%20pic.png`、`./assets/../x.png`、POSIX
@@ -67,45 +131,177 @@ export async function inlineLocalImages(
       ? normalizeLocalPath(cleaned)
       : normalizeLocalPath(`${dir}/${cleaned}`);
   };
-  const jobs: Array<{ src: string; abs: string }> = [];
+  const keyOf = (src: string): string | null => {
+    if (/^https?:/i.test(src)) return src;
+    return dir ? toAbs(src) : null;
+  };
+
+  // 第一遍：按文档顺序收集唯一引用，分本地/远程作业（remote-skip 与
+  // 无 docPath 相对引用没有作业，直接定性）。
+  const localJobs = new Map<string, string>(); // abs → 首个 src（作业去重）
+  const remoteJobs = new Map<string, string>(); // url → 首个 src
+  const orderedSrcs: string[] = [];
+  const seenSrc = new Set<string>();
   IMG_SRC_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = IMG_SRC_RE.exec(html))) {
     const src = m[1];
-    if (!src || /^(https?:|data:|asset:|blob:)/i.test(src)) continue;
-    jobs.push({ src, abs: toAbs(src) });
+    if (!src || seenSrc.has(src)) continue;
+    seenSrc.add(src);
+    orderedSrcs.push(src);
+    if (/^data:|^asset:|^blob:/i.test(src)) continue; // 不参与内联决策
+    if (/^https?:/i.test(src)) {
+      if (remoteMode === "fetch") remoteJobs.set(src, src);
+      continue; // skip 模式的结局在报告遍历里补
+    }
+    if (!dir) continue; // 无 docPath 的结局在报告遍历里补
+    const abs = toAbs(src);
+    if (!localJobs.has(abs)) localJobs.set(abs, src);
   }
-  if (jobs.length === 0) return html;
 
   let used = 0;
-  const cache = new Map<string, string>();
-  for (const { abs } of jobs) {
-    if (cache.has(abs)) continue;
+  const cache = new Map<string, { dataUrl: string; bytes: number }>();
+  const failures = new Map<string, Omit<ExportImageReportItem, "src">>();
+  const classifyBytes = (key: string, bytes: Uint8Array): void => {
+    if (bytes.byteLength > INLINE_IMG_MAX_BYTES) {
+      failures.set(key, { status: "oversize", bytes: bytes.byteLength });
+      return;
+    }
+    // 魔数门（v4.6.2）：未知格式不内联——html-to-docx 的 image-size 对
+    // ICNS/JXL/HEIF 有解析死循环（详见 lib/imageSniff.ts），且 octet-stream
+    // 内联本就渲染不出。嗅探出的真实 MIME 优先于扩展名猜测。
+    const sniffed = sniffImageMime(bytes);
+    if (!sniffed) {
+      failures.set(key, { status: "sniff-fail", bytes: bytes.byteLength });
+      return;
+    }
+    if (used + bytes.byteLength > INLINE_IMG_TOTAL_BUDGET) {
+      failures.set(key, { status: "budget", bytes: bytes.byteLength });
+      return;
+    }
+    used += bytes.byteLength;
+    cache.set(key, { dataUrl: bytesToDataUrl(bytes, sniffed), bytes: bytes.byteLength });
+  };
+
+  // 本地读盘：串行（IPC 便宜，串行最省内存峰值）。
+  for (const abs of localJobs.keys()) {
     try {
       const bytes = await getAdapter().fs.readFile(abs);
-      if (bytes.byteLength > INLINE_IMG_MAX_BYTES) continue;
-      // 魔数门（v4.6.2）：未知格式不内联——html-to-docx 的 image-size 对
-      // ICNS/JXL/HEIF 有解析死循环（详见 lib/imageSniff.ts），且 octet-stream
-      // 内联本就渲染不出。嗅探出的真实 MIME 优先于扩展名猜测。
-      const sniffed = sniffImageMime(bytes);
-      if (!sniffed) continue;
-      if (used + bytes.byteLength > INLINE_IMG_TOTAL_BUDGET) continue;
-      used += bytes.byteLength;
-      let bin = "";
-      const CHUNK = 0x8000;
-      for (let i = 0; i < bytes.length; i += CHUNK) {
-        bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-      }
-      cache.set(abs, `data:${sniffed};base64,${btoa(bin)}`);
-    } catch {
-      /* 读取失败：保留原引用 */
+      classifyBytes(abs, bytes);
+    } catch (e) {
+      failures.set(abs, { status: "read-error", detail: String(e).slice(0, 120) });
     }
   }
-  if (cache.size === 0) return html;
-  return html.replace(IMG_SRC_RE, (whole, src: string) => {
-    const data = cache.get(toAbs(src));
-    return data ? whole.replace(`"${src}"`, `"${data}"`) : whole;
-  });
+
+  // 远程抓取：小并发池 + 单图超时（挂起的 IPC 无法取消，只停止等待）。
+  if (remoteJobs.size > 0) {
+    const timeout = opts.remoteTimeoutMs ?? REMOTE_IMG_TIMEOUT_MS;
+    const urls = [...remoteJobs.keys()];
+    let idx = 0;
+    const worker = async () => {
+      while (idx < urls.length) {
+        const url = urls[idx++];
+        try {
+          const bytes = await Promise.race([
+            getAdapter().app.fetchImage(url),
+            new Promise<never>((_, rej) =>
+              setTimeout(() => rej(new Error("timeout")), timeout)
+            ),
+          ]);
+          classifyBytes(url, bytes);
+        } catch (e) {
+          const msg = String(e);
+          failures.set(url, {
+            status: msg.includes("timeout") ? "remote-timeout" : "remote-error",
+            detail: msg.slice(0, 120),
+          });
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(REMOTE_IMG_CONCURRENCY, urls.length) }, worker)
+    );
+  }
+
+  // 第二遍：按文档顺序产出报告 + 换装。
+  const report: ExportImageReportItem[] = [];
+  for (const src of orderedSrcs) {
+    if (/^data:|^asset:|^blob:/i.test(src)) continue;
+    if (/^https?:/i.test(src)) {
+      if (remoteMode !== "fetch") {
+        report.push({ src, status: "remote-skip" });
+        continue;
+      }
+    }
+    const key = keyOf(src);
+    if (key === null) {
+      // 相对引用但文档未保存：无从解析，必裂图——显式列报而非静默。
+      report.push({ src, status: "read-error", detail: "文档未保存，相对路径无法解析" });
+      continue;
+    }
+    const hit = cache.get(key);
+    if (hit) report.push({ src, status: "inlined", bytes: hit.bytes });
+    else {
+      const fail = failures.get(key);
+      report.push(fail ? { src, ...fail } : { src, status: "read-error", detail: "未知失败" });
+    }
+  }
+
+  const replaced =
+    cache.size === 0
+      ? html
+      : html.replace(IMG_SRC_RE, (whole, src: string) => {
+          const key = keyOf(src);
+          const hit = key ? cache.get(key) : undefined;
+          return hit ? whole.replace(`"${src}"`, `"${hit.dataUrl}"`) : whole;
+        });
+  return { html: replaced, report, missing: missingOf(report) };
+}
+
+function missingOf(report: ExportImageReportItem[]): ExportImageReportItem[] {
+  return report.filter((r) => r.status !== "inlined" && r.status !== "remote-skip");
+}
+
+/** C2 列报文案：状态 → 用户可读原因（顺序即展示顺序）。 */
+const STATUS_LABEL: Record<ExportImageStatus, string> = {
+  inlined: "已内联",
+  oversize: "超过 10MB 单图上限",
+  "sniff-fail": "格式无法识别",
+  budget: "超出内联总预算",
+  "read-error": "读取失败",
+  "remote-error": "下载失败",
+  "remote-timeout": "下载超时（15 秒）",
+  "remote-skip": "按设置保留引用",
+};
+
+/** 未内联图片清单 → 用户可读多行文案（UI 列报用，最多列 8 项）。 */
+export function formatMissingImages(missing: ExportImageReportItem[]): string {
+  if (missing.length === 0) return "";
+  const lines = missing
+    .slice(0, 8)
+    .map((m) => `· ${shortSrc(m.src)} —— ${STATUS_LABEL[m.status]}${m.detail ? `：${m.detail}` : ""}`);
+  const more = missing.length - Math.min(missing.length, 8);
+  return [`以下 ${missing.length} 张图片未包含在导出产物中：`, ...lines, ...(more > 0 ? [`……等共 ${missing.length} 项`] : [])].join("\n");
+}
+
+function shortSrc(src: string): string {
+  return src.length > 72 ? src.slice(0, 69) + "…" : src;
+}
+
+/**
+ * 把 HTML 里引用的 LOCAL 图片（相对路径 / 绝对路径，非 http(s) / data:）
+ * 读出来替换为 base64 data URL。`docPath` 用于解析相对引用。远程 URL 与
+ * 读取失败/超限的图片保留原样。单次遍历 + 预算控制，失败静默降级。
+ *
+ * @deprecated 兼容包装（EX 轮 Fix-C2 起被 inlineExportImages 取代）——
+ * 保留给未迁移调用方与回归测试；新代码一律用带显式报告的版本。
+ */
+export async function inlineLocalImages(
+  html: string,
+  docPath?: string | null
+): Promise<string> {
+  const r = await inlineExportImages(html, docPath, { remote: "skip" });
+  return r.html;
 }
 
 export interface ExportContext {
@@ -115,6 +311,14 @@ export interface ExportContext {
   css: string;
   /** Optional base path to resolve relative image refs for inlining. */
   docPath?: string | null;
+}
+
+/** 导出结果（EX 轮 Fix-C2）：落盘路径 + 未进产物的图片清单（C2 列报源）。 */
+export interface ExportOutcome {
+  /** 用户选择的保存路径（取消 = null）。 */
+  path: string | null;
+  /** 未内联进产物的图片（空 = 图片全部就位或文档无图）。 */
+  missing: ExportImageReportItem[];
 }
 
 /** Active theme id（与 collectThemeCss 同源：<html data-theme>）。 */
@@ -164,23 +368,24 @@ function escapeHtml(s: string): string {
 }
 
 /** Export a standalone .html file. Returns the chosen path or null.
- *  V3.6: `options.inlineImages` 把本地图片内联为 base64（单文件分发）。 */
+ *  V3.6: `options.inlineImages` 把本地图片内联为 base64（单文件分发）。
+ *  EX Fix-C2：内联模式下远程图一并抓取，未内联项显式列报。 */
 export async function exportHtml(
   ctx: ExportContext,
   suggestedName = "untitled.html",
   options: { inlineImages?: boolean } = {}
-): Promise<string | null> {
+): Promise<ExportOutcome> {
   const path = await getAdapter().dialog.pickSaveFile(suggestedName, HTML_FILTER);
-  if (!path) return null;
+  if (!path) return { path: null, missing: [] };
   const title = suggestedName.replace(/\.html?$/i, "");
   // S10：落盘前兜底消毒（raw-HTML 直通漏出时导出文件不再是保护空窗）。
   let html = sanitizeExportHtml(ctx.html);
+  let missing: ExportImageReportItem[] = [];
   if (options.inlineImages) {
-    try {
-      html = await inlineLocalImages(html, ctx.docPath);
-    } catch {
-      /* 内联失败退回原引用 —— 导出仍然完成 */
-    }
+    // 内联模式：本地 + 远程全抓（单文件分发语义），失败项列报。
+    const r = await inlineExportImages(html, ctx.docPath, { remote: "fetch" });
+    html = r.html;
+    missing = r.missing;
   }
   // v4.6：文档含公式时把 KaTeX woff2 字体内嵌为 base64——导出文件在磁盘上
   // 打开后，CSS 里的字体相对/绝对路径都会失效，公式会退化到回退字体。PDF
@@ -196,7 +401,7 @@ export async function exportHtml(
   }
   const standalone = wrapHtml(html, css, title, currentTheme());
   await getAdapter().fs.writeTextFile(path, standalone);
-  return path;
+  return { path, missing };
 }
 
 /**
@@ -210,19 +415,24 @@ export async function exportHtml(
 export async function exportPdf(
   ctx: ExportContext,
   suggestedName = "untitled.pdf"
-): Promise<void> {
+): Promise<ExportOutcome> {
   const title = suggestedName.replace(/\.pdf$/i, "");
   // 本地相对路径图片内联为 data URL：iframe 里相对引用没有文档基准目录，
   // 必然 404（打出来是裂图/空白）。内联后既可见又即时就绪；asset:/远程引用
-  // 在应用内 iframe 同源可加载，保持原样。失败退回原引用，导出仍完成。
+  // 在应用内 iframe 同源可加载。EX Fix-C2：远程图一并抓取（应用自身 Rust
+  // http 通道），失败项显式列报——不再静默裂图（E-1 主犯）。
   // S10：doc.write 前兜底消毒。
   let html = sanitizeExportHtml(ctx.html);
+  let missing: ExportImageReportItem[] = [];
   try {
-    html = await inlineLocalImages(html, ctx.docPath);
+    const r = await inlineExportImages(html, ctx.docPath, { remote: "fetch" });
+    html = r.html;
+    missing = r.missing;
   } catch {
-    /* 内联失败保留原引用 */
+    /* 内联整体失败保留原引用（missing 为空——无法判定时不算列报项） */
   }
   await printHtml(wrapHtml(html, ctx.css, title, currentTheme()));
+  return { path: null, missing };
 }
 
 /** Render `fullHtml` (a complete document) offscreen and call print().
@@ -391,15 +601,19 @@ export async function exportPng(
 export async function exportDocx(
   ctx: ExportContext,
   suggestedName = "untitled.docx"
-): Promise<string | null> {
+): Promise<ExportOutcome> {
   const path = await getAdapter().dialog.pickSaveFile(suggestedName, DOCX_FILTER);
-  if (!path) return null;
+  if (!path) return { path: null, missing: [] };
   // V3.6：先把本地图片内联成 data URL —— 浏览器构建没有 sharp，相对引用的
-  // 图片会被转换器直接丢弃（V3.5 已知问题）。失败退回原 HTML（行为同旧版）。
+  // 图片会被转换器直接丢弃（V3.5 已知问题）。EX Fix-C2：远程图一并抓取，
+  // 失败项显式列报（转换器静默丢图的输入侧防线）。
   // S10：进转换器前兜底消毒。
   let html = sanitizeExportHtml(ctx.html);
+  let missing: ExportImageReportItem[] = [];
   try {
-    html = await inlineLocalImages(ctx.html, ctx.docPath);
+    const r = await inlineExportImages(html, ctx.docPath, { remote: "fetch" });
+    html = r.html;
+    missing = r.missing;
   } catch {
     /* 内联失败按旧路径继续 */
   }
@@ -415,7 +629,7 @@ export async function exportDocx(
   const result = await htmlToDocx(inlined, null, documentOptions);
   const bytes = toArrayBuffer(result);
   await getAdapter().fs.writeFile(path, new Uint8Array(bytes));
-  return path;
+  return { path, missing };
 }
 
 /**

@@ -1651,6 +1651,9 @@ export default function App() {
         // PDF 由 OS 打印对话框产出文件，「完成」语义与其他格式不同——用
         // 分支级文案，避免谎报「导出完成」（用户可能还没打印甚至取消）。
         let doneMsg = "导出完成";
+        // EX Fix-C2：未内联图片（超预算/格式/网络）显式列报——静默裂图是
+        // E-1 的直接根源，阶段一定罪 ex-phase1-e1e2。
+        let missing: import("./lib/exporter").ExportImageReportItem[] = [];
         if (kind === "html") {
           // V3.6：导出前选择是否把本地图片内联为 base64（单文件分发）。
           const inline = await choiceDialog(
@@ -1659,15 +1662,18 @@ export default function App() {
             "保留引用"
           );
           flashStatus("正在导出…", 60_000);
-          await exportHtml(ctx, `${name}.html`, { inlineImages: inline });
+          const out = await exportHtml(ctx, `${name}.html`, { inlineImages: inline });
+          if (inline) missing = out.missing; // 保留引用模式不列报（文档化语义）
         } else if (kind === "pdf") {
           flashStatus("正在打开打印对话框…", 60_000);
-          await exportPdf(ctx, `${name}.pdf`);
+          const out = await exportPdf(ctx, `${name}.pdf`);
+          missing = out.missing;
           // exportPdf 在 afterprint（对话框关闭，打印或取消均触发）后才返回。
           doneMsg = "打印流程已结束（若未在对话框中另存为 PDF 则未导出）";
         } else if (kind === "docx") {
           flashStatus("正在导出…", 60_000);
-          await exportDocx(ctx, `${name}.docx`);
+          const out = await exportDocx(ctx, `${name}.docx`);
+          missing = out.missing;
         } else if (kind === "png") {
           const el = ed.previewEl();
           if (!el) {
@@ -1684,6 +1690,10 @@ export default function App() {
           await exportPng(el, `${name}.png`, bg);
         }
         flashStatus(doneMsg);
+        if (missing.length > 0) {
+          const { formatMissingImages } = await import("./lib/exporter");
+          void showAlert(formatMissingImages(missing), "导出图片清单", "warning");
+        }
       } catch (e) {
         flashStatus("导出失败", 5000);
         void showAlert(`导出失败：${String(e)}`, "Mditor", "error");
