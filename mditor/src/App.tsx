@@ -55,6 +55,7 @@ import { useAnnotations } from "./hooks/useAnnotations";
 import { useSwitchFlow, nextPaint } from "./hooks/useSwitchFlow";
 import { useMenuCommands } from "./hooks/useMenuCommands";
 import { findAnnotationRefLine, parseAnnotations } from "./lib/annotations";
+import { registerExportDebugHandle } from "./lib/exportDebug";
 import { resolveCodeLines, highlightCodeLines } from "./lib/codeAnno";
 import { findHeadingLine } from "./lib/outline";
 import { buildAnnotationMessages, chatStream, isAiConfigured } from "./lib/ai";
@@ -1008,6 +1009,20 @@ export default function App() {
     },
     [activateTab, beginSwitch, updateSwitchHeavy, finishSwitch, snapshotActiveTab, isStale, scheduleFollowUpPreparse] // 均 stable —— openPath 身份保持稳定
   );
+
+  // 导出诊断把手（EX 轮观测）：把编辑器真源只读暴露给 window.__exportDebug
+  // （perf/ CDP 复现与验收走模型序列化 getHTML，而非实时 DOM），外加 open(path)
+  // ——perf 脚本用与文件树点击完全相同的打开流程加载 fixture（工作区外的
+  // 压测文档不经原生对话框无法驱动）。只读观测 + 等价于用户点击的打开动作，
+  // 不新增任何导出/编辑行为面。
+  useEffect(() => {
+    registerExportDebugHandle({
+      getHTML: () => editorRef.current?.getHTML() ?? "",
+      getValue: () => editorRef.current?.getValue() ?? "",
+      docPath: () => fileApi.doc.path ?? null,
+      open: (p) => openPath(p),
+    });
+  }, [fileApi.doc.path, openPath]);
 
   // P11：编辑器就绪通知。此前启动/自愈路径用 80×50ms 盲轮询等 ready()；现在
   // Editor 在 ready 翻真时回调 onEditorReady，等待方挂一个 promise 即可（时序

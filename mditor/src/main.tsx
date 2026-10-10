@@ -9,6 +9,7 @@ import { attachMathPumpStatsGlobal } from "./lib/lazyInlineMath";
 import { attachOpDebugGlobal } from "./lib/opDebug";
 import { attachSysDebugGlobal } from "./lib/sysDebug";
 import { attachDevModeGlobal } from "./lib/devMode";
+import { attachExportDebugGlobal } from "./lib/exportDebug";
 import { detectRuntime } from "./platform";
 // KaTeX + highlight.js styles power the static Markdown renderer (AI messages,
 // annotation previews, source-mode export) — rehype-katex / rehype-highlight
@@ -81,6 +82,11 @@ attachSysDebugGlobal();
 // 开发者模式出口（window.__devMode）：记录器状态 / 异常累计 / 手动冲刷 /
 // report 汇总。记录器本体由 App 的 devMode 设置项驱动启停，这里只挂出口。
 attachDevModeGlobal();
+
+// 导出诊断出口（window.__exportDebug，EX 轮）：编辑器模型序列化 getHTML /
+// Markdown 源 / 文档路径的只读出口——perf/ CDP 复现与验收用（导出真源是
+// PM 序列化而非实时 DOM）。handle 由 App 挂载编辑器后注册。
+attachExportDebugGlobal();
 
 // 窗口隐藏时暂停纯装饰性动画（AI 悬浮按钮呼吸光晕）：后台窗口无人观看，
 // 常驻动画只会白白消耗绘制。CSS 侧用 .app-idle 暂停（见 global.css）。

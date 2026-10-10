@@ -1,0 +1,17 @@
+{
+  "sizes": {
+    "rawKB": 22940,
+    "fullKB": 23188,
+    "hasMath": true,
+    "mathMs": 22,
+    "sanitizeMs": 966,
+    "inlineMs": 12
+  },
+  "layout": {
+    "scrollWidth": 717,
+    "scrollHeight": 831220,
+    "expectedPages": 795,
+    "fullKB": 23188
+  },
+  "auxFound": false
+}

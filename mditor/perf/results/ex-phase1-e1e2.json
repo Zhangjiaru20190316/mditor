@@ -1,0 +1,130 @@
+{
+  "when": "2026-10-10T05:29:43.344Z",
+  "doc": "多图导出压测副本.md",
+  "pipeline": {
+    "rawKB": 8,
+    "fullKB": 268,
+    "hasMath": true,
+    "inlineMs": 107
+  },
+  "images": [
+    {
+      "src": "assets/normal-red.png",
+      "outcome": "INLINED",
+      "inlinedKB": 1
+    },
+    {
+      "src": "assets/big-noise.png",
+      "outcome": "KEPT",
+      "inlinedKB": 0
+    },
+    {
+      "src": "assets/anim.gif",
+      "outcome": "INLINED",
+      "inlinedKB": 5
+    },
+    {
+      "src": "assets/fake.png",
+      "outcome": "KEPT",
+      "inlinedKB": 0
+    },
+    {
+      "src": "https://picsum.photos/seed/mditor-ex/640/320",
+      "outcome": "KEPT",
+      "inlinedKB": 0
+    }
+  ],
+  "iframeTimeline": {
+    "events": [
+      {
+        "img": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg",
+        "ev": "load@20ms",
+        "w": 320
+      },
+      {
+        "img": "data:image/gif;base64,R0lGODlhyABkAPcfMQAAAC",
+        "ev": "load@20ms",
+        "w": 200
+      },
+      {
+        "img": "https://picsum.photos/seed/mditor-ex/640/320",
+        "ev": "error@20ms"
+      },
+      {
+        "img": "assets/big-noise.png",
+        "ev": "error@22ms"
+      },
+      {
+        "img": "assets/fake.png",
+        "ev": "error@22ms"
+      }
+    ],
+    "atPrint": [
+      {
+        "img": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg",
+        "complete": true,
+        "naturalWidth": 320
+      },
+      {
+        "img": "assets/big-noise.png",
+        "complete": true,
+        "naturalWidth": 0
+      },
+      {
+        "img": "data:image/gif;base64,R0lGODlhyABkAPcfMQAAAC",
+        "complete": true,
+        "naturalWidth": 200
+      },
+      {
+        "img": "assets/fake.png",
+        "complete": true,
+        "naturalWidth": 0
+      },
+      {
+        "img": "https://picsum.photos/seed/mditor-ex/640/320",
+        "complete": true,
+        "naturalWidth": 0
+      }
+    ],
+    "atEnd": [
+      {
+        "img": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg",
+        "complete": true,
+        "naturalWidth": 320
+      },
+      {
+        "img": "assets/big-noise.png",
+        "complete": true,
+        "naturalWidth": 0
+      },
+      {
+        "img": "data:image/gif;base64,R0lGODlhyABkAPcfMQAAAC",
+        "complete": true,
+        "naturalWidth": 200
+      },
+      {
+        "img": "assets/fake.png",
+        "complete": true,
+        "naturalWidth": 0
+      },
+      {
+        "img": "https://picsum.photos/seed/mditor-ex/640/320",
+        "complete": true,
+        "naturalWidth": 0
+      }
+    ],
+    "fontsReady": "ready",
+    "a4ContentWidthPx": 717,
+    "bodyScrollWidth": 1917,
+    "bodyMaxWidth": "",
+    "overflowCount": 1,
+    "overflows": [
+      {
+        "tag": "A",
+        "cls": "",
+        "right": 1917,
+        "text": "https://example.com/very/long/path/that/"
+      }
+    ]
+  }
+}
