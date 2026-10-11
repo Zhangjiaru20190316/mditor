@@ -108,7 +108,7 @@ mditor/
 └── docs/                   # 设计与实施文档
 ```
 
-进阶文档：[大文档性能三阶段架构](docs/performance.md) ·
+进阶文档：[性能治理总索引（R1~R10 + EX 轮全史）](docs/performance.md) ·
 [安全说明（CSP / 文件权限 / AI 密钥存储）](docs/security.md)
 
 ## 支持本项目

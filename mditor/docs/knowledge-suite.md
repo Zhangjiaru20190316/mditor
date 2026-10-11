@@ -1,6 +1,6 @@
 # Mditor 知识功能套件 · 功能介绍
 
-> 适用版本：v4.7.0-beta.1 及以上。语法规范与设置的技术细节见 [research-features.md](./research-features.md)，验收样例见 [demo.md](./demo.md)。
+> 适用版本：v5.x（功能自 v4.7.0-beta.1 起提供）。语法规范与设置的技术细节见 [research-features.md](./research-features.md)，验收样例见 [demo.md](./demo.md)。
 
 Mditor 一直是一个「快、轻、本地」的 Markdown 编辑器。v4.7 的知识功能套件在此基础上回答一个新问题：**当你用 Markdown 做科研和学习时，编辑器还能替你多做哪些事？**
 
