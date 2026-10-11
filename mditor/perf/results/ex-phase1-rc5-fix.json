@@ -1,0 +1,34 @@
+{
+  "when": "2026-10-11T04:41:19.013Z",
+  "doc": "无穷级数_密度档压测副本_减配触发.md（3061 行 > BIG_DOC_LINES）",
+  "fix": "Fix-D4 renderDegradedMath（doExport/doCopyRich 以 isBigDoc() 门控）",
+  "before": {
+    "isBigDocOff": false,
+    "htmlDollars": 3,
+    "htmlKatex": 19689
+  },
+  "toggled": "toggled:true",
+  "pipeline": {
+    "gate": true,
+    "rawKB": 232,
+    "raw": {
+      "dollars": 4713,
+      "katex": 0
+    },
+    "afterDegraded": {
+      "dollars": 3,
+      "katex": 19673
+    },
+    "afterPipeline": {
+      "dollars": 3,
+      "katex": 19673
+    },
+    "renderedInline": 2355,
+    "renderedBlock": 0,
+    "degradeMs": 396,
+    "blockMs": 1,
+    "hasMath": true
+  },
+  "restore": "restored:true",
+  "verdict": "PASS"
+}

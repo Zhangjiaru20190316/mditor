@@ -67,6 +67,11 @@ export interface EditorHandle {
   getValue: () => string;
   setValue: (md: string) => void;
   getHTML: () => string;
+  /** EX Fix-D4：当前文档是否处于大文档减配档（编辑器关闭公式特性，
+   *  getHTML() 会把公式序列化为 $/$$ 源码文本）。导出/复制富文本路径以
+   *  此门控 renderDegradedMath 补渲染——普通文档的合法 $ 字面（货币等）
+   *  不受影响。 */
+  isBigDoc: () => boolean;
   /** Insert markdown at the cursor (used by the AI panel). */
   insertAtCursor: (md: string) => void;
   /** Replace the whole document (used by the AI panel). */
@@ -836,6 +841,7 @@ export const Editor = memo(
         onInputRef.current?.(md);
       },
       getHTML: () => handle.editor?.getHTML() ?? "",
+      isBigDoc: () => handle.bigDoc,
       insertAtCursor: (md) => {
         const ed = handle.editor;
         if (!ed) return;

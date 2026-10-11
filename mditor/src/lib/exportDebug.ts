@@ -12,6 +12,9 @@ export interface ExportDebugHandle {
   getValue(): string;
   /** 当前文档磁盘路径（相对图片解析基准），未保存文档为 null。 */
   docPath(): string | null;
+  /** EX Fix-D4 验收用：编辑器当前是否处于大文档减配档（导出侧
+   *  renderDegradedMath 的门控信号）。只读观测。 */
+  isBigDoc(): boolean;
   /** 与文件树点击同流程打开文档（perf 驱动 fixture 用；工作区外文档无
    *  其他免对话框入口）。返回是否成功打开。 */
   open(path: string): Promise<boolean>;
@@ -27,9 +30,7 @@ export function registerExportDebugHandle(h: ExportDebugHandle): void {
 /** main.tsx 挂 window.__exportDebug（常驻、零风险）。 */
 export function attachExportDebugGlobal(): void {
   (
-    window as unknown as {
-      __exportDebug?: Record<string, () => unknown>;
-    }
+    window as unknown as { __exportDebug?: ExportDebugHandle }
   ).__exportDebug = {
     getHTML: () => {
       try {
@@ -50,6 +51,13 @@ export function attachExportDebugGlobal(): void {
         return handle?.docPath() ?? null;
       } catch {
         return null;
+      }
+    },
+    isBigDoc: () => {
+      try {
+        return handle?.isBigDoc() ?? false;
+      } catch {
+        return false;
       }
     },
     open: (p: string) => {

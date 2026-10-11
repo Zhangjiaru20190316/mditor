@@ -1020,7 +1020,11 @@ export default function App() {
       getHTML: () => editorRef.current?.getHTML() ?? "",
       getValue: () => editorRef.current?.getValue() ?? "",
       docPath: () => fileApi.doc.path ?? null,
-      open: (p) => openPath(p),
+      isBigDoc: () => editorRef.current?.isBigDoc() ?? false,
+      open: async (p) => {
+        await openPath(p);
+        return true; // 失败路径由 openPath 抛出，attachExportDebugGlobal 捕获为 false
+      },
     });
   }, [fileApi.doc.path, openPath]);
 
@@ -1612,7 +1616,21 @@ export default function App() {
       // 需处理）。DOCX/复制富文本场景 Word 渲染不了 KaTeX 布局，公式栅格化
       // 为图片；HTML/PDF 保留矢量标记（CSS 由 collectThemeCss 一并带走）。
       if (kind !== "png") {
-        const { renderBlockMath, rasterizeFormulas } = await import("./lib/exportMath");
+        const { renderBlockMath, rasterizeFormulas, renderDegradedMath } =
+          await import("./lib/exportMath");
+        // EX Fix-D4（RC-5）：减配档（大文档性能模式 + 超阈值）下编辑器关闭
+        // 公式特性，getHTML() 把公式序列化为 $/$$ 源码文本——renderBlockMath
+        // 只认 <pre data-language="LaTeX">，匹配不到这种形态，PDF/HTML/DOCX
+        // 全是裸源码。导出前补渲染为与非减配档同形的 KaTeX 标记（后续
+        // renderBlockMath 对残存 pre 照常处理，DOCX 栅格化消费同样式节点）。
+        // 仅减配档调用：普通文档的合法 $ 字面不受影响。
+        if (ed.isBigDoc()) {
+          try {
+            html = renderDegradedMath(html).html;
+          } catch {
+            /* 补渲染失败保留原样（源码可见） */
+          }
+        }
         const r = renderBlockMath(html);
         html = r.html;
         if (kind === "docx" && r.hasMath) {
@@ -1711,7 +1729,16 @@ export default function App() {
       const plain = ed.getValue();
       // v4.6：复制富文本同样修复块级公式——再渲染 + 栅格化（粘贴进 Word 等
       // 富文本目标得到公式图片，而不是一段 LaTeX 源码）。
-      const { renderBlockMath, rasterizeFormulas } = await import("./lib/exportMath");
+      const { renderBlockMath, rasterizeFormulas, renderDegradedMath } = await import("./lib/exportMath");
+      // EX Fix-D4（RC-5）：减配档补渲染（与 doExport 同门控同顺序——粘贴进
+      // Word 等富文本目标得到公式图片而不是 LaTeX 源码）。
+      if (ed.isBigDoc()) {
+        try {
+          html = renderDegradedMath(html).html;
+        } catch {
+          /* 补渲染失败保留原样 */
+        }
+      }
       const r = renderBlockMath(html);
       html = r.hasMath ? await rasterizeFormulas(r.html) : r.html;
       // v4.7：双链降级（离开本工具可读）。经 ref 读路径（本回调空依赖）。
