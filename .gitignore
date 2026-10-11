@@ -29,8 +29,17 @@ promo/
 Thumbs.db
 desktop.ini
 mditor/perf/fixtures/
-mditor/perf/results/trace-oneclick.json
+
+# 性能实验原始测量数据（证据链只保留 md 报告与 png 截图，原始数据本地生成不入库）
+mditor/perf/results/*.json
+mditor/perf/results/*.jsonl
 mditor/perf/results/*.cpuprofile
+mditor/perf/results/*.html
+mditor/perf/results/*.pdf
+mditor/perf/results/*.log
+mditor/perf/results/*.txt
+mditor/perf/results/screen.png
+mditor/perf/tmp-*/
 
 # Computer-use / Harmony 构建工具本地状态
 .cua/

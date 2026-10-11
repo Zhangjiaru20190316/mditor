@@ -1,6 +1,0 @@
-06:13:50 stash: {"blocks":11628,"kb":23188}
-06:13:51 slice10: {"blocks":1163,"kb":2473}
-06:13:52 print slice10 ...
-06:14:08 slice10 pdf: {"ms":9194,"bytes":2029230,"pageObjects":80,"countNode":8}
-06:14:08 print full (bound 15min) ...
-06:29:17 full pdf: {"error":"Error: BOUND_TIMEOUT","ms":900014}
