@@ -24,8 +24,9 @@ import { getAdapter } from "../platform";
 import { sniffImageMime } from "./imageSniff";
 import { cleanLocalRef, normalizeLocalPath } from "./imageManager";
 import { sanitizeExportHtml } from "./exportSanitize";
-// type-only：编译期擦除，不把 pdf 管线块拉进首屏（依赖纪律见下）。
+// type-only：编译期擦除，不把 pdf/png 管线块拉进首屏（依赖纪律见下）。
 import type { PdfPipelineOptions } from "./exportPdfPipeline";
+import type { PngPipelineOptions } from "./exportPngPipeline";
 // NOTE: modern-screenshot + juice + @turbodocx/html-to-docx are all imported
 // lazily inside their respective export functions so the heavyweight "export"
 // bundle only loads when the user actually exports. Importing them at the top
@@ -454,10 +455,59 @@ export async function exportPdf(
 }
 
 /**
+ * PNG 自研管线编排（EX 轮阶段五，RC-6 修复）：共享预处理（S10 消毒 +
+ * 图片内联强化）→ 离屏工厂 → 分块光栅 → 纵向拼接。返回字节与 meta。
+ */
+export async function buildPng(
+  ctx: ExportContext,
+  o: PngPipelineOptions = {}
+): Promise<{
+  bytes: Uint8Array;
+  meta: Record<string, unknown>;
+  missing: ExportImageReportItem[];
+}> {
+  let html = sanitizeExportHtml(ctx.html);
+  let missing: ExportImageReportItem[] = [];
+  try {
+    const r = await inlineExportImages(html, ctx.docPath, { remote: "fetch" });
+    html = r.html;
+    missing = r.missing;
+  } catch {
+    /* 内联整体失败保留原引用 */
+  }
+  const { runPngPipeline } = await import("./exportPngPipeline");
+  const result = await runPngPipeline(html, ctx.css, o);
+  return {
+    bytes: result.bytes,
+    meta: result.meta as unknown as Record<string, unknown>,
+    missing,
+  };
+}
+
+/**
+ * Export to PNG（EX 轮阶段五：离屏工厂路径——懒渲染占位/未加载图不再
+ * 入图；不再依赖预览模式）。
+ */
+export async function exportPngFromDocument(
+  ctx: ExportContext,
+  suggestedName = "untitled.png",
+  backgroundColor?: string,
+  o: PngPipelineOptions = {}
+): Promise<ExportOutcome> {
+  const path = await getAdapter().dialog.pickSaveFile(suggestedName, PNG_FILTER);
+  if (!path) return { path: null, missing: [] };
+  const r = await buildPng(ctx, { ...o, backgroundColor });
+  await getAdapter().fs.writeFile(path, r.bytes);
+  return { path, missing: r.missing };
+}
+
+/**
  * Export to PNG by snapshotting a rendered preview element.
  *
  * @param previewEl  a DOM node containing the rendered document
  * @param backgroundColor  page background (defaults to white)
+ * @deprecated EX 轮阶段五起被 exportPngFromDocument（离屏工厂路径）取代
+ *   ——实时 DOM 截图继承懒渲染状态（RC-6）。保留供回归对照，新代码勿用。
  */
 export async function exportPng(
   previewEl: HTMLElement,

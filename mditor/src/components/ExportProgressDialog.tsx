@@ -13,11 +13,13 @@ export interface ExportProgressState {
 }
 
 interface Props {
+  /** 对话框标题（PDF/PNG 等导出类型）。 */
+  title: string;
   progress: ExportProgressState;
   onCancel: () => void;
 }
 
-export function ExportProgressDialog({ progress, onCancel }: Props) {
+export function ExportProgressDialog({ title, progress, onCancel }: Props) {
   // Esc 取消（与「可取消」门禁的键盘路径；对话框不拦截其他键）。
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -40,7 +42,7 @@ export function ExportProgressDialog({ progress, onCancel }: Props) {
       aria-label="导出进度"
     >
       <div className="export-progress-card">
-        <div className="export-progress-title">正在导出 PDF</div>
+        <div className="export-progress-title">{title}</div>
         <div className="export-progress-stage">{progress.stage}</div>
         <div className="export-progress-bar" aria-hidden={pct === null}>
           {pct !== null && (

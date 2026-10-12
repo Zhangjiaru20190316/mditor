@@ -223,7 +223,11 @@ const HARMONY_CAPS: PlatformCapabilities = {
   multiWindow: false, // P6 spike 待真机（无设备连接），保守不开放
   watch: true, // ArkTS stat 轮询（WatchManager.ets）
   trash: true, // 应用回收站 /AppData/trash（30 天启动清理）
-  pdfExport: false, // 待真机 spike：iframe contentWindow.print() 能否唤起系统打印
+  // EX 轮：PDF 已改自研纯前端管线（离屏 iframe + 分块光栅 + pdf-lib 组装，
+  // 无 window.print/系统打印依赖，richExport 同栈）。翻 true 前仍需真机
+  // spike 验证：①modern-screenshot 在 ArkWeb 的 foreignObject 光栅质量
+  // ②pdf-lib 字节量在鸿蒙 JS 引擎的内存表现。保守维持 false。
+  pdfExport: false,
   richExport: true, // exporter.ts 纯前端（LaTeX/DOCX/PNG 桥依赖已具备）
   remoteImageProxy: false,
   windowControls: false,

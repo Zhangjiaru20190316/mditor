@@ -64,7 +64,13 @@ import { baseName, pickFolder, MD_EXT_RE } from "./lib/tauriFs";
 import { readFresh, peekHoverContent } from "./lib/filePrefetch";
 import { prepareDoc } from "./lib/parsePipeline";
 import { toPosix } from "./lib/path-shim";
-import { exportHtml, exportPdf, exportPng, exportDocx, exportLatexFile } from "./lib/exporter";
+import {
+  exportHtml,
+  exportPdf,
+  exportPngFromDocument,
+  exportDocx,
+  exportLatexFile,
+} from "./lib/exporter";
 import { vaultIndex } from "./lib/vaultIndex";
 import { QuickSwitcher } from "./components/QuickSwitcher";
 import {
@@ -154,7 +160,21 @@ function pdfStageView(
   }
 }
 
-export default function App() {
+/** EX U1：PNG 管线进度 → 进度对话框视图。 */
+function pngStageView(
+  p: import("./lib/exportPngPipeline").PngExportProgress
+): ExportProgressState {
+  switch (p.stage) {
+    case "factory":
+      return { stage: `加载图片 ${p.done}/${p.total}…`, done: p.done, total: p.total };
+    case "raster":
+      return { stage: `生成分块 ${p.done}/${p.total}…`, done: p.done, total: p.total };
+    case "stitch":
+      return { stage: "拼接图像…", done: p.done, total: p.total };
+  }
+}
+
+function App() {
   const settingsApi = useSettings();
   const fileApi = useFile();
   const editorRef = useRef<EditorHandle>(null);
@@ -205,6 +225,7 @@ export default function App() {
   // EX U1：PDF 导出进度（自研管线自有进度 UI；null = 无导出在进行）。
   const [pdfProg, setPdfProg] = useState<{
     ctrl: AbortController;
+    title: string;
     view: ExportProgressState;
   } | null>(null);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -1683,10 +1704,12 @@ export default function App() {
       }
       let html = ed.getHTML();
       // v4.6：块级公式修复——编辑器把公式块序列化为 <pre data-language=
-      // "LaTeX"> 原始源码，导出前再渲染为 KaTeX HTML（PNG 截实时 DOM，无
-      // 需处理）。DOCX/复制富文本场景 Word 渲染不了 KaTeX 布局，公式栅格化
-      // 为图片；HTML/PDF 保留矢量标记（CSS 由 collectThemeCss 一并带走）。
-      if (kind !== "png") {
+      // "LaTeX"> 原始源码，导出前再渲染为 KaTeX HTML。DOCX/复制富文本场景
+      // Word 渲染不了 KaTeX 布局，公式栅格化为图片；HTML/PDF 保留矢量标记
+      // （CSS 由 collectThemeCss 一并带走）。EX 阶段五起 PNG 走离屏工厂
+      // （与 PDF/HTML 同源 HTML），同样纳入预处理——RC-6（懒渲染占位入图）
+      // 的结构性修复。
+      {
         const { renderBlockMath, rasterizeFormulas, renderDegradedMath } =
           await import("./lib/exportMath");
         // EX Fix-D4（RC-5）：减配档（大文档性能模式 + 超阈值）下编辑器关闭
@@ -1759,9 +1782,10 @@ export default function App() {
           // （U2，设置面板「导出」分区）。
           const ctrl = new AbortController();
           const push = (p: import("./lib/exportPdfPipeline").PdfExportProgress): void =>
-            setPdfProg({ ctrl, view: pdfStageView(p) });
+            setPdfProg({ ctrl, title: "正在导出 PDF", view: pdfStageView(p) });
           setPdfProg({
             ctrl,
+            title: "正在导出 PDF",
             view: { stage: "准备文档…", done: 0, total: 0 },
           });
           try {
@@ -1782,19 +1806,27 @@ export default function App() {
           const out = await exportDocx(ctx, `${name}.docx`);
           missing = out.missing;
         } else if (kind === "png") {
-          const el = ed.previewEl();
-          if (!el) {
-            void showAlert(
-              "当前模式下无可截图的预览区，请切换到所见即所得/预览模式",
-              "Mditor",
-              "warning"
-            );
-            return;
-          }
-          // 深色底判定走 types.isDarkTheme 单一事实源（原三连枚举收编）。
+          // EX 阶段五：离屏工厂路径（RC-6 修复）——不再截实时 DOM（懒渲染
+          // 占位/未加载图不再入图），也不再依赖预览模式。深色底判定走
+          // types.isDarkTheme 单一事实源。
           const bg = isDarkTheme(settingsApi.settings.theme) ? "#1e1e1e" : "#ffffff";
-          flashStatus("正在导出…", 60_000);
-          await exportPng(el, `${name}.png`, bg);
+          const ctrl = new AbortController();
+          const push = (p: import("./lib/exportPngPipeline").PngExportProgress): void =>
+            setPdfProg({ ctrl, title: "正在导出 PNG", view: pngStageView(p) });
+          setPdfProg({
+            ctrl,
+            title: "正在导出 PNG",
+            view: { stage: "准备文档…", done: 0, total: 0 },
+          });
+          try {
+            const out = await exportPngFromDocument(ctx, `${name}.png`, bg, {
+              signal: ctrl.signal,
+              onProgress: push,
+            });
+            missing = out.missing;
+          } finally {
+            setPdfProg(null);
+          }
         }
         flashStatus(doneMsg);
         if (missing.length > 0) {
@@ -2992,6 +3024,7 @@ export default function App() {
       {/* EX U1：导出进度（自有 UI，可取消；结束即卸载）。 */}
       {pdfProg && (
         <ExportProgressDialog
+          title={pdfProg.title}
           progress={pdfProg.view}
           onCancel={() => pdfProg.ctrl.abort()}
         />
@@ -3074,3 +3107,5 @@ export default function App() {
     </div>
   );
 }
+
+export default App;
