@@ -15,6 +15,13 @@ export interface ExportDebugHandle {
   /** EX Fix-D4 验收用：编辑器当前是否处于大文档减配档（导出侧
    *  renderDegradedMath 的门控信号）。只读观测。 */
   isBigDoc(): boolean;
+  /** EX 阶段三/四验收用：在当前文档上跑自研 PDF 管线并写盘到指定路径
+   *  （免 pickSaveFile 对话框的 perf 驱动入口）。返回管线 meta（页数/
+   *  分页统计/组装信息/分阶段耗时）。不改变任何默认导出行为。 */
+  exportPdfTo(
+    path: string,
+    opts?: { paper?: "A4" | "Letter" | "A3"; marginMm?: number; rasterScale?: number; textLayer?: boolean }
+  ): Promise<Record<string, unknown>>;
   /** 与文件树点击同流程打开文档（perf 驱动 fixture 用；工作区外文档无
    *  其他免对话框入口）。返回是否成功打开。 */
   open(path: string): Promise<boolean>;
@@ -59,6 +66,13 @@ export function attachExportDebugGlobal(): void {
       } catch {
         return false;
       }
+    },
+    exportPdfTo: (p, opts) => {
+      const run = handle?.exportPdfTo(p, opts) ?? Promise.resolve({});
+      return run.catch((e) => {
+        // 失败也以对象形态返回（CDP returnByValue 无法搬运异常栈）。
+        return { error: String(e) };
+      });
     },
     open: (p: string) => {
       try {

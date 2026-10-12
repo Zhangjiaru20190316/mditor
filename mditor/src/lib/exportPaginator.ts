@@ -143,7 +143,6 @@ export function paginateBlocks(
       const b = blocks[idx];
       const blockTop = tops[idx];
       const blockBottom = blockTop + b.height;
-      const effTop = blockTop + resume; // 本块在本页的起点（绝对）
 
       // 剩余部分整段放得下（含从恢复点续完）。
       if (blockBottom <= limit + 1e-6) {

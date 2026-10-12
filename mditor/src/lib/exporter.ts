@@ -24,6 +24,8 @@ import { getAdapter } from "../platform";
 import { sniffImageMime } from "./imageSniff";
 import { cleanLocalRef, normalizeLocalPath } from "./imageManager";
 import { sanitizeExportHtml } from "./exportSanitize";
+// type-only：编译期擦除，不把 pdf 管线块拉进首屏（依赖纪律见下）。
+import type { PdfPipelineOptions } from "./exportPdfPipeline";
 // NOTE: modern-screenshot + juice + @turbodocx/html-to-docx are all imported
 // lazily inside their respective export functions so the heavyweight "export"
 // bundle only loads when the user actually exports. Importing them at the top
@@ -402,6 +404,34 @@ export async function exportHtml(
   const standalone = wrapHtml(html, css, title, currentTheme());
   await getAdapter().fs.writeTextFile(path, standalone);
   return { path, missing };
+}
+
+/**
+ * 自研 PDF 管线编排（EX 轮）：共享预处理（S10 消毒 + 图片内联强化）→
+ * 离屏工厂 → 分页 → 分块光栅 → pdf-lib 组装。返回字节与 meta（不落盘——
+ * 落盘由调用方 pickSaveFile 后进行；perf 驱动口经 __exportDebug.exportPdfTo
+ * 直写指定路径）。EX-P 原型期 textLayer 开关透传；字体缺位自动纯光栅。
+ */
+export async function buildPdf(
+  ctx: ExportContext,
+  o: PdfPipelineOptions = {}
+): Promise<{ bytes: Uint8Array; meta: Record<string, unknown>; missing: ExportImageReportItem[] }> {
+  let html = sanitizeExportHtml(ctx.html);
+  let missing: ExportImageReportItem[] = [];
+  try {
+    const r = await inlineExportImages(html, ctx.docPath, { remote: "fetch" });
+    html = r.html;
+    missing = r.missing;
+  } catch {
+    /* 内联整体失败保留原引用（missing 为空——无法判定时不算列报项） */
+  }
+  const { runPdfPipeline } = await import("./exportPdfPipeline");
+  const result = await runPdfPipeline(html, ctx.css, o);
+  return {
+    bytes: result.bytes,
+    meta: result.meta as unknown as Record<string, unknown>,
+    missing,
+  };
 }
 
 /**

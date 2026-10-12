@@ -143,11 +143,10 @@ export function awaitFactoryResources(
       return;
     }
     let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (timedOut: boolean): void => {
       if (settled) return;
       settled = true;
-      if (timer !== undefined) clearTimeout(timer);
+      clearTimeout(timer);
       if (timedOut) {
         for (const img of images) {
           if (!img.complete) issues.push({ kind: "image-timeout", src: img.src });
@@ -168,7 +167,11 @@ export function awaitFactoryResources(
         one();
       }, { once: true });
     }
-    timer = setTimeout(() => finish(true), o.readyTimeoutMs ?? FACTORY_READY_TIMEOUT_MS);
+    // finish 只经 one()/超时回调触达，二者都晚于本行（同步初始化先完成）。
+    const timer = setTimeout(
+      () => finish(true),
+      o.readyTimeoutMs ?? FACTORY_READY_TIMEOUT_MS
+    );
   });
 }
 
@@ -180,13 +183,13 @@ export interface RenderFactoryOptions extends FactoryDocOptions {
 
 export interface RenderFactoryHandle {
   readonly iframe: HTMLIFrameElement;
-  readonly doc: Document;
+  doc: Document;
   /** 版心容器（坐标基准；分页/文本层/光栅都相对它取 rect）。 */
-  readonly content: HTMLElement;
+  content: HTMLElement;
   /** 未就绪资源（就绪阶段产出；调用方并入 C2 列报）。 */
   readonly issues: FactoryResourceIssue[];
   /** 就绪是否触发了超时（诊断位）。 */
-  readonly timedOut: boolean;
+  timedOut: boolean;
   /** 幂等回收：移除 iframe。连续导出不得堆积。 */
   destroy(): void;
 }
@@ -256,7 +259,9 @@ export async function renderInFactory(
     o.onProgress?.({ stage: "fonts", done: 1, total: 1 });
     // 双 rAF：字体/图片就绪后的布局收帧（KaTeX 标记是静态 HTML，无脚本）。
     await Promise.race([
-      new Promise<void>((res) => requestAnimationFrame(() => requestAnimationFrame(res))),
+      new Promise<void>((res) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => res()))
+      ),
       abort,
     ]);
     o.onProgress?.({ stage: "layout", done: 1, total: 1 });

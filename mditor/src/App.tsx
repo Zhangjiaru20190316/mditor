@@ -1025,6 +1025,46 @@ export default function App() {
         await openPath(p);
         return true; // 失败路径由 openPath 抛出，attachExportDebugGlobal 捕获为 false
       },
+      // EX 阶段三/四：自研 PDF 管线 perf 驱动口（免对话框直写指定路径）。
+      // 预处理与 doExport("pdf") 同序：减配补渲染 → 块公式 → 双链/引用/
+      // 闪卡降级 → buildPdf（消毒/内联在 buildPdf 内）。只驱动，不落默认。
+      exportPdfTo: async (path, opts) => {
+        const ed = editorRef.current;
+        if (!ed) return { error: "no editor" };
+        let html = ed.getHTML();
+        const { renderBlockMath, renderDegradedMath } = await import("./lib/exportMath");
+        if (ed.isBigDoc()) {
+          try {
+            html = renderDegradedMath(html).html;
+          } catch {
+            /* 补渲染失败保留原样 */
+          }
+        }
+        html = renderBlockMath(html).html;
+        try {
+          html = resolveWikiLinksInHtml(html, fileApi.doc.path);
+        } catch {
+          /* 降级失败保留原标记 */
+        }
+        try {
+          html = resolveCitationsForExport(html);
+        } catch {
+          /* 降级失败保留 chip 文本 */
+        }
+        try {
+          html = degradeFlashcardsInHtml(html);
+        } catch {
+          /* 降级失败保留卡片容器 */
+        }
+        const { buildPdf } = await import("./lib/exporter");
+        const r = await buildPdf(
+          { html, css: collectThemeCss(), docPath: fileApi.doc.path },
+          opts ?? {}
+        );
+        const { getAdapter } = await import("./platform");
+        await getAdapter().fs.writeFile(path, r.bytes);
+        return { meta: r.meta, missingCount: r.missing.length };
+      },
     });
   }, [fileApi.doc.path, openPath]);
 

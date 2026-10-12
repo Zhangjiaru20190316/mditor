@@ -10,7 +10,9 @@ import {
   type ResourceImageLike,
 } from "./exportRenderFactory";
 
-function fakeImage(src: string, complete: boolean): ResourceImageLike {
+type FireableImage = ResourceImageLike & { fire(t: "load" | "error"): void };
+
+function fakeImage(src: string, complete: boolean): FireableImage {
   const listeners = new Map<string, (() => void)[]>();
   return {
     src,
@@ -22,7 +24,7 @@ function fakeImage(src: string, complete: boolean): ResourceImageLike {
     fire(type: "load" | "error") {
       for (const fn of listeners.get(type) ?? []) fn();
     },
-  } as ResourceImageLike & { fire(t: "load" | "error"): void };
+  };
 }
 
 describe("buildFactoryDocumentHtml", () => {
