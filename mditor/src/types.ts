@@ -211,6 +211,15 @@ export interface Settings {
    */
   bigDocViewport: boolean;
   /**
+   * EX 轮 U2：PDF 导出（自研管线）设置。纸张/边距/光栅倍率，随 settings
+   * 持久化；默认 A4 / 15mm / 2x（192dpi 等效）——数值经用户拍板前列为
+   * 未拍板清单项。管线在 lib/exportPdfPipeline（PDF_PAPERS /
+   * PDF_MARGIN_CHOICES / PDF_SCALE_CHOICES 为合法值域单一事实源）。
+   */
+  exportPdfPaper: "A4" | "Letter" | "A3";
+  exportPdfMarginMm: number;
+  exportPdfRasterScale: number;
+  /**
    * 公式自动编号（v4.6，默认关）：开启后展示公式（$$...$$ / ```math）在静
    * 态渲染（AI 面板/批注预览）与导出（HTML/PDF/DOCX/复制富文本）中按序自
    * 动编号（注入 \tag），\label{key} 收集建表、正文与公式里的 \ref/\eqref

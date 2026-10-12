@@ -67,6 +67,10 @@ import { toPosix } from "./lib/path-shim";
 import { exportHtml, exportPdf, exportPng, exportDocx, exportLatexFile } from "./lib/exporter";
 import { vaultIndex } from "./lib/vaultIndex";
 import { QuickSwitcher } from "./components/QuickSwitcher";
+import {
+  ExportProgressDialog,
+  type ExportProgressState,
+} from "./components/ExportProgressDialog";
 import { LinksPanel } from "./components/LinksPanel";
 import { WikiLinkSuggest } from "./components/WikiLinkSuggest";
 import { CitationPicker } from "./components/CitationPicker";
@@ -128,6 +132,28 @@ function tabPathKey(p: string): string {
   return toPosix(p).toLowerCase();
 }
 
+/** EX U1：管线进度 → 进度对话框视图（阶段文案本地化）。 */
+function pdfStageView(
+  p: import("./lib/exportPdfPipeline").PdfExportProgress
+): ExportProgressState {
+  switch (p.stage) {
+    case "factory":
+      return p.note === "images"
+        ? { stage: `加载图片 ${p.done}/${p.total}…`, done: p.done, total: p.total }
+        : { stage: "渲染文档…", done: 1, total: 1 };
+    case "measure":
+      return { stage: "测量分页…", done: p.done, total: p.total };
+    case "paginate":
+      return { stage: `分页完成（共 ${p.total} 页）…`, done: p.done, total: p.total };
+    case "text":
+      return { stage: "收集文本层…", done: p.done, total: p.total };
+    case "raster":
+      return { stage: `生成页面 ${p.done}/${p.total}…`, done: p.done, total: p.total };
+    case "assemble":
+      return { stage: "组装 PDF…", done: p.done, total: p.total };
+  }
+}
+
 export default function App() {
   const settingsApi = useSettings();
   const fileApi = useFile();
@@ -176,6 +202,11 @@ export default function App() {
   const [recentWs, setRecentWs] = useState<string[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // EX U1：PDF 导出进度（自研管线自有进度 UI；null = 无导出在进行）。
+  const [pdfProg, setPdfProg] = useState<{
+    ctrl: AbortController;
+    view: ExportProgressState;
+  } | null>(null);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   // Ctrl+P 快速切换器（v4.7 知识功能）。
@@ -1708,7 +1739,7 @@ export default function App() {
       try {
         // PDF 由 OS 打印对话框产出文件，「完成」语义与其他格式不同——用
         // 分支级文案，避免谎报「导出完成」（用户可能还没打印甚至取消）。
-        let doneMsg = "导出完成";
+        const doneMsg = "导出完成";
         // EX Fix-C2：未内联图片（超预算/格式/网络）显式列报——静默裂图是
         // E-1 的直接根源，阶段一定罪 ex-phase1-e1e2。
         let missing: import("./lib/exporter").ExportImageReportItem[] = [];
@@ -1723,11 +1754,29 @@ export default function App() {
           const out = await exportHtml(ctx, `${name}.html`, { inlineImages: inline });
           if (inline) missing = out.missing; // 保留引用模式不列报（文档化语义）
         } else if (kind === "pdf") {
-          flashStatus("正在打开打印对话框…", 60_000);
-          const out = await exportPdf(ctx, `${name}.pdf`);
-          missing = out.missing;
-          // exportPdf 在 afterprint（对话框关闭，打印或取消均触发）后才返回。
-          doneMsg = "打印流程已结束（若未在对话框中另存为 PDF 则未导出）";
+          // EX 阶段四：自研管线全量落地——零 OS 打印对话框，自有进度 UI
+          // （可视/可取消/结束即卸载，U1）。纸张/边距/清晰度取持久化设置
+          // （U2，设置面板「导出」分区）。
+          const ctrl = new AbortController();
+          const push = (p: import("./lib/exportPdfPipeline").PdfExportProgress): void =>
+            setPdfProg({ ctrl, view: pdfStageView(p) });
+          setPdfProg({
+            ctrl,
+            view: { stage: "准备文档…", done: 0, total: 0 },
+          });
+          try {
+            const out = await exportPdf(ctx, `${name}.pdf`, {
+              signal: ctrl.signal,
+              onProgress: push,
+              paper: settingsApi.settings.exportPdfPaper,
+              marginMm: settingsApi.settings.exportPdfMarginMm,
+              rasterScale: settingsApi.settings.exportPdfRasterScale,
+              textLayer: true,
+            });
+            missing = out.missing;
+          } finally {
+            setPdfProg(null);
+          }
         } else if (kind === "docx") {
           flashStatus("正在导出…", 60_000);
           const out = await exportDocx(ctx, `${name}.docx`);
@@ -1753,12 +1802,18 @@ export default function App() {
           void showAlert(formatMissingImages(missing), "导出图片清单", "warning");
         }
       } catch (e) {
-        flashStatus("导出失败", 5000);
-        void showAlert(`导出失败：${String(e)}`, "Mditor", "error");
+        if (e instanceof DOMException && e.name === "AbortError") {
+          flashStatus("已取消导出", 5000); // 取消不是失败：静默收场（U1）
+        } else {
+          flashStatus("导出失败", 5000);
+          void showAlert(`导出失败：${String(e)}`, "Mditor", "error");
+        }
+      } finally {
+        setPdfProg(null); // 结束即卸载（含异常路径——进度 UI 可回收）
       }
     },
     // flashStatus 为稳定 useCallback（空依赖），列入只为满足 exhaustive-deps。
-    [fileApi.doc.path, settingsApi.settings.theme, flashStatus]
+    [fileApi.doc.path, settingsApi.settings, flashStatus]
   );
 
   const doCopyRich = useCallback(async () => {
@@ -2933,6 +2988,14 @@ export default function App() {
       </ErrorBoundary>
 
       <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
+
+      {/* EX U1：导出进度（自有 UI，可取消；结束即卸载）。 */}
+      {pdfProg && (
+        <ExportProgressDialog
+          progress={pdfProg.view}
+          onCancel={() => pdfProg.ctrl.abort()}
+        />
+      )}
 
       {/* V3.6：从模板新建 / 插入链接 弹窗 */}
       <TemplateModal

@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS, isDarkTheme } from "./defaults";
 import type { Theme } from "./types";
 
-/** 重构前（v3.9.7）的 Settings 字段全集 + v4.1 motionLevel + v4.2 devMode + v4.4.1 bigDocPerformance + v4.6 mathAutoNumber/mathMacros + v4.6.1 bigDocViewport + v4.7 vaultIndexEnabled/wikiLinksEnabled + v4.7 模块 3 bibliographyPath/citationStyle + v4.9 Agent aiPanelMode/agentWriteMode。 */
+/** 重构前（v3.9.7）的 Settings 字段全集 + v4.1 motionLevel + v4.2 devMode + v4.4.1 bigDocPerformance + v4.6 mathAutoNumber/mathMacros + v4.6.1 bigDocViewport + v4.7 vaultIndexEnabled/wikiLinksEnabled + v4.7 模块 3 bibliographyPath/citationStyle + v4.9 Agent aiPanelMode/agentWriteMode + EX 轮 U2 exportPdfPaper/exportPdfMarginMm/exportPdfRasterScale。 */
 const SETTING_KEYS = [
   "theme",
   "motionLevel",
@@ -34,6 +34,9 @@ const SETTING_KEYS = [
   "devMode",
   "bigDocPerformance",
   "bigDocViewport",
+  "exportPdfPaper",
+  "exportPdfMarginMm",
+  "exportPdfRasterScale",
   "mathAutoNumber",
   "mathMacros",
   "memoryGuard",
@@ -92,6 +95,9 @@ const SCALAR_DEFAULTS: Record<string, unknown> = {
   devMode: false,
   bigDocPerformance: false,
   bigDocViewport: false,
+  exportPdfPaper: "A4",
+  exportPdfMarginMm: 15,
+  exportPdfRasterScale: 2,
   mathAutoNumber: false,
   mathMacros: "",
   memoryGuard: true,

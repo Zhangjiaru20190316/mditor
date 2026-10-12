@@ -101,11 +101,11 @@ afterEach(() => {
 });
 
 describe("SettingsModal", () => {
-  it("打开渲染 dialog + 10 项分区导航，仅渲染当前分区（默认外观）", () => {
+  it("打开渲染 dialog + 11 项分区导航，仅渲染当前分区（默认外观）", () => {
     renderModal();
     expect(screen.getByRole("dialog", { name: "设置" })).toBeInTheDocument();
     const nav = screen.getByRole("navigation", { name: "设置分区" });
-    expect(nav.querySelectorAll(".settings-nav-btn")).toHaveLength(10);
+    expect(nav.querySelectorAll(".settings-nav-btn")).toHaveLength(11);
     // 默认分区 0（外观）：aria-current + 指示条 translateY(0)。
     expect(screen.getByRole("button", { name: "外观" })).toHaveAttribute("aria-current", "true");
     const ind = nav.querySelector<HTMLElement>(".settings-nav-ind")!;
@@ -126,7 +126,7 @@ describe("SettingsModal", () => {
     expect(ind.style.transform).toBe("translateY(38px)"); // 1 * (34 + 4)
     gotoSection("云同步");
     expect(control("Endpoint")).toBeInTheDocument();
-    expect(ind.style.transform).toBe("translateY(304px)"); // 8 * 38
+    expect(ind.style.transform).toBe("translateY(342px)"); // 9 * 38（EX 轮插「导出」分区后云同步 idx 8→9）
   });
 
   it("主题下拉 + 动效单选改值 → 应用提交 draft 并关闭", async () => {

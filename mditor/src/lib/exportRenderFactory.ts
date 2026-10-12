@@ -257,11 +257,16 @@ export async function renderInFactory(
     handle.issues.push(...r.issues);
     handle.timedOut = r.timedOut;
     o.onProgress?.({ stage: "fonts", done: 1, total: 1 });
-    // 双 rAF：字体/图片就绪后的布局收帧（KaTeX 标记是静态 HTML，无脚本）。
+    // 布局收帧：双 setTimeout + 强制同步布局读。不依赖 rAF——被遮挡/
+    // 最小化窗口的 rAF 会被 Chromium 暂停（EX-P 实测挂死根因：用户导出中
+    // 切走窗口 = 导出永不完成）。KaTeX 标记是静态 HTML，无脚本需要等。
     await Promise.race([
-      new Promise<void>((res) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => res()))
-      ),
+      (async () => {
+        void handle.content.scrollHeight; // 强制重排
+        await new Promise((res) => setTimeout(res, 0));
+        void handle.content.scrollHeight;
+        await new Promise((res) => setTimeout(res, 0));
+      })(),
       abort,
     ]);
     o.onProgress?.({ stage: "layout", done: 1, total: 1 });

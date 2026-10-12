@@ -509,10 +509,13 @@ async function rasterizeAndAssemble(
       const chunkTop = chunk[0].top;
       win.style.height = `${a.contentHeightPx * chunk.length}px`;
       content.style.transform = `translateY(${-chunkTop}px)`;
-      // 平移后布局收帧再截图。
-      await new Promise<void>((res) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => res()))
-      );
+      // 平移后布局收帧：不依赖 rAF（后台/被遮挡窗口的 rAF 会被暂停，
+      // 挂死导出——见 exportRenderFactory 同款注释）——强制同步布局读 +
+      // 双定时器翻两轮事件循环。
+      void content.scrollHeight;
+      await new Promise((res) => setTimeout(res, 0));
+      void content.scrollHeight;
+      await new Promise((res) => setTimeout(res, 0));
       const dataUrl = await domToPng(win, {
         width: a.contentWidthPx,
         height: a.contentHeightPx * chunk.length,

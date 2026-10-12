@@ -47,6 +47,7 @@ const SECTIONS = [
   "排版",
   "编辑行为",
   "性能与诊断",
+  "导出",
   "AI 助手",
   "快捷操作",
   "工作区",
@@ -666,6 +667,57 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
 
             {section === 4 && (
               <>
+                <Field label="PDF 纸张">
+                  <select
+                    value={draft.exportPdfPaper}
+                    onChange={(e) =>
+                      set(
+                        "exportPdfPaper",
+                        e.target.value as Settings["exportPdfPaper"]
+                      )
+                    }
+                  >
+                    <option value="A4">A4（210×297mm）</option>
+                    <option value="Letter">Letter（216×279mm）</option>
+                    <option value="A3">A3（297×420mm）</option>
+                  </select>
+                  <span className="hint">
+                    自研导出管线的页尺寸——内容宽恒等于版心宽（纸宽−边距），
+                    按构造不会再出现打印对话框缩放导致的边缘裁切。
+                  </span>
+                </Field>
+                <Field label="PDF 页边距（mm）">
+                  <select
+                    value={draft.exportPdfMarginMm}
+                    onChange={(e) => set("exportPdfMarginMm", Number(e.target.value))}
+                  >
+                    <option value={10}>10（窄）</option>
+                    <option value={15}>15（默认）</option>
+                    <option value={20}>20（宽）</option>
+                    <option value={25}>25（很宽）</option>
+                  </select>
+                  <span className="hint">四边统一边距。</span>
+                </Field>
+                <Field label="PDF 清晰度">
+                  <select
+                    value={draft.exportPdfRasterScale}
+                    onChange={(e) => set("exportPdfRasterScale", Number(e.target.value))}
+                  >
+                    <option value={1}>标准（96dpi 等效，文件最小）</option>
+                    <option value={1.5}>高（144dpi 等效）</option>
+                    <option value={2}>超高（192dpi 等效，默认）</option>
+                  </select>
+                  <span className="hint">
+                    页面位图的光栅倍率。倍率越高文字越锐利，文件体积与导出
+                    时长相应增加；PDF 内嵌隐形文本层不受此影响（选中/复制/
+                    搜索始终可用）。
+                  </span>
+                </Field>
+              </>
+            )}
+
+            {section === 5 && (
+              <>
                 <span className="hint" style={{ marginTop: -2 }}>
                   可配置多个模型，在 AI 面板顶部一键切换。温度、思考强度、系统提示词为全局共享。
                 </span>
@@ -899,7 +951,7 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
               </>
             )}
 
-            {section === 5 && (
+            {section === 6 && (
               <>
                 <span className="hint" style={{ marginTop: -4 }}>
                   作用域「全文」的操作显示在 AI 面板顶部；「选区」操作显示在选中文字的工具条。
@@ -947,7 +999,7 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
               </>
             )}
 
-            {section === 6 && (
+            {section === 7 && (
               <>
                 <div className="excluded-hint">
                   以下项仅从文件树隐藏，磁盘文件未删除；点「恢复」可在文件树重新显示。
@@ -980,7 +1032,7 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
               </>
             )}
 
-            {section === 7 && (
+            {section === 8 && (
               <>
                 <Field label="全库索引">
                   <input
@@ -1320,7 +1372,7 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
               </>
             )}
 
-            {section === 9 && (
+            {section === 10 && (
               <div className="settings-about">
                 <LogoIcon size={40} className="settings-about-logo" />
                 <h2 className="settings-about-name">Mditor</h2>

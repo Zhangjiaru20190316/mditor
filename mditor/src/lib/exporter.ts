@@ -7,9 +7,9 @@
 //   * HTML:  inline theme CSS into a standalone .html, write to disk. With
 //            `inlineImages` the LOCAL images referenced by the doc are read
 //            from disk and embedded as base64 data URLs → one portable file.
-//   * PDF:   load the same HTML into a hidden iframe and call print(). The user
-//            picks "Save as PDF" in the OS dialog. (True silent export isn't
-//            exposed by Tauri/wry yet — wry#707. Windows-only path TODO P1.)
+//   * PDF:   自研管线（EX 轮）：离屏工厂渲染 → 分页 → 分块光栅 → pdf-lib
+//            组装（位图 + 隐形文本层）。全链路应用内完成，无 OS 打印对话
+//            框（wry#707 的静默导出限制由此绕开，不再借道系统打印）。
 //   * PNG:   modern-screenshot of a rendered preview container; oversized
 //            documents step the scale DOWN fractionally instead of refusing.
 //   * DOCX:  @turbodocx/html-to-docx (real OOXML, client-side, no pandoc).
@@ -32,6 +32,7 @@ import type { PdfPipelineOptions } from "./exportPdfPipeline";
 // would pull a 2 MB+ chunk into the initial page load.
 
 const HTML_FILTER = [{ name: "HTML", extensions: ["html"] }];
+const PDF_FILTER = [{ name: "PDF", extensions: ["pdf"] }];
 const PNG_FILTER = [{ name: "Image", extensions: ["png"] }];
 const DOCX_FILTER = [{ name: "Word", extensions: ["docx"] }];
 const TEX_FILTER = [{ name: "LaTeX", extensions: ["tex"] }];
@@ -435,127 +436,21 @@ export async function buildPdf(
 }
 
 /**
- * Export to PDF. Renders the HTML in a hidden iframe and opens the OS print
- * dialog; the user selects "Save as PDF" there (true silent export isn't
- * exposed by Tauri/wry yet — wry#707). No pickSaveFile up front: the path it
- * returned was never written to, so it only made the user pick twice. The
- * iframe document's <title> is the doc name, which the print dialog uses to
- * pre-fill the PDF filename. Resolves after the dialog closes (afterprint).
+ * Export to PDF（EX 轮全量落地：自研管线，printHtml/win.print 退役）。
+ * pickSaveFile 先行（唯一系统交互）→ buildPdf（消毒/内联/工厂/分页/光栅/
+ * 组装，进度回调 + 可取消）→ 落盘。未内联图片经 ExportOutcome.missing 由
+ * 调用方列报（C2）；取消（AbortError）向上抛出。
  */
 export async function exportPdf(
   ctx: ExportContext,
-  suggestedName = "untitled.pdf"
+  suggestedName = "untitled.pdf",
+  o: PdfPipelineOptions = {}
 ): Promise<ExportOutcome> {
-  const title = suggestedName.replace(/\.pdf$/i, "");
-  // 本地相对路径图片内联为 data URL：iframe 里相对引用没有文档基准目录，
-  // 必然 404（打出来是裂图/空白）。内联后既可见又即时就绪；asset:/远程引用
-  // 在应用内 iframe 同源可加载。EX Fix-C2：远程图一并抓取（应用自身 Rust
-  // http 通道），失败项显式列报——不再静默裂图（E-1 主犯）。
-  // S10：doc.write 前兜底消毒。
-  let html = sanitizeExportHtml(ctx.html);
-  let missing: ExportImageReportItem[] = [];
-  try {
-    const r = await inlineExportImages(html, ctx.docPath, { remote: "fetch" });
-    html = r.html;
-    missing = r.missing;
-  } catch {
-    /* 内联整体失败保留原引用（missing 为空——无法判定时不算列报项） */
-  }
-  await printHtml(wrapHtml(html, ctx.css, title, currentTheme()));
-  return { path: null, missing };
-}
-
-/** Render `fullHtml` (a complete document) offscreen and call print().
- *  Resolves when the print dialog closes (afterprint, 打印或取消都触发). */
-function printHtml(fullHtml: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const iframe = document.createElement("iframe");
-    iframe.style.position = "fixed";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.width = "0";
-    iframe.style.height = "0";
-    iframe.style.border = "0";
-    // 幂等回收：移除 iframe 并清掉兜底定时器。连续导出 PDF 时若不即时回收，
-    // 每个隐藏 iframe（含其完整 document 对象）会一直挂到兜底超时才释放，
-    // 堆积成可观的内存占用。
-    let settled = false;
-    let resWaitTimer: number | undefined;
-    let fallbackTimer: number | undefined;
-    const cleanup = () => {
-      if (settled) return;
-      settled = true;
-      if (resWaitTimer !== undefined) window.clearTimeout(resWaitTimer);
-      if (fallbackTimer !== undefined) window.clearTimeout(fallbackTimer);
-      iframe.remove();
-    };
-    const finish = () => {
-      cleanup();
-      resolve();
-    };
-    iframe.onload = () => {
-      try {
-        const win = iframe.contentWindow;
-        const doc = iframe.contentDocument;
-        if (!win || !doc) {
-          throw new Error("无法创建打印文档（iframe 被浏览器策略拦截）");
-        }
-        // 盲等固定时长会漏掉慢加载的图片/字体（打出来是空白）。等文档内
-        // 字体与全部 <img> 就绪再打印；总上限 5s，防单个远程图挂死导出。
-        const imgsReady = Promise.all(
-          Array.from(doc.images).map((img) =>
-            img.complete
-              ? Promise.resolve()
-              : new Promise<void>((res) => {
-                  img.addEventListener("load", () => res(), { once: true });
-                  img.addEventListener("error", () => res(), { once: true });
-                })
-          )
-        );
-        const fontsReady = doc.fonts?.ready ?? Promise.resolve();
-        const deadline = new Promise<void>((res) => {
-          resWaitTimer = window.setTimeout(res, 5_000);
-        });
-        void Promise.all([imgsReady, fontsReady, deadline]).then(() => {
-          if (settled) return;
-          // 资源就绪后再留一拍给 layout / KaTeX 渲染收尾。Track the handle
-          // and re-check `settled`: if cleanup already ran, the pending
-          // callback must not call print() on a removed iframe.
-          window.setTimeout(() => {
-            if (settled) return;
-            try {
-              win.focus();
-              // afterprint 于打印/取消后触发 → 此刻才算「打印流程结束」；
-              // 兜底定时器防范事件缺失的浏览器（5 分钟，留足预览时间）。
-              win.addEventListener("afterprint", finish, { once: true });
-              win.print();
-              fallbackTimer = window.setTimeout(finish, 300_000);
-            } catch (e) {
-              cleanup();
-              reject(e);
-            }
-          }, 50);
-        });
-      } catch (e) {
-        cleanup();
-        reject(e);
-      }
-    };
-    iframe.onerror = (e) => {
-      cleanup();
-      reject(e);
-    };
-    document.body.appendChild(iframe);
-    const doc = iframe.contentDocument;
-    if (!doc) {
-      cleanup();
-      reject(new Error("无法创建打印文档（iframe contentDocument 为空）"));
-      return;
-    }
-    doc.open();
-    doc.write(fullHtml);
-    doc.close();
-  });
+  const path = await getAdapter().dialog.pickSaveFile(suggestedName, PDF_FILTER);
+  if (!path) return { path: null, missing: [] };
+  const r = await buildPdf(ctx, o);
+  await getAdapter().fs.writeFile(path, r.bytes);
+  return { path, missing: r.missing };
 }
 
 /**

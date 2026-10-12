@@ -103,6 +103,10 @@ export async function createPdfAssembler(
 
   return {
     async addPage(pngBytes, textRuns) {
+      // 宏任务让渡（EX-P 实测教训：pdf-lib 铺字/编码是重同步 JS，不让渡
+      // 会饱和主线程——进度 UI 冻结、取消信号无机会处理、CDP 观测饿死）。
+      // 逐页一次：粒度 ≈ 每页铺字时长（亚秒~秒级），UI 呼吸感足够。
+      await new Promise((res) => setTimeout(res, 0));
       const page = doc.addPage([o.pageWidthPt, o.pageHeightPt]);
       const img = await doc.embedPng(pngBytes);
       // PDF 原点在左下：内容盒左上 = (marginL, pageH - marginT)。
@@ -126,6 +130,18 @@ export async function createPdfAssembler(
        *  的连续字符合并为一次 drawText（CJK 全宽字符几乎总命中——算子数
        *  骤减）；不一致处断组、按实测位重锚（拉丁逐字精度，D-2 分治）。 */
       const EPS_PX = 0.5;
+      // 字形自然宽度缓存（EX-P 实测热点：fontkit 逐字 layout 是铺字主要
+      // 成本；CJK 字符高频重复，(char,size) 级缓存把重复字形查询压到 O(1)）。
+      const naturalCache = new Map<string, number>();
+      const naturalWidth = (ch: string, size: number): number => {
+        const key = ch + "\u0000" + size;
+        let w = naturalCache.get(key);
+        if (w === undefined) {
+          w = font.widthOfTextAtSize(ch, size) / k;
+          naturalCache.set(key, w);
+        }
+        return w;
+      };
       for (const run of textRuns) {
         if (!run.text) continue;
         const sizePt = Math.max(run.size * k, 0.1);
@@ -162,9 +178,7 @@ export async function createPdfAssembler(
               start = i + 1;
               continue;
             }
-            const natural =
-              (font.widthOfTextAtSize(chars[i], sizePt) / k) +
-              positions[i];
+            const natural = naturalWidth(chars[i], sizePt) + positions[i];
             const desired = positions[i + 1];
             if (Math.abs(desired - natural) > EPS_PX) {
               emit(i + 1);

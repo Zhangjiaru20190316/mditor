@@ -202,6 +202,10 @@ export const DEFAULT_SETTINGS: Settings = {
   devMode: false,
   bigDocPerformance: false,
   bigDocViewport: false,
+  // EX 轮 U2：PDF 自研管线默认（A4 / 15mm / 2x = 192dpi 等效）——未拍板清单项。
+  exportPdfPaper: "A4",
+  exportPdfMarginMm: 15,
+  exportPdfRasterScale: 2,
   mathAutoNumber: false,
   mathMacros: "",
   memoryGuard: true,
