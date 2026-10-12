@@ -52,8 +52,14 @@ export interface PdfAssembleInfo {
 }
 
 /** 逐页喂图（pipeline 分块光栅后即喂即释放，不整本驻留内存）。 */
+export interface PdfPageImage {
+  bytes: Uint8Array;
+  /** image/png = 无损（默认）；image/jpeg = 内存护栏大文档档（DCT 直通）。 */
+  mime: "image/png" | "image/jpeg";
+}
+
 export interface PdfAssembler {
-  addPage(pngBytes: Uint8Array, textRuns: PdfTextRun[]): Promise<void>;
+  addPage(image: PdfPageImage, textRuns: PdfTextRun[]): Promise<void>;
   save(): Promise<Uint8Array>;
   info(): PdfAssembleInfo;
 }
@@ -102,13 +108,19 @@ export async function createPdfAssembler(
   };
 
   return {
-    async addPage(pngBytes, textRuns) {
+    async addPage(image, textRuns) {
       // 宏任务让渡（EX-P 实测教训：pdf-lib 铺字/编码是重同步 JS，不让渡
       // 会饱和主线程——进度 UI 冻结、取消信号无机会处理、CDP 观测饿死）。
       // 逐页一次：粒度 ≈ 每页铺字时长（亚秒~秒级），UI 呼吸感足够。
       await new Promise((res) => setTimeout(res, 0));
       const page = doc.addPage([o.pageWidthPt, o.pageHeightPt]);
-      const img = await doc.embedPng(pngBytes);
+      // embedJpg 直通压缩字节（DCTDecode），embedPng 会解码并驻留 RGBA 到
+      // save——大文档 JPEG 档是内存护栏（EX-P 实测：87 页 × 2x PNG 解码
+      // 驻留 ~1GB 撞内存墙）。
+      const img =
+        image.mime === "image/jpeg"
+          ? await doc.embedJpg(image.bytes)
+          : await doc.embedPng(image.bytes);
       // PDF 原点在左下：内容盒左上 = (marginL, pageH - marginT)。
       page.drawImage(img, {
         x: o.marginPt.left,

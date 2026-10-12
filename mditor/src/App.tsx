@@ -1109,11 +1109,31 @@ function App() {
           /* 降级失败保留卡片容器 */
         }
         const { buildPdf } = await import("./lib/exporter");
+        const { getAdapter } = await import("./platform");
+        const dump = opts?.dumpPages;
+        const b64ToBytes = (d: string): Uint8Array => {
+          const bin = atob(d.slice(d.indexOf(",") + 1));
+          const out = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+          return out;
+        };
         const r = await buildPdf(
           { html, css: collectThemeCss(), docPath: fileApi.doc.path },
-          opts ?? {}
+          {
+            ...opts,
+            onPagePng: dump
+              ? (i, dataUrl) => {
+                  if (!dump.indices.includes(i)) return;
+                  void getAdapter()
+                    .fs.writeFile(
+                      `${dump.dir}/${dump.name ?? "page"}-${i}.png`,
+                      b64ToBytes(dataUrl)
+                    )
+                    .catch(() => undefined);
+                }
+              : undefined,
+          }
         );
-        const { getAdapter } = await import("./platform");
         await getAdapter().fs.writeFile(path, r.bytes);
         return { meta: r.meta, missingCount: r.missing.length };
       },

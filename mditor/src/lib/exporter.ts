@@ -266,6 +266,30 @@ function missingOf(report: ExportImageReportItem[]): ExportImageReportItem[] {
   return report.filter((r) => r.status !== "inlined" && r.status !== "remote-skip");
 }
 
+/**
+ * C2 产物内显式占位（EX 轮）：内联失败/超预算/远程失败的 <img> 换成可见的
+ * 「图片未包含」占位框——静默裂图（broken icon/空白）不允许；原因取自
+ * 内联报告分类。仅用于工厂渲染路径（PDF/PNG）；HTML「保留引用」模式语义
+ * 不变（引用是文档化行为）。
+ */
+export function markMissingImages(
+  html: string,
+  missing: ExportImageReportItem[]
+): string {
+  if (missing.length === 0) return html;
+  let out = html;
+  for (const m of missing) {
+    const esc = m.src.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`<img\\b[^>]*\\bsrc="${esc}"[^>]*>`, "gi");
+    const label = `${shortSrc(m.src)}——${STATUS_LABEL[m.status]}${m.detail ? `：${m.detail}` : ""}`;
+    out = out.replace(
+      re,
+      `<span style="display:block;border:1.5px dashed currentColor;border-radius:6px;padding:18px 14px;margin:8px 0;opacity:.75;text-align:center;font-size:.9em">🖼 图片未包含（${label}）</span>`
+    );
+  }
+  return out;
+}
+
 /** C2 列报文案：状态 → 用户可读原因（顺序即展示顺序）。 */
 const STATUS_LABEL: Record<ExportImageStatus, string> = {
   inlined: "已内联",
@@ -427,6 +451,8 @@ export async function buildPdf(
   } catch {
     /* 内联整体失败保留原引用（missing 为空——无法判定时不算列报项） */
   }
+  // C2：未内联项显式占位（静默裂图禁止）。
+  html = markMissingImages(html, missing);
   const { runPdfPipeline } = await import("./exportPdfPipeline");
   const result = await runPdfPipeline(html, ctx.css, o);
   return {
@@ -475,6 +501,8 @@ export async function buildPng(
   } catch {
     /* 内联整体失败保留原引用 */
   }
+  // C2：未内联项显式占位（静默裂图禁止）。
+  html = markMissingImages(html, missing);
   const { runPngPipeline } = await import("./exportPngPipeline");
   const result = await runPngPipeline(html, ctx.css, o);
   return {

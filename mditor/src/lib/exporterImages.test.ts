@@ -10,6 +10,7 @@ import {
   inlineExportImages,
   INLINE_IMG_MAX_BYTES,
   formatMissingImages,
+  markMissingImages,
   type ExportImageReportItem,
 } from "./exporter";
 
@@ -214,5 +215,31 @@ describe("inlineExportImages 远程图（D-5：fetch→dataURL，失败显式入
     expect(statuses.filter((s) => s === "inlined")).toHaveLength(6);
     expect(statuses.filter((s) => s === "budget")).toHaveLength(1);
     expect(r.missing).toHaveLength(1);
+  });
+});
+
+// ---- C2 产物内显式占位（EX 轮 markMissingImages）----
+describe("markMissingImages", () => {
+  it("未内联 <img> 换成带原因的占位框；已内联/无缺失不受影响", () => {
+    const html =
+      '<p><img src="assets/ok.png"><img src="assets/big.png" alt="大图"></p>';
+    const out = markMissingImages(html, [
+      { src: "assets/big.png", status: "oversize", bytes: 15_000_000 },
+    ]);
+    expect(out).toContain('src="assets/ok.png"'); // 未提及的图不动
+    expect(out).not.toContain('src="assets/big.png"');
+    expect(out).toContain("图片未包含");
+    expect(out).toContain("超过 10MB 单图上限");
+    expect(out).not.toContain('alt="大图"'); // 原 img 整体被换掉
+  });
+
+  it("src 含正则元字符也安全（路径点号/括号）；无缺失原样返回", () => {
+    const html = '<img src="assets/pic (v1.2).png">';
+    const out = markMissingImages(html, [
+      { src: "assets/pic (v1.2).png", status: "read-error", detail: "x" },
+    ]);
+    expect(out).toContain("图片未包含");
+    expect(out).not.toContain("<img");
+    expect(markMissingImages(html, [])).toBe(html); // 空 missing = 原引用
   });
 });

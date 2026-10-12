@@ -20,7 +20,14 @@ export interface ExportDebugHandle {
    *  分页统计/组装信息/分阶段耗时）。不改变任何默认导出行为。 */
   exportPdfTo(
     path: string,
-    opts?: { paper?: "A4" | "Letter" | "A3"; marginMm?: number; rasterScale?: number; textLayer?: boolean }
+    opts?: {
+      paper?: "A4" | "Letter" | "A3";
+      marginMm?: number;
+      rasterScale?: number;
+      textLayer?: boolean;
+      /** 调试：把指定页（0 基）的页位图 PNG 写到 dir（C1 视觉抽检）。 */
+      dumpPages?: { indices: number[]; dir: string; name?: string };
+    }
   ): Promise<Record<string, unknown>>;
   /** 与文件树点击同流程打开文档（perf 驱动 fixture 用；工作区外文档无
    *  其他免对话框入口）。返回是否成功打开。 */

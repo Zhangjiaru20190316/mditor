@@ -78,8 +78,8 @@ describe("createPdfAssembler", () => {
       contentHeightPx: CONTENT_PX.h,
       fontBytes: null,
     });
-    await a.addPage(TINY_PNG, []);
-    await a.addPage(TINY_PNG, []);
+    await a.addPage({ bytes: TINY_PNG, mime: "image/png" }, []);
+    await a.addPage({ bytes: TINY_PNG, mime: "image/png" }, []);
     const bytes = await a.save();
     expect(a.info().pages).toBe(2);
     expect(a.info().fontEmbedded).toBe(false);
@@ -101,7 +101,7 @@ describe("createPdfAssembler", () => {
       contentHeightPx: CONTENT_PX.h,
       fontBytes: new Uint8Array([1, 2, 3, 4, 5]),
     });
-    await a.addPage(TINY_PNG, [{ text: "测试", x: 10, baselineY: 20, size: 16 }]);
+    await a.addPage({ bytes: TINY_PNG, mime: "image/png" }, [{ text: "测试", x: 10, baselineY: 20, size: 16 }]);
     expect(a.info().fontEmbedded).toBe(false);
     expect(a.info().textRunsPlaced).toBe(0); // 无字体不铺字
     await expect(a.save()).resolves.toBeInstanceOf(Uint8Array);
@@ -121,7 +121,7 @@ describe("createPdfAssembler", () => {
       fontBytes,
       title: "t",
     });
-    await a.addPage(TINY_PNG, [
+    await a.addPage({ bytes: TINY_PNG, mime: "image/png" }, [
       { text: "无穷级数密度档压测", x: 24, baselineY: 40, size: 17 },
       { text: "series x⃗ = Σaₙ", x: 24, baselineY: 70, size: 17 },
     ]);
@@ -151,7 +151,7 @@ describe("createPdfAssembler", () => {
       contentHeightPx: CONTENT_PX.h,
       fontBytes,
     });
-    await a.addPage(TINY_PNG, [
+    await a.addPage({ bytes: TINY_PNG, mime: "image/png" }, [
       {
         text: "abc",
         x: 10,
@@ -176,7 +176,7 @@ describe("createPdfAssembler", () => {
       contentHeightPx: CONTENT_PX.h,
       fontBytes,
     });
-    await a.addPage(TINY_PNG, [
+    await a.addPage({ bytes: TINY_PNG, mime: "image/png" }, [
       { text: "", x: 0, baselineY: 0, size: 16 },
       { text: "a b", x: 0, baselineY: 20, size: 16, advances: [9, 5, 9] },
     ]);

@@ -42,6 +42,10 @@ const MAX_CANVAS_SIDE = 16_384;
 const MAX_CANVAS_PIXELS = 120_000_000;
 /** 每分块最多页数（foreignObject 序列化是全文档级成本，块太大内存尖峰）。 */
 const MAX_PAGES_PER_CHUNK = 4;
+/** JPEG 档内存护栏：解码位图累计超过该值 → 页图转 JPEG（0.92）。
+ *  pdf-lib 的 embedPng 解码 RGBA 且驻留到 save；87 页 × 2x ≈ 1GB 实测
+ *  撞墙（EX-P）。阈值取 ~256MB——小文档保持无损 PNG。 */
+const JPEG_GUARD_BYTES = 256 * 1024 * 1024;
 /** 文本层字体（应用源；OFL 授权见 public/assets/fonts/OFL.txt）。 */
 const CJK_FONT_URL =
   (import.meta.env.BASE_URL ?? "/") + "assets/fonts/NotoSansSC-Regular.otf";
@@ -64,6 +68,8 @@ export interface PdfPipelineOptions {
   signal?: AbortSignal;
   onProgress?: (p: PdfExportProgress) => void;
   title?: string;
+  /** 调试：指定页码（0 基）在入册时回调页 PNG dataURL（C1 视觉抽检用）。 */
+  onPagePng?: (index: number, dataUrl: string) => void;
 }
 
 export interface PdfPipelineResult {
@@ -174,6 +180,7 @@ export async function runPdfPipeline(
       signal,
       onProgress: (done, total, note) =>
         progress({ stage: "raster", done, total, note }),
+      onPagePng: o.onPagePng,
     });
     t.raster = performance.now() - t0;
 
@@ -463,6 +470,7 @@ interface RasterizeArgs {
   assembler: Awaited<ReturnType<typeof createPdfAssembler>>;
   signal?: AbortSignal;
   onProgress: (done: number, total: number, note?: string) => void;
+  onPagePng?: (index: number, dataUrl: string) => void;
 }
 
 async function rasterizeAndAssemble(
@@ -473,6 +481,10 @@ async function rasterizeAndAssemble(
   const doc = handle.doc;
   const content = handle.content;
   const runsPerPage = fragmentsToPageRuns(a.fragments, pages, a.contentHeightPx);
+  // 内存护栏：整本解码位图预算超限 → JPEG 档（视觉质量权衡记录于结题
+  // 报告 Q3；未拍板清单含「阈值与质量参数」）。
+  const pagePx = a.contentWidthPx * a.scale * a.contentHeightPx * a.scale;
+  const useJpeg = pages.length * pagePx * 4 > JPEG_GUARD_BYTES;
 
   // 裁剪窗口就位（把 content 挪进窗口容器；同文档内移动，样式不丢）。
   const win = doc.createElement("div");
@@ -539,8 +551,16 @@ async function rasterizeAndAssemble(
           pw,
           ph
         );
-        const png = dataUrlToBytes(pageCanvas.toDataURL("image/png"));
-        await a.assembler.addPage(png, runsPerPage[pageIndex]);
+        const pageDataUrl = pageCanvas.toDataURL(
+          useJpeg ? "image/jpeg" : "image/png",
+          0.92
+        );
+        a.onPagePng?.(pageIndex, pageDataUrl);
+        const bytes = dataUrlToBytes(pageDataUrl);
+        await a.assembler.addPage(
+          { bytes, mime: useJpeg ? "image/jpeg" : "image/png" },
+          runsPerPage[pageIndex]
+        );
         a.onProgress(pageIndex + 1, pages.length);
       }
       // 即弃：分块位图与解码图随下一轮 GC；显式断引用帮助引擎回收。
