@@ -460,7 +460,27 @@ export function fragmentsToPageRuns(
 // ---------------------------------------------------------------------------
 // 分块光栅：裁剪窗口（overflow:hidden + translateY 平移内容）+ modern-
 // screenshot 按 chunk 出图 → 父窗口 canvas 裁成页 PNG → 入册即弃。
+//
+// 序列化裁剪（EX 阶段六，密度档 87 页实测冻死归因）：domToPng 对窗口子树
+// 全量克隆——87 页文档每块克隆 ~80 万节点，6 块后 renderer 内存压力累积冻
+// 死（进度事件定位：6×87s 后第 7 块 console/eval 双静默）。裁剪法：每块把
+// 窗口外的顶层块暂存到 DocumentFragment，窗口内块改绝对定位（top = 原始
+// content 坐标，margin 归零并入 top——绝对定位不参与相邻 margin 合并，坐
+// 标精确），出图后按原序全量还原。克隆成本从 O(全文档)×块数 降为
+// O(块内)×块数，块间垃圾即弃。
 // ---------------------------------------------------------------------------
+
+/** 窗口相交判定（纯函数）：块区间 [top, bottom) 与窗口 [wTop, wBottom)
+ * 有重叠则保留（骑线块必须保留——分页刀口可能落在块内部）。 */
+export function blockIntersectsWindow(
+  top: number,
+  bottom: number,
+  wTop: number,
+  wBottom: number,
+  eps = 1
+): boolean {
+  return top < wBottom - eps && bottom > wTop + eps;
+}
 
 interface RasterizeArgs {
   contentWidthPx: number;
@@ -471,6 +491,65 @@ interface RasterizeArgs {
   signal?: AbortSignal;
   onProgress: (done: number, total: number, note?: string) => void;
   onPagePng?: (index: number, dataUrl: string) => void;
+}
+
+/** 分块序列化裁剪句柄：抓取 content 顶层子元素的原位坐标，按块暂存/还原。 */
+class ChunkTrim {
+  private kids: HTMLElement[] = [];
+  private tops: number[] = [];
+  private savedCss: string[] = [];
+  private staging: DocumentFragment;
+  private detached = false;
+
+  constructor(
+    private content: HTMLElement
+  ) {
+    this.staging = content.ownerDocument!.createDocumentFragment();
+    // 快照必须在任何裁剪前完成：rect 相对 content 盒（与分页/文本素材同坐
+    // 标系）。此后仅由裁剪自身改结构，坐标不再依赖回流。
+    const base = content.getBoundingClientRect();
+    this.kids = Array.from(content.children) as HTMLElement[];
+    this.tops = this.kids.map((k) => k.getBoundingClientRect().top - base.top);
+    this.savedCss = this.kids.map((k) => k.style.cssText);
+  }
+
+  get kidTops(): number[] {
+    return this.tops;
+  }
+
+  /** 应用到窗口 [wTop, wBottom)：窗口外块暂存，窗口内块绝对定位到原坐标。 */
+  apply(wTop: number, wBottom: number): void {
+    const n = this.kids.length;
+    for (let i = 0; i < n; i++) {
+      const top = this.tops[i];
+      // 区间语义与 measureBlocks 一致：高度覆盖到下一块顶。
+      const bottom = i + 1 < n ? this.tops[i + 1] : top + this.kids[i].getBoundingClientRect().height;
+      if (!blockIntersectsWindow(top, bottom, wTop, wBottom)) {
+        this.staging.appendChild(this.kids[i]);
+        continue;
+      }
+      const k = this.kids[i];
+      // 绝对定位：top 为 margin 盒顶——margin 归零并入 top，border 盒精确
+      // 落在原坐标（rect 即 border 盒）。left/right:0 钉住流宽度。
+      k.style.position = "absolute";
+      k.style.top = `${top}px`;
+      k.style.left = "0";
+      k.style.right = "0";
+      k.style.margin = "0";
+      k.style.bottom = "auto";
+    }
+    this.detached = true;
+  }
+
+  /** 按原序全量还原（appendChild 移动既有节点，无克隆；还原后一次回流）。 */
+  restore(): void {
+    if (!this.detached) return;
+    for (let i = 0; i < this.kids.length; i++) {
+      this.content.appendChild(this.kids[i]);
+      this.kids[i].style.cssText = this.savedCss[i];
+    }
+    this.detached = false;
+  }
 }
 
 async function rasterizeAndAssemble(
@@ -514,13 +593,16 @@ async function rasterizeAndAssemble(
   const pw = pageCanvas.width;
   const ph = pageCanvas.height;
 
+  const trim = new ChunkTrim(content);
   try {
     for (let start = 0; start < pages.length; start += perChunk) {
       if (a.signal?.aborted) throw new DOMException("导出已取消", "AbortError");
       const chunk = pages.slice(start, start + perChunk);
       const chunkTop = chunk[0].top;
+      const chunkBottom = chunk[chunk.length - 1].top + a.contentHeightPx;
       win.style.height = `${a.contentHeightPx * chunk.length}px`;
       content.style.transform = `translateY(${-chunkTop}px)`;
+      trim.apply(chunkTop, chunkBottom);
       // 平移后布局收帧：不依赖 rAF（后台/被遮挡窗口的 rAF 会被暂停，
       // 挂死导出——见 exportRenderFactory 同款注释）——强制同步布局读 +
       // 双定时器翻两轮事件循环。
@@ -534,6 +616,7 @@ async function rasterizeAndAssemble(
         scale: a.scale,
         backgroundColor: bg,
       });
+      trim.restore();
       const img = new Image();
       img.src = dataUrl;
       await img.decode();
@@ -567,6 +650,7 @@ async function rasterizeAndAssemble(
       img.src = "";
     }
   } finally {
+    trim.restore();
     // 工厂回收前把 content 归位（destroy 只移除 iframe，无副作用亦可）。
     try {
       parent.insertBefore(content, win);
@@ -599,4 +683,298 @@ export async function loadFontBytes(url: string = CJK_FONT_URL): Promise<Uint8Ar
     fontBytesCache = null; // 字体缺位：纯光栅降级（EX-P 允许，完整性不受损）
   }
   return fontBytesCache;
+}
+
+// ---------------------------------------------------------------------------
+// 调试 A/B（EX 阶段六，裁剪语义决定性判定）：同一工厂内把同一批页光栅化三
+// 遍——trim1（现行为：ChunkTrim 裁剪）→ stream（修复前行为：窗口 +
+// translateY 不裁剪，含全量克隆成本）→ trim2（trim 对照二跑，夹住 stream
+// 检出 renderer 状态污染）。行墨量剖面互相关定位移滞后与残差，块顶对原位
+// 基准（measureBlocks/文本层同坐标系）取差。仅 perf 驱动（__exportDebug.
+// rasterAb），不进默认导出路径；结论落 docs/export-overhaul-report.md §4。
+// ---------------------------------------------------------------------------
+
+export interface RasterAbOptions {
+  paper?: PdfPaperId;
+  marginMm?: number;
+  rasterScale?: number;
+  /** 参与对比的连续页数（从第 0 页起）。默认 3。 */
+  pageCount?: number;
+  /** 行剖面互相关搜索的最大滞后（CSS px 双侧；设备像素 = ×scale）。默认 24。 */
+  maxLagPx?: number;
+  /** 各变体页位图回调（perf 落盘人工比对；同一变体内按页序调用）。 */
+  onPng?: (variant: "trim1" | "stream" | "trim2", index: number, dataUrl: string) => void;
+  /** 阶段遥测（factory/measure/{variant}:start|done；挂点定位用）。 */
+  onStage?: (stage: string, ms?: number) => void;
+}
+
+export interface RasterAbRectDiff {
+  /** 首块顶差（margin 逃逸类偏移直接可见）。 */
+  first: number;
+  maxAbs: number;
+  meanAbs: number;
+  /** 参与统计的块数（窗口内且已连接）。 */
+  count: number;
+}
+
+export interface RasterAbPage {
+  page: number;
+  ink: { trim1: number; stream: number; trim2: number };
+  /** 行剖面最优滞后（CSS px；正 = 后者内容更靠下）。 */
+  lagPx: { streamVsTrim1: number; trim1VsTrim2: number };
+  /** 最优滞后处 Pearson r（1 = 剖面全等；残差视角 = 1−r）。 */
+  corr: { streamVsTrim1: number; trim1VsTrim2: number };
+}
+
+export interface RasterAbResult {
+  pages: number;
+  scale: number;
+  contentWidthPx: number;
+  contentHeightPx: number;
+  /** 变体布局对原位基准的块顶差（px）。 */
+  rectDiff: { stream: RasterAbRectDiff; trim: RasterAbRectDiff };
+  perPage: RasterAbPage[];
+  timings: Record<string, number>;
+}
+
+/**
+ * 行剖面互相关（纯函数）：在 ±maxLag 整数滞后内找 Pearson r 最优处。
+ * 约定：b[y+lag] ≈ a[y]，lag > 0 = b 内容比 a 靠下 lag px。
+ */
+export function pearsonBestLag(
+  a: ArrayLike<number>,
+  b: ArrayLike<number>,
+  maxLag: number
+): { lag: number; r: number } {
+  const n = Math.min(a.length, b.length);
+  let best = { lag: 0, r: -2 };
+  for (let lag = -maxLag; lag <= maxLag; lag++) {
+    const y0 = Math.max(0, -lag);
+    const y1 = Math.min(n, n - lag);
+    const m = y1 - y0;
+    if (m < 8) continue; // 重叠过短：相关无意义
+    let sa = 0;
+    let sb = 0;
+    for (let y = y0; y < y1; y++) {
+      sa += a[y];
+      sb += b[y + lag];
+    }
+    const ma = sa / m;
+    const mb = sb / m;
+    let num = 0;
+    let da = 0;
+    let db = 0;
+    for (let y = y0; y < y1; y++) {
+      const va = a[y] - ma;
+      const vb = b[y + lag] - mb;
+      num += va * vb;
+      da += va * va;
+      db += vb * vb;
+    }
+    const den = Math.sqrt(da * db);
+    if (den <= 0) continue;
+    const r = num / den;
+    if (r > best.r) best = { lag, r };
+  }
+  return best.r === -2 ? { lag: 0, r: 0 } : best;
+}
+
+interface RasterAbVariantOutput {
+  pngs: string[];
+  profiles: Float64Array[];
+  inks: number[];
+  rectDiff: RasterAbRectDiff;
+}
+
+export async function runPdfRasterAb(
+  html: string,
+  css: string,
+  o: RasterAbOptions = {}
+): Promise<RasterAbResult> {
+  const paper = PDF_PAPERS[o.paper ?? "A4"];
+  const marginPt = mmToPt(o.marginMm ?? 15);
+  const scale = o.rasterScale ?? 2;
+  const contentWidthPx = Math.round((paper.widthPt - 2 * marginPt) / PT_PER_PX);
+  const contentHeightPx = Math.round((paper.heightPt - 2 * marginPt) / PT_PER_PX);
+  const t: Record<string, number> = { factory: 0, measure: 0, trim1: 0, stream: 0, trim2: 0 };
+  let t0 = performance.now();
+  const handle = await renderInFactory(html, {
+    contentWidthPx,
+    css,
+    maxImageHeightPx: contentHeightPx,
+  });
+  t.factory = performance.now() - t0;
+  o.onStage?.("factory", t.factory);
+  try {
+    t0 = performance.now();
+    const blocks = measureBlocks(handle);
+    const paginated = paginateBlocks(blocks, contentHeightPx);
+    t.measure = performance.now() - t0;
+    o.onStage?.("measure", t.measure);
+    const pageCount = Math.min(Math.max(o.pageCount ?? 3, 1), paginated.pages.length);
+    const pages = paginated.pages.slice(0, pageCount);
+
+    // 原位基准：与 measureBlocks/collectTextFragments 同坐标系（content 盒）。
+    const content = handle.content;
+    const doc = handle.doc;
+    const base0 = content.getBoundingClientRect();
+    const kids = Array.from(content.children) as HTMLElement[];
+    const origTops = kids.map((k) => k.getBoundingClientRect().top - base0.top);
+
+    const { domToPng } = await import("modern-screenshot");
+    const bg =
+      doc.defaultView?.getComputedStyle(doc.documentElement).backgroundColor || "#ffffff";
+    const chunkTop = pages[0].top;
+    const chunkBottom = pages[pages.length - 1].top + contentHeightPx;
+    const W = Math.round(contentWidthPx * scale);
+    const H = Math.round(contentHeightPx * scale);
+
+    // 单变体：win 组装（与 rasterizeAndAssemble 同序）→ 可选裁剪 → 收帧 →
+    // 矩形采样 → 出图 → 逐页剖面 → 还原。裁剪变体的 ChunkTrim 构造时机与
+    // 生产一致（content 移入 win 之后）。
+    const runVariant = async (
+      label: "trim1" | "stream" | "trim2",
+      useTrim: boolean
+    ): Promise<RasterAbVariantOutput> => {
+      o.onStage?.(`${label}:start`);
+      const parent = content.parentNode as Node;
+      const next = content.nextSibling;
+      const win = doc.createElement("div");
+      win.style.cssText = `overflow:hidden;position:relative;width:${contentWidthPx}px;`;
+      parent.insertBefore(win, content);
+      win.appendChild(content);
+      content.style.position = "relative";
+      win.style.height = `${contentHeightPx * pages.length}px`;
+      content.style.transform = `translateY(${-chunkTop}px)`;
+      const trim = useTrim ? new ChunkTrim(content) : null;
+      try {
+        trim?.apply(chunkTop, chunkBottom);
+        // 收帧：与生产同款（双 setTimeout + 强制布局读，不依赖 rAF）。
+        void content.scrollHeight;
+        await new Promise((res) => setTimeout(res, 0));
+        void content.scrollHeight;
+        await new Promise((res) => setTimeout(res, 0));
+        // 矩形采样（相对 content 盒；translateY 对基差相消）。裁剪变体中
+        // 被暂存的窗口外块不连接，跳过。
+        const base = content.getBoundingClientRect();
+        const diffs: number[] = [];
+        let first = 0;
+        for (let i = 0; i < kids.length; i++) {
+          const el = kids[i];
+          if (!el.isConnected) continue;
+          const top = el.getBoundingClientRect().top - base.top;
+          const d = top - origTops[i];
+          if (i === 0) first = d;
+          if (!blockIntersectsWindow(origTops[i], origTops[i] + 1e-6, chunkTop, chunkBottom))
+            continue;
+          diffs.push(d);
+        }
+        const rectDiff: RasterAbRectDiff = {
+          first,
+          maxAbs: diffs.length ? Math.max(...diffs.map(Math.abs)) : 0,
+          meanAbs: diffs.length
+            ? diffs.reduce((s, d) => s + Math.abs(d), 0) / diffs.length
+            : 0,
+          count: diffs.length,
+        };
+        const dataUrl = await domToPng(win, {
+          width: contentWidthPx,
+          height: contentHeightPx * pages.length,
+          scale,
+          backgroundColor: bg,
+        });
+        const img = new Image();
+        img.src = dataUrl;
+        await img.decode();
+        const pageCanvas = doc.createElement("canvas");
+        pageCanvas.width = W;
+        pageCanvas.height = H;
+        const ctx = pageCanvas.getContext("2d");
+        if (!ctx) throw new Error("无法创建页画布（2D 上下文不可用）");
+        const pngs: string[] = [];
+        const profiles: Float64Array[] = [];
+        const inks: number[] = [];
+        for (let i = 0; i < pages.length; i++) {
+          ctx.fillStyle = bg;
+          ctx.fillRect(0, 0, W, H);
+          ctx.drawImage(img, 0, i * H, W, H, 0, 0, W, H);
+          const data = ctx.getImageData(0, 0, W, H).data;
+          // 行墨量：对页角背景色的逐通道偏差（任意主题底色通用）。
+          const bgR = data[0];
+          const bgG = data[1];
+          const bgB = data[2];
+          const profile = new Float64Array(H);
+          for (let y = 0; y < H; y++) {
+            let ink = 0;
+            const row = y * W * 4;
+            for (let x = 0; x < W; x++) {
+              const p = row + x * 4;
+              ink +=
+                Math.abs(data[p] - bgR) + Math.abs(data[p + 1] - bgG) + Math.abs(data[p + 2] - bgB);
+            }
+            profile[y] = ink / W;
+          }
+          profiles.push(profile);
+          inks.push(profile.reduce((s, v) => s + v, 0) / H);
+          if (o.onPng) {
+            const png = pageCanvas.toDataURL("image/png");
+            pngs.push(png);
+            o.onPng(label, i, png);
+          }
+        }
+        img.src = "";
+        return { pngs, profiles, inks, rectDiff };
+      } finally {
+        trim?.restore();
+        // 归位到原插槽 + 清内联样式：下一变体从原位布局开始。
+        try {
+          parent.insertBefore(content, next);
+          win.remove();
+        } catch {
+          /* 已随 iframe 销毁 */
+        }
+        content.style.position = "";
+        content.style.transform = "";
+      }
+    };
+
+    t0 = performance.now();
+    const trim1 = await runVariant("trim1", true);
+    t.trim1 = performance.now() - t0;
+    o.onStage?.("trim1:done", t.trim1);
+    t0 = performance.now();
+    const stream = await runVariant("stream", false);
+    t.stream = performance.now() - t0;
+    o.onStage?.("stream:done", t.stream);
+    t0 = performance.now();
+    const trim2 = await runVariant("trim2", true);
+    t.trim2 = performance.now() - t0;
+    o.onStage?.("trim2:done", t.trim2);
+
+    const maxLag = Math.round((o.maxLagPx ?? 24) * scale);
+    const perPage: RasterAbPage[] = pages.map((_, i) => {
+      const sT = pearsonBestLag(stream.profiles[i], trim1.profiles[i], maxLag);
+      const tT = pearsonBestLag(trim1.profiles[i], trim2.profiles[i], maxLag);
+      return {
+        page: i,
+        ink: { trim1: trim1.inks[i], stream: stream.inks[i], trim2: trim2.inks[i] },
+        lagPx: {
+          streamVsTrim1: sT.lag / scale,
+          trim1VsTrim2: tT.lag / scale,
+        },
+        corr: { streamVsTrim1: sT.r, trim1VsTrim2: tT.r },
+      };
+    });
+    return {
+      pages: pageCount,
+      scale,
+      contentWidthPx,
+      contentHeightPx,
+      rectDiff: { stream: stream.rectDiff, trim: trim1.rectDiff },
+      perPage,
+      timings: t,
+    };
+  } finally {
+    handle.destroy();
+  }
 }

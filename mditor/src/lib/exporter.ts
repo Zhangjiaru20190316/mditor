@@ -433,15 +433,13 @@ export async function exportHtml(
 }
 
 /**
- * 自研 PDF 管线编排（EX 轮）：共享预处理（S10 消毒 + 图片内联强化）→
- * 离屏工厂 → 分页 → 分块光栅 → pdf-lib 组装。返回字节与 meta（不落盘——
- * 落盘由调用方 pickSaveFile 后进行；perf 驱动口经 __exportDebug.exportPdfTo
- * 直写指定路径）。EX-P 原型期 textLayer 开关透传；字体缺位自动纯光栅。
+ * 共享预处理（S10 消毒 + 图片内联强化 + C2 未内联显式占位）：buildPdf 与
+ * 调试 A/B（__exportDebug.rasterAb）同源入口，保证 perf 对照与生产路径的
+ * 工厂输入逐字节一致。
  */
-export async function buildPdf(
-  ctx: ExportContext,
-  o: PdfPipelineOptions = {}
-): Promise<{ bytes: Uint8Array; meta: Record<string, unknown>; missing: ExportImageReportItem[] }> {
+export async function prepareExportHtml(
+  ctx: ExportContext
+): Promise<{ html: string; missing: ExportImageReportItem[] }> {
   let html = sanitizeExportHtml(ctx.html);
   let missing: ExportImageReportItem[] = [];
   try {
@@ -451,8 +449,20 @@ export async function buildPdf(
   } catch {
     /* 内联整体失败保留原引用（missing 为空——无法判定时不算列报项） */
   }
-  // C2：未内联项显式占位（静默裂图禁止）。
-  html = markMissingImages(html, missing);
+  return { html: markMissingImages(html, missing), missing };
+}
+
+/**
+ * 自研 PDF 管线编排（EX 轮）：共享预处理（S10 消毒 + 图片内联强化）→
+ * 离屏工厂 → 分页 → 分块光栅 → pdf-lib 组装。返回字节与 meta（不落盘——
+ * 落盘由调用方 pickSaveFile 后进行；perf 驱动口经 __exportDebug.exportPdfTo
+ * 直写指定路径）。EX-P 原型期 textLayer 开关透传；字体缺位自动纯光栅。
+ */
+export async function buildPdf(
+  ctx: ExportContext,
+  o: PdfPipelineOptions = {}
+): Promise<{ bytes: Uint8Array; meta: Record<string, unknown>; missing: ExportImageReportItem[] }> {
+  const { html, missing } = await prepareExportHtml(ctx);
   const { runPdfPipeline } = await import("./exportPdfPipeline");
   const result = await runPdfPipeline(html, ctx.css, o);
   return {

@@ -1,0 +1,8 @@
+2026-10-14T05:04:45.992Z [rasterAb] factory 440ms
+2026-10-14T05:04:46.021Z [rasterAb] measure 30ms
+2026-10-14T05:04:46.025Z [rasterAb] trim1:start
+2026-10-14T05:04:47.784Z [rasterAb] trim1:done 1758ms
+2026-10-14T05:04:47.785Z [rasterAb] stream:start
+2026-10-14T05:05:18.224Z [rasterAb] stream:done 30441ms
+2026-10-14T05:05:18.225Z [rasterAb] trim2:start
+2026-10-14T05:05:19.835Z [rasterAb] trim2:done 1610ms

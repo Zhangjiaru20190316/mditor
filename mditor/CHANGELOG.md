@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased（2026-10-12~14 批，EX 轮）：导出体系全面翻新——PDF 自研管线重建 + 全格式完整性 + PNG 离屏工厂 + 导出设置持久化
+
+结题报告 `docs/export-overhaul-report.md`（§4 门禁表已收口）。PDF 从「借道 OS
+打印对话框」整体迁移到「应用内自研管线」（离屏工厂 → 分页器纯函数 → 分块
+光栅 → pdf-lib 组装：页位图 + 隐形文本层 Tr 3 + CJK 子集内嵌）；`win.print()`
+路径整体退役（wry#707 静默导出限制由此绕开）。npm test 997 → **1077 绿**；
+编辑器热路径模块 diff 为零（R2 实查）。
+
+- **fix(export) Fix-C2 图片内联全量显式报告 + 远程图抓取**（E-1 主犯，
+  `1b949a7`）：每张图片显式结局（8 分类）+ missing 清单 UI 列报；远程图经
+  平台 Rust http 抓取（SSRF 防线 + 并发 3 + 15s 超时）；exportDocx 既有
+  S10 消毒缺口顺手修复。
+- **fix(export) Fix-D4 减配档公式补渲染**（RC-5 全格式公式覆没，`cedc30f`）：
+  大文档性能模式 + 超阈值下 getHTML 输出 `$` 源码（2,355 公式全灭）——
+  `renderDegradedMath` 块容器逻辑串扫描 + Range 手术跨元素替换，残留 $ 
+  4713→3（=基线）。
+- **feat(export) 自研 PDF 管线**（`de8eb56`/`d5550df`/`2418c31`/`be39beb`）：
+  离屏渲染工厂（真实版心宽 + 资源确定性就绪 + 进度/取消/幂等回收）、分页器
+  纯函数（keep-together/表格行断/孤儿寡妇/标题随文 + resume 状态机）、
+  分块光栅（画布预算 16384px/120MP）、pdf-lib 组装（隐形文本层 ε-合并组
+  铺字 + Noto Sans SC OFL 子集内嵌 8.3MB→数十 KB）。
+- **feat(export) U1 自有进度 UI + U2 设置持久化**：导出全链路零系统弹窗
+  （唯一系统交互 = pickSaveFile）；进度对话框（阶段文案/逐页进度/取消）；
+  设置面板新增「导出」分区（纸张 A4/Letter/A3 × 边距 10~25mm × 清晰度
+  1/1.5/2x）。
+- **feat(export) PNG 改走离屏工厂**（RC-6，`3f91375`）：懒渲染占位/未加载
+  lazy 图不再入图（密度档实测 984/2355 公式曾以源码入图）；不再依赖预览
+  模式。
+- **fix(export) C2 产物内显式占位框 + JPEG 内存护栏**（`6634948`）：未内联
+  图片在产物内为带原因的可见占位框（静默裂图禁止）；大文档解码预算
+  >256MB 时页图转 JPEG 0.92（embedPng 解码驻留在 87 页 × 2x 档实测撞
+  ~1GB 内存墙）。
+- **fix(export) 分块序列化裁剪 ChunkTrim + 裁剪语义 A/B 判定**（阶段六）：
+  密度档 87 页流式光栅第 7 块冻死 renderer（domToPng 全文档克隆 ~80 万
+  节点/块）——改为每块暂存窗口外块 + 窗口内块绝对定位钉实测坐标，87 页
+  145s 全量跑通。同工厂三变体 A/B（trim/stream/trim 对照）证实：trim 位图
+  级确定性（corr=1.0）+ 坐标保真（块顶差 2×10⁻⁶px）；流式在 foreignObject
+  中序列化坐标漂移（首块 margin 重现 21px + 逐页累积）且 18× 慢、大文档
+  不可生存——**裁剪保留，fractional top 不取整**；跨文件 18px 位移之谜随
+  之归因关闭（报告 §4.1）。调试口 `__exportDebug.rasterAb` + `pearsonBestLag`
+  单测留档。
+- **C3 公式完整性收口**：三档 `$` 残留 3/3/3（=基线）、KaTeX 2355/2355/2354；
+  减配档 Δ1 归因为编辑器减配档把公式内 `](...)` 链接化吞字符（范围外既有
+  缺陷，证据 `ex-phase6-c3-delta1.json`，报告 §5-4）。
+- **生产级修复**：布局收帧弃 rAF（被遮挡窗口 rAF 暂停 = 导出挂死）；pdf-lib
+  铺字逐页宏任务让渡（主线程饱和会冻结进度 UI/饿死取消信号）。
+- 新增测试：exportRenderFactory 10 + exportPaginator 15 + exportPdfAssembly 5 +
+  exportPdfPipeline 12 + exporterImages +2 + exporterDocx 1。
+
 ## Unreleased（2026-10-09 批，第十轮）：大文档滚动视口底部闪刷/换装可见修复（Fix-A'/Fix-B）
 
 结题报告 `docs/large-doc-bottom-flicker-report.md`。S1 换装可见事件（dev 密度档

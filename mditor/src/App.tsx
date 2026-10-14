@@ -1137,6 +1137,68 @@ function App() {
         await getAdapter().fs.writeFile(path, r.bytes);
         return { meta: r.meta, missingCount: r.missing.length };
       },
+      // EX 阶段六：裁剪语义决定性 A/B（同工厂 trim1/stream/trim2 三变体
+      // 光栅对比）。编辑器侧预处理与 exportPdfTo 同序，再经 prepareExportHtml
+      // 与 buildPdf 共享消毒/内联——perf 对照与生产路径工厂输入一致。
+      rasterAb: async (opts) => {
+        const ed = editorRef.current;
+        if (!ed) return { error: "no editor" };
+        let html = ed.getHTML();
+        const { renderBlockMath, renderDegradedMath } = await import("./lib/exportMath");
+        if (ed.isBigDoc()) {
+          try {
+            html = renderDegradedMath(html).html;
+          } catch {
+            /* 补渲染失败保留原样 */
+          }
+        }
+        html = renderBlockMath(html).html;
+        try {
+          html = resolveWikiLinksInHtml(html, fileApi.doc.path);
+        } catch {
+          /* 降级失败保留原标记 */
+        }
+        try {
+          html = resolveCitationsForExport(html);
+        } catch {
+          /* 降级失败保留 chip 文本 */
+        }
+        try {
+          html = degradeFlashcardsInHtml(html);
+        } catch {
+          /* 降级失败保留卡片容器 */
+        }
+        const { prepareExportHtml } = await import("./lib/exporter");
+        const { html: prepared } = await prepareExportHtml({
+          html,
+          css: collectThemeCss(),
+          docPath: fileApi.doc.path,
+        });
+        const { runPdfRasterAb } = await import("./lib/exportPdfPipeline");
+        const dumpDir = opts?.dumpDir;
+        const b64ToBytes = (d: string): Uint8Array => {
+          const bin = atob(d.slice(d.indexOf(",") + 1));
+          const out = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+          return out;
+        };
+        return (await runPdfRasterAb(prepared, collectThemeCss(), {
+          paper: opts?.paper,
+          marginMm: opts?.marginMm,
+          rasterScale: opts?.rasterScale,
+          pageCount: opts?.pageCount,
+          maxLagPx: opts?.maxLagPx,
+          onStage: (stage, ms) =>
+            console.log(`[rasterAb] ${stage}${ms != null ? ` ${Math.round(ms)}ms` : ""}`),
+          onPng: dumpDir
+            ? (variant, i, dataUrl) => {
+                void getAdapter()
+                  .fs.writeFile(`${dumpDir}/ex6-ab-${variant}-page${i}.png`, b64ToBytes(dataUrl))
+                  .catch(() => undefined);
+              }
+            : undefined,
+        })) as unknown as Record<string, unknown>;
+      },
     });
   }, [fileApi.doc.path, openPath]);
 

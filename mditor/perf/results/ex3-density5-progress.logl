@@ -1,0 +1,110 @@
+2026-10-13T06:05:16.306Z connected scale=2 cap=45min
+2026-10-13T06:05:18.696Z open: true
+2026-10-13T06:05:23.970Z launched, polling…
+2026-10-13T06:05:24.576Z console [ex3] {"t":873,"stage":"factory","done":1,"total":1}
+2026-10-13T06:05:24.667Z console [ex3] {"t":966,"stage":"factory","done":0,"total":0}
+2026-10-13T06:05:25.551Z console [ex3] {"t":1851,"stage":"factory","done":1,"total":1}
+2026-10-13T06:05:25.552Z console [ex3] {"t":1851,"stage":"factory","done":1,"total":1}
+2026-10-13T06:05:25.630Z console [ex3] {"t":1930,"stage":"measure","done":978,"total":978}
+2026-10-13T06:05:25.631Z console [ex3] {"t":1931,"stage":"paginate","done":87,"total":87}
+2026-10-13T06:05:25.898Z console [ex3] {"t":2197,"stage":"text","done":24625,"total":24625}
+2026-10-13T06:05:28.067Z console [ex3] {"t":4367,"stage":"raster","done":1,"total":87}
+2026-10-13T06:05:28.094Z console [ex3] {"t":4395,"stage":"raster","done":2,"total":87}
+2026-10-13T06:05:28.220Z console [ex3] {"t":4520,"stage":"raster","done":3,"total":87}
+2026-10-13T06:05:28.296Z console [ex3] {"t":4595,"stage":"raster","done":4,"total":87}
+2026-10-13T06:05:33.864Z console [ex3] {"t":10164,"stage":"raster","done":5,"total":87}
+2026-10-13T06:05:33.888Z console [ex3] {"t":10188,"stage":"raster","done":6,"total":87}
+2026-10-13T06:05:33.911Z console [ex3] {"t":10211,"stage":"raster","done":7,"total":87}
+2026-10-13T06:05:33.934Z console [ex3] {"t":10235,"stage":"raster","done":8,"total":87}
+2026-10-13T06:05:39.512Z console [ex3] {"t":15812,"stage":"raster","done":9,"total":87}
+2026-10-13T06:05:39.543Z console [ex3] {"t":15843,"stage":"raster","done":10,"total":87}
+2026-10-13T06:05:39.565Z console [ex3] {"t":15865,"stage":"raster","done":11,"total":87}
+2026-10-13T06:05:39.591Z console [ex3] {"t":15891,"stage":"raster","done":12,"total":87}
+2026-10-13T06:05:44.837Z poll 20s {"done":false,"err":null,"last":{"t":15891,"stage":"raster","done":12,"total":87}} consoleIdle=5s
+2026-10-13T06:05:45.614Z console [ex3] {"t":21914,"stage":"raster","done":13,"total":87}
+2026-10-13T06:05:45.642Z console [ex3] {"t":21942,"stage":"raster","done":14,"total":87}
+2026-10-13T06:05:45.666Z console [ex3] {"t":21966,"stage":"raster","done":15,"total":87}
+2026-10-13T06:05:45.702Z console [ex3] {"t":22002,"stage":"raster","done":16,"total":87}
+2026-10-13T06:05:51.572Z console [ex3] {"t":27872,"stage":"raster","done":17,"total":87}
+2026-10-13T06:05:51.599Z console [ex3] {"t":27899,"stage":"raster","done":18,"total":87}
+2026-10-13T06:05:51.621Z console [ex3] {"t":27921,"stage":"raster","done":19,"total":87}
+2026-10-13T06:05:51.648Z console [ex3] {"t":27948,"stage":"raster","done":20,"total":87}
+2026-10-13T06:05:56.520Z console [ex3] {"t":32820,"stage":"raster","done":21,"total":87}
+2026-10-13T06:05:56.548Z console [ex3] {"t":32848,"stage":"raster","done":22,"total":87}
+2026-10-13T06:05:56.572Z console [ex3] {"t":32872,"stage":"raster","done":23,"total":87}
+2026-10-13T06:05:56.598Z console [ex3] {"t":32898,"stage":"raster","done":24,"total":87}
+2026-10-13T06:06:01.526Z console [ex3] {"t":37826,"stage":"raster","done":25,"total":87}
+2026-10-13T06:06:01.549Z console [ex3] {"t":37849,"stage":"raster","done":26,"total":87}
+2026-10-13T06:06:01.574Z console [ex3] {"t":37874,"stage":"raster","done":27,"total":87}
+2026-10-13T06:06:01.594Z console [ex3] {"t":37895,"stage":"raster","done":28,"total":87}
+2026-10-13T06:06:05.235Z poll 41s {"done":false,"err":null,"last":{"t":37895,"stage":"raster","done":28,"total":87}} consoleIdle=4s
+2026-10-13T06:06:07.259Z console [ex3] {"t":43558,"stage":"raster","done":29,"total":87}
+2026-10-13T06:06:07.298Z console [ex3] {"t":43598,"stage":"raster","done":30,"total":87}
+2026-10-13T06:06:07.327Z console [ex3] {"t":43627,"stage":"raster","done":31,"total":87}
+2026-10-13T06:06:07.353Z console [ex3] {"t":43653,"stage":"raster","done":32,"total":87}
+2026-10-13T06:06:13.501Z console [ex3] {"t":49801,"stage":"raster","done":33,"total":87}
+2026-10-13T06:06:13.530Z console [ex3] {"t":49830,"stage":"raster","done":34,"total":87}
+2026-10-13T06:06:13.548Z console [ex3] {"t":49848,"stage":"raster","done":35,"total":87}
+2026-10-13T06:06:13.573Z console [ex3] {"t":49874,"stage":"raster","done":36,"total":87}
+2026-10-13T06:06:19.496Z console [ex3] {"t":55796,"stage":"raster","done":37,"total":87}
+2026-10-13T06:06:19.526Z console [ex3] {"t":55826,"stage":"raster","done":38,"total":87}
+2026-10-13T06:06:19.548Z console [ex3] {"t":55849,"stage":"raster","done":39,"total":87}
+2026-10-13T06:06:19.578Z console [ex3] {"t":55879,"stage":"raster","done":40,"total":87}
+2026-10-13T06:06:25.645Z poll 61s {"done":false,"err":null,"last":{"t":55879,"stage":"raster","done":40,"total":87}} consoleIdle=6s
+2026-10-13T06:06:25.659Z console [ex3] {"t":61960,"stage":"raster","done":41,"total":87}
+2026-10-13T06:06:25.683Z console [ex3] {"t":61984,"stage":"raster","done":42,"total":87}
+2026-10-13T06:06:25.713Z console [ex3] {"t":62013,"stage":"raster","done":43,"total":87}
+2026-10-13T06:06:25.792Z console [ex3] {"t":62092,"stage":"raster","done":44,"total":87}
+2026-10-13T06:06:32.175Z console [ex3] {"t":68476,"stage":"raster","done":45,"total":87}
+2026-10-13T06:06:32.206Z console [ex3] {"t":68506,"stage":"raster","done":46,"total":87}
+2026-10-13T06:06:32.228Z console [ex3] {"t":68529,"stage":"raster","done":47,"total":87}
+2026-10-13T06:06:32.257Z console [ex3] {"t":68557,"stage":"raster","done":48,"total":87}
+2026-10-13T06:06:38.230Z console [ex3] {"t":74530,"stage":"raster","done":49,"total":87}
+2026-10-13T06:06:38.263Z console [ex3] {"t":74563,"stage":"raster","done":50,"total":87}
+2026-10-13T06:06:38.290Z console [ex3] {"t":74590,"stage":"raster","done":51,"total":87}
+2026-10-13T06:06:38.316Z console [ex3] {"t":74616,"stage":"raster","done":52,"total":87}
+2026-10-13T06:06:44.769Z console [ex3] {"t":81069,"stage":"raster","done":53,"total":87}
+2026-10-13T06:06:44.799Z console [ex3] {"t":81099,"stage":"raster","done":54,"total":87}
+2026-10-13T06:06:44.825Z console [ex3] {"t":81126,"stage":"raster","done":55,"total":87}
+2026-10-13T06:06:44.849Z console [ex3] {"t":81149,"stage":"raster","done":56,"total":87}
+2026-10-13T06:06:48.141Z poll 82s {"done":false,"err":null,"last":{"t":81149,"stage":"raster","done":56,"total":87}} consoleIdle=3s
+2026-10-13T06:06:50.186Z console [ex3] {"t":86486,"stage":"raster","done":57,"total":87}
+2026-10-13T06:06:50.211Z console [ex3] {"t":86511,"stage":"raster","done":58,"total":87}
+2026-10-13T06:06:50.296Z console [ex3] {"t":86596,"stage":"raster","done":59,"total":87}
+2026-10-13T06:06:50.326Z console [ex3] {"t":86627,"stage":"raster","done":60,"total":87}
+2026-10-13T06:06:56.576Z console [ex3] {"t":92877,"stage":"raster","done":61,"total":87}
+2026-10-13T06:06:56.606Z console [ex3] {"t":92907,"stage":"raster","done":62,"total":87}
+2026-10-13T06:06:56.629Z console [ex3] {"t":92930,"stage":"raster","done":63,"total":87}
+2026-10-13T06:06:56.658Z console [ex3] {"t":92958,"stage":"raster","done":64,"total":87}
+2026-10-13T06:07:03.005Z console [ex3] {"t":99305,"stage":"raster","done":65,"total":87}
+2026-10-13T06:07:03.040Z console [ex3] {"t":99341,"stage":"raster","done":66,"total":87}
+2026-10-13T06:07:03.067Z console [ex3] {"t":99367,"stage":"raster","done":67,"total":87}
+2026-10-13T06:07:03.096Z console [ex3] {"t":99397,"stage":"raster","done":68,"total":87}
+2026-10-13T06:07:08.908Z poll 104s {"done":false,"err":null,"last":{"t":99397,"stage":"raster","done":68,"total":87}} consoleIdle=6s
+2026-10-13T06:07:09.784Z console [ex3] {"t":106084,"stage":"raster","done":69,"total":87}
+2026-10-13T06:07:09.808Z console [ex3] {"t":106108,"stage":"raster","done":70,"total":87}
+2026-10-13T06:07:09.836Z console [ex3] {"t":106137,"stage":"raster","done":71,"total":87}
+2026-10-13T06:07:09.886Z console [ex3] {"t":106187,"stage":"raster","done":72,"total":87}
+2026-10-13T06:07:14.871Z console [ex3] {"t":111171,"stage":"raster","done":73,"total":87}
+2026-10-13T06:07:14.906Z console [ex3] {"t":111207,"stage":"raster","done":74,"total":87}
+2026-10-13T06:07:14.938Z console [ex3] {"t":111239,"stage":"raster","done":75,"total":87}
+2026-10-13T06:07:14.958Z console [ex3] {"t":111258,"stage":"raster","done":76,"total":87}
+2026-10-13T06:07:21.303Z console [ex3] {"t":117603,"stage":"raster","done":77,"total":87}
+2026-10-13T06:07:21.334Z console [ex3] {"t":117633,"stage":"raster","done":78,"total":87}
+2026-10-13T06:07:21.359Z console [ex3] {"t":117658,"stage":"raster","done":79,"total":87}
+2026-10-13T06:07:21.386Z console [ex3] {"t":117686,"stage":"raster","done":80,"total":87}
+2026-10-13T06:07:28.999Z poll 125s {"done":false,"err":null,"last":{"t":117686,"stage":"raster","done":80,"total":87}} consoleIdle=8s
+2026-10-13T06:07:29.005Z console [ex3] {"t":125305,"stage":"raster","done":81,"total":87}
+2026-10-13T06:07:29.035Z console [ex3] {"t":125334,"stage":"raster","done":82,"total":87}
+2026-10-13T06:07:29.058Z console [ex3] {"t":125358,"stage":"raster","done":83,"total":87}
+2026-10-13T06:07:29.086Z console [ex3] {"t":125386,"stage":"raster","done":84,"total":87}
+2026-10-13T06:07:30.918Z console [ex3] {"t":127217,"stage":"raster","done":85,"total":87}
+2026-10-13T06:07:30.948Z console [ex3] {"t":127248,"stage":"raster","done":86,"total":87}
+2026-10-13T06:07:30.975Z console [ex3] {"t":127275,"stage":"raster","done":87,"total":87}
+2026-10-13T06:07:32.324Z console [ex3] DONE err=null
+2026-10-13T06:07:49.007Z poll 145s {"done":true,"err":null,"last":{"t":127275,"stage":"raster","done":87,"total":87}} consoleIdle=17s
+2026-10-13T06:07:49.007Z verdict: done
+2026-10-13T06:07:49.009Z meta: {"pages":87,"paper":"A4","contentWidthPx":680,"contentHeightPx":1009,"rasterScale":2,"paginate":{"pages":87,"splits":22,"pushedKeepTogether":6,"orphanWidowPushes":38,"headingPushes":12,"clippedSegments":0},"assemble":{"pages":87,"fontEmbedded":true,"embedFontMs":10,"textRunsPlaced":24625,"glyphsPlaced":82168,"textOpsPlaced":40231},"textFragments":24625,"timings":{"factory":1234.0999999996275,"measure":78.3999999994412,"paginate":0.599999999627471,"text":266.79999999981374,"raster":125067.79999999981,"assemble":857}}
+2026-10-13T06:07:49.009Z PDF bytes: 28124713
+2026-10-13T06:07:49.283Z pdf-lib pageCount: 87 | meta.pages: 87 | MATCH: true
+2026-10-13T06:07:49.284Z saved → perf/results/ex-phase3-density-run.json

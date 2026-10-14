@@ -6,12 +6,32 @@
 import { describe, expect, it } from "vitest";
 import {
   PDF_PAPERS,
+  blockIntersectsWindow,
   dataUrlToBytes,
   fragmentsToPageRuns,
   mmToPt,
+  pearsonBestLag,
   type PdfExportProgress,
 } from "./exportPdfPipeline";
 import type { PageWindow } from "./exportPaginator";
+
+describe("blockIntersectsWindow（分块序列化裁剪判定）", () => {
+  it("窗口内/窗口外/骑线块：骑线必留（分页刀口可落在块内部）", () => {
+    const wTop = 1000;
+    const wBottom = 1000 + 4036;
+    // 完全在窗口上方/下方 → 不留
+    expect(blockIntersectsWindow(0, 100, wTop, wBottom)).toBe(false);
+    expect(blockIntersectsWindow(wBottom + 500, wBottom + 600, wTop, wBottom)).toBe(false);
+    // 完全在窗口内 → 留
+    expect(blockIntersectsWindow(1200, 1300, wTop, wBottom)).toBe(true);
+    // 骑上缘/骑下缘 → 留
+    expect(blockIntersectsWindow(900, 1100, wTop, wBottom)).toBe(true);
+    expect(blockIntersectsWindow(wBottom - 50, wBottom + 50, wTop, wBottom)).toBe(true);
+    // 纯边接触（区间半开 + eps）→ 不留
+    expect(blockIntersectsWindow(0, wTop, wTop, wBottom)).toBe(false);
+    expect(blockIntersectsWindow(wBottom, wBottom + 10, wTop, wBottom)).toBe(false);
+  });
+});
 
 describe("纸张数学", () => {
   it("mm→pt 换算（25.4mm = 72pt）", () => {
@@ -142,6 +162,35 @@ describe("dataUrlToBytes", () => {
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ";
     const b = dataUrlToBytes(url);
     expect(Array.from(b.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+  });
+});
+
+describe("pearsonBestLag（调试 A/B 行剖面互相关）", () => {
+  const mkProfile = (peaks: number[], n = 400): number[] => {
+    const a = new Array<number>(n).fill(0);
+    for (const p of peaks) for (let d = -2; d <= 2; d++) a[p + d] = 10 - Math.abs(d) * 2;
+    return a;
+  };
+
+  it("b 比 a 整体下移 8px：lag=8 且 r≈1", () => {
+    const a = mkProfile([50, 120, 210, 300]);
+    const b = mkProfile([58, 128, 218, 308]);
+    const r = pearsonBestLag(a, b, 24);
+    expect(r.lag).toBe(8);
+    expect(r.r).toBeGreaterThan(0.999);
+  });
+
+  it("零位移：lag=0 且 r=1", () => {
+    const a = mkProfile([40, 130, 260]);
+    expect(pearsonBestLag(a, a.slice(), 24)).toEqual({ lag: 0, r: 1 });
+  });
+
+  it("滞后超出搜索窗：不再强行对齐（|lag| ≤ maxLag 且 r 有界）", () => {
+    const a = mkProfile([30, 200]);
+    const b = mkProfile([130, 300]); // 下移 100px > maxLag 24
+    const r = pearsonBestLag(a, b, 24);
+    expect(Math.abs(r.lag)).toBeLessThanOrEqual(24);
+    expect(r.r).toBeLessThan(0.5);
   });
 });
 
