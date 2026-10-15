@@ -606,11 +606,86 @@ export async function exportPng(
  *   HTMLtoDOCX(htmlString, headerHTML?, documentOptions?, footerHTML?) ->
  *     Promise<ArrayBuffer | Blob | Buffer>
  *
- * NOTE: this lib has a Node heritage (Buffer/sharp under the hood). The browser
- * build degrades gracefully on images (no sharp) — text formatting still
- * exports. If the browser build throws at runtime, the P1 fix is to run the
- * conversion in a Tauri sidecar or a Node child process. TODO(P1).
+ * DX 修复（2026-10-15）：该库的 browser 构建（exports.browser 条件，webview
+ * 实际加载）裸引用 Node 全局 `Buffer`/`global`（1.22.0～1.23.1 上游未修，
+ * 库内部打包了完整 buffer 实现却没挂到全局），WebView2 里任何文档都抛
+ * ReferenceError——含图档崩在 yM 图片解码（Buffer），纯文本档崩在尾段产物
+ * 转换（global）。定罪证据：perf/results/ex-dx-phase1-conviction.md。
+ * 输入侧规避：加载库前补最小垫片（ensureBrowserNodeGlobals，仅补缺不覆
+ * 盖、幂等、零新依赖）——sidecar/Node 子进程预案（TODO P1）不需要。
  */
+/** 垫片 Buffer 的外部面（库与 node 侧依赖的实测调用形态，见定罪报告）。 */
+interface ShimBufferCtor {
+  new (size: number): Uint8Array;
+  from(input: string | Uint8Array | ArrayLike<number>, encoding?: string): Uint8Array;
+  isBuffer(x: unknown): boolean;
+  byteLength(s: string, encoding?: string): number;
+  alloc(size: number, fill?: number): Uint8Array;
+  concat(list: Uint8Array[]): Uint8Array;
+}
+
+/** Uint8Array 子类（产物可进 zip 流，toArrayBuffer 的 instanceof 检查天然
+ * 通过）。from 以 Buffer 语义（str + encoding）遮蔽 Uint8Array.from 的 mapfn
+ * 重载——静态签名天然冲突，故 class 内叫 make、挂载时换名（调用形态由
+ * exporterDocxBrowserBuild.test.ts 钉住）。 */
+const MiniBufferClass = class extends Uint8Array {
+  static make(
+    input: string | Uint8Array | ArrayLike<number>,
+    encoding?: string
+  ): Uint8Array {
+    if (typeof input === "string") {
+      const bytes =
+        (encoding ?? "utf-8").toLowerCase() === "base64"
+          ? base64ToBytes(input)
+          : new TextEncoder().encode(input);
+      const out = new MiniBufferClass(bytes.length);
+      out.set(bytes);
+      return out;
+    }
+    const out = new MiniBufferClass(input.length);
+    out.set(input);
+    return out;
+  }
+
+  static isBuffer(x: unknown): boolean {
+    return x instanceof MiniBufferClass;
+  }
+
+  // 静态工具面：库本体不直接用，但 node 侧依赖（如 undici fetch 实现）会
+  // 裸调 Buffer.byteLength 等——补齐核心三件，避免垫片环境下的旁路崩溃。
+  static byteLength(s: string, encoding?: string): number {
+    return MiniBufferClass.make(s, encoding).length;
+  }
+
+  static alloc(size: number, fill: number = 0): Uint8Array {
+    const b = new MiniBufferClass(size);
+    b.fill(fill);
+    return b;
+  }
+
+  static concat(list: Uint8Array[]): Uint8Array {
+    const total = list.reduce((n, x) => n + x.length, 0);
+    const out = new MiniBufferClass(total);
+    let o = 0;
+    for (const x of list) {
+      out.set(x, o);
+      o += x.length;
+    }
+    return out;
+  }
+};
+
+const MiniBuffer: ShimBufferCtor = Object.assign(MiniBufferClass, {
+  from: MiniBufferClass.make,
+});
+
+/** webview 下补 global 别名与 Buffer 垫片（见 exportDocx 头注）。 */
+export function ensureBrowserNodeGlobals(): void {
+  const g = globalThis as { global?: unknown; Buffer?: unknown };
+  if (g.global === undefined) g.global = globalThis;
+  if (g.Buffer === undefined) g.Buffer = MiniBuffer;
+}
+
 export async function exportDocx(
   ctx: ExportContext,
   suggestedName = "untitled.docx"
@@ -633,6 +708,9 @@ export async function exportDocx(
   // Inline CSS so heading/list styling survives the html->docx conversion.
   const juice = (await import("juice")).default;
   const inlined = juice.inlineContent(html, ctx.css);
+  // DX：browser 构建裸引用 Buffer/global——必须在首次 import 前注入垫片
+  //（库顶层与图片解码路径都会读这两个全局，见 exportDocx 头注）。
+  ensureBrowserNodeGlobals();
   const htmlToDocx = (await import("@turbodocx/html-to-docx")).default;
   const documentOptions = {
     table: { row: { cantSplit: true } },
