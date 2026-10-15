@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased（2026-10-15，DX 轮）：Word(docx) 导出必败修复——browser 构建全局垫片
+
+结题报告 `docs/docx-export-fix-report.md`。根因：@turbodocx/html-to-docx 的
+browser 构建（`exports.browser` 条件——webview 实际加载的那份）裸引用 Node
+全局 `Buffer`/`global`，**任何文档**导出 Word 必弹「导出失败：
+ReferenceError: …」（含图档崩 yM 图片解码、纯文本档崩尾段产物转换；vitest
+走 node 构建所以 1077 绿测不出；上游 1.23.1 tarball 比对未修）。
+
+- **fix(export) ensureBrowserNodeGlobals 垫片**（`4155006`）：
+  `globalThis.global` 别名 + MiniBuffer（Uint8Array 子类：
+  from(str,"utf-8"|"base64")/from(arrayLike)/isBuffer/byteLength/alloc/
+  concat，仅补缺不覆盖、幂等）在 exportDocx 加载库前注入——零新依赖、零
+  包体积，sidecar/Node 子进程预案（TODO P1）不需要。npm test
+  1077 → **1080 绿**；本机 Word COM 无头实开 5/5（最小纯文本/最小 dataURL
+  图/demo 全语法/公式档/多图档），data URL 图真实嵌入 word/media。
+- **test(export) browser 构建根因回归**：exporterDocxBrowserBuild.test.ts
+  （jsdom 模拟 webview 全局缺失，直驱 browser 构建钉两个 throw 点）与
+  exporterDocx.test.ts 的 node 构建钉子互补——双构建覆盖。定罪证据
+  `perf/results/ex-dx-phase1-conviction.md`（观测独立 commit `98dcfd7`）。
+
 ## Unreleased（2026-10-12~14 批，EX 轮）：导出体系全面翻新——PDF 自研管线重建 + 全格式完整性 + PNG 离屏工厂 + 导出设置持久化
 
 结题报告 `docs/export-overhaul-report.md`（§4 门禁表已收口）。PDF 从「借道 OS
