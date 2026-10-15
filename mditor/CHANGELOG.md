@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased（2026-10-15，DX 轮）：Word(docx) 导出必败修复——browser 构建全局垫片
+## 5.0.2-beta（2026-10-15）：EX 导出体系全面翻新 + DX Word 导出必败修复
+
+### DX 轮（2026-10-15）：Word(docx) 导出必败修复——browser 构建全局垫片
 
 结题报告 `docs/docx-export-fix-report.md`。根因：@turbodocx/html-to-docx 的
 browser 构建（`exports.browser` 条件——webview 实际加载的那份）裸引用 Node
@@ -20,7 +22,7 @@ ReferenceError: …」（含图档崩 yM 图片解码、纯文本档崩尾段产
   exporterDocx.test.ts 的 node 构建钉子互补——双构建覆盖。定罪证据
   `perf/results/ex-dx-phase1-conviction.md`（观测独立 commit `98dcfd7`）。
 
-## Unreleased（2026-10-12~14 批，EX 轮）：导出体系全面翻新——PDF 自研管线重建 + 全格式完整性 + PNG 离屏工厂 + 导出设置持久化
+### EX 轮（2026-10-12~14 批）：导出体系全面翻新——PDF 自研管线重建 + 全格式完整性 + PNG 离屏工厂 + 导出设置持久化
 
 结题报告 `docs/export-overhaul-report.md`（§4 门禁表已收口）。PDF 从「借道 OS
 打印对话框」整体迁移到「应用内自研管线」（离屏工厂 → 分页器纯函数 → 分块
