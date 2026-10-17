@@ -237,27 +237,94 @@ export function measureBlocks(handle: RenderFactoryHandle): MeasuredBlock[] {
       kids.push(span);
     }
   }
-  const blocks: MeasuredBlock[] = [];
-  for (let i = 0; i < kids.length; i++) {
-    const el = kids[i] as HTMLElement;
+  if (kids.length === 0) return [];
+
+  // Pass 1：逐 kid 测 border 顶 + 断页单元（行盒/行，rel 到 border 顶——
+  // 首单元可为负：KaTeX vlist 零高盒的墨迹绘制在布局盒之外，HX P-γ）。
+  interface KidMeasure {
+    borderTop: number;
+    borderHeight: number;
+    keepTogether?: boolean;
+    keepWithNext?: boolean;
+    rows?: SplitLine[];
+    lines?: SplitLine[];
+    orphanControl?: boolean;
+    /** 首单元绝对顶（content 坐标；无单元 = border 顶）。 */
+    inkTop: number;
+    /** 末单元绝对底与 border 底的较大者（content 坐标）。 */
+    coverBottom: number;
+  }
+  const unitTop = (u?: SplitLine): number | undefined =>
+    u ? u.top : undefined;
+  const unitBottom = (u?: SplitLine): number | undefined =>
+    u ? u.top + u.height : undefined;
+  const measured: KidMeasure[] = kids.map((kid) => {
+    const el = kid as HTMLElement;
     const rect = el.getBoundingClientRect();
     const top = rect.top - base.top;
-    const nextTop =
-      i + 1 < kids.length
-        ? (kids[i + 1] as HTMLElement).getBoundingClientRect().top - base.top
-        : content.scrollHeight;
-    const height = Math.max(nextTop - top, rect.height, 0);
-      const tag = el.tagName;
-      const blockId = blocks.length;
-      if (KEEP_TAGS.has(tag)) {
-        blocks.push({ blockId, height, keepTogether: true });
-      } else if (HEADING_TAGS.has(tag)) {
-        blocks.push({ blockId, height, keepTogether: true, keepWithNext: true });
-      } else if (tag === "TABLE") {
-        blocks.push({ blockId, height, rows: tableRows(el, top, base.top) });
-      } else {
-        blocks.push({ blockId, height, lines: lineBoxes(doc, el, top, base.top), orphanControl: true });
-      }
+    const tag = el.tagName;
+    let m: KidMeasure = {
+      borderTop: top,
+      borderHeight: rect.height,
+      inkTop: top,
+      coverBottom: top + rect.height,
+    };
+    if (KEEP_TAGS.has(tag)) {
+      m.keepTogether = true;
+    } else if (HEADING_TAGS.has(tag)) {
+      m.keepTogether = true;
+      m.keepWithNext = true;
+    } else if (tag === "TABLE") {
+      m.rows = tableRows(el, top, base.top);
+    } else {
+      m.lines = lineBoxes(doc, el, top, base.top);
+      m.orphanControl = true;
+    }
+    const units = m.rows ?? m.lines;
+    if (units && units.length > 0) {
+      const first = unitTop(units[0]) as number;
+      const last = unitBottom(units[units.length - 1]) as number;
+      m.inkTop = Math.min(top, top + first);
+      m.coverBottom = Math.max(top + rect.height, top + last);
+    }
+    return m;
+  });
+
+  // Pass 2：墨迹感知 rebase——块基准顶取「墨迹顶」（首块不取负：content
+  // 原点以上的溢出不在任何页窗内，从测量面裁掉），高度链铺满到下一块墨迹
+  // 顶，且任何块的覆盖底不小于自身墨迹底（块间刀口构造性落进无墨间隙/
+  // 块间隙）。
+  const blocks: MeasuredBlock[] = [];
+  let acc = 0;
+  for (let i = 0; i < measured.length; i++) {
+    const m = measured[i];
+    const coverTop = i === 0 ? Math.max(0, m.inkTop) : m.inkTop;
+    const top = Math.max(acc, coverTop);
+    // 单元换算：rel(border) → rel(新基)＝borderTop − top（墨迹顶高于
+    // border 顶时为正，把上溢部分拉回 0 基）。
+    const shift = m.borderTop - top;
+    const nextCoverTop = measured[i + 1]?.inkTop;
+    // 末块兜底到内容末底（scrollHeight 含溢出绘制）。
+    const lastEnd = Math.max(
+      content.scrollHeight,
+      measured[measured.length - 1].coverBottom
+    );
+    const height =
+      i + 1 < measured.length
+        ? Math.max(Math.max(nextCoverTop, m.coverBottom) - top, 0)
+        : Math.max(lastEnd - top, 0);
+    const rebase = (units?: SplitLine[]): SplitLine[] | undefined =>
+      units?.map((u) => ({ top: u.top + shift, height: u.height }));
+    blocks.push({
+      blockId: blocks.length,
+      height,
+      ...(m.keepTogether ? { keepTogether: true } : {}),
+      ...(m.keepWithNext ? { keepWithNext: true } : {}),
+      ...(m.rows ? { rows: rebase(m.rows) } : {}),
+      ...(m.lines ? { lines: rebase(m.lines) } : {}),
+      ...(m.orphanControl ? { orphanControl: true } : {}),
+    });
+    acc = top + height;
   }
   return blocks;
 }

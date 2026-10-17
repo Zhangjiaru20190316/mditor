@@ -93,6 +93,62 @@ afterEach(() => {
   while (restoreFns.length) restoreFns.pop()!();
 });
 
+// HX P-γ 回归锚定：KaTeX vlist 零高盒的墨迹会超出块 border 盒（实测上溢
+// 3.2px）；块间刀口落在下一块 border 顶时切进上溢墨迹。修复语义：块坐标
+// 基准重定到「墨迹顶」（min(border 顶, 首行盒顶)），高度链随之 ink 对齐。
+describe("measureBlocks 墨迹感知 rebase（HX P-γ：块首墨迹上溢不出刀）", () => {
+  it("下一块首行墨迹上溢 border 顶：高度链覆盖到墨迹顶，行盒 rel 到墨迹基", () => {
+    const doc = document.implementation.createHTMLDocument("fac");
+    const content = doc.createElement("div");
+    const pa = doc.createElement("p");
+    pa.textContent = "前块";
+    const pb = doc.createElement("p");
+    pb.textContent = "含公式行";
+    content.append(pa, pb);
+    doc.body.appendChild(content);
+    const vpTop = 100;
+    const aBorder = vpTop + 400;
+    const bBorder = vpTop + 500;
+    const OVER = 3.2; // 公式墨迹上溢
+    const origGBCR = Element.prototype.getBoundingClientRect;
+    (Element.prototype as unknown as Record<string, unknown>).getBoundingClientRect =
+      function (this: Element) {
+        if (this === content) {
+          return { top: vpTop, bottom: vpTop + 1000, height: 1000, width: 680, left: 0, right: 680, x: 0, y: vpTop, toJSON: () => ({}) };
+        }
+        if (this === pa) {
+          return { top: aBorder, bottom: aBorder + 44, height: 44, width: 680, left: 0, right: 680, x: 0, y: aBorder, toJSON: () => ({}) };
+        }
+        if (this === pb) {
+          return { top: bBorder, bottom: bBorder + 44, height: 44, width: 680, left: 0, right: 680, x: 0, y: bBorder, toJSON: () => ({}) };
+        }
+        return { top: 0, bottom: 0, height: 0, width: 0, left: 0, right: 0, x: 0, y: 0, toJSON: () => ({}) };
+      };
+    const origGCR = Range.prototype.getClientRects;
+    (Range.prototype as unknown as Record<string, unknown>).getClientRects =
+      function (this: Range) {
+        const node = this.startContainer;
+        const t = node.textContent ?? "";
+        // 前块行 [4,24]；后块首行墨迹 [−3.2, 20]（上溢 border 顶）
+        if (t === "前块") {
+          return [{ top: aBorder + 4, bottom: aBorder + 24, height: 20, width: 40, left: 0, right: 40, x: 0, y: aBorder + 4, toJSON: () => ({}) }];
+        }
+        return [{ top: bBorder - OVER, bottom: bBorder + 20, height: 20 + OVER, width: 40, left: 0, right: 40, x: 0, y: bBorder - OVER, toJSON: () => ({}) }];
+      };
+    restoreFns.push(() => {
+      (Element.prototype as unknown as Record<string, unknown>).getBoundingClientRect = origGBCR;
+      (Range.prototype as unknown as Record<string, unknown>).getClientRects = origGCR;
+    });
+    const h = { iframe: {}, doc, content, issues: [], timedOut: false, destroy: () => {} } as unknown as RenderFactoryHandle;
+    const blocks = measureBlocks(h);
+    // 高度链：块 A 高度覆盖到块 B 墨迹顶（500−3.2），不再止于 B border 顶
+    expect(blocks[0].height).toBeCloseTo(96.8, 5);
+    // 块 B 行盒 rel 到墨迹基（首行 top=0），不再带负值
+    expect(blocks[1].lines![0].top).toBeCloseTo(0, 5);
+    expect(blocks[1].lines![0].height).toBeCloseTo(23.2, 5);
+  });
+});
+
 describe("measureBlocks 行盒坐标系（HX P-α 回归：视口 rect → content 相对）", () => {
   it("content 视口原点≠0 时行盒不随偏移（demo 实测几何：原点 21.4/两行 [4,24]+[32,52]）", () => {
     const h = fakeFactory({
