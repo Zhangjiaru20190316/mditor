@@ -37,8 +37,10 @@ const standalone = await cdp.eval(`(async () => {
   try { html = (await import('/src/lib/citationExport.ts')).resolveCitationsForExport(html); } catch {}
   try { html = (await import('/src/lib/flashcardExport.ts')).degradeFlashcardsInHtml(html); } catch {}
   // —— 镜像 exportHtml（exporter.ts :401-433，inlineImages=false 分支）——
+  // exporter 加 cache-bust：CDP 侧动态 import 不走 vite HMR 簿记，须强制取
+  // 当前源（否则修复后仍复用页面内旧模块，误判修复无效）。
   const { sanitizeExportHtml } = await import('/src/lib/exportSanitize.ts');
-  const { wrapHtml } = await import('/src/lib/exporter.ts');
+  const { wrapHtml } = await import('/src/lib/exporter.ts?t=' + Date.now());
   const { collectThemeCss } = await import('/src/lib/themeCss.ts');
   const sanitized = sanitizeExportHtml(html);
   let css = collectThemeCss();

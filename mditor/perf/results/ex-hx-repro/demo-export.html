@@ -2213,6 +2213,11 @@ html[data-motion="lively"] .template-item:active, html[data-motion="lively"] .an
    该属性时 var(--bg)/var(--fg) 全部退化到 :root 浅色兜底——任何主题导出都
    变成默认浅色。此处必须回写 data-theme。 */
 html { background: var(--bg); } /* 根元素背景传播到画布：打印时整页带主题底色 */
+/* HX E-H1：整包收集的应用外壳规则（html/body height:100% + body
+   overflow:hidden——无边框窗口语义）会随主题 CSS 进导出文件；body 的
+   overflow 传播到视口，浏览器打开后滚动锁死。导出文档是普通流式网页，
+   在收集 CSS 之后声明（同特异度层叠后者胜）恢复自然文档语义。 */
+html, body { height: auto; overflow: visible; }
 body { max-width: 820px; margin: 40px auto; padding: 0 24px; }
 mark { background: var(--mark-bg, rgba(255, 213, 79, 0.55)); color: inherit; border-radius: 2px; padding: 0.05em 0.12em; } /* ==高光== */
 /* 打印默认丢弃背景色：暗色主题下浅色文字 + 白纸 = 白纸白字。强制按屏幕

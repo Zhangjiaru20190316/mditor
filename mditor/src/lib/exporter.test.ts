@@ -39,4 +39,20 @@ describe("wrapHtml 导出文档外壳", () => {
     expect(doc).toContain('<body class="vditor-reset">');
     expect(doc).toContain('<p class="x">正文</p>');
   });
+
+  // HX E-H1 回归锚定：应用外壳规则随整包收集进入导出文件——body 的
+  // overflow:hidden 传播到视口，独立 HTML 打开后滚动锁死（只能看到第一屏）。
+  // 修复：导出 defaults 在收集 CSS 之后声明 html/body 的 height/overflow
+  // 覆盖（同特异度层叠后者胜），恢复普通流式网页语义。
+  it("导出外壳覆盖整包收集的应用外壳规则（html/body height 与 overflow）", () => {
+    const shellCss = [
+      "html, body, #root { height: 100%; margin: 0; padding: 0; }",
+      "body { font-family: var(--font-prose); overflow: hidden; }",
+    ].join("\n");
+    const doc = wrapHtml("<p>hi</p>", shellCss, "t", "light");
+    const override = "html, body { height: auto; overflow: visible; }";
+    expect(doc).toContain(override);
+    // 层叠位次：覆盖必须出现在收集 CSS 之后（同特异度后者胜）
+    expect(doc.indexOf(override)).toBeGreaterThan(doc.indexOf("overflow: hidden"));
+  });
 });
