@@ -11,6 +11,7 @@ import {
   fragmentsToPageRuns,
   measureBlocks,
   mmToPt,
+  pageSliceSourceY,
   pearsonBestLag,
   type PdfExportProgress,
 } from "./exportPdfPipeline";
@@ -165,6 +166,39 @@ describe("measureBlocks 行盒坐标系（HX P-α 回归：视口 rect → conte
     expect(blocks[0].rows![0].height).toBe(30);
     expect(blocks[0].rows![1].top).toBeCloseTo(30, 6);
     expect(blocks[0].rows![1].height).toBe(30);
+  });
+});
+
+describe("pageSliceSourceY（HX P-β 回归：变高页切片位 = 页真实窗口顶）", () => {
+  it("chunk 内页高不齐（首页提前收尾）时切片位跟随页顶，不按定高网格漂移", () => {
+    // demo.md 实测几何：page1 只装到 991.3（split 后提前收尾），page2 从 991.3 续。
+    // 旧网格切片给 [0, 1009, 2018]×scale——page2 起累计漂移 17.7px+。
+    const chunkTop = 0;
+    const tops = [0, 991.3, 1980.6];
+    const scale = 2;
+    expect(tops.map((t) => pageSliceSourceY(t, chunkTop, scale))).toEqual([
+      0,
+      1983, // round(991.3 × 2)——跟随真实页顶，而非 1009×2=2018
+      3961,
+    ]);
+  });
+
+  it("chunk 顶非 0（后续 chunk）：切片位相对本 chunk 首页顶", () => {
+    // chunk1 首页 top=4036（chunk 边界重置），chunk 内页 [4036, 4894.1, 5859.5]
+    const chunkTop = 4036;
+    const tops = [4036, 4894.1, 5859.5];
+    expect(tops.map((t) => pageSliceSourceY(t, chunkTop, 2))).toEqual([
+      0,
+      1716, // round(858.1 × 2)
+      3647, // round(1823.5 × 2)
+    ]);
+  });
+
+  it("整 chunk 页高恰满（无提前收尾）时与定高网格一致——旧正确场景零扰动", () => {
+    const tops = [0, 1009, 2018, 3027];
+    expect(tops.map((t) => pageSliceSourceY(t, 0, 2))).toEqual(
+      tops.map((_, i) => Math.round(i * 1009 * 2))
+    );
   });
 });
 

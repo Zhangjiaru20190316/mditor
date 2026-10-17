@@ -485,6 +485,20 @@ export function fragmentsToPageRuns(
 // O(块内)×块数，块间垃圾即弃。
 // ---------------------------------------------------------------------------
 
+/** 页切片源 y（设备 px，纯函数）：页真实窗口顶相对 chunk 顶。HX P-β——
+ *  分页器产出变高页（endPage bottom=末段底，页顶链式推进），chunk 内按
+ *  i×contentHeightPx 定高网格切片会使提前收尾页之后的所有页累计漂移
+ *  （密度档实测最大 211px），产物页界落在任意墨迹上。切片位必须跟随
+ *  pages[i].top；文本层（fragmentsToPageRuns）本就按页顶开窗，此后三路
+ *  坐标系对齐。 */
+export function pageSliceSourceY(
+  pageTop: number,
+  chunkTop: number,
+  scale: number
+): number {
+  return Math.round((pageTop - chunkTop) * scale);
+}
+
 /** 窗口相交判定（纯函数）：块区间 [top, bottom) 与窗口 [wTop, wBottom)
  * 有重叠则保留（骑线块必须保留——分页刀口可能落在块内部）。 */
 export function blockIntersectsWindow(
@@ -615,7 +629,10 @@ async function rasterizeAndAssemble(
       const chunk = pages.slice(start, start + perChunk);
       const chunkTop = chunk[0].top;
       const chunkBottom = chunk[chunk.length - 1].top + a.contentHeightPx;
-      win.style.height = `${a.contentHeightPx * chunk.length}px`;
+      // chunk 窗口高 = 实际跨度（变高页下小于 contentHeight×页数——网格
+      // 高度只会在尾部多出空白画布，无内容意义）。
+      const chunkSpan = chunkBottom - chunkTop;
+      win.style.height = `${chunkSpan}px`;
       content.style.transform = `translateY(${-chunkTop}px)`;
       trim.apply(chunkTop, chunkBottom);
       // 平移后布局收帧：不依赖 rAF（后台/被遮挡窗口的 rAF 会被暂停，
@@ -627,7 +644,7 @@ async function rasterizeAndAssemble(
       await new Promise((res) => setTimeout(res, 0));
       const dataUrl = await domToPng(win, {
         width: a.contentWidthPx,
-        height: a.contentHeightPx * chunk.length,
+        height: chunkSpan,
         scale: a.scale,
         backgroundColor: bg,
       });
@@ -641,7 +658,7 @@ async function rasterizeAndAssemble(
         pageCtx.drawImage(
           img,
           0,
-          Math.round(i * a.contentHeightPx * a.scale),
+          pageSliceSourceY(chunk[i].top, chunkTop, a.scale),
           img.width,
           Math.round(a.contentHeightPx * a.scale),
           0,
