@@ -11,6 +11,7 @@ import {
   fragmentsToPageRuns,
   measureBlocks,
   mmToPt,
+  pageSlicePlan,
   pageSliceSourceY,
   pearsonBestLag,
   type PdfExportProgress,
@@ -255,6 +256,27 @@ describe("pageSliceSourceY（HX P-β 回归：变高页切片位 = 页真实窗�
     expect(tops.map((t) => pageSliceSourceY(t, 0, 2))).toEqual(
       tops.map((_, i) => Math.round(i * 1009 * 2))
     );
+  });
+
+  it("页切片计划按变高页拼接：相邻页 [sy, sy+sh) 连续零缝隙零重叠（无窗口重叠重复）", () => {
+    // 变高页：page1 只到 991.3（提前收尾），page2 从 991.3 续，page3 到 1980.6。
+    // 若每页仍取满 1009 高（窗口 [top, top+1009)），page1 与 page2 窗口重叠
+    // 17.7px——重叠区内容跨页重复且页 1 底缘切在下页内容上。
+    const pages: PageWindow[] = [
+      { top: 0, bottom: 991.3, segments: [] },
+      { top: 991.3, bottom: 1980.6, segments: [] },
+      { top: 1980.6, bottom: 2989.6, segments: [] },
+    ];
+    const plan = pageSlicePlan(pages, 0, 2);
+    // 拼接不变量：sy 逐页推进，且 sy_{i+1} = sy_i + sh_i（零缝隙零重叠）
+    for (let i = 0; i + 1 < plan.length; i++) {
+      expect(plan[i + 1].sy).toBe(plan[i].sy + plan[i].sh);
+    }
+    // 短页高度 = 拼接边差（round(991.3×2)=1983），不是满页 2018
+    expect(plan[0].sh).toBe(1983);
+    expect(plan[1].sh).toBe(1978); // round(1980.6×2)=3961 − 1983
+    // 末页不足满高时按 bottom 截断（2989.6−1980.6=1009 恰满则满）
+    expect(plan[2].sh).toBe(2018);
   });
 });
 

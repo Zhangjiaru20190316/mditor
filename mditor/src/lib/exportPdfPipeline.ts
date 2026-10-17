@@ -566,6 +566,24 @@ export function pageSliceSourceY(
   return Math.round((pageTop - chunkTop) * scale);
 }
 
+/** 页切片计划（设备 px，纯函数）：每页源竖片 [sy, sy+sh) 按变高页拼接——
+ *  sh = 页内容高（非末页 = 下页 top − 本页 top；末页 = bottom − top）。
+ *  若每页取满 contentHeightPx（窗口 [top, top+H)），变高页窗口互相重叠：
+ *  重叠区内容跨页重复、页底缘切在下页开头内容上（HX P-β 补全：拼接语义
+ *  零缝隙零重叠，短页尾部由页画布背景填充）。满页时与定高网格一致。 */
+export function pageSlicePlan(
+  chunk: PageWindow[],
+  chunkTop: number,
+  scale: number
+): Array<{ sy: number; sh: number }> {
+  const edge = (y: number): number => Math.round((y - chunkTop) * scale);
+  return chunk.map((p, i) => {
+    const sy = edge(p.top);
+    const end = i + 1 < chunk.length ? edge(chunk[i + 1].top) : edge(p.bottom);
+    return { sy, sh: Math.max(end - sy, 0) };
+  });
+}
+
 /** 窗口相交判定（纯函数）：块区间 [top, bottom) 与窗口 [wTop, wBottom)
  * 有重叠则保留（骑线块必须保留——分页刀口可能落在块内部）。 */
 export function blockIntersectsWindow(
@@ -719,19 +737,20 @@ async function rasterizeAndAssemble(
       const img = new Image();
       img.src = dataUrl;
       await img.decode();
+      const plan = pageSlicePlan(chunk, chunkTop, a.scale);
       for (let i = 0; i < chunk.length; i++) {
         const pageIndex = start + i;
         pageCtx.fillRect(0, 0, pw, ph);
         pageCtx.drawImage(
           img,
           0,
-          pageSliceSourceY(chunk[i].top, chunkTop, a.scale),
+          plan[i].sy,
           img.width,
-          Math.round(a.contentHeightPx * a.scale),
+          plan[i].sh,
           0,
           0,
           pw,
-          ph
+          plan[i].sh
         );
         const pageDataUrl = pageCanvas.toDataURL(
           useJpeg ? "image/jpeg" : "image/png",
