@@ -142,11 +142,11 @@ describe("measureBlocks 墨迹感知 rebase（HX P-γ：块首墨迹上溢不出
     });
     const h = { iframe: {}, doc, content, issues: [], timedOut: false, destroy: () => {} } as unknown as RenderFactoryHandle;
     const blocks = measureBlocks(h);
-    // 高度链：块 A 高度覆盖到块 B 墨迹顶（500−3.2），不再止于 B border 顶
-    expect(blocks[0].height).toBeCloseTo(96.8, 5);
-    // 块 B 行盒 rel 到墨迹基（首行 top=0），不再带负值
-    expect(blocks[1].lines![0].top).toBeCloseTo(0, 5);
-    expect(blocks[1].lines![0].height).toBeCloseTo(23.2, 5);
+    // 高度链：块 A 高度覆盖到块 B 墨迹顶（500−3.2−1 护量），不再止于 B border 顶
+    expect(blocks[0].height).toBeCloseTo(95.8, 5);
+    // 块 B 行盒 rel 到墨迹基（首行 top=1.0＝护量），行盒底含 +1 护量
+    expect(blocks[1].lines![0].top).toBeCloseTo(1.0, 5);
+    expect(blocks[1].lines![0].height).toBeCloseTo(24.2, 5);
   });
 });
 
@@ -162,9 +162,10 @@ describe("measureBlocks 行盒坐标系（HX P-α 回归：视口 rect → conte
     });
     const blocks = measureBlocks(h);
     expect(blocks).toHaveLength(1);
+    // 行盒底含 INK_GUARD_PX=1 外扩（P-γ 补全：越盒墨迹护量）
     expect(blocks[0].lines).toEqual([
-      { top: 4, height: 20 },
-      { top: 32, height: 20 },
+      { top: 4, height: 21 },
+      { top: 32, height: 21 },
     ]);
   });
 
@@ -179,12 +180,12 @@ describe("measureBlocks 行盒坐标系（HX P-α 回归：视口 rect → conte
     });
     const blocks = measureBlocks(h);
     expect(blocks[0].lines).toEqual([
-      { top: 4, height: 20 },
-      { top: 32, height: 20 },
+      { top: 4, height: 21 },
+      { top: 32, height: 21 },
     ]);
   });
 
-  it("表格行盒同款坐标系（行 rect 视口系 → content 相对）", () => {
+  it("表格行盒同款坐标系（行 rect 视口系 → content 相对，不加墨迹护量）", () => {
     const doc = document.implementation.createHTMLDocument("fac");
     const content = doc.createElement("div");
     const table = doc.createElement("table");

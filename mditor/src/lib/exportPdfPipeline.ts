@@ -213,6 +213,12 @@ export async function runPdfPipeline(
 
 const KEEP_TAGS = new Set(["IMG", "HR", "FIGURE", "VIDEO", "SVG", "IFRAME"]);
 const HEADING_TAGS = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
+/** 墨迹护量（CSS px，HX P-γ 补全）：字形墨迹可越出文本 rect 盒——KaTeX
+ *  大操作符（∑ 等）降部实测越盒 0.1-0.5px，刀口贴行盒底会剃进笔画（页尾
+ *  全浓墨平切像）。行盒底/墨迹顶各外扩本值，刀口构造性避开越盒墨迹；
+ *  行盒间隙按合并规则恒 >1px，护量不会吞并相邻行。表格行不加（边框线
+ *  本就贴行界，外扩反而切边框）。 */
+const INK_GUARD_PX = 1;
 
 export function measureBlocks(handle: RenderFactoryHandle): MeasuredBlock[] {
   const content = handle.content;
@@ -277,14 +283,20 @@ export function measureBlocks(handle: RenderFactoryHandle): MeasuredBlock[] {
     } else if (tag === "TABLE") {
       m.rows = tableRows(el, top, base.top);
     } else {
-      m.lines = lineBoxes(doc, el, top, base.top);
+      // 行盒底外扩护量：split 刀口取行盒底（unitBottoms），外扩让刀口落在
+      // 越盒墨迹之下（间隙按合并规则 >1px，外扩不吞并相邻行）。
+      m.lines = lineBoxes(doc, el, top, base.top).map((u) => ({
+        top: u.top,
+        height: u.height + INK_GUARD_PX,
+      }));
       m.orphanControl = true;
     }
     const units = m.rows ?? m.lines;
     if (units && units.length > 0) {
       const first = unitTop(units[0]) as number;
       const last = unitBottom(units[units.length - 1]) as number;
-      m.inkTop = Math.min(top, top + first);
+      const guard = m.rows ? 0 : INK_GUARD_PX; // 表格行不外扩（边框贴界）
+      m.inkTop = Math.min(top, top + first - guard);
       m.coverBottom = Math.max(top + rect.height, top + last);
     }
     return m;
