@@ -1,0 +1,827 @@
+{
+  "pages": 87,
+  "stats": {
+    "pages": 87,
+    "splits": 22,
+    "pushedKeepTogether": 6,
+    "orphanWidowPushes": 38,
+    "headingPushes": 12,
+    "clippedSegments": 0
+  },
+  "inkCount": 24821,
+  "knifeCount": 86,
+  "straddleKnifeCount": 31,
+  "straddles": [
+    {
+      "knifeIndex": 5,
+      "y": 4904.4,
+      "count": 1,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 2.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "2",
+          "above": 2.3,
+          "below": 9.1
+        }
+      ]
+    },
+    {
+      "knifeIndex": 6,
+      "y": 5859.5,
+      "count": 6,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "(",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": "−",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": ")",
+          "above": 3.2,
+          "below": 19.7
+        }
+      ]
+    },
+    {
+      "knifeIndex": 7,
+      "y": 6819.8,
+      "count": 5,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "(",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": "+",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": ")",
+          "above": 3.2,
+          "below": 19.7
+        }
+      ]
+    },
+    {
+      "knifeIndex": 10,
+      "y": 9728.3,
+      "count": 2,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 5.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 11,
+      "y": 10685,
+      "count": 4,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 4.7,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "∞",
+          "above": 4.2,
+          "below": 11.2
+        },
+        {
+          "kind": "text",
+          "t": "n",
+          "above": 0.7,
+          "below": 17.1
+        },
+        {
+          "kind": "text",
+          "t": "+",
+          "above": 4.7,
+          "below": 18.2
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 4.7,
+          "below": 18.2
+        }
+      ]
+    },
+    {
+      "knifeIndex": 14,
+      "y": 13604.5,
+      "count": 1,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 4.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "ln",
+          "above": 4.3,
+          "below": 18.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 16,
+      "y": 15551.3,
+      "count": 1,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 5.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 18,
+      "y": 17533,
+      "count": 1,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 6.9,
+      "samples": [
+        {
+          "kind": "text",
+          "t": " 比较，发散。∎",
+          "above": 6.9,
+          "below": 13.1
+        }
+      ]
+    },
+    {
+      "knifeIndex": 21,
+      "y": 20431,
+      "count": 3,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 4.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "），",
+          "above": 4.3,
+          "below": 15.7
+        },
+        {
+          "kind": "text",
+          "t": "u",
+          "above": 2,
+          "below": 15.7
+        },
+        {
+          "kind": "text",
+          "t": " 递减。由莱布尼茨判别法收敛。",
+          "above": 4.3,
+          "below": 15.7
+        }
+      ]
+    },
+    {
+      "knifeIndex": 25,
+      "y": 24247.2,
+      "count": 1,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 5.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 29,
+      "y": 28086.9,
+      "count": 11,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "∣",
+          "above": 0.8,
+          "below": 22
+        },
+        {
+          "kind": "text",
+          "t": "sin",
+          "above": 0.8,
+          "below": 22
+        },
+        {
+          "kind": "text",
+          "t": "∣",
+          "above": 0.8,
+          "below": 22
+        },
+        {
+          "kind": "text",
+          "t": "sin",
+          "above": 0.8,
+          "below": 22
+        }
+      ]
+    },
+    {
+      "knifeIndex": 32,
+      "y": 31099.6,
+      "count": 4,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 5.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "a",
+          "above": 1.2,
+          "below": 16.5
+        },
+        {
+          "kind": "text",
+          "t": "11",
+          "above": 5.2,
+          "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "11",
+          "above": 5.2,
+          "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 41,
+      "y": 39814.1,
+      "count": 2,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "2",
+          "above": 3.3,
+          "below": 12.2
+        },
+        {
+          "kind": "text",
+          "t": "n",
+          "above": 1,
+          "below": 11.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 45,
+      "y": 43648.9,
+      "count": 3,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 2.8,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 2.8,
+          "below": 20.1
+        },
+        {
+          "kind": "text",
+          "t": "n",
+          "above": 1.8,
+          "below": 10.8
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 2.8,
+          "below": 20.1
+        }
+      ]
+    },
+    {
+      "knifeIndex": 48,
+      "y": 46651.2,
+      "count": 1,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 5.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 49,
+      "y": 47635.2,
+      "count": 3,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "2",
+          "above": 3.3,
+          "below": 12.2
+        },
+        {
+          "kind": "text",
+          "t": "4",
+          "above": 3.3,
+          "below": 12.2
+        },
+        {
+          "kind": "text",
+          "t": "4",
+          "above": 3.3,
+          "below": 12.2
+        }
+      ]
+    },
+    {
+      "knifeIndex": 50,
+      "y": 48603.8,
+      "count": 3,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 2.8,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 2.8,
+          "below": 20.1
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 2.8,
+          "below": 20.1
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 2.8,
+          "below": 20.1
+        }
+      ]
+    },
+    {
+      "knifeIndex": 51,
+      "y": 49588.4,
+      "count": 3,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 4.6,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "一致收敛——逐项求导/积分合法性",
+          "above": 2.9,
+          "below": 17.1
+        },
+        {
+          "kind": "text",
+          "t": "x",
+          "above": 0.6,
+          "below": 17.1
+        },
+        {
+          "kind": "text",
+          "t": "→",
+          "above": 4.6,
+          "below": 18.3
+        }
+      ]
+    },
+    {
+      "knifeIndex": 57,
+      "y": 55271.7,
+      "count": 2,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.9,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "x",
+          "above": 0.8,
+          "below": 16.9
+        },
+        {
+          "kind": "text",
+          "t": "n",
+          "above": 3.9,
+          "below": 8.7
+        }
+      ]
+    },
+    {
+      "knifeIndex": 61,
+      "y": 59203.9,
+      "count": 1,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 4,
+      "samples": [
+        {
+          "kind": "text",
+          "t": " ✓（顺带重演 Gregory ",
+          "above": 4,
+          "below": 16
+        }
+      ]
+    },
+    {
+      "knifeIndex": 63,
+      "y": 61169.5,
+      "count": 6,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 5.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "2",
+          "above": 5.2,
+          "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "4",
+          "above": 5.2,
+          "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "cos",
+          "above": 5.2,
+          "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "2",
+          "above": 5.2,
+          "below": 17.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 69,
+      "y": 67075,
+      "count": 6,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "(",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": "±",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": ")",
+          "above": 3.2,
+          "below": 19.7
+        }
+      ]
+    },
+    {
+      "knifeIndex": 71,
+      "y": 68932.9,
+      "count": 2,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 4.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "2",
+          "above": 4.3,
+          "below": 18.6
+        },
+        {
+          "kind": "text",
+          "t": "sh",
+          "above": 4.3,
+          "below": 18.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 74,
+      "y": 71918.5,
+      "count": 2,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 4.7,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "∞",
+          "above": 4.2,
+          "below": 11.2
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 4.7,
+          "below": 18.2
+        }
+      ]
+    },
+    {
+      "knifeIndex": 75,
+      "y": 72874,
+      "count": 4,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 5.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "p",
+          "above": 1.2,
+          "below": 16.5
+        },
+        {
+          "kind": "text",
+          "t": "+",
+          "above": 5.2,
+          "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 76,
+      "y": 73863.3,
+      "count": 2,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 6.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "∞",
+          "above": 6.2,
+          "below": 9.3
+        },
+        {
+          "kind": "text",
+          "t": "∞",
+          "above": 6.2,
+          "below": 9.3
+        }
+      ]
+    },
+    {
+      "knifeIndex": 77,
+      "y": 74790.2,
+      "count": 5,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "(",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": "−",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": ")",
+          "above": 3.2,
+          "below": 19.7
+        }
+      ]
+    },
+    {
+      "knifeIndex": 79,
+      "y": 76700.9,
+      "count": 2,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 2.6,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "+",
+          "above": 2.6,
+          "below": 12.9
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 2.6,
+          "below": 12.9
+        }
+      ]
+    },
+    {
+      "knifeIndex": 81,
+      "y": 78674.3,
+      "count": 5,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 4.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 4.3,
+          "below": 18.6
+        },
+        {
+          "kind": "text",
+          "t": "n",
+          "above": 1.5,
+          "below": 11
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 4.3,
+          "below": 18.6
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 4.3,
+          "below": 18.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 82,
+      "y": 79661.3,
+      "count": 1,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 5.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 83,
+      "y": 80551.5,
+      "count": 1,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 2.7,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "−",
+          "above": 2.7,
+          "below": 12.7
+        }
+      ]
+    }
+  ],
+  "doc": "C:\\Users\\hh\\Desktop\\Tp\\mditor\\perf\\fixtures\\无穷级数_密度档压测副本.md",
+  "tookMs": 2494
+}

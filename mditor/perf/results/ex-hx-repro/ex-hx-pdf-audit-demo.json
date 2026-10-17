@@ -1,0 +1,35 @@
+{
+  "pages": 2,
+  "stats": {
+    "pages": 2,
+    "splits": 1,
+    "pushedKeepTogether": 0,
+    "orphanWidowPushes": 0,
+    "headingPushes": 0,
+    "clippedSegments": 0
+  },
+  "inkCount": 109,
+  "knifeCount": 1,
+  "straddleKnifeCount": 1,
+  "straddles": [
+    {
+      "knifeIndex": 1,
+      "y": 991.3,
+      "count": 1,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 6.6,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "最小二乘解 1 是经典结论（本文",
+          "above": 13.4,
+          "below": 6.6
+        }
+      ]
+    }
+  ],
+  "doc": "C:\\Users\\hh\\Desktop\\Tp\\mditor\\docs\\demo.md",
+  "tookMs": 29
+}
