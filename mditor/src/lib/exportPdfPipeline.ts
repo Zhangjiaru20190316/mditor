@@ -213,12 +213,28 @@ export async function runPdfPipeline(
 
 const KEEP_TAGS = new Set(["IMG", "HR", "FIGURE", "VIDEO", "SVG", "IFRAME"]);
 const HEADING_TAGS = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
-/** 墨迹护量（CSS px，HX P-γ 补全）：字形墨迹可越出文本 rect 盒——KaTeX
- *  大操作符（∑ 等）降部实测越盒 0.1-0.5px，刀口贴行盒底会剃进笔画（页尾
- *  全浓墨平切像）。行盒底/墨迹顶各外扩本值，刀口构造性避开越盒墨迹；
- *  行盒间隙按合并规则恒 >1px，护量不会吞并相邻行。表格行不加（边框线
- *  本就贴行界，外扩反而切边框）。 */
-const INK_GUARD_PX = 1;
+/** 墨迹护量上限（CSS px，HX P-γ 补全）：字形墨迹可越出文本 rect 盒——
+ *  KaTeX 大操作符降部（∑）实测越盒 ~0.5px、行内极限栈（∫n+1∞ 的 vlist
+ *  零高盒）越盒 ~3.5px，刀口贴行盒底会剃进笔画（页尾全浓墨平切像）。
+ *  行盒底按「相邻行间隙半宽」自适应外扩（≤本值）：split 刀口随之落到
+ *  越盒墨迹之下；块末行的外扩由块间距（≥margin）吸收。表格行不外扩
+ *  （边框线本就贴行界，外扩反而切边框）。 */
+const INK_GUARD_MAX_PX = 4;
+
+/** 行盒底自适应护量：每行底部外扩 min(上限, 与下一行间隙的一半 − ε)，
+ *  保证相邻行护量不交叠（刀口仍落在本行墨迹与下行墨迹之间）。 */
+function guardLineUnits(units: SplitLine[]): SplitLine[] {
+  return units.map((u, i) => {
+    const bottom = u.top + u.height;
+    const nextTop = i + 1 < units.length ? units[i + 1].top : Infinity;
+    const gap = nextTop - bottom;
+    const pad =
+      i + 1 < units.length
+        ? Math.min(INK_GUARD_MAX_PX, Math.max(gap / 2 - 0.25, 0))
+        : INK_GUARD_MAX_PX;
+    return { top: u.top, height: u.height + pad };
+  });
+}
 
 export function measureBlocks(handle: RenderFactoryHandle): MeasuredBlock[] {
   const content = handle.content;
@@ -283,20 +299,15 @@ export function measureBlocks(handle: RenderFactoryHandle): MeasuredBlock[] {
     } else if (tag === "TABLE") {
       m.rows = tableRows(el, top, base.top);
     } else {
-      // 行盒底外扩护量：split 刀口取行盒底（unitBottoms），外扩让刀口落在
-      // 越盒墨迹之下（间隙按合并规则 >1px，外扩不吞并相邻行）。
-      m.lines = lineBoxes(doc, el, top, base.top).map((u) => ({
-        top: u.top,
-        height: u.height + INK_GUARD_PX,
-      }));
+      m.lines = guardLineUnits(lineBoxes(doc, el, top, base.top));
       m.orphanControl = true;
     }
     const units = m.rows ?? m.lines;
     if (units && units.length > 0) {
       const first = unitTop(units[0]) as number;
       const last = unitBottom(units[units.length - 1]) as number;
-      const guard = m.rows ? 0 : INK_GUARD_PX; // 表格行不外扩（边框贴界）
-      m.inkTop = Math.min(top, top + first - guard);
+      // 墨迹顶：行盒首顶可为负（vlist 上伸越盒）；表格行首顶 ≥0。
+      m.inkTop = Math.min(top, top + first);
       m.coverBottom = Math.max(top + rect.height, top + last);
     }
     return m;
