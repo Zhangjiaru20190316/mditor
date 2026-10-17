@@ -1,0 +1,21 @@
+{
+  "startedAt": "2026-10-17T04:14:01.350Z",
+  "doc": "C:\\Users\\hh\\Desktop\\Tp\\mditor\\docs\\demo.md",
+  "theme": "light",
+  "bytes": 961077,
+  "rawLen": 10128,
+  "sanitizedLen": 13014,
+  "cssLen": 945178,
+  "sheetCount": 10,
+  "s4_fileTruncation": {
+    "tailHtmlClosed": true,
+    "lastVisibleText": "导出时替换为正式列表",
+    "headFirstHeading": "<h1 id=\"科研功能验收样例\">科研功能验收样例<",
+    "verdict": "排除：文件完整，非截断"
+  },
+  "s1_shellRulesInExport": {
+    "bodyOverflowHidden": "body { font-family: var(--font-prose, system-ui, sans-serif); font-size: var(--font-size, 16px); line-height: var(--line-height, 1.75); color: var(--fg); background: var(--bg); overflow: hidden; -webkit-font-smoothing: antialiased; text-rendering: optimizelegibility; }",
+    "htmlBodyHeight100": "html, body, #root { height: 100%; margin: 0px; padding: 0px; }"
+  },
+  "file": "C:\\Users\\hh\\Desktop\\Tp\\mditor\\perf\\results\\ex-hx-repro\\demo-export.html"
+}

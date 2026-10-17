@@ -1,0 +1,437 @@
+{
+  "startedAt": "2026-10-17T04:16:21.468Z",
+  "browser": "Edge headless (Chromium)",
+  "runs": [
+    {
+      "round": 1,
+      "baseline": {
+        "viewportH": 804,
+        "deScrollH": 1905,
+        "deClientH": 804,
+        "bodyScrollH": 1865,
+        "bodyClientH": 804,
+        "bodyOverflowY": "hidden",
+        "bodyHeight": "804px",
+        "htmlOverflowY": "visible",
+        "htmlHeight": "804px",
+        "lastBlockTag": "P",
+        "lastBlockBottomDoc": 1905,
+        "flowBottomDoc": 1905,
+        "scrollY": 0,
+        "userScrollYAfterWheel5x600": 0,
+        "userScrollYAfterPageDown3x": 0,
+        "userScrollLocked": true
+      },
+      "expA_overflowVisibleOnly": {
+        "viewportH": 804,
+        "deScrollH": 1905,
+        "deClientH": 804,
+        "bodyScrollH": 1865,
+        "bodyClientH": 804,
+        "bodyOverflowY": "visible",
+        "bodyHeight": "804px",
+        "htmlOverflowY": "visible",
+        "htmlHeight": "804px",
+        "lastBlockTag": "P",
+        "lastBlockBottomDoc": 1905,
+        "flowBottomDoc": 1905,
+        "scrollY": 1101,
+        "userScrollYAfterWheel5x600": 1101,
+        "userScrollYAfterPageDown3x": 1101,
+        "userScrollLocked": false
+      },
+      "expB_heightAutoOnly": {
+        "viewportH": 804,
+        "deScrollH": 1945,
+        "deClientH": 804,
+        "bodyScrollH": 1865,
+        "bodyClientH": 1865,
+        "bodyOverflowY": "hidden",
+        "bodyHeight": "1864.86px",
+        "htmlOverflowY": "visible",
+        "htmlHeight": "1944.86px",
+        "lastBlockTag": "P",
+        "lastBlockBottomDoc": 1905,
+        "flowBottomDoc": 1905,
+        "scrollY": 0,
+        "userScrollYAfterWheel5x600": 0,
+        "userScrollYAfterPageDown3x": 0,
+        "userScrollLocked": true
+      },
+      "relocked": {
+        "viewportH": 804,
+        "deScrollH": 1905,
+        "deClientH": 804,
+        "bodyScrollH": 1865,
+        "bodyClientH": 804,
+        "bodyOverflowY": "hidden",
+        "bodyHeight": "804px",
+        "htmlOverflowY": "visible",
+        "htmlHeight": "804px",
+        "lastBlockTag": "P",
+        "lastBlockBottomDoc": 1905,
+        "flowBottomDoc": 1905,
+        "scrollY": 0,
+        "userScrollYAfterWheel5x600": 0,
+        "userScrollYAfterPageDown3x": 0,
+        "userScrollLocked": true
+      },
+      "expC_both": {
+        "viewportH": 804,
+        "deScrollH": 1945,
+        "deClientH": 804,
+        "bodyScrollH": 1865,
+        "bodyClientH": 1865,
+        "bodyOverflowY": "visible",
+        "bodyHeight": "1864.86px",
+        "htmlOverflowY": "visible",
+        "htmlHeight": "1944.86px",
+        "lastBlockTag": "P",
+        "lastBlockBottomDoc": 1905,
+        "flowBottomDoc": 1905,
+        "scrollY": 1141,
+        "userScrollYAfterWheel5x600": 1141,
+        "userScrollYAfterPageDown3x": 1141,
+        "userScrollLocked": false
+      }
+    },
+    {
+      "round": 2,
+      "baseline": {
+        "viewportH": 804,
+        "deScrollH": 1905,
+        "deClientH": 804,
+        "bodyScrollH": 1865,
+        "bodyClientH": 804,
+        "bodyOverflowY": "hidden",
+        "bodyHeight": "804px",
+        "htmlOverflowY": "visible",
+        "htmlHeight": "804px",
+        "lastBlockTag": "P",
+        "lastBlockBottomDoc": 1905,
+        "flowBottomDoc": 1905,
+        "scrollY": 0,
+        "userScrollYAfterWheel5x600": 0,
+        "userScrollYAfterPageDown3x": 0,
+        "userScrollLocked": true
+      },
+      "expA_overflowVisibleOnly": {
+        "viewportH": 804,
+        "deScrollH": 1905,
+        "deClientH": 804,
+        "bodyScrollH": 1865,
+        "bodyClientH": 804,
+        "bodyOverflowY": "visible",
+        "bodyHeight": "804px",
+        "htmlOverflowY": "visible",
+        "htmlHeight": "804px",
+        "lastBlockTag": "P",
+        "lastBlockBottomDoc": 1905,
+        "flowBottomDoc": 1905,
+        "scrollY": 1101,
+        "userScrollYAfterWheel5x600": 1101,
+        "userScrollYAfterPageDown3x": 1101,
+        "userScrollLocked": false
+      },
+      "expB_heightAutoOnly": {
+        "viewportH": 804,
+        "deScrollH": 1945,
+        "deClientH": 804,
+        "bodyScrollH": 1865,
+        "bodyClientH": 1865,
+        "bodyOverflowY": "hidden",
+        "bodyHeight": "1864.86px",
+        "htmlOverflowY": "visible",
+        "htmlHeight": "1944.86px",
+        "lastBlockTag": "P",
+        "lastBlockBottomDoc": 1905,
+        "flowBottomDoc": 1905,
+        "scrollY": 0,
+        "userScrollYAfterWheel5x600": 0,
+        "userScrollYAfterPageDown3x": 0,
+        "userScrollLocked": true
+      },
+      "relocked": {
+        "viewportH": 804,
+        "deScrollH": 1905,
+        "deClientH": 804,
+        "bodyScrollH": 1865,
+        "bodyClientH": 804,
+        "bodyOverflowY": "hidden",
+        "bodyHeight": "804px",
+        "htmlOverflowY": "visible",
+        "htmlHeight": "804px",
+        "lastBlockTag": "P",
+        "lastBlockBottomDoc": 1905,
+        "flowBottomDoc": 1905,
+        "scrollY": 0,
+        "userScrollYAfterWheel5x600": 0,
+        "userScrollYAfterPageDown3x": 0,
+        "userScrollLocked": true
+      },
+      "expC_both": {
+        "viewportH": 804,
+        "deScrollH": 1945,
+        "deClientH": 804,
+        "bodyScrollH": 1865,
+        "bodyClientH": 1865,
+        "bodyOverflowY": "visible",
+        "bodyHeight": "1864.86px",
+        "htmlOverflowY": "visible",
+        "htmlHeight": "1944.86px",
+        "lastBlockTag": "P",
+        "lastBlockBottomDoc": 1905,
+        "flowBottomDoc": 1905,
+        "scrollY": 1141,
+        "userScrollYAfterWheel5x600": 1141,
+        "userScrollYAfterPageDown3x": 1141,
+        "userScrollLocked": false
+      }
+    }
+  ],
+  "s2_audit": {
+    "total": 40,
+    "hits": [
+      {
+        "sel": ".katex",
+        "matched": 5,
+        "sample": "SPAN",
+        "decls": "position:relative"
+      },
+      {
+        "sel": ".katex .katex-mathml",
+        "matched": 5,
+        "sample": "SPAN",
+        "decls": "overflow:hidden;height:1px;position:absolute;padding:0px;width:1px"
+      },
+      {
+        "sel": ".katex .katex-base",
+        "matched": 10,
+        "sample": "SPAN",
+        "decls": "position:relative;width:min-content"
+      },
+      {
+        "sel": ".katex .katex-base, .katex .katex-strut",
+        "matched": 21,
+        "sample": "SPAN",
+        "decls": "display:inline-block"
+      },
+      {
+        "sel": ".katex .vlist-t",
+        "matched": 11,
+        "sample": "SPAN",
+        "decls": "display:inline-table"
+      },
+      {
+        "sel": ".katex .vlist-r",
+        "matched": 13,
+        "sample": "SPAN",
+        "decls": "display:table-row"
+      },
+      {
+        "sel": ".katex .vlist",
+        "matched": 13,
+        "sample": "SPAN",
+        "decls": "position:relative;display:table-cell"
+      },
+      {
+        "sel": ".katex .vlist > span",
+        "matched": 15,
+        "sample": "SPAN",
+        "decls": "height:0px;position:relative;display:block"
+      },
+      {
+        "sel": ".katex .vlist > span > span",
+        "matched": 26,
+        "sample": "SPAN",
+        "decls": "display:inline-block"
+      },
+      {
+        "sel": ".katex .vlist > span > .pstrut",
+        "matched": 13,
+        "sample": "SPAN",
+        "decls": "overflow:hidden;width:0px"
+      },
+      {
+        "sel": ".katex .vlist-s",
+        "matched": 2,
+        "sample": "SPAN",
+        "decls": "display:table-cell;width:2px"
+      },
+      {
+        "sel": ".katex .mspace",
+        "matched": 10,
+        "sample": "SPAN",
+        "decls": "display:inline-block"
+      },
+      {
+        "sel": ".katex .katex-accent .accent-body",
+        "matched": 2,
+        "sample": "SPAN",
+        "decls": "position:relative"
+      },
+      {
+        "sel": ".katex .katex-accent .accent-body:not(.accent-full)",
+        "matched": 2,
+        "sample": "SPAN",
+        "decls": "width:0px"
+      },
+      {
+        "sel": ".katex-display",
+        "matched": 1,
+        "sample": "SPAN",
+        "decls": "display:block;margin:1em 0px"
+      },
+      {
+        "sel": ".katex-display > .katex",
+        "matched": 1,
+        "sample": "SPAN",
+        "decls": "display:block"
+      },
+      {
+        "sel": ".katex-display > .katex > .katex-html",
+        "matched": 1,
+        "sample": "SPAN",
+        "decls": "position:relative;display:block"
+      },
+      {
+        "sel": ".katex-display > .katex > .katex-html > .katex-tag",
+        "matched": 1,
+        "sample": "SPAN",
+        "decls": "position:absolute;right:0px"
+      },
+      {
+        "sel": ".katex",
+        "matched": 5,
+        "sample": "SPAN",
+        "decls": "position:relative"
+      },
+      {
+        "sel": ".katex .katex-mathml",
+        "matched": 5,
+        "sample": "SPAN",
+        "decls": "overflow:hidden;height:1px;position:absolute;padding:0px;width:1px"
+      },
+      {
+        "sel": ".katex .katex-base",
+        "matched": 10,
+        "sample": "SPAN",
+        "decls": "position:relative;width:min-content"
+      },
+      {
+        "sel": ".katex .katex-base, .katex .katex-strut",
+        "matched": 21,
+        "sample": "SPAN",
+        "decls": "display:inline-block"
+      },
+      {
+        "sel": ".katex .vlist-t",
+        "matched": 11,
+        "sample": "SPAN",
+        "decls": "display:inline-table"
+      },
+      {
+        "sel": ".katex .vlist-r",
+        "matched": 13,
+        "sample": "SPAN",
+        "decls": "display:table-row"
+      },
+      {
+        "sel": ".katex .vlist",
+        "matched": 13,
+        "sample": "SPAN",
+        "decls": "position:relative;display:table-cell"
+      },
+      {
+        "sel": ".katex .vlist > span",
+        "matched": 15,
+        "sample": "SPAN",
+        "decls": "height:0px;position:relative;display:block"
+      },
+      {
+        "sel": ".katex .vlist > span > span",
+        "matched": 26,
+        "sample": "SPAN",
+        "decls": "display:inline-block"
+      },
+      {
+        "sel": ".katex .vlist > span > .pstrut",
+        "matched": 13,
+        "sample": "SPAN",
+        "decls": "overflow:hidden;width:0px"
+      },
+      {
+        "sel": ".katex .vlist-s",
+        "matched": 2,
+        "sample": "SPAN",
+        "decls": "display:table-cell;width:2px"
+      },
+      {
+        "sel": ".katex .mspace",
+        "matched": 10,
+        "sample": "SPAN",
+        "decls": "display:inline-block"
+      },
+      {
+        "sel": ".katex .katex-accent .accent-body",
+        "matched": 2,
+        "sample": "SPAN",
+        "decls": "position:relative"
+      },
+      {
+        "sel": ".katex .katex-accent .accent-body:not(.accent-full)",
+        "matched": 2,
+        "sample": "SPAN",
+        "decls": "width:0px"
+      },
+      {
+        "sel": ".katex-display",
+        "matched": 1,
+        "sample": "SPAN",
+        "decls": "display:block;margin:1em 0px"
+      },
+      {
+        "sel": ".katex-display > .katex",
+        "matched": 1,
+        "sample": "SPAN",
+        "decls": "display:block"
+      },
+      {
+        "sel": ".katex-display > .katex > .katex-html",
+        "matched": 1,
+        "sample": "SPAN",
+        "decls": "position:relative;display:block"
+      },
+      {
+        "sel": ".katex-display > .katex > .katex-html > .katex-tag",
+        "matched": 1,
+        "sample": "SPAN",
+        "decls": "position:absolute;right:0px"
+      },
+      {
+        "sel": "html, body, #root",
+        "matched": 2,
+        "sample": "HTML",
+        "decls": "height:100%;margin:0px;padding:0px"
+      },
+      {
+        "sel": "body",
+        "matched": 1,
+        "sample": "BODY",
+        "decls": "overflow:hidden"
+      },
+      {
+        "sel": ".wikilink-unresolved",
+        "matched": 2,
+        "sample": "SPAN",
+        "decls": "padding:0.05em 0.3em"
+      },
+      {
+        "sel": "body",
+        "matched": 1,
+        "sample": "BODY",
+        "decls": "margin:40px auto;padding:0px 24px;max-width:820px"
+      }
+    ]
+  }
+}
