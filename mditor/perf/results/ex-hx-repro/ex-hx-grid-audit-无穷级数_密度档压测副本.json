@@ -1,21 +1,21 @@
 {
-  "pages": 87,
+  "pages": 86,
   "perChunk": 4,
   "stats": {
-    "pages": 87,
-    "splits": 22,
+    "pages": 86,
+    "splits": 17,
     "pushedKeepTogether": 6,
-    "orphanWidowPushes": 38,
-    "headingPushes": 12,
+    "orphanWidowPushes": 34,
+    "headingPushes": 10,
     "clippedSegments": 0
   },
   "pagKnifeStraddle": {
-    "knives": 86,
-    "straddle": 31
+    "knives": 85,
+    "straddle": 37
   },
   "gridKnifeStraddle": {
-    "boundaries": 86,
-    "straddle": 56,
+    "boundaries": 85,
+    "straddle": 53,
     "samples": [
       {
         "page": 2,
@@ -223,67 +223,67 @@
       },
       {
         "page": 13,
-        "y": 12682.2,
+        "y": 12753.9,
         "chunkEdge": false,
-        "n": 15,
+        "n": 14,
         "samples": [
           {
             "k": "text",
-            "x": "n",
-            "above": 3.4,
-            "below": 14.3
+            "x": "(",
+            "above": 24.5,
+            "below": 21.8
           },
           {
             "k": "text",
-            "x": "n",
-            "above": 5,
-            "below": 7.6
+            "x": ")",
+            "above": 24.5,
+            "below": 21.8
           },
           {
             "k": "text",
             "x": "、",
-            "above": 19,
-            "below": 1
+            "above": 12.5,
+            "below": 7.5
           }
         ]
       },
       {
         "page": 14,
-        "y": 13691.2,
+        "y": 13762.9,
         "chunkEdge": false,
-        "n": 23,
+        "n": 5,
         "samples": [
           {
             "k": "text",
-            "x": "(3) ",
-            "above": 17.8,
-            "below": 2.2
+            "x": "2",
+            "above": 17.9,
+            "below": 4.9
           },
           {
             "k": "text",
-            "x": "u",
-            "above": 2.2,
-            "below": 15.5
+            "x": "×",
+            "above": 17.9,
+            "below": 4.9
           },
           {
             "k": "text",
-            "x": "=",
-            "above": 19.5,
-            "below": 3.3
+            "x": "21",
+            "above": 17.9,
+            "below": 4.9
           }
         ]
       },
       {
         "page": 15,
-        "y": 14700.2,
+        "y": 14771.9,
         "chunkEdge": false,
         "n": 1,
         "samples": [
           {
             "k": "text",
-            "x": "n",
-            "above": 11.9,
-            "below": 0.7
+            "x": "练习题详解",
+            "above": 6.5,
+            "below": 16.9
           }
         ]
       }
@@ -293,17 +293,17 @@
     "first10": [
       0,
       -46.6,
-      -49.4,
-      -58.2,
+      -57.4,
+      -66.2,
       0,
       -3.7,
       -57.6,
       -106.3,
       0,
-      -29.8
+      -37.8
     ],
-    "maxAbs": 211.2,
-    "last": -83.6
+    "maxAbs": 195.9,
+    "last": 1.2
   },
   "doc": "C:\\Users\\hh\\Desktop\\Tp\\mditor\\perf\\fixtures\\无穷级数_密度档压测副本.md"
 }

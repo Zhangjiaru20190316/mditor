@@ -247,41 +247,56 @@ export function measureBlocks(handle: RenderFactoryHandle): MeasuredBlock[] {
         ? (kids[i + 1] as HTMLElement).getBoundingClientRect().top - base.top
         : content.scrollHeight;
     const height = Math.max(nextTop - top, rect.height, 0);
-    const tag = el.tagName;
-    const blockId = blocks.length;
-    if (KEEP_TAGS.has(tag)) {
-      blocks.push({ blockId, height, keepTogether: true });
-    } else if (HEADING_TAGS.has(tag)) {
-      blocks.push({ blockId, height, keepTogether: true, keepWithNext: true });
-    } else if (tag === "TABLE") {
-      blocks.push({ blockId, height, rows: tableRows(el, top) });
-    } else {
-      blocks.push({ blockId, height, lines: lineBoxes(doc, el, top), orphanControl: true });
-    }
+      const tag = el.tagName;
+      const blockId = blocks.length;
+      if (KEEP_TAGS.has(tag)) {
+        blocks.push({ blockId, height, keepTogether: true });
+      } else if (HEADING_TAGS.has(tag)) {
+        blocks.push({ blockId, height, keepTogether: true, keepWithNext: true });
+      } else if (tag === "TABLE") {
+        blocks.push({ blockId, height, rows: tableRows(el, top, base.top) });
+      } else {
+        blocks.push({ blockId, height, lines: lineBoxes(doc, el, top, base.top), orphanControl: true });
+      }
   }
   return blocks;
 }
 
-/** 表格行盒（相对块顶）。 */
-function tableRows(table: HTMLElement, blockTop: number): SplitLine[] {
+/** 表格行盒（相对块顶）。baseTop＝content 容器视口顶（HX P-α：Range/
+ *  getBoundingClientRect 均为视口坐标，须先换算回 content 相对坐标）。 */
+function tableRows(
+  table: HTMLElement,
+  blockTop: number,
+  baseTop: number
+): SplitLine[] {
   const rows: SplitLine[] = [];
   for (const tr of Array.from(table.querySelectorAll("tr"))) {
     const r = tr.getBoundingClientRect();
     if (r.height <= 0) continue;
-    rows.push({ top: r.top - blockTop, height: r.height });
+    rows.push({ top: r.top - baseTop - blockTop, height: r.height });
   }
-  return rows.length > 0 ? rows : [{ top: 0, height: table.getBoundingClientRect().height }];
+  if (rows.length > 0) return rows;
+  const whole = table.getBoundingClientRect();
+  return [{ top: whole.top - baseTop - blockTop, height: whole.height }];
 }
 
 /**
  * 块内行盒（相对块顶）：Range 全量取文本片矩形 → 垂直区间合并（同线不同
- * 高度的上下标/行内公式并成一行，防止刀口落进视觉行内部）。
+ * 高度的上下标/行内公式并成一行，防止刀口落进视觉行内部）。baseTop＝
+ * content 容器视口顶：HX P-α——getClientRects 是视口坐标而 blockTop 是
+ * content 相对坐标，content 视口原点≠0（首块塌陷 margin 等）时混用会使
+ * 全部行盒整体偏移，刀口切进视觉行内部。
  */
-function lineBoxes(doc: Document, el: HTMLElement, blockTop: number): SplitLine[] {
+function lineBoxes(
+  doc: Document,
+  el: HTMLElement,
+  blockTop: number,
+  baseTop: number
+): SplitLine[] {
   const rects = textRectsOf(doc, el);
   if (rects.length === 0) {
     const r = el.getBoundingClientRect();
-    return r.height > 0 ? [{ top: r.top - blockTop, height: r.height }] : [];
+    return r.height > 0 ? [{ top: r.top - baseTop - blockTop, height: r.height }] : [];
   }
   rects.sort((a, b) => a.top - b.top);
   const merged: SplitLine[] = [];
@@ -291,11 +306,11 @@ function lineBoxes(doc: Document, el: HTMLElement, blockTop: number): SplitLine[
     if (r.top <= cur.bottom + 1) {
       cur.bottom = Math.max(cur.bottom, r.bottom);
     } else {
-      merged.push({ top: cur.top - blockTop, height: cur.bottom - cur.top });
+      merged.push({ top: cur.top - baseTop - blockTop, height: cur.bottom - cur.top });
       cur = { top: r.top, bottom: r.bottom };
     }
   }
-  merged.push({ top: cur.top - blockTop, height: cur.bottom - cur.top });
+  merged.push({ top: cur.top - baseTop - blockTop, height: cur.bottom - cur.top });
   return merged;
 }
 

@@ -30,7 +30,7 @@ const AUDIT = `(async () => {
   html = sanitizeExportHtml(html);
   const css = await import('/src/lib/themeCss.ts').then(m => m.collectThemeCss());
   const fac = await import('/src/lib/exportRenderFactory.ts');
-  const pipe = await import('/src/lib/exportPdfPipeline.ts');
+  const pipe = await import('/src/lib/exportPdfPipeline.ts?t=' + Date.now());
   const { paginateBlocks } = await import('/src/lib/exportPaginator.ts');
   // A4 + 15mm（生产默认）：版心 680×1009 CSS px（与 ex6 同口径）
   const h = await fac.renderInFactory(html, { contentWidthPx: 680, css, maxImageHeightPx: 1009 });

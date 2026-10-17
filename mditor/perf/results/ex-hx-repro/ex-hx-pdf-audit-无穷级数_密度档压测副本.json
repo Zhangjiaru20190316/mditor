@@ -1,16 +1,16 @@
 {
-  "pages": 87,
+  "pages": 86,
   "stats": {
-    "pages": 87,
-    "splits": 22,
+    "pages": 86,
+    "splits": 17,
     "pushedKeepTogether": 6,
-    "orphanWidowPushes": 38,
-    "headingPushes": 12,
+    "orphanWidowPushes": 34,
+    "headingPushes": 10,
     "clippedSegments": 0
   },
   "inkCount": 24821,
-  "knifeCount": 86,
-  "straddleKnifeCount": 31,
+  "knifeCount": 85,
+  "straddleKnifeCount": 37,
   "straddles": [
     {
       "knifeIndex": 5,
@@ -124,7 +124,7 @@
     },
     {
       "knifeIndex": 11,
-      "y": 10685,
+      "y": 10745.9,
       "count": 4,
       "kinds": [
         "text"
@@ -139,15 +139,15 @@
         },
         {
           "kind": "text",
-          "t": "n",
-          "above": 0.7,
-          "below": 17.1
+          "t": "1",
+          "above": 4.7,
+          "below": 18.2
         },
         {
           "kind": "text",
-          "t": "+",
-          "above": 4.7,
-          "below": 18.2
+          "t": "n",
+          "above": 0.7,
+          "below": 17.1
         },
         {
           "kind": "text",
@@ -159,24 +159,36 @@
     },
     {
       "knifeIndex": 14,
-      "y": 13604.5,
-      "count": 1,
+      "y": 13723.8,
+      "count": 3,
       "kinds": [
         "text"
       ],
-      "maxDepth": 4.3,
+      "maxDepth": 5.2,
       "samples": [
         {
           "kind": "text",
-          "t": "ln",
-          "above": 4.3,
-          "below": 18.6
+          "t": "11",
+          "above": 5.2,
+          "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "11",
+          "above": 5.2,
+          "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
         }
       ]
     },
     {
       "knifeIndex": 16,
-      "y": 15551.3,
+      "y": 15691.8,
       "count": 1,
       "kinds": [
         "text"
@@ -193,24 +205,327 @@
     },
     {
       "knifeIndex": 18,
-      "y": 17533,
-      "count": 1,
+      "y": 17623.9,
+      "count": 3,
       "kinds": [
         "text"
       ],
-      "maxDepth": 6.9,
+      "maxDepth": 5.2,
       "samples": [
         {
           "kind": "text",
-          "t": " 比较，发散。∎",
-          "above": 6.9,
-          "below": 13.1
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
         }
       ]
     },
     {
       "knifeIndex": 21,
-      "y": 20431,
+      "y": 20639.1,
+      "count": 1,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 4.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "∞",
+          "above": 4.2,
+          "below": 11.2
+        }
+      ]
+    },
+    {
+      "knifeIndex": 22,
+      "y": 21478.8,
+      "count": 10,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "ln",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": "(",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": "+",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 3.2,
+          "below": 19.7
+        }
+      ]
+    },
+    {
+      "knifeIndex": 25,
+      "y": 24435.7,
+      "count": 7,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "(",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": "−",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": ")",
+          "above": 3.2,
+          "below": 19.7
+        }
+      ]
+    },
+    {
+      "knifeIndex": 26,
+      "y": 25451.2,
+      "count": 3,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 5.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "nπ",
+          "above": 1.2,
+          "below": 16.5
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 27,
+      "y": 26404.7,
+      "count": 6,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 4.8,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "sin",
+          "above": 4.8,
+          "below": 18.1
+        },
+        {
+          "kind": "text",
+          "t": "n",
+          "above": 0.8,
+          "below": 16.9
+        },
+        {
+          "kind": "text",
+          "t": "x",
+          "above": 0.8,
+          "below": 16.9
+        },
+        {
+          "kind": "text",
+          "t": "cos",
+          "above": 4.8,
+          "below": 18.1
+        }
+      ]
+    },
+    {
+      "knifeIndex": 28,
+      "y": 27361.8,
+      "count": 6,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "sin",
+          "above": 1.4,
+          "below": 21.5
+        },
+        {
+          "kind": "text",
+          "t": "n",
+          "above": 1,
+          "below": 11.6
+        },
+        {
+          "kind": "text",
+          "t": "sin",
+          "above": 1.4,
+          "below": 21.5
+        },
+        {
+          "kind": "text",
+          "t": "n",
+          "above": 1,
+          "below": 11.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 32,
+      "y": 31273.3,
+      "count": 9,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "∞",
+          "above": 1.5,
+          "below": 13.9
+        },
+        {
+          "kind": "text",
+          "t": "2",
+          "above": 3.3,
+          "below": 12.2
+        },
+        {
+          "kind": "text",
+          "t": "n",
+          "above": 1,
+          "below": 11.6
+        },
+        {
+          "kind": "text",
+          "t": "∞",
+          "above": 1.5,
+          "below": 13.9
+        }
+      ]
+    },
+    {
+      "knifeIndex": 33,
+      "y": 32287.3,
+      "count": 8,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.9,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "!",
+          "above": 1.7,
+          "below": 21.2
+        },
+        {
+          "kind": "text",
+          "t": "n",
+          "above": 0.7,
+          "below": 11.8
+        },
+        {
+          "kind": "text",
+          "t": "n",
+          "above": 3.9,
+          "below": 8.7
+        },
+        {
+          "kind": "text",
+          "t": "(",
+          "above": 1.7,
+          "below": 21.2
+        }
+      ]
+    },
+    {
+      "knifeIndex": 37,
+      "y": 36175.8,
+      "count": 5,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "(",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": "−",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 3.2,
+          "below": 19.7
+        },
+        {
+          "kind": "text",
+          "t": ")",
+          "above": 3.2,
+          "below": 19.7
+        }
+      ]
+    },
+    {
+      "knifeIndex": 38,
+      "y": 37198.1,
       "count": 3,
       "kinds": [
         "text"
@@ -219,45 +534,28 @@
       "samples": [
         {
           "kind": "text",
-          "t": "），",
+          "t": "1",
           "above": 4.3,
-          "below": 15.7
+          "below": 18.6
         },
-        {
-          "kind": "text",
-          "t": "u",
-          "above": 2,
-          "below": 15.7
-        },
-        {
-          "kind": "text",
-          "t": " 递减。由莱布尼茨判别法收敛。",
-          "above": 4.3,
-          "below": 15.7
-        }
-      ]
-    },
-    {
-      "knifeIndex": 25,
-      "y": 24247.2,
-      "count": 1,
-      "kinds": [
-        "text"
-      ],
-      "maxDepth": 5.2,
-      "samples": [
         {
           "kind": "text",
           "t": "1",
-          "above": 5.2,
-          "below": 17.6
+          "above": 4.3,
+          "below": 18.6
+        },
+        {
+          "kind": "text",
+          "t": "+",
+          "above": 4.3,
+          "below": 18.6
         }
       ]
     },
     {
-      "knifeIndex": 29,
-      "y": 28086.9,
-      "count": 11,
+      "knifeIndex": 42,
+      "y": 41047.7,
+      "count": 9,
       "kinds": [
         "text"
       ],
@@ -265,68 +563,62 @@
       "samples": [
         {
           "kind": "text",
-          "t": "∣",
-          "above": 0.8,
-          "below": 22
+          "t": "n",
+          "above": 1,
+          "below": 11.6
         },
         {
           "kind": "text",
-          "t": "sin",
-          "above": 0.8,
-          "below": 22
-        },
-        {
-          "kind": "text",
-          "t": "∣",
-          "above": 0.8,
-          "below": 22
-        },
-        {
-          "kind": "text",
-          "t": "sin",
-          "above": 0.8,
-          "below": 22
-        }
-      ]
-    },
-    {
-      "knifeIndex": 32,
-      "y": 31099.6,
-      "count": 4,
-      "kinds": [
-        "text"
-      ],
-      "maxDepth": 5.2,
-      "samples": [
-        {
-          "kind": "text",
-          "t": "a",
-          "above": 1.2,
-          "below": 16.5
-        },
-        {
-          "kind": "text",
-          "t": "11",
-          "above": 5.2,
-          "below": 17.6
-        },
-        {
-          "kind": "text",
-          "t": "11",
-          "above": 5.2,
-          "below": 17.6
+          "t": "−",
+          "above": 3.3,
+          "below": 12.2
         },
         {
           "kind": "text",
           "t": "1",
-          "above": 5.2,
-          "below": 17.6
+          "above": 3.3,
+          "below": 12.2
+        },
+        {
+          "kind": "text",
+          "t": "n",
+          "above": 1,
+          "below": 11.6
         }
       ]
     },
     {
-      "knifeIndex": 41,
-      "y": 39814.1,
+      "knifeIndex": 45,
+      "y": 44079.1,
+      "count": 3,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 2,
+          "below": 20.9
+        },
+        {
+          "kind": "text",
+          "t": "−",
+          "above": 2,
+          "below": 20.9
+        },
+        {
+          "kind": "text",
+          "t": "3",
+          "above": 3.3,
+          "below": 12.2
+        }
+      ]
+    },
+    {
+      "knifeIndex": 47,
+      "y": 45955.7,
       "count": 2,
       "kinds": [
         "text"
@@ -348,9 +640,9 @@
       ]
     },
     {
-      "knifeIndex": 45,
-      "y": 43648.9,
-      "count": 3,
+      "knifeIndex": 50,
+      "y": 48928.2,
+      "count": 4,
       "kinds": [
         "text"
       ],
@@ -364,9 +656,15 @@
         },
         {
           "kind": "text",
-          "t": "n",
-          "above": 1.8,
-          "below": 10.8
+          "t": "1",
+          "above": 2.8,
+          "below": 20.1
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 2.8,
+          "below": 20.1
         },
         {
           "kind": "text",
@@ -377,9 +675,32 @@
       ]
     },
     {
-      "knifeIndex": 48,
-      "y": 46651.2,
-      "count": 1,
+      "knifeIndex": 53,
+      "y": 51773.8,
+      "count": 2,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 5.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "n",
+          "above": 1.2,
+          "below": 16.5
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 55,
+      "y": 53695.8,
+      "count": 3,
       "kinds": [
         "text"
       ],
@@ -390,13 +711,60 @@
           "t": "1",
           "above": 5.2,
           "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
         }
       ]
     },
     {
-      "knifeIndex": 49,
-      "y": 47635.2,
-      "count": 3,
+      "knifeIndex": 57,
+      "y": 55589.8,
+      "count": 8,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "n",
+          "above": 1,
+          "below": 11.6
+        },
+        {
+          "kind": "text",
+          "t": "(",
+          "above": 2,
+          "below": 20.9
+        },
+        {
+          "kind": "text",
+          "t": "−",
+          "above": 2,
+          "below": 20.9
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 2,
+          "below": 20.9
+        }
+      ]
+    },
+    {
+      "knifeIndex": 58,
+      "y": 56550,
+      "count": 4,
       "kinds": [
         "text"
       ],
@@ -410,120 +778,220 @@
         },
         {
           "kind": "text",
-          "t": "4",
-          "above": 3.3,
-          "below": 12.2
-        },
-        {
-          "kind": "text",
-          "t": "4",
-          "above": 3.3,
-          "below": 12.2
-        }
-      ]
-    },
-    {
-      "knifeIndex": 50,
-      "y": 48603.8,
-      "count": 3,
-      "kinds": [
-        "text"
-      ],
-      "maxDepth": 2.8,
-      "samples": [
-        {
-          "kind": "text",
-          "t": "1",
-          "above": 2.8,
-          "below": 20.1
-        },
-        {
-          "kind": "text",
-          "t": "1",
-          "above": 2.8,
-          "below": 20.1
-        },
-        {
-          "kind": "text",
-          "t": "1",
-          "above": 2.8,
-          "below": 20.1
-        }
-      ]
-    },
-    {
-      "knifeIndex": 51,
-      "y": 49588.4,
-      "count": 3,
-      "kinds": [
-        "text"
-      ],
-      "maxDepth": 4.6,
-      "samples": [
-        {
-          "kind": "text",
-          "t": "一致收敛——逐项求导/积分合法性",
-          "above": 2.9,
-          "below": 17.1
-        },
-        {
-          "kind": "text",
-          "t": "x",
-          "above": 0.6,
-          "below": 17.1
-        },
-        {
-          "kind": "text",
-          "t": "→",
-          "above": 4.6,
-          "below": 18.3
-        }
-      ]
-    },
-    {
-      "knifeIndex": 57,
-      "y": 55271.7,
-      "count": 2,
-      "kinds": [
-        "text"
-      ],
-      "maxDepth": 3.9,
-      "samples": [
-        {
-          "kind": "text",
-          "t": "x",
-          "above": 0.8,
-          "below": 16.9
-        },
-        {
-          "kind": "text",
           "t": "n",
-          "above": 3.9,
-          "below": 8.7
+          "above": 1,
+          "below": 11.6
+        },
+        {
+          "kind": "text",
+          "t": "−",
+          "above": 3.3,
+          "below": 12.2
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 3.3,
+          "below": 12.2
         }
       ]
     },
     {
       "knifeIndex": 61,
-      "y": 59203.9,
-      "count": 1,
+      "y": 59581.8,
+      "count": 6,
       "kinds": [
         "text"
       ],
-      "maxDepth": 4,
+      "maxDepth": 3.3,
       "samples": [
         {
           "kind": "text",
-          "t": " ✓（顺带重演 Gregory ",
-          "above": 4,
-          "below": 16
+          "t": "2",
+          "above": 3.3,
+          "below": 12.2
+        },
+        {
+          "kind": "text",
+          "t": "(",
+          "above": 2,
+          "below": 20.9
+        },
+        {
+          "kind": "text",
+          "t": "−",
+          "above": 2,
+          "below": 20.9
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 2,
+          "below": 20.9
         }
       ]
     },
     {
-      "knifeIndex": 63,
-      "y": 61169.5,
-      "count": 6,
+      "knifeIndex": 62,
+      "y": 60573.5,
+      "count": 4,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "4",
+          "above": 2,
+          "below": 20.9
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 2,
+          "below": 20.9
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 2,
+          "below": 20.9
+        },
+        {
+          "kind": "text",
+          "t": "2",
+          "above": 3.3,
+          "below": 12.2
+        }
+      ]
+    },
+    {
+      "knifeIndex": 65,
+      "y": 63474.9,
+      "count": 5,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 1.8,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "(",
+          "above": 1.8,
+          "below": 13.6
+        },
+        {
+          "kind": "text",
+          "t": "2",
+          "above": 1.8,
+          "below": 13.6
+        },
+        {
+          "kind": "text",
+          "t": "−",
+          "above": 1.8,
+          "below": 13.6
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 1.8,
+          "below": 13.6
+        }
+      ]
+    },
+    {
+      "knifeIndex": 67,
+      "y": 65499.8,
+      "count": 3,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "2",
+          "above": 2,
+          "below": 20.9
+        },
+        {
+          "kind": "text",
+          "t": "π",
+          "above": 2.4,
+          "below": 10.2
+        },
+        {
+          "kind": "text",
+          "t": "2",
+          "above": 3.3,
+          "below": 12.2
+        }
+      ]
+    },
+    {
+      "knifeIndex": 69,
+      "y": 67451.5,
+      "count": 8,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 1.9,
+          "below": 20.9
+        },
+        {
+          "kind": "text",
+          "t": "2",
+          "above": 3.3,
+          "below": 12.2
+        },
+        {
+          "kind": "text",
+          "t": "2",
+          "above": 1.9,
+          "below": 20.9
+        },
+        {
+          "kind": "text",
+          "t": "2",
+          "above": 3.3,
+          "below": 12.2
+        }
+      ]
+    },
+    {
+      "knifeIndex": 70,
+      "y": 68438.2,
+      "count": 2,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 3.3,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 2,
+          "below": 20.9
+        },
+        {
+          "kind": "text",
+          "t": "6",
+          "above": 3.3,
+          "below": 12.2
+        }
+      ]
+    },
+    {
+      "knifeIndex": 73,
+      "y": 71347,
+      "count": 1,
       "kinds": [
         "text"
       ],
@@ -531,39 +999,27 @@
       "samples": [
         {
           "kind": "text",
-          "t": "2",
-          "above": 5.2,
-          "below": 17.6
-        },
-        {
-          "kind": "text",
-          "t": "4",
-          "above": 5.2,
-          "below": 17.6
-        },
-        {
-          "kind": "text",
-          "t": "cos",
-          "above": 5.2,
-          "below": 17.6
-        },
-        {
-          "kind": "text",
-          "t": "2",
+          "t": "1",
           "above": 5.2,
           "below": 17.6
         }
       ]
     },
     {
-      "knifeIndex": 69,
-      "y": 67075,
-      "count": 6,
+      "knifeIndex": 74,
+      "y": 72359.8,
+      "count": 9,
       "kinds": [
         "text"
       ],
       "maxDepth": 3.2,
       "samples": [
+        {
+          "kind": "text",
+          "t": "1/",
+          "above": 3.2,
+          "below": 19.7
+        },
         {
           "kind": "text",
           "t": "(",
@@ -572,50 +1028,56 @@
         },
         {
           "kind": "text",
-          "t": "±",
+          "t": "p",
+          "above": 2.2,
+          "below": 10.3
+        },
+        {
+          "kind": "text",
+          "t": "+",
           "above": 3.2,
           "below": 19.7
+        }
+      ]
+    },
+    {
+      "knifeIndex": 77,
+      "y": 75349.3,
+      "count": 4,
+      "kinds": [
+        "text"
+      ],
+      "maxDepth": 5.2,
+      "samples": [
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
         },
         {
           "kind": "text",
           "t": "1",
-          "above": 3.2,
-          "below": 19.7
+          "above": 5.2,
+          "below": 17.6
         },
         {
           "kind": "text",
-          "t": ")",
-          "above": 3.2,
-          "below": 19.7
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
+        },
+        {
+          "kind": "text",
+          "t": "1",
+          "above": 5.2,
+          "below": 17.6
         }
       ]
     },
     {
-      "knifeIndex": 71,
-      "y": 68932.9,
-      "count": 2,
-      "kinds": [
-        "text"
-      ],
-      "maxDepth": 4.3,
-      "samples": [
-        {
-          "kind": "text",
-          "t": "2",
-          "above": 4.3,
-          "below": 18.6
-        },
-        {
-          "kind": "text",
-          "t": "sh",
-          "above": 4.3,
-          "below": 18.6
-        }
-      ]
-    },
-    {
-      "knifeIndex": 74,
-      "y": 71918.5,
+      "knifeIndex": 78,
+      "y": 76248.4,
       "count": 2,
       "kinds": [
         "text"
@@ -637,191 +1099,36 @@
       ]
     },
     {
-      "knifeIndex": 75,
-      "y": 72874,
-      "count": 4,
-      "kinds": [
-        "text"
-      ],
-      "maxDepth": 5.2,
-      "samples": [
-        {
-          "kind": "text",
-          "t": "1",
-          "above": 5.2,
-          "below": 17.6
-        },
-        {
-          "kind": "text",
-          "t": "p",
-          "above": 1.2,
-          "below": 16.5
-        },
-        {
-          "kind": "text",
-          "t": "+",
-          "above": 5.2,
-          "below": 17.6
-        },
-        {
-          "kind": "text",
-          "t": "1",
-          "above": 5.2,
-          "below": 17.6
-        }
-      ]
-    },
-    {
-      "knifeIndex": 76,
-      "y": 73863.3,
-      "count": 2,
-      "kinds": [
-        "text"
-      ],
-      "maxDepth": 6.2,
-      "samples": [
-        {
-          "kind": "text",
-          "t": "∞",
-          "above": 6.2,
-          "below": 9.3
-        },
-        {
-          "kind": "text",
-          "t": "∞",
-          "above": 6.2,
-          "below": 9.3
-        }
-      ]
-    },
-    {
-      "knifeIndex": 77,
-      "y": 74790.2,
-      "count": 5,
-      "kinds": [
-        "text"
-      ],
-      "maxDepth": 3.2,
-      "samples": [
-        {
-          "kind": "text",
-          "t": "(",
-          "above": 3.2,
-          "below": 19.7
-        },
-        {
-          "kind": "text",
-          "t": "−",
-          "above": 3.2,
-          "below": 19.7
-        },
-        {
-          "kind": "text",
-          "t": "1",
-          "above": 3.2,
-          "below": 19.7
-        },
-        {
-          "kind": "text",
-          "t": ")",
-          "above": 3.2,
-          "below": 19.7
-        }
-      ]
-    },
-    {
-      "knifeIndex": 79,
-      "y": 76700.9,
-      "count": 2,
-      "kinds": [
-        "text"
-      ],
-      "maxDepth": 2.6,
-      "samples": [
-        {
-          "kind": "text",
-          "t": "+",
-          "above": 2.6,
-          "below": 12.9
-        },
-        {
-          "kind": "text",
-          "t": "1",
-          "above": 2.6,
-          "below": 12.9
-        }
-      ]
-    },
-    {
-      "knifeIndex": 81,
-      "y": 78674.3,
-      "count": 5,
-      "kinds": [
-        "text"
-      ],
-      "maxDepth": 4.3,
-      "samples": [
-        {
-          "kind": "text",
-          "t": "1",
-          "above": 4.3,
-          "below": 18.6
-        },
-        {
-          "kind": "text",
-          "t": "n",
-          "above": 1.5,
-          "below": 11
-        },
-        {
-          "kind": "text",
-          "t": "1",
-          "above": 4.3,
-          "below": 18.6
-        },
-        {
-          "kind": "text",
-          "t": "1",
-          "above": 4.3,
-          "below": 18.6
-        }
-      ]
-    },
-    {
       "knifeIndex": 82,
-      "y": 79661.3,
-      "count": 1,
+      "y": 80116.3,
+      "count": 3,
       "kinds": [
-        "text"
+        "text",
+        "svg"
       ],
-      "maxDepth": 5.2,
+      "maxDepth": 1.3,
       "samples": [
         {
           "kind": "text",
           "t": "1",
-          "above": 5.2,
-          "below": 17.6
-        }
-      ]
-    },
-    {
-      "knifeIndex": 83,
-      "y": 80551.5,
-      "count": 1,
-      "kinds": [
-        "text"
-      ],
-      "maxDepth": 2.7,
-      "samples": [
+          "above": 1.3,
+          "below": 21.6
+        },
         {
           "kind": "text",
-          "t": "−",
-          "above": 2.7,
-          "below": 12.7
+          "t": "1",
+          "above": 1.3,
+          "below": 21.6
+        },
+        {
+          "kind": "svg",
+          "t": "",
+          "above": 0.8,
+          "below": 47.2
         }
       ]
     }
   ],
   "doc": "C:\\Users\\hh\\Desktop\\Tp\\mditor\\perf\\fixtures\\无穷级数_密度档压测副本.md",
-  "tookMs": 2494
+  "tookMs": 2217
 }

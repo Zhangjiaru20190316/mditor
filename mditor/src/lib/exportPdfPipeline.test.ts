@@ -3,17 +3,170 @@
 // （perf/ex3-*）。
 
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterEach } from "vitest";
 import {
   PDF_PAPERS,
   blockIntersectsWindow,
   dataUrlToBytes,
   fragmentsToPageRuns,
+  measureBlocks,
   mmToPt,
   pearsonBestLag,
   type PdfExportProgress,
 } from "./exportPdfPipeline";
 import type { PageWindow } from "./exportPaginator";
+import type { RenderFactoryHandle } from "./exportRenderFactory";
+
+// ---------------------------------------------------------------------------
+// HX P-α 回归锚定：measureBlocks 行盒坐标系。
+// 缺陷形态（8da2982 定罪）：lineBoxes/tableRows 用视口绝对 rect 减 content
+// 相对 blockTop——content 容器视口原点 ≠ 0（首块塌陷 margin 等）时行盒整体
+// 偏移，分页刀口切进视觉行内部。测试注入「视口原点=100」的几何，断言行盒
+// 回到 content 相对坐标。
+// ---------------------------------------------------------------------------
+
+interface FakeGeometry {
+  /** content 容器的视口顶（缺陷触发条件：≠0）。 */
+  contentViewportTop: number;
+  /** P 块相对 content 的顶。 */
+  blockTopRel: number;
+  /** 文本行矩形（相对 P 顶）[top, bottom][]。 */
+  lineRectsRel: Array<[number, number]>;
+}
+
+/** 最小工厂句柄 + 原型级 rect 注入（jsdom 无布局，视口系 rect 全部可控）。 */
+function fakeFactory(g: FakeGeometry): RenderFactoryHandle {
+  const doc = document.implementation.createHTMLDocument("fac");
+  const content = doc.createElement("div");
+  const p = doc.createElement("p");
+  p.textContent = "第一行 第二行";
+  content.appendChild(p);
+  doc.body.appendChild(content);
+  const vpTop = g.contentViewportTop;
+  const blockVpTop = vpTop + g.blockTopRel;
+  const lineBottomRel = Math.max(...g.lineRectsRel.map(([, b]) => b));
+  const rectsFor = () =>
+    g.lineRectsRel.map(([t, b]) => ({
+      top: blockVpTop + t,
+      bottom: blockVpTop + b,
+      height: b - t,
+      width: 40,
+      left: 0,
+      right: 40,
+      x: 0,
+      y: blockVpTop + t,
+      toJSON: () => ({}),
+    }));
+  const origGBCR = Element.prototype.getBoundingClientRect;
+  const origGCR = Range.prototype.getClientRects;
+  (Element.prototype as unknown as Record<string, unknown>).getBoundingClientRect =
+    function (this: Element) {
+      if (this === content) {
+        return { top: vpTop, bottom: vpTop + 1000, height: 1000, width: 680, left: 0, right: 680, x: 0, y: vpTop, toJSON: () => ({}) };
+      }
+      if (this === p) {
+        return { top: blockVpTop, bottom: blockVpTop + lineBottomRel + 16, height: lineBottomRel + 16, width: 680, left: 0, right: 680, x: 0, y: blockVpTop, toJSON: () => ({}) };
+      }
+      return { top: 0, bottom: 0, height: 0, width: 0, left: 0, right: 0, x: 0, y: 0, toJSON: () => ({}) };
+    };
+  (Range.prototype as unknown as Record<string, unknown>).getClientRects =
+    function () {
+      return rectsFor();
+    };
+  restoreFns.push(() => {
+    (Element.prototype as unknown as Record<string, unknown>).getBoundingClientRect = origGBCR;
+    (Range.prototype as unknown as Record<string, unknown>).getClientRects = origGCR;
+  });
+  return {
+    iframe: {} as HTMLIFrameElement,
+    doc,
+    content,
+    issues: [],
+    timedOut: false,
+    destroy: () => {},
+  } as unknown as RenderFactoryHandle;
+}
+
+const restoreFns: Array<() => void> = [];
+afterEach(() => {
+  while (restoreFns.length) restoreFns.pop()!();
+});
+
+describe("measureBlocks 行盒坐标系（HX P-α 回归：视口 rect → content 相对）", () => {
+  it("content 视口原点≠0 时行盒不随偏移（demo 实测几何：原点 21.4/两行 [4,24]+[32,52]）", () => {
+    const h = fakeFactory({
+      contentViewportTop: 21.4,
+      blockTopRel: 945.9,
+      lineRectsRel: [
+        [4, 24],
+        [32, 52],
+      ],
+    });
+    const blocks = measureBlocks(h);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].lines).toEqual([
+      { top: 4, height: 20 },
+      { top: 32, height: 20 },
+    ]);
+  });
+
+  it("视口原点=0（旧隐含假设）结果不变——修复对既有几何零扰动", () => {
+    const h = fakeFactory({
+      contentViewportTop: 0,
+      blockTopRel: 945.9,
+      lineRectsRel: [
+        [4, 24],
+        [32, 52],
+      ],
+    });
+    const blocks = measureBlocks(h);
+    expect(blocks[0].lines).toEqual([
+      { top: 4, height: 20 },
+      { top: 32, height: 20 },
+    ]);
+  });
+
+  it("表格行盒同款坐标系（行 rect 视口系 → content 相对）", () => {
+    const doc = document.implementation.createHTMLDocument("fac");
+    const content = doc.createElement("div");
+    const table = doc.createElement("table");
+    const tr1 = doc.createElement("tr");
+    const tr2 = doc.createElement("tr");
+    table.append(tr1, tr2);
+    content.appendChild(table);
+    doc.body.appendChild(content);
+    const vpTop = 33.3;
+    const blockVpTop = vpTop + 500;
+    const origGBCR = Element.prototype.getBoundingClientRect;
+    (Element.prototype as unknown as Record<string, unknown>).getBoundingClientRect =
+      function (this: Element) {
+        if (this === content) {
+          return { top: vpTop, bottom: vpTop + 1000, height: 1000, width: 680, left: 0, right: 0, x: 0, y: vpTop, toJSON: () => ({}) };
+        }
+        if (this === table) {
+          return { top: blockVpTop, bottom: blockVpTop + 60, height: 60, width: 680, left: 0, right: 680, x: 0, y: blockVpTop, toJSON: () => ({}) };
+        }
+        if (this === tr1) {
+          return { top: blockVpTop, bottom: blockVpTop + 30, height: 30, width: 680, left: 0, right: 680, x: 0, y: blockVpTop, toJSON: () => ({}) };
+        }
+        if (this === tr2) {
+          return { top: blockVpTop + 30, bottom: blockVpTop + 60, height: 30, width: 680, left: 0, right: 680, x: 0, y: blockVpTop + 30, toJSON: () => ({}) };
+        }
+        return { top: 0, bottom: 0, height: 0, width: 0, left: 0, right: 0, x: 0, y: 0, toJSON: () => ({}) };
+      };
+    restoreFns.push(() => {
+      (Element.prototype as unknown as Record<string, unknown>).getBoundingClientRect = origGBCR;
+    });
+    const h = { iframe: {}, doc, content, issues: [], timedOut: false, destroy: () => {} } as unknown as RenderFactoryHandle;
+    const blocks = measureBlocks(h);
+    // vpTop=33.3 引入浮点 epsilon：语义断言用 toBeCloseTo（偏移量级 ≫ 1e-6）。
+    expect(blocks[0].rows).toHaveLength(2);
+    expect(blocks[0].rows![0].top).toBeCloseTo(0, 6);
+    expect(blocks[0].rows![0].height).toBe(30);
+    expect(blocks[0].rows![1].top).toBeCloseTo(30, 6);
+    expect(blocks[0].rows![1].height).toBe(30);
+  });
+});
 
 describe("blockIntersectsWindow（分块序列化裁剪判定）", () => {
   it("窗口内/窗口外/骑线块：骑线必留（分页刀口可落在块内部）", () => {
