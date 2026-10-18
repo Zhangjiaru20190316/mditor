@@ -608,7 +608,7 @@ export function pageSlicePlan(
 }
 
 /** 窗口相交判定（纯函数）：块区间 [top, bottom) 与窗口 [wTop, wBottom)
- * 有重叠则保留（骑线块必须保留——分页刀口可能落在块内部）。 */
+ *  有重叠则保留（骑线块必须保留——分页刀口可能落在块内部）。 */
 export function blockIntersectsWindow(
   top: number,
   bottom: number,
@@ -617,6 +617,27 @@ export function blockIntersectsWindow(
   eps = 1
 ): boolean {
   return top < wBottom - eps && bottom > wTop + eps;
+}
+
+/** 块的「首个流内块级后代」锚点（HX P-δ）：沿首个非 inline、非浮动、
+ *  非 absolute 的子元素下钻（塌缩链只经这条路径穿透块顶）。锚点的位移
+ *  ＝该块内容的整体位移，供 trim 后实测回拨。无合格子级时回落到自身。 */
+function anchorOf(el: HTMLElement, win: Window): HTMLElement {
+  let e = el;
+  for (let depth = 0; depth < 32; depth++) {
+    let next: HTMLElement | null = null;
+    for (const c of Array.from(e.children)) {
+      const cs = win.getComputedStyle(c);
+      if (cs.position !== "static" || cs.float !== "none" || cs.display.startsWith("inline")) {
+        continue;
+      }
+      next = c as HTMLElement;
+      break;
+    }
+    if (!next) return e;
+    e = next;
+  }
+  return e;
 }
 
 interface RasterizeArgs {
@@ -637,6 +658,8 @@ class ChunkTrim {
   private savedCss: string[] = [];
   private staging: DocumentFragment;
   private detached = false;
+  /** 每 kid 的「首个流内块级后代」锚点原位 top（HX P-δ）。 */
+  private anchorTops: number[] = [];
 
   constructor(
     private content: HTMLElement
@@ -645,9 +668,14 @@ class ChunkTrim {
     // 快照必须在任何裁剪前完成：rect 相对 content 盒（与分页/文本素材同坐
     // 标系）。此后仅由裁剪自身改结构，坐标不再依赖回流。
     const base = content.getBoundingClientRect();
+    const win = content.ownerDocument!.defaultView!;
     this.kids = Array.from(content.children) as HTMLElement[];
     this.tops = this.kids.map((k) => k.getBoundingClientRect().top - base.top);
     this.savedCss = this.kids.map((k) => k.style.cssText);
+    this.anchorTops = this.kids.map((k, i) => {
+      const t = anchorOf(k, win).getBoundingClientRect().top - base.top;
+      return Number.isFinite(t) ? t : this.tops[i];
+    });
   }
 
   get kidTops(): number[] {
@@ -657,6 +685,7 @@ class ChunkTrim {
   /** 应用到窗口 [wTop, wBottom)：窗口外块暂存，窗口内块绝对定位到原坐标。 */
   apply(wTop: number, wBottom: number): void {
     const n = this.kids.length;
+    const inWindow: number[] = [];
     for (let i = 0; i < n; i++) {
       const top = this.tops[i];
       // 区间语义与 measureBlocks 一致：高度覆盖到下一块顶。
@@ -665,6 +694,7 @@ class ChunkTrim {
         this.staging.appendChild(this.kids[i]);
         continue;
       }
+      inWindow.push(i);
       const k = this.kids[i];
       // 绝对定位：top 为 margin 盒顶——margin 归零并入 top，border 盒精确
       // 落在原坐标（rect 即 border 盒）。left/right:0 钉住流宽度。
@@ -676,6 +706,22 @@ class ChunkTrim {
       k.style.bottom = "auto";
     }
     this.detached = true;
+    // HX P-δ：绝对定位盒的 margin 不与子级塌缩——原本「塌缩穿透到盒外」
+    // 的首行链 margin（列表/引用常见 16px）会在盒内重新生效，把该块全部
+    // 内容推低同样距离（密度档实测 +16px，页窗刀口按测量布局落位 → 切字）。
+    // 按锚点实测回拨：内容几何还原为测量面（有涂装盒自带 padding 分隔塌缩
+    // 不会漂移，回拨量自然为 0）。
+    void this.content.scrollHeight;
+    const base = this.content.getBoundingClientRect();
+    const win = this.content.ownerDocument!.defaultView!;
+    const adjust: Array<{ k: HTMLElement; top: number }> = [];
+    for (const i of inWindow) {
+      const k = this.kids[i];
+      const anchorNow = anchorOf(k, win).getBoundingClientRect().top - base.top;
+      const delta = anchorNow - this.anchorTops[i];
+      if (Math.abs(delta) > 0.5) adjust.push({ k, top: this.tops[i] - delta });
+    }
+    for (const a of adjust) a.k.style.top = `${a.top}px`;
   }
 
   /** 按原序全量还原（appendChild 移动既有节点，无克隆；还原后一次回流）。 */
