@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased：HX 轮——导出 HTML 滚动锁死 + PDF 分页切字修复
+
+结题报告 `docs/html-pdf-export-fix-report.md`。用户报障两症状（打包版 5.0.2-beta 观察）：
+
+### E-H1 HTML 导出滚动锁死（`b2ab0e9`）
+
+应用外壳 `html,body,#root{height:100%}` + `body{overflow:hidden}` 随 `collectThemeCss`
+整包进导出文件，wrapHtml 默认层叠盖不掉 → 独立 HTML body 视口锁死。修复：外壳显式
+覆盖 height/overflow。H2 门 5/5（light/dark × 公式矩阵：用户滚动到底 + 主题保真）。
+
+### E-P1 PDF 分页切字（四层根因分层修复，`fc5adfc`→`e1f5a52`）
+
+1. **P-α** 行盒坐标系混用：视口坐标未换算 content 相对，全部行盒整体偏移。
+2. **P-β** 变高页 vs 定高网格切片：累计漂移最大 211px + 窗口重叠重复；切片位改跟
+   `pages[i].top` 按变高页拼接（`pageSlicePlan`）。
+3. **P-γ** 行盒外墨迹出刀：KaTeX vlist/大操作符越盒墨迹；两遍墨迹感知 rebase + 行盒底
+   自适应护量（≤4px，间隙半宽−0.25，表格行除外）。
+4. **P-δ** trim 绝对化抑制父子 margin 塌缩：列表首行链 margin（16px）在绝对盒内再生，
+   块内容整体下移 → 刀口系统性偏上 16px 切字（密度档 p71 拦腰切/p75/p76 页顶残端）。
+   修复：ChunkTrim 构造期记录「首个流内块级后代」锚点原位 top，apply 后实测回拨
+   （测量即真值，不枚举塌缩条件）。
+
+验收：密度档 87 页生产路径全量重导，程序扫描 0 切字 + 视觉终裁 5/5 A；demo 档零标记；
+npm test **1089/1089 绿**。
+
 ## 5.0.2-beta（2026-10-15）：EX 导出体系全面翻新 + DX Word 导出必败修复
 
 ### DX 轮（2026-10-15）：Word(docx) 导出必败修复——browser 构建全局垫片
