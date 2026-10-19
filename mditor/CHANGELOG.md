@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased：R11 大文档首现闪刷收尾 + 滚动性能归因（原型入库，默认关）
+
+结题报告 `docs/large-doc-reveal-flicker-scroll-perf-report.md`；归因书
+`perf/results/r11-phase4-attribution.md`；拍板材料 `docs/r11-decision-materials.md`。
+用户报障（5.0.3-beta 观察）："上下滚动时第一次公式，文字等块刷新闪烁" + "优化滚动性能"。
+
+### E-a 块级换装可见（主犯，R10 S-a 已决，本轮兑现修复原型 `7d8c980`）
+
+`src/lib/blockPreMount.ts` + 补丁侧 `__codeBlockPreMount` 受控触发器：滚动输入驱动的
+预测式预挂载（rAF 帧内扫描方向前方预测带，走与 IO 进带完全相同路径，幂等 + IO 兜底），
+限速每帧 1 块（最坏帧预算 ~10ms）、上滚仅限曾挂块（冻结高语义）。开关
+`window.__blockPreMountCfg` **默认关=零行为**。实测：解题技巧 down-slow E1 可见
+24/24（×6 一字不差）→ **0/0/1（×3，-100%）**；down-fast 16→1；revisit 48 块 0 可见；
+帧代价零（p50 6ms 持平）；M3 挂载率 100% 保持。**待用户拍板默认开启**。
+
+### E-b/E-c 归因重排（不立项，负结果留档）
+
+- "首开即滚"本身不构成症状：密度档 fresh（真冷启动）慢滚 S1=0/0/0——R10 Fix-A
+  预测式发现连冷缓存窗口也覆盖；1MB 快滚 S1=124~134 的真因是**冷区穿越**
+  （fresh≈warm，全程分布，预热被快滚甩开 cov .49→.52）。
+- 文字块首绘（E3）可见高度跳全为行内公式行高变化（E-b 同源）或嵌套块挂载外溢
+  （24/96 与块挂载 ±50ms 对齐）——主载体回指 E-a/E-b，随修复自然收敛；
+  过渡样式波及块级/图片候选**静态排除**（选择器只覆盖行内 lazy span）。
+
+### P1/P3 性能侧（1MB 快滚布局墙复核 + P3 第三次呈报否证 `04c4ac2`）
+
+- R8 冷区首渲布局墙**复核坐实**（layout:block 553 + layout:height 544 伴随全程）；
+  同批 ABAB 基线：1MB on 臂 p50 中位 64.7ms / p95 175.8ms。
+- P3 盒预留预热原型（`src/lib/inlineBoxPrewarm.ts`，默认关）：同批 ABAB 修复臂
+  p50/p95 与基线差 <2%（噪声级）——**R8 投影（p95→~130）在 R10 后代码上不复现**
+  （队列积压主成分已被 R10 Fix-A/A' 消化，现存墙为块级变现层）。建议按原案不采纳。
+- 方法学：E 剖面重记录器在 1MB 上加帧 ~75ms（p50 124-135 vs 轻记录器 48-53）——
+  P 门一律以轻记录器/scroll-abab 为准。
+
+### 测量与文档
+
+- `scroll-abab.mjs` 增 `--pre-eval`（开档前注入，门控原型臂通道，缺省零变化 `25714c5`）。
+- 单测 +8（blockPreMount 5 + inlineBoxPrewarm 3）；npm test **1097/1097 绿**。
+- E5 盲序录屏素材与合成脚本（`perf/tmp-r11/capture-e5.mjs` / `assemble-e5.mjs`）。
+
 ## 5.0.3-beta（2026-10-19）：HX 轮——导出 HTML 滚动锁死 + PDF 分页切字修复
 
 结题报告 `docs/html-pdf-export-fix-report.md`。用户报障两症状（打包版 5.0.2-beta 观察）：
