@@ -125,6 +125,8 @@ import {
 } from "../lib/parsePipeline";
 import { installIncrementalSerializer, warmIncrementalSerializer } from "../lib/incrementalSerializer";
 import { lazyInlineMath, setLazyMathBySize } from "../lib/lazyInlineMath";
+import { setBlockPreMountEnabled } from "../lib/blockPreMount";
+import { startInlineBoxPrewarm } from "../lib/inlineBoxPrewarm";
 import { stampHeadingIdsFromCtx } from "../lib/headingStamp";
 import {
   insertIntoTextarea,
@@ -578,6 +580,18 @@ function scheduleMathCachePrewarm(crepe: Crepe, delayMs = 350): void {
   }
 }
 
+/** R11 原型（P3）：盒预留预热的调度入口（与缓存预热同点位；尽力而为）。 */
+function scheduleInlineBoxPrewarm(crepe: Crepe, delayMs = 350): void {
+  try {
+    crepe.editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      window.setTimeout(() => startInlineBoxPrewarm(view), delayMs);
+    });
+  } catch {
+    /* 预热失败静默 */
+  }
+}
+
 export function useMilkdown(opts: Options): MilkdownHandle {
   const { hostRef, sourceRef, svHostRef } = opts;
   const crepeRef = useRef<Crepe | null>(null);
@@ -696,6 +710,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       const big = isBigDoc(seed);
       // R1：按体量（不经设置开关）决定行内公式是否懒渲染——重建时重估。
       setLazyMathBySize(seed);
+      // R11 原型（E-a 块级预挂载，拍板项默认关）：与行内懒渲染同点位按 cv 档启用。
+      setBlockPreMountEnabled(isBigDocCv(seed));
       bigDocRef.current = big;
       setBigDoc(big);
       const cv = isBigDocCv(seed);
@@ -992,6 +1008,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       if (cvDocRef.current && seed) {
         scheduleCvPrewarm(crepe);
         scheduleMathCachePrewarm(crepe);
+        // R11 原型（P3 盒预留预热，拍板项默认关）：与缓存预热同点位。
+        scheduleInlineBoxPrewarm(crepe);
       }
     });
     // Defensive: never let an unexpected late rejection surface as unhandled.
@@ -1216,6 +1234,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           // 整篇载入：优先解析缓存（阶段 1 命中 → 零解析），未命中原地解析
           // 并回填缓存。suppress 包住两条路径，避免程序化载入被当作用户输入。
           setLazyMathBySize(md);
+          setBlockPreMountEnabled(cvDocRef.current);
           suppressRef.current = true;
           loadMarkdownFull(crepe, md);
           suppressRef.current = false;
@@ -1226,6 +1245,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           if (cvDocRef.current) {
             scheduleCvPrewarm(crepe);
             scheduleMathCachePrewarm(crepe);
+            scheduleInlineBoxPrewarm(crepe);
           }
           return;
         }

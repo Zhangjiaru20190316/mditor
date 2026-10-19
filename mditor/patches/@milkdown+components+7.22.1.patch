@@ -1,8 +1,8 @@
 diff --git a/node_modules/@milkdown/components/lib/code-block/index.js b/node_modules/@milkdown/components/lib/code-block/index.js
-index 7e1baef..d555a51 100644
+index 7e1baef..c81befa 100644
 --- a/node_modules/@milkdown/components/lib/code-block/index.js
 +++ b/node_modules/@milkdown/components/lib/code-block/index.js
-@@ -581,7 +581,7 @@ function getSharedObserver() {
+@@ -581,11 +581,29 @@ function getSharedObserver() {
            callback == null ? void 0 : callback(entry.isIntersecting);
          }
        },
@@ -11,7 +11,29 @@ index 7e1baef..d555a51 100644
      );
    }
    return sharedObserver;
-@@ -725,6 +725,19 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+ }
++// mditor prototype (R11, decision-pending): controlled pre-mount trigger for
++// the predictive block scheduler (src/lib/blockPreMount.ts). Invokes the
++// exact IO-enter path (cancelTeardown + initializeCodeMirror; idempotent via
++// the initialized flag). Scheduler-driven only — never auto-executes.
++// Removal: delete together with the scheduler module.
++try {
++  if (typeof window !== "undefined" && !window.__codeBlockPreMount) {
++    window.__codeBlockPreMount = (el) => {
++      const cb = visibilityCallbacks.get(el);
++      if (cb) {
++        cb(true);
++        return true;
++      }
++      return false;
++    };
++  }
++} catch {
++}
+ const _CodeMirrorBlock = class _CodeMirrorBlock {
+   constructor(node, view, getPos, loader, config) {
+     this.node = node;
+@@ -725,6 +743,19 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
        }
      });
      this.renderPlaceholder();
@@ -31,7 +53,7 @@ index 7e1baef..d555a51 100644
      visibilityCallbacks.set(this.dom, (isIntersecting) => {
        if (isIntersecting) {
          this.cancelTeardown();
-@@ -746,6 +759,22 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+@@ -746,6 +777,22 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
    initializeCodeMirror() {
      if (this.initialized) return;
      this.initialized = true;
@@ -54,7 +76,7 @@ index 7e1baef..d555a51 100644
      this.cm = new EditorView({
        doc: this.node.textContent,
        root: this.view.root,
-@@ -773,7 +802,31 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+@@ -773,7 +820,31 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
    }
    teardownCodeMirror() {
      if (!this.initialized) return;
@@ -87,7 +109,7 @@ index 7e1baef..d555a51 100644
      this.app.unmount();
      this.cm.destroy();
      this.initialized = false;
-@@ -782,6 +835,13 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+@@ -782,6 +853,13 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
        this.dom.removeChild(this.dom.firstChild);
      }
      this.renderPlaceholder();
@@ -101,7 +123,7 @@ index 7e1baef..d555a51 100644
    }
    scheduleTeardown() {
      this.cancelTeardown();
-@@ -853,9 +913,10 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+@@ -853,9 +931,10 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
        try {
          this.cm.dispatch({
            changes: { from: change.from, to: change.to, insert: change.text },
@@ -115,7 +137,7 @@ index 7e1baef..d555a51 100644
          });
        } finally {
          this.updating = false;
-@@ -888,7 +949,7 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
+@@ -888,7 +967,7 @@ const _CodeMirrorBlock = class _CodeMirrorBlock {
    }
  };
  /** Delay before tearing down an off-screen CodeMirror instance. */
