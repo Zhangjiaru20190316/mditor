@@ -285,7 +285,7 @@ export function measureBlocks(handle: RenderFactoryHandle): MeasuredBlock[] {
     const rect = el.getBoundingClientRect();
     const top = rect.top - base.top;
     const tag = el.tagName;
-    let m: KidMeasure = {
+    const m: KidMeasure = {
       borderTop: top,
       borderHeight: rect.height,
       inkTop: top,
