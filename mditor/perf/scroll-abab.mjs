@@ -47,7 +47,7 @@ const SELFTEST_DOC = "微分方程专题_CMC备战_基准副本"; // D1：1267 �
 
 function parseArgs(argv) {
   const a = {
-    doc: null, viewport: null, round: null, devmode: false,
+    doc: null, viewport: null, round: null, devmode: false, preEval: null,
     duration: 60, tag: "run", selftest: false, validate: false, expect: null,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -62,6 +62,7 @@ function parseArgs(argv) {
     else if (k === "--selftest") a.selftest = true;
     else if (k === "--validate") a.validate = true;
     else if (k === "--expect") a.expect = next();
+    else if (k === "--pre-eval") a.preEval = next();
     else throw new Error("未知参数: " + k);
   }
   if (Number.isNaN(a.duration) || a.duration < 5) throw new Error("--duration 必须 ≥5 秒");
@@ -410,6 +411,12 @@ async function main() {
     await cdp.eval(LONGTASK_RECORDER);
     await cdp.eval(SFR_INSTALL);
     const win = await cdp.eval(`({w: innerWidth, h: innerHeight, dpr: devicePixelRatio})`);
+
+    // ---- b2) R11：--pre-eval 在开档前注入（门控原型臂的 window 开关；缺省零变化）
+    if (args.preEval) {
+      await cdp.eval(args.preEval);
+      log(`pre-eval 已应用: ${args.preEval}`);
+    }
 
     // ---- c) 文件树点击打开（重试 3 次），等渲染稳定 ----------------------------
     const wantPath = docInfo.path.replaceAll("\\", "/").toLowerCase();
