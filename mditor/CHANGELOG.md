@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased：HX 轮——导出 HTML 滚动锁死 + PDF 分页切字修复
+## 5.0.3-beta（2026-10-19）：HX 轮——导出 HTML 滚动锁死 + PDF 分页切字修复
 
 结题报告 `docs/html-pdf-export-fix-report.md`。用户报障两症状（打包版 5.0.2-beta 观察）：
 
