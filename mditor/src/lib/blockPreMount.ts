@@ -1,4 +1,7 @@
-// R11 原型（E-a 块级主动预挂载，限速）——拍板项，默认关闭，未拍板不合入。
+// R11 E-a 块级主动预挂载（限速）——2026-10-20 拍板默认开启：用户实测
+// 5.0.4-beta 反馈"公式块闪烁优化没效果"，归因为原型彼时默认关（安装包零
+// 行为），拍板指令"继续优化"即开启；参数维持阶段五实测值（bandPx 800 /
+// perFrame 1），上滚首挂维持不放开。
 //
 // 机制背景（r10-phase4-attribution.md S-a/S-g）：块公式（Crepe 把 math 改写
 // 为 code_block(language:"LaTeX")）与代码块共用 @milkdown/components 的
@@ -21,8 +24,9 @@
 //    已标 + teardown 冻结高仍在），首挂块一律留给 IO 原路径。
 //  * IO 兜底保留：预挂载只是提前，IO 回调照常（先到者幂等）——M3 块挂载率
 //    100% 硬门不受影响。
-//  * 开关：window.__blockPreMountCfg = { on: true, bandPx: 800, perFrame: 1 }；
-//    默认关闭（未设置即零行为）。统计出口 window.__blockPreMountStats。
+//  * 开关：默认开启（cv 档 + setBlockPreMountEnabled 才挂钩）；测量基线臂用
+//    window.__blockPreMountCfg = { on: false } 显式关闭（ABAB 语义保留）。
+//    统计出口 window.__blockPreMountStats。
 //
 // 移除路径：删除 useMilkdown 的 import/安装两行 + 本文件 + 补丁侧
 // __codeBlockPreMount 注册块。
@@ -36,7 +40,7 @@ interface BlockPreMountCfg {
   perFrame: number;
 }
 
-const DEFAULT_CFG: BlockPreMountCfg = { on: false, bandPx: 800, perFrame: 1 };
+const DEFAULT_CFG: BlockPreMountCfg = { on: true, bandPx: 800, perFrame: 1 };
 
 interface BlockPreMountStats {
   sweeps: number;

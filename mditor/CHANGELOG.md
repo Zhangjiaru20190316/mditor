@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### R11 拍板落地：E-a 块级预挂载默认开启（公式块首现闪刷修复生效）
+
+用户实测 5.0.4-beta 反馈"公式块闪烁优化没效果"——归因：E-a 原型当时以
+**默认关**入库（未拍板不合入），安装包内零行为，非修复失效。2026-10-20
+拍板（指令"继续优化"）默认开启：`blockPreMount.ts` `DEFAULT_CFG.on=true`
+（bandPx=800 / perFrame=1 / 上滚首挂不放开，均维持阶段五实测值）。cv 档
+大文档滚动方向前方预测带内占位块经 rAF 限速预挂载（每帧 1 块，走与 IO
+进带完全相同路径）；`window.__blockPreMountCfg={on:false}` 为测量基线臂
+专用整体关闭。P3 盒预留预热维持不采纳（默认关）。
+
+同批复验（dev）：解题技巧 down-slow 默认开启 ×2 **E1 可见 0/0**（基线 24，
+显式关闭臂 24 精确复现）；帧代价 gapP50 6ms 持平、M 门 0 违例；1MB 档
+scroll-abab 同批 off/on 交错无回归。拍板记录与复验数据：
+`docs/r11-decision-materials.md` §④、`perf/results/r11-pmdefault-*.json`、
+`perf/results/scroll-abab.jsonl` pmflp-* 臂。
+
 ## 5.0.4-beta（2026-10-20）：R11 大文档首现闪刷收尾 + 滚动性能归因（原型入库，默认关）
 
 结题报告 `docs/large-doc-reveal-flicker-scroll-perf-report.md`；归因书

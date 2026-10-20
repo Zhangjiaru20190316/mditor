@@ -120,3 +120,21 @@ mountMsMax）、`__inlineBoxPrewarmStats`（measured/batches/measureMsMax）—�
 - 打包冒烟：`npm run tauri build` 重建 + target/release @CDP 9224 身份门
   断言（`__mathPumpStats().proactiveSweeps` 字段存在 + `__blockMountStats`
   存在 + `__blockPreMountCfg` 未设即默认关）——见报告尾补录。
+
+## ⑦ 拍板落地补录（2026-10-20）
+
+- **拍板**：用户实测 5.0.4-beta 反馈"公式块闪烁优化没效果"——E-a 彼时
+  按未拍板默认关入库，安装包零行为（预期而非失效）。同日指令"继续优化"
+  即拍板：E-a 默认开启（bandPx=800 / perFrame=1 / 上滚首挂不放开，维持
+  阶段五实测值）；P3 维持不采纳；E2/P1 深层维持另立项。详见
+  `docs/r11-decision-materials.md` §④。
+- **落地**：`blockPreMount.ts` `DEFAULT_CFG.on` 一处翻转 + 单测/注释同步 +
+  电池 base 臂显式 `on:false`（历史基线可比性保留）。
+- **复验（同批 dev）**：解题技巧 down-slow 默认开启 ×2 E1 可见 **0/0**、
+  E3 归零、gapP50 6ms 持平、M 门 0 违例；显式关闭臂 24（23 LaTeX+1 code）
+  精确复现基线六臂。P 门 scroll-abab 1MB 同批 off/on/on/off 交错：无回归
+  （pmflp-* 臂）。上滚对称沿用阶段五 revisit 臂（48 块 0 可见）。
+- **R 组**：未整组重跑——E-a 激活面仅 wheel/touch × cv 档（双门），打开/
+  打字/切换路径结构性不经过；整组 R 重基准留下个打包发布周期。
+- 5.0.4-beta 的"打包冒烟"门中"`__blockPreMountCfg` 未设即默认关"一条自
+  本补录起反转：**未设即默认开**，基线臂需显式 `{on:false}`。

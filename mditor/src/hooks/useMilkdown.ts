@@ -710,7 +710,8 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       const big = isBigDoc(seed);
       // R1：按体量（不经设置开关）决定行内公式是否懒渲染——重建时重估。
       setLazyMathBySize(seed);
-      // R11 原型（E-a 块级预挂载，拍板项默认关）：与行内懒渲染同点位按 cv 档启用。
+      // R11 E-a 块级预挂载：与行内懒渲染同点位按 cv 档启用（2026-10-20 拍板
+      // 默认开启；window.__blockPreMountCfg={on:false} 为测量基线臂专用关闭）。
       setBlockPreMountEnabled(isBigDocCv(seed));
       bigDocRef.current = big;
       setBigDoc(big);

@@ -1,6 +1,6 @@
-// blockPreMount（R11 E-a 原型：块级主动预挂载，限速）单测。
-// 拍板项默认关：未开开关零行为；开启后验证发现带、限速、上滚安全门、
-// 视口内跳过与统计出口。
+// blockPreMount（R11 E-a：块级主动预挂载，限速）单测。
+// 2026-10-20 拍板默认开启：未设 cfg 即生效；显式 {on:false} 为测量基线臂
+// 语义（零行为）。开启后验证发现带、限速、上滚安全门、视口内跳过与统计出口。
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -52,7 +52,7 @@ function raf(): Promise<void> {
   });
 }
 
-describe("blockPreMount 原型（默认关）", () => {
+describe("blockPreMount（默认开）", () => {
   beforeEach(() => {
     __resetBlockPreMountForTest();
     document.body.innerHTML = "";
@@ -63,11 +63,27 @@ describe("blockPreMount 原型（默认关）", () => {
     __resetBlockPreMountForTest();
   });
 
-  it("未开开关：wheel 后零触发（零行为）", async () => {
+  it("默认开启：未设 cfg 时预测带内占位块被预挂", async () => {
+    const { pm } = makeHost();
+    const inBand = makeBlock(pm, 900, 200); // 视口底(800)下方 100px——带内但非视口内
+    const mounted = new Set<Element>();
+    (window as unknown as Record<string, unknown>).__codeBlockPreMount = (el: Element) => {
+      mounted.add(el);
+      el.removeChild((el as HTMLElement).firstChild!);
+      return true;
+    };
+    setBlockPreMountEnabled(true);
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: 300 }));
+    await raf();
+    expect(mounted.has(inBand.el)).toBe(true);
+  });
+
+  it("显式关闭（{on:false}，测量基线臂语义）：wheel 后零触发", async () => {
     const { pm } = makeHost();
     makeBlock(pm, 1200, 200);
     const trigger = vi.fn(() => true);
     (window as unknown as Record<string, unknown>).__codeBlockPreMount = trigger;
+    (window as unknown as Record<string, unknown>).__blockPreMountCfg = { on: false };
     setBlockPreMountEnabled(true);
     window.dispatchEvent(new WheelEvent("wheel", { deltaY: 300 }));
     await raf();
