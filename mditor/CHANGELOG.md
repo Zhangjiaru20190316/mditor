@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased：R11 大文档首现闪刷收尾 + 滚动性能归因（原型入库，默认关）
+## 5.0.4-beta（2026-10-20）：R11 大文档首现闪刷收尾 + 滚动性能归因（原型入库，默认关）
 
 结题报告 `docs/large-doc-reveal-flicker-scroll-perf-report.md`；归因书
 `perf/results/r11-phase4-attribution.md`；拍板材料 `docs/r11-decision-materials.md`。
