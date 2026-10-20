@@ -2114,7 +2114,7 @@ dependencies = [
 
 [[package]]
 name = "mditor"
-version = "5.0.3-beta"
+version = "5.0.5-beta"
 dependencies = [
  "futures-util",
  "object_store",
