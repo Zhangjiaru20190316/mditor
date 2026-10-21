@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 5.0.6-beta（2026-10-21）：RV 矢量 PDF 导出改造 + 导出表格边框修复打包版
+
+门禁：tsc / 全量 vitest 1134 绿；bundle 静态门见结题报告
+`docs/vector-pdf-export-report.md`。含本轮全部七次提交（RV 阶段 0~5 +
+结题）与「大文档视口渲染」锁定（2026-10-21 拍板，随包首次发布）。
 
 ### PDF 矢量导出改造（RV 轮）+ 导出表格边框修复
 
