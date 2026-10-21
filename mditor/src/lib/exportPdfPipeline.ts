@@ -27,6 +27,7 @@ import {
   type PdfTextRun,
 } from "./exportPdfAssembly";
 import { decideTextVectorization, parseCssColor } from "./exportVectorText";
+import { decorationsToPageDecos, type PageDeco } from "./exportVectorDecor";
 
 export const PDF_PAPERS = {
   A4: { widthPt: 595.28, heightPt: 841.89, label: "A4（210×297mm）" },
@@ -193,14 +194,21 @@ async function runPdfPipelineOnce(
     if (wantText) fontBytes = await loadFontBytes();
     const vectorActive = vector && wantText && !!fontBytes;
 
-    // ---- 5. 文本素材（一次全量收集，页窗口二分归属；textLayer=false 跳过）----
+    // ---- 5. 文本素材 + 块装饰（一次全量收集，页窗口二分归属；textLayer=false 跳过）----
     t0 = performance.now();
+    const emptyHiding: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [] };
     const material = wantText
       ? collectTextMaterial(handle, { vector: vectorActive })
-      : { fragments: [] as TextFragment[], vectorNodes: [] as Text[], stats: {
-          totalChars: 0, vectorChars: 0, shadowChars: 0, reasons: {} as Record<string, number>,
-        } };
+      : {
+          fragments: [] as TextFragment[],
+          vectorNodes: [] as Text[],
+          hiding: emptyHiding,
+          stats: {
+            totalChars: 0, vectorChars: 0, shadowChars: 0, reasons: {} as Record<string, number>,
+          },
+        };
     const fragments = material.fragments;
+    const blockDecor = vectorActive ? collectBlockDecorations(handle) : null;
     t.text = performance.now() - t0;
     progress({ stage: "text", done: fragments.length, total: fragments.length });
 
@@ -224,6 +232,10 @@ async function runPdfPipelineOnce(
       scale,
       fragments,
       vectorNodes: vectorActive ? material.vectorNodes : [],
+      hiding: vectorActive
+        ? [material.hiding, ...(blockDecor ? [blockDecor.hiding] : [])]
+        : [],
+      blockDecor,
       assembler,
       signal,
       onProgress: (done, total, note) =>
@@ -498,6 +510,11 @@ interface TextFragment {
   /** true = 矢量可见绘制；false/缺省 = 位图承载视觉 + Tr 3 影子（旧形态）。 */
   vector?: boolean;
   skipReason?: string;
+  /** 有效文本装饰线（最近带线祖先——传播语义近似；shadow 片段也记录：
+   *  位图统一摘线后由矢量补画，加粗链接的线不丢）。 */
+  decor?: { kinds: Array<"underline" | "line-through">; color: { r: number; g: number; b: number } };
+  /** inline 背景提供者（mark 高亮等；混合粗体片段的底也不丢——rect 几何即片段盒）。 */
+  bg?: { color: { r: number; g: number; b: number } };
 }
 
 export interface TextPlanStats {
@@ -511,7 +528,21 @@ export interface TextMaterial {
   fragments: TextFragment[];
   /** 矢量文本结点（光栅前包 span 摘除位图墨迹用）。 */
   vectorNodes: Text[];
+  /** 装饰遮蔽面（光栅期间对位图隐藏、由矢量补画的元素清单）。 */
+  hiding: DecorationHiding;
   stats: TextPlanStats;
+}
+
+/** 装饰遮蔽面：各元素要隐藏的视觉通道（还原用 cssText 快照）。 */
+export interface DecorationHiding {
+  /** 边框 → transparent（table/th/td/hr）。 */
+  borderEls: HTMLElement[];
+  /** 引用块：左竖条 + 底色。 */
+  quoteEls: HTMLElement[];
+  /** inline 背景（mark 高亮等，至少含一个矢量片段才隐藏）。 */
+  bgEls: HTMLElement[];
+  /** 装饰线（下划线/删除线绘制宿主）→ text-decoration-color transparent。 */
+  decorEls: HTMLElement[];
 }
 
 interface FontMetrics {
@@ -538,11 +569,12 @@ export function collectTextMaterial(
   const bump = (reason: string, chars: number): void => {
     stats.reasons[reason] = (stats.reasons[reason] ?? 0) + chars;
   };
-  if (!win) return { fragments: [], vectorNodes: [], stats };
+  const noHiding: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [] };
+  if (!win) return { fragments: [], vectorNodes: [], hiding: noHiding, stats };
   const base = content.getBoundingClientRect();
   const canvas = doc.createElement("canvas");
   const ctx = canvas.getContext("2d");
-  if (!ctx) return { fragments: [], vectorNodes: [], stats };
+  if (!ctx) return { fragments: [], vectorNodes: [], hiding: noHiding, stats };
   const fontMetrics = new Map<string, FontMetrics>();
   const advanceCache = new Map<string, number>();
   interface StyleInfo {
@@ -570,6 +602,76 @@ export function collectTextMaterial(
   };
   const fragments: TextFragment[] = [];
   const vectorNodes: Text[] = [];
+  const hiding: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [] };
+  // 有效装饰线：最近带线祖先（含 parent；传播语义近似——GFM 的 a/del/u 命中）。
+  // 返回宿主元素（线的绘制者——遮蔽与取色都指向它）。
+  const decorLineCache = new Map<HTMLElement, string>();
+  const decorHostCache = new Map<HTMLElement, HTMLElement | null>();
+  const decorHostOf = (el: HTMLElement): HTMLElement | null => {
+    let v = decorHostCache.get(el);
+    if (v === undefined) {
+      v = null;
+      let e: HTMLElement | null = el;
+      while (e && e !== content) {
+        const d = decorLineCache.get(e) ?? win.getComputedStyle(e).textDecorationLine;
+        decorLineCache.set(e, d);
+        if (d && d !== "none") {
+          v = e;
+          break;
+        }
+        e = e.parentElement;
+      }
+      decorHostCache.set(el, v);
+    }
+    return v;
+  };
+  const decorLineOfHost = (host: HTMLElement | null): string =>
+    host ? decorLineCache.get(host) ?? "none" : "none";
+  // 装饰线颜色：宿主的 text-decoration-color（currentcolor → 宿主 color）。
+  const decorColorCache = new Map<HTMLElement, { r: number; g: number; b: number } | null>();
+  const decorColorOf = (el: HTMLElement) => {
+    let c = decorColorCache.get(el);
+    if (c === undefined) {
+      const cs = win.getComputedStyle(el);
+      const dc = parseCssColor(cs.textDecorationColor);
+      c = dc && dc.a >= 0.9 ? { r: dc.r, g: dc.g, b: dc.b } : pickColor(cs.color) ?? null;
+      decorColorCache.set(el, c);
+    }
+    return c;
+  };
+  // inline 背景提供者（mark 等；块级底色走块装饰通道，只认 inline）。
+  const bgProviderCache = new Map<HTMLElement, HTMLElement | null>();
+  const bgProviderOf = (el: HTMLElement): HTMLElement | null => {
+    let v = bgProviderCache.get(el);
+    if (v === undefined) {
+      v = null;
+      let e: HTMLElement | null = el;
+      while (e && e !== content) {
+        const cs = win.getComputedStyle(e);
+        if (!cs.display.startsWith("inline")) break; // 块级到此为止
+        const c = parseCssColor(cs.backgroundColor);
+        if (c && c.a > 0.01) {
+          v = e;
+          break;
+        }
+        e = e.parentElement;
+      }
+      bgProviderCache.set(el, v);
+    }
+    return v;
+  };
+  // 页面底色（半透明背景的预混合基准：工厂 html 背景）。
+  const pageBg = (() => {
+    const c = parseCssColor(
+      win.getComputedStyle(doc.documentElement).backgroundColor || "#ffffff"
+    );
+    return c ?? { r: 255, g: 255, b: 255, a: 1 };
+  })();
+  const blendOver = (fg: { r: number; g: number; b: number; a: number }) => ({
+    r: Math.round(fg.r * fg.a + pageBg.r * (1 - fg.a)),
+    g: Math.round(fg.g * fg.a + pageBg.g * (1 - fg.a)),
+    b: Math.round(fg.b * fg.a + pageBg.b * (1 - fg.a)),
+  });
   const walker = doc.createTreeWalker(content, NodeFilter.SHOW_TEXT);
   const range = doc.createRange();
   while (walker.nextNode()) {
@@ -610,6 +712,9 @@ export function collectTextMaterial(
       fontMetrics.set(style.font, fm);
     }
     // 矢量化判定（纯逻辑见 exportVectorText.ts——采集与组装共享同一批）。
+    // 装饰线按「最近带线祖先」取有效值（传播语义），可画的线不阻断矢量。
+    const decorHost = o.vector ? decorHostOf(p) : null;
+    const effectiveDecor = decorLineOfHost(decorHost);
     let vector = false;
     let skipReason = "";
     if (o.vector) {
@@ -618,12 +723,39 @@ export function collectTextMaterial(
         inKatex: !!p.closest(".katex"),
         fontWeight: style.weight,
         fontStyle: style.style,
-        textDecorationLine: style.decoration,
+        textDecorationLine: effectiveDecor,
         fontFamily: style.family,
         color: parseCssColor(style.colorStr),
       });
       vector = d.vector;
       skipReason = d.reason;
+    }
+    // 装饰线信息（vector 与 shadow 片段都记：位图统一摘线、矢量统一补线）。
+    let fragDecor: TextFragment["decor"] | undefined;
+    if (
+      decorHost &&
+      /^(underline|line-through)( (underline|line-through))?$/.test(effectiveDecor.trim())
+    ) {
+      const color = decorColorOf(decorHost);
+      if (color) {
+        const kinds = effectiveDecor.trim().split(/\s+/) as Array<"underline" | "line-through">;
+        fragDecor = { kinds, color };
+        if (!hiding.decorEls.includes(decorHost)) hiding.decorEls.push(decorHost);
+      }
+    }
+    // inline 背景提供者（vector 片段触发隐藏；shadow 片段的行也补 rect——
+    // 混合粗体的高亮行不丢底）。
+    let bgProvider: HTMLElement | null = null;
+    let fragBg: TextFragment["bg"] | undefined;
+    if (o.vector && !p.closest(".katex")) {
+      bgProvider = bgProviderOf(p);
+      if (bgProvider) {
+        const c = parseCssColor(win.getComputedStyle(bgProvider).backgroundColor);
+        if (c) {
+          fragBg = { color: c.a >= 1 ? { r: c.r, g: c.g, b: c.b } : blendOver(c) };
+          if (vector && !hiding.bgEls.includes(bgProvider)) hiding.bgEls.push(bgProvider);
+        }
+      }
     }
     const charCount = Array.from(data).length;
     stats.totalChars += charCount;
@@ -654,6 +786,8 @@ export function collectTextMaterial(
         ...(vector ? { color: pickColor(style.colorStr) } : {}),
         vector,
         skipReason,
+        ...(fragDecor ? { decor: fragDecor } : {}),
+        ...(fragBg ? { bg: fragBg } : {}),
       });
     };
     // 逐字符 advance（(font,char) 缓存——CJK 重复率高）。
@@ -725,7 +859,7 @@ export function collectTextMaterial(
     }
     continue;
   }
-  return { fragments, vectorNodes, stats };
+  return { fragments, vectorNodes, hiding, stats };
 }
 
 /** 文本颜色（rgb → {r,g,b}；解析失败给黑色兜底——判定已保证 vector 必有色）。 */
@@ -771,6 +905,168 @@ export function applyTextTransparency(doc: Document, nodes: Text[]): () => void 
   };
 }
 
+/**
+ * 块级装饰采集（RV 阶段二）：表格边框全量线段（外框 + 单元格内线）、引用
+ * 块底色/左竖条、hr 分割线 → content 坐标装饰面 + 断口补线输入 + 遮蔽清单。
+ * 位置来自工厂 DOM 实测 rect，颜色/宽度来自 computed style。
+ */
+export interface BlockDecorationMaterial {
+  rects: import("./exportVectorDecor").DecoRect[];
+  lines: import("./exportVectorDecor").DecoLine[];
+  tables: import("./exportVectorDecor").TableSpan[];
+  hiding: DecorationHiding;
+}
+
+export function collectBlockDecorations(
+  handle: RenderFactoryHandle
+): BlockDecorationMaterial {
+  const content = handle.content;
+  const doc = handle.doc;
+  const win = handle.iframe.contentWindow;
+  const rects: BlockDecorationMaterial["rects"] = [];
+  const lines: BlockDecorationMaterial["lines"] = [];
+  const tables: BlockDecorationMaterial["tables"] = [];
+  const hiding: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [] };
+  if (!win) return { rects, lines, tables, hiding };
+  const base = content.getBoundingClientRect();
+  const pageBgC = parseCssColor(
+    win.getComputedStyle(doc.documentElement).backgroundColor || "#ffffff"
+  );
+  const pageBg = pageBgC ?? { r: 255, g: 255, b: 255, a: 1 };
+  const blendOver = (fg: { r: number; g: number; b: number; a: number }) => ({
+    r: Math.round(fg.r * fg.a + pageBg.r * (1 - fg.a)),
+    g: Math.round(fg.g * fg.a + pageBg.g * (1 - fg.a)),
+    b: Math.round(fg.b * fg.a + pageBg.b * (1 - fg.a)),
+  });
+  const hline = (y: number, x1: number, x2: number, w: number, c: { r: number; g: number; b: number }) =>
+    lines.push({ x1, y1: y, x2, y2: y, width: w, color: c });
+  const vline = (x: number, y1: number, y2: number, w: number, c: { r: number; g: number; b: number }) =>
+    lines.push({ x1: x, y1, x2: x, y2, width: w, color: c });
+
+  for (const table of Array.from(content.querySelectorAll("table"))) {
+    const el = table as HTMLElement;
+    const tcs = win.getComputedStyle(el);
+    const tColor = parseCssColor(tcs.borderTopColor);
+    const tWidth = Math.max(parseFloat(tcs.borderTopWidth) || 1, 0.5);
+    const tr = el.getBoundingClientRect();
+    const L = tr.left - base.left;
+    const R = tr.right - base.left;
+    const T = tr.top - base.top;
+    const B = tr.bottom - base.top;
+    const color = tColor ?? { r: 200, g: 200, b: 200 };
+    hline(T, L, R, tWidth, color);
+    hline(B, L, R, tWidth, color);
+    vline(L, T, B, tWidth, color);
+    vline(R, T, B, tWidth, color);
+    tables.push({ x1: L, x2: R, top: T, bottom: B, borderWidth: tWidth, color });
+    hiding.borderEls.push(el);
+    const rows = Array.from(el.querySelectorAll("tr"));
+    rows.forEach((row, ri) => {
+      const cells = Array.from(row.children);
+      cells.forEach((cellNode, ci) => {
+        const cell = cellNode as HTMLElement;
+        const ccs = win.getComputedStyle(cell);
+        const cColor = parseCssColor(ccs.borderBottomColor) ?? color;
+        const cWidth = Math.max(parseFloat(ccs.borderBottomWidth) || tWidth, 0.5);
+        const cr = cell.getBoundingClientRect();
+        hiding.borderEls.push(cell);
+        if (ci < cells.length - 1) {
+          vline(cr.right - base.left, cr.top - base.top, cr.bottom - base.top, cWidth, cColor);
+        }
+        if (ri < rows.length - 1) {
+          hline(cr.bottom - base.top, cr.left - base.left, cr.right - base.left, cWidth, cColor);
+        }
+      });
+    });
+  }
+
+  for (const q of Array.from(content.querySelectorAll("blockquote"))) {
+    const el = q as HTMLElement;
+    const cs = win.getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    const x = r.left - base.left;
+    const y = r.top - base.top;
+    const bg = parseCssColor(cs.backgroundColor);
+    if (bg && bg.a > 0.01) {
+      rects.push({
+        x,
+        y,
+        w: r.width,
+        h: r.height,
+        color: bg.a >= 1 ? { r: bg.r, g: bg.g, b: bg.b } : blendOver(bg),
+      });
+    }
+    const barColor = parseCssColor(cs.borderLeftColor);
+    const barW = parseFloat(cs.borderLeftWidth) || 0;
+    if (barColor && barW > 0) {
+      rects.push({ x, y, w: barW, h: r.height, color: { r: barColor.r, g: barColor.g, b: barColor.b } });
+    }
+    hiding.quoteEls.push(el);
+  }
+
+  for (const hr of Array.from(content.querySelectorAll("hr"))) {
+    const el = hr as HTMLElement;
+    const cs = win.getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    const c = parseCssColor(cs.borderTopColor) ?? parseCssColor(cs.color);
+    const w = Math.max(parseFloat(cs.borderTopWidth) || 1, 0.5);
+    if (c) {
+      hline(r.top - base.top + w / 2, r.left - base.left, r.right - base.left, w, { r: c.r, g: c.g, b: c.b });
+    }
+    hiding.borderEls.push(el);
+  }
+
+  return { rects, lines, tables, hiding };
+}
+
+/**
+ * 装饰遮蔽（RV 阶段二）：光栅期间把「将由矢量补画」的装饰通道对位图隐藏
+ * ——表格/单元格/hr 边框色、引用块底色+左竖条、inline 背景（mark）、装饰
+ * 线颜色。cssText 快照还原（含异常/取消路径）。与文字摘除同一 finally 链。
+ */
+export function applyDecorationTransparency(
+  hiding: DecorationHiding,
+  more: DecorationHiding[] = []
+): () => void {
+  const all: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [] };
+  for (const h of [hiding, ...more]) {
+    all.borderEls.push(...h.borderEls);
+    all.quoteEls.push(...h.quoteEls);
+    all.bgEls.push(...h.bgEls);
+    all.decorEls.push(...h.decorEls);
+  }
+  const saved: Array<[HTMLElement, string]> = [];
+  const push = (el: HTMLElement): void => {
+    saved.push([el, el.style.cssText]);
+  };
+  for (const el of all.borderEls) {
+    push(el);
+    el.style.borderColor = "transparent";
+  }
+  for (const el of all.quoteEls) {
+    push(el);
+    el.style.borderLeftColor = "transparent";
+    el.style.backgroundColor = "transparent";
+  }
+  for (const el of all.bgEls) {
+    push(el);
+    el.style.backgroundColor = "transparent";
+  }
+  for (const el of all.decorEls) {
+    push(el);
+    el.style.textDecorationColor = "transparent";
+  }
+  return () => {
+    for (const [el, css] of saved) {
+      try {
+        el.style.cssText = css;
+      } catch {
+        /* 已随工厂销毁 */
+      }
+    }
+  };
+}
+
 /** 页窗口 → 文本 run（片段与窗口相交即入；整行原子，归属重叠最多的一页）。 */
 export function fragmentsToPageRuns(
   fragments: TextFragment[],
@@ -807,11 +1103,15 @@ export function fragmentsToPageRuns(
         perPage[best].push({
           text: f.text,
           x: f.x,
+          top: f.top,
+          height: f.height,
           baselineY: f.baselineY - pages[best].top,
           size: f.size,
           advances: f.advances,
           ...(f.vector ? { color: f.color ?? { r: 0, g: 0, b: 0 } } : {}),
           shadow: f.vector !== true,
+          ...(f.decor ? { decor: f.decor } : {}),
+          ...(f.bg ? { bg: f.bg } : {}),
         });
         break;
       }
@@ -905,6 +1205,10 @@ interface RasterizeArgs {
   fragments: TextFragment[];
   /** 矢量文本结点：光栅前包 span 摘除位图墨迹（空 = 旧满铺行为）。 */
   vectorNodes: Text[];
+  /** 装饰遮蔽面（文本侧 + 块级；矢量补画通道对位图隐藏）。 */
+  hiding: DecorationHiding[];
+  /** 块装饰（矢量 rect/line + 表格断口补线输入；null = 关闭）。 */
+  blockDecor: BlockDecorationMaterial | null;
   assembler: Awaited<ReturnType<typeof createPdfAssembler>>;
   signal?: AbortSignal;
   onProgress: (done: number, total: number, note?: string) => void;
@@ -1003,6 +1307,9 @@ async function rasterizeAndAssemble(
   const doc = handle.doc;
   const content = handle.content;
   const runsPerPage = fragmentsToPageRuns(a.fragments, pages, a.contentHeightPx);
+  const decosPerPage = a.blockDecor
+    ? decorationsToPageDecos(a.blockDecor, pages)
+    : (pages.map(() => null) as Array<PageDeco | null>);
   // 内存护栏：整本解码位图预算超限 → JPEG 档（视觉质量权衡记录于结题
   // 报告 Q3；未拍板清单含「阈值与质量参数」）。
   const pagePx = a.contentWidthPx * a.scale * a.contentHeightPx * a.scale;
@@ -1037,10 +1344,12 @@ async function rasterizeAndAssemble(
   const ph = pageCanvas.height;
 
   const trim = new ChunkTrim(content);
-  // 矢量文本摘除：整段光栅期间统一生效（颜色不参与布局，块测量/文本素材
-  // 均在此之前完成——坐标面不受影响）。还原在 finally（含异常/取消路径）。
+  // 矢量文本摘除 + 装饰遮蔽：整段光栅期间统一生效（颜色/边框色不参与布局，
+  // 块测量/文本素材均在此之前完成——坐标面不受影响）。还原在 finally。
   const undoTransparency =
     a.vectorNodes.length > 0 ? applyTextTransparency(doc, a.vectorNodes) : null;
+  const undoDecor =
+    a.hiding.length > 0 ? applyDecorationTransparency(a.hiding[0], a.hiding.slice(1)) : null;
   try {
     for (let start = 0; start < pages.length; start += perChunk) {
       if (a.signal?.aborted) throw new DOMException("导出已取消", "AbortError");
@@ -1093,7 +1402,8 @@ async function rasterizeAndAssemble(
         const bytes = dataUrlToBytes(pageDataUrl);
         await a.assembler.addPage(
           { bytes, mime: useJpeg ? "image/jpeg" : "image/png" },
-          runsPerPage[pageIndex]
+          runsPerPage[pageIndex],
+          decosPerPage[pageIndex] ?? undefined
         );
         a.onProgress(pageIndex + 1, pages.length);
       }
@@ -1101,6 +1411,7 @@ async function rasterizeAndAssemble(
       img.src = "";
     }
   } finally {
+    undoDecor?.();
     undoTransparency?.();
     trim.restore();
     // 工厂回收前把 content 归位（destroy 只移除 iframe，无副作用亦可）。

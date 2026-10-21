@@ -74,6 +74,10 @@ export interface VectorizeDecision {
 /** 合成字重阈值：≥600 视为 bold（阶段四合成开启后仅作统计口径）。 */
 export const BOLD_WEIGHT_MIN = 600;
 
+/** 可矢量绘制的文本装饰线（underline/line-through；overline 等罕见形态
+ *  保守留位图）。 */
+const DRAWABLE_DECOR = /^(underline|line-through)( (underline|line-through))?$/;
+
 /** 逐文本结点矢量化判定（纯函数）。 */
 export function decideTextVectorization(x: VectorizeInput): VectorizeDecision {
   if (x.inRasterScope) return { vector: false, reason: "raster-scope" };
@@ -81,7 +85,9 @@ export function decideTextVectorization(x: VectorizeInput): VectorizeDecision {
   if (x.fontWeight >= BOLD_WEIGHT_MIN) return { vector: false, reason: "bold" };
   if (x.fontStyle !== "normal") return { vector: false, reason: "italic" };
   if (/mono/i.test(x.fontFamily)) return { vector: false, reason: "mono-font" };
-  if (x.textDecorationLine !== "none") return { vector: false, reason: "decorated" };
+  if (x.textDecorationLine !== "none" && !DRAWABLE_DECOR.test(x.textDecorationLine.trim())) {
+    return { vector: false, reason: "decorated" };
+  }
   if (!x.color) return { vector: false, reason: "no-color" };
   if (x.color.a < 0.9) return { vector: false, reason: "alpha-color" };
   return { vector: true, reason: "ok" };

@@ -14,6 +14,8 @@
 // 嵌入（微软雅黑等不可再分发）。字体文件缺失 → 纯光栅降级（info.
 // fontEmbedded = false），不静默假装有文本层。
 
+import { decorationLineGeometry } from "./exportVectorDecor";
+
 /** CSS px → pt 的名义比（96dpi 语义下 1px = 0.75pt；实际换算用内容盒比）。 */
 export const PT_PER_PX = 72 / 96;
 
@@ -21,6 +23,10 @@ export interface PdfTextRun {
   text: string;
   /** run 起点 x（CSS px，相对内容盒左上）。 */
   x: number;
+  /** 行盒顶（CSS px，相对页窗口顶；run 背景矩形的几何输入）。 */
+  top?: number;
+  /** 行盒高（CSS px）。 */
+  height?: number;
   /** 基线 y（CSS px，相对内容盒顶部，向下正）。 */
   baselineY: number;
   /** 字号（CSS px）。 */
@@ -31,6 +37,10 @@ export interface PdfTextRun {
   color?: { r: number; g: number; b: number };
   /** true = 位图承载视觉、此处只铺 Tr 3 影子（旧满铺行为/降级域文本）。 */
   shadow?: boolean;
+  /** 装饰线（下划线/删除线；shadow run 也画——位图已统一摘线）。 */
+  decor?: { kinds: Array<"underline" | "line-through">; color: { r: number; g: number; b: number } };
+  /** inline 背景（mark 高亮等；rect = 片段行盒）。 */
+  bg?: { color: { r: number; g: number; b: number } };
 }
 
 export interface PdfAssemblerOptions {
@@ -69,9 +79,21 @@ export interface PdfPageImage {
 }
 
 export interface PdfAssembler {
-  addPage(image: PdfPageImage, textRuns: PdfTextRun[]): Promise<void>;
+  addPage(
+    image: PdfPageImage,
+    textRuns: PdfTextRun[],
+    deco?: import("./exportVectorDecor").PageDeco
+  ): Promise<void>;
   save(): Promise<Uint8Array>;
   info(): PdfAssembleInfo;
+}
+
+/** run 的横向跨度（px；advances 优先，缺省按字号粗估）。 */
+function runWidthPx(run: PdfTextRun): number {
+  if (run.advances && run.advances.length > 0) {
+    return run.advances.reduce((s, v) => s + v, 0);
+  }
+  return Array.from(run.text).length * run.size * 0.6;
 }
 
 export async function createPdfAssembler(
@@ -120,12 +142,17 @@ export async function createPdfAssembler(
   };
 
   return {
-    async addPage(image, textRuns) {
+    async addPage(image, textRuns, deco) {
       // 宏任务让渡（EX-P 实测教训：pdf-lib 铺字/编码是重同步 JS，不让渡
       // 会饱和主线程——进度 UI 冻结、取消信号无机会处理、CDP 观测饿死）。
       // 逐页一次：粒度 ≈ 每页铺字时长（亚秒~秒级），UI 呼吸感足够。
       await new Promise((res) => setTimeout(res, 0));
       const page = doc.addPage([o.pageWidthPt, o.pageHeightPt]);
+      const toRgb = (c: { r: number; g: number; b: number }) =>
+        pdfLib.rgb(c.r / 255, c.g / 255, c.b / 255);
+      // px→pt 辅助：x 水平、y 自内容盒顶向下（PDF 原点左下，翻转）。
+      const px = (v: number): number => o.marginPt.left + v * k;
+      const py = (v: number): number => o.pageHeightPt - o.marginPt.top - v * k;
       // embedJpg 直通压缩字节（DCTDecode），embedPng 会解码并驻留 RGBA 到
       // save——大文档 JPEG 档是内存护栏（EX-P 实测：87 页 × 2x PNG 解码
       // 驻留 ~1GB 撞内存墙）。
@@ -141,8 +168,41 @@ export async function createPdfAssembler(
         height: contentHpt,
       });
       info.pages++;
+      // ---- 块级矢量装饰（RV 阶段二）：引用底色/竖条 rect → 表格边框/hr 线 ----
+      if (deco) {
+        for (const r of deco.rects) {
+          page.drawRectangle({
+            x: px(r.x),
+            y: py(r.y + r.h),
+            width: Math.max(r.w * k, 0.1),
+            height: Math.max(r.h * k, 0.1),
+            color: toRgb(r.color),
+          });
+        }
+        for (const l of deco.lines) {
+          page.drawLine({
+            start: { x: px(l.x1), y: py(l.y1) },
+            end: { x: px(l.x2), y: py(l.y2) },
+            thickness: Math.max(l.width * k, 0.3),
+            color: toRgb(l.color),
+          });
+        }
+      }
       if (!font) return;
 
+      // ---- run 级背景（mark 高亮等）：铺字前画（垫在文字下）----
+      for (const run of textRuns) {
+        if (!run.bg || run.top == null || run.height == null) continue;
+        const w = runWidthPx(run);
+        if (w <= 0) continue;
+        page.drawRectangle({
+          x: px(run.x),
+          y: py(run.top + run.height),
+          width: w * k,
+          height: run.height * k,
+          color: toRgb(run.bg.color),
+        });
+      }
       // 文本渲染模式（RV 轮）：可见矢量 run 用 Fill（显式重推——Tr 状态跨
       // 文本对象持久，防止前序 3 Tr 污染后续绘制）；影子 run 用 Tr 3。
       const trFill = () =>
@@ -242,6 +302,22 @@ export async function createPdfAssembler(
           });
           info.textOpsPlaced++;
           info.glyphsPlaced += chars.length;
+        }
+      }
+
+      // ---- run 级装饰线（下划线/删除线；shadow run 也画——位图已摘线）----
+      for (const run of textRuns) {
+        if (!run.decor) continue;
+        const w = runWidthPx(run);
+        if (w <= 0) continue;
+        for (const kind of run.decor.kinds) {
+          const g = decorationLineGeometry(run.baselineY, run.size, kind);
+          page.drawLine({
+            start: { x: px(run.x), y: py(g.y) },
+            end: { x: px(run.x + w), y: py(g.y) },
+            thickness: Math.max(g.thickness * k, 0.3),
+            color: toRgb(run.decor.color),
+          });
         }
       }
     },

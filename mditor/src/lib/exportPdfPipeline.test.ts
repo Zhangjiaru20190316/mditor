@@ -358,6 +358,8 @@ describe("fragmentsToPageRuns（页窗口二分归属）", () => {
     expect(runs[0][0]).toEqual({
       text: "无穷级数",
       x: 20,
+      top: 50,
+      height: 20,
       baselineY: 65,
       size: 17,
       advances: [17, 17, 17, 17],

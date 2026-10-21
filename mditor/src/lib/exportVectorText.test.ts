@@ -81,8 +81,20 @@ describe("decideTextVectorization（阶段一口径）", () => {
     ).toEqual({ vector: false, reason: "mono-font" });
   });
 
-  it("文本装饰线（下划线/删除线）→ 留位图（阶段二矢量画线前）", () => {
+  it("文本装饰线：underline/line-through 可矢量（阶段二矢量画线）；overline 等罕见形态留位图", () => {
     expect(decideTextVectorization({ ...plain, textDecorationLine: "underline" })).toEqual({
+      vector: true,
+      reason: "ok",
+    });
+    expect(decideTextVectorization({ ...plain, textDecorationLine: "line-through" })).toEqual({
+      vector: true,
+      reason: "ok",
+    });
+    expect(decideTextVectorization({ ...plain, textDecorationLine: "underline line-through" })).toEqual({
+      vector: true,
+      reason: "ok",
+    });
+    expect(decideTextVectorization({ ...plain, textDecorationLine: "overline" })).toEqual({
       vector: false,
       reason: "decorated",
     });

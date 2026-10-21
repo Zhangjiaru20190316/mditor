@@ -36,5 +36,56 @@ export const EXPORT_TABLE_CSS = `/* mditor-export-prose：R1 导出表格边框�
 }
 `;
 
-/** 导出散文补丁整体（现阶段仅表格；后续矢量装饰的 DOM 侧着色如有需要也挂这里）。 */
-export const EXPORT_PROSE_CSS = EXPORT_TABLE_CSS;
+/** 引用块/mark/代码块/间距规则（编辑器 global.css 同款语义；R1 同族的
+ *  作用域错配缺口——.ProseMirror 前缀规则在导出文档全部落空，引用竖条/
+ *  高光底色/代码底色与段落间距一并丢失）。 */
+export const EXPORT_BLOCK_CSS = `/* mditor-export-prose：R1 同族补齐——引用块/高光/代码块/间距。 */
+.vditor-reset p,
+.vditor-reset li,
+.vditor-reset blockquote {
+  margin: 0 0 var(--para-spacing, 16px);
+}
+.vditor-reset h1,
+.vditor-reset h2,
+.vditor-reset h3,
+.vditor-reset h4 {
+  margin: 1.4em 0 0.5em;
+}
+.vditor-reset blockquote {
+  border-left: 4px solid var(--accent, #4f46e5);
+  background: var(--accent-soft, #eef2ff);
+  border-radius: 0 var(--radius-m, 8px) var(--radius-m, 8px) 0;
+  padding: 6px 14px;
+  color: var(--fg, inherit);
+}
+.vditor-reset mark {
+  background: var(--mark-bg, rgba(255, 213, 79, 0.55));
+  color: inherit;
+  border-radius: 2px;
+  padding: 0.05em 0.12em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.vditor-reset code,
+.vditor-reset pre {
+  font-family: var(--font-mono, ui-monospace, "Cascadia Mono", Consolas, monospace);
+}
+.vditor-reset pre {
+  background: var(--code-bg, #dde1e8);
+  border: 1px solid var(--code-border, #c4c9d4);
+  border-radius: var(--radius-l, 10px);
+  padding: 12px 14px;
+  overflow: auto;
+}
+.vditor-reset :not(pre) > code {
+  background: var(--code-bg, #dde1e8);
+  border: 1px solid var(--code-border, #c4c9d4);
+  border-radius: var(--radius-s, 6px);
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+}
+`;
+
+/** 导出散文补丁整体（表格边框 + 引用/高光/代码/间距；HTML 导出与
+ *  PDF/PNG 工厂同源注入）。 */
+export const EXPORT_PROSE_CSS = EXPORT_TABLE_CSS + EXPORT_BLOCK_CSS;
