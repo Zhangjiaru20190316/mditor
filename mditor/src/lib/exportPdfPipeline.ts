@@ -211,15 +211,50 @@ async function runPdfPipelineOnce(
     t0 = performance.now();
     const emptyHiding: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [], imgEls: [] };
     const patchPlan = vectorActive ? collectPatchPlan(handle) : null;
+    // 字形覆盖检测（阶段四）：fontkit 直读全量字体，(codePoint) 级缓存。
+    // 缺字形（emoji/特殊符号）→ 判定 no-glyph → 残留补丁兜底，绝不画 notdef。
+    let glyphChecker: ((text: string) => boolean) | undefined;
+    if (vectorActive && fontBytes) {
+      try {
+        const fontkitMod = (await import("@pdf-lib/fontkit")) as unknown as {
+          default?: unknown;
+        };
+        const fontkit = (fontkitMod.default ?? fontkitMod) as {
+          create: (b: Uint8Array) => {
+            hasGlyphForCodePoint: (cp: number) => boolean;
+          };
+        };
+        const gf = fontkit.create(fontBytes);
+        const covered = new Map<number, boolean>();
+        glyphChecker = (text: string): boolean => {
+          for (const ch of Array.from(text)) {
+            const cp = ch.codePointAt(0)!;
+            let ok = covered.get(cp);
+            if (ok === undefined) {
+              ok = cp < 0x80 || !!gf.hasGlyphForCodePoint(cp); // ASCII 直放
+              covered.set(cp, ok);
+            }
+            if (!ok) return false;
+          }
+          return true;
+        };
+      } catch {
+        glyphChecker = undefined; // 检测不可用：保守跳过检测
+      }
+    }
     const material = wantText
-      ? collectTextMaterial(handle, { vector: vectorActive, patchPlan: patchPlan ?? undefined })
+      ? collectTextMaterial(handle, {
+          vector: vectorActive,
+          patchPlan: patchPlan ?? undefined,
+          glyphChecker,
+        })
       : {
           fragments: [] as TextFragment[],
           vectorNodes: [] as Text[],
           hiding: emptyHiding,
           residualPatches: [] as PatchSource[],
           stats: {
-            totalChars: 0, vectorChars: 0, shadowChars: 0, reasons: {} as Record<string, number>,
+            totalChars: 0, vectorChars: 0, shadowChars: 0, syntheticBoldChars: 0, syntheticItalicChars: 0, reasons: {} as Record<string, number>,
           },
         };
     const fragments = material.fragments;
@@ -559,6 +594,10 @@ interface TextFragment {
   /** true = 矢量可见绘制；false/缺省 = 位图承载视觉 + Tr 3 影子（旧形态）。 */
   vector?: boolean;
   skipReason?: string;
+  /** 合成加粗（阶段四：Tr 2 FillAndStroke + 细描边）。 */
+  syntheticBold?: boolean;
+  /** 合成斜体（阶段四：xSkew 剪切）。 */
+  syntheticItalic?: boolean;
   /** 有效文本装饰线（最近带线祖先——传播语义近似；shadow 片段也记录：
    *  位图统一摘线后由矢量补画，加粗链接的线不丢）。 */
   decor?: { kinds: Array<"underline" | "line-through">; color: { r: number; g: number; b: number } };
@@ -570,6 +609,9 @@ export interface TextPlanStats {
   totalChars: number;
   vectorChars: number;
   shadowChars: number;
+  /** 合成加粗/斜体字符数（阶段四覆盖口径）。 */
+  syntheticBoldChars: number;
+  syntheticItalicChars: number;
   reasons: Record<string, number>;
 }
 
@@ -764,12 +806,12 @@ export function collectPatchPlan(handle: RenderFactoryHandle): PatchPlan {
  */
 export function collectTextMaterial(
   handle: RenderFactoryHandle,
-  o: { vector: boolean; patchPlan?: PatchPlan }
+  o: { vector: boolean; patchPlan?: PatchPlan; glyphChecker?: (text: string) => boolean }
 ): TextMaterial {
   const content = handle.content;
   const doc = handle.doc;
   const win = handle.iframe.contentWindow;
-  const stats: TextPlanStats = { totalChars: 0, vectorChars: 0, shadowChars: 0, reasons: {} };
+  const stats: TextPlanStats = { totalChars: 0, vectorChars: 0, shadowChars: 0, syntheticBoldChars: 0, syntheticItalicChars: 0, reasons: {} };
   const bump = (reason: string, chars: number): void => {
     stats.reasons[reason] = (stats.reasons[reason] ?? 0) + chars;
   };
@@ -928,10 +970,13 @@ export function collectTextMaterial(
     }
     // 矢量化判定（纯逻辑见 exportVectorText.ts——采集与组装共享同一批）。
     // 装饰线按「最近带线祖先」取有效值（传播语义），可画的线不阻断矢量。
+    const charCount = Array.from(data).length;
     const decorHost = o.vector ? decorHostOf(p) : null;
     const effectiveDecor = decorLineOfHost(decorHost);
     let vector = false;
     let skipReason = "";
+    let syntheticBold = false;
+    let syntheticItalic = false;
     if (o.vector) {
       const d = decideTextVectorization({
         inRasterScope: inRasterScopeOf(p),
@@ -941,9 +986,14 @@ export function collectTextMaterial(
         textDecorationLine: effectiveDecor,
         fontFamily: style.family,
         color: parseCssColor(style.colorStr),
+        glyphsCovered: o.glyphChecker ? o.glyphChecker(data) : undefined,
       });
       vector = d.vector;
       skipReason = d.reason;
+      syntheticBold = !!d.syntheticBold;
+      syntheticItalic = !!d.syntheticItalic;
+      if (vector && syntheticBold) stats.syntheticBoldChars += charCount;
+      if (vector && syntheticItalic) stats.syntheticItalicChars += charCount;
     }
     // 装饰线信息（vector 与 shadow 片段都记：位图统一摘线、矢量统一补线）。
     let fragDecor: TextFragment["decor"] | undefined;
@@ -972,7 +1022,6 @@ export function collectTextMaterial(
         }
       }
     }
-    const charCount = Array.from(data).length;
     stats.totalChars += charCount;
     if (vector) {
       stats.vectorChars += charCount;
@@ -1001,6 +1050,8 @@ export function collectTextMaterial(
         ...(vector ? { color: pickColor(style.colorStr) } : {}),
         vector,
         skipReason,
+        ...(syntheticBold ? { syntheticBold: true } : {}),
+        ...(syntheticItalic ? { syntheticItalic: true } : {}),
         ...(fragDecor ? { decor: fragDecor } : {}),
         ...(fragBg ? { bg: fragBg } : {}),
       });
@@ -1357,6 +1408,8 @@ export function fragmentsToPageRuns(
           advances: f.advances,
           ...(f.vector ? { color: f.color ?? { r: 0, g: 0, b: 0 } } : {}),
           shadow: f.vector !== true,
+          ...(f.syntheticBold ? { syntheticBold: true } : {}),
+          ...(f.syntheticItalic ? { syntheticItalic: true } : {}),
           ...(f.decor ? { decor: f.decor } : {}),
           ...(f.bg ? { bg: f.bg } : {}),
         });

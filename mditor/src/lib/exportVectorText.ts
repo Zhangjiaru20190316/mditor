@@ -49,12 +49,11 @@ export function parseCssColor(s: string): RgbColor | null {
 export type VectorSkipReason =
   | "raster-scope" // 块级降级域（公式块/图/代码块等所在顶层块）
   | "katex" // KaTeX 渲染域（含行内公式）
-  | "bold" // 字重 ≥600：阶段四合成 bold 前留在位图
-  | "italic" // 斜体：阶段四合成 oblique 前留在位图
   | "mono-font" // 等宽字体（行内代码）：字形不可复刻，留位图
-  | "decorated" // 下划线/删除线等文本装饰：阶段二矢量画线前留位图
+  | "decorated" // 不可矢量画的文本装饰（overline 等罕见形态）
   | "alpha-color" // 半透明文字色：pdf-lib 无文字 alpha，混色近似留位图
-  | "no-color"; // 颜色解析失败（保守留位图）
+  | "no-color" // 颜色解析失败（保守留位图）
+  | "no-glyph"; // 内嵌字体缺字形（emoji/特殊符号）→ 残留补丁兜底
 
 export interface VectorizeInput {
   inRasterScope: boolean;
@@ -64,14 +63,20 @@ export interface VectorizeInput {
   textDecorationLine: string;
   fontFamily: string;
   color: RgbColor | null;
+  /** 内嵌字体对文本全字符有字形（阶段四；false → 残留补丁兜底）。 */
+  glyphsCovered?: boolean;
 }
 
 export interface VectorizeDecision {
   vector: boolean;
   reason: "ok" | VectorSkipReason;
+  /** 合成加粗（阶段四：Tr 2 FillAndStroke + 细描边）。 */
+  syntheticBold?: boolean;
+  /** 合成斜体（阶段四：xSkew 剪切）。 */
+  syntheticItalic?: boolean;
 }
 
-/** 合成字重阈值：≥600 视为 bold（阶段四合成开启后仅作统计口径）。 */
+/** 合成字重阈值：≥600 视为 bold（合成加粗覆盖）。 */
 export const BOLD_WEIGHT_MIN = 600;
 
 /** 可矢量绘制的文本装饰线（underline/line-through；overline 等罕见形态
@@ -82,13 +87,19 @@ const DRAWABLE_DECOR = /^(underline|line-through)( (underline|line-through))?$/;
 export function decideTextVectorization(x: VectorizeInput): VectorizeDecision {
   if (x.inRasterScope) return { vector: false, reason: "raster-scope" };
   if (x.inKatex) return { vector: false, reason: "katex" };
-  if (x.fontWeight >= BOLD_WEIGHT_MIN) return { vector: false, reason: "bold" };
-  if (x.fontStyle !== "normal") return { vector: false, reason: "italic" };
   if (/mono/i.test(x.fontFamily)) return { vector: false, reason: "mono-font" };
   if (x.textDecorationLine !== "none" && !DRAWABLE_DECOR.test(x.textDecorationLine.trim())) {
     return { vector: false, reason: "decorated" };
   }
   if (!x.color) return { vector: false, reason: "no-color" };
   if (x.color.a < 0.9) return { vector: false, reason: "alpha-color" };
-  return { vector: true, reason: "ok" };
+  if (x.glyphsCovered === false) return { vector: false, reason: "no-glyph" };
+  const syntheticBold = x.fontWeight >= BOLD_WEIGHT_MIN;
+  const syntheticItalic = x.fontStyle !== "normal";
+  return {
+    vector: true,
+    reason: "ok",
+    ...(syntheticBold ? { syntheticBold: true } : {}),
+    ...(syntheticItalic ? { syntheticItalic: true } : {}),
+  };
 }

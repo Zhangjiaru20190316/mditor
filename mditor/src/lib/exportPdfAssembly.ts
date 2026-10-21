@@ -37,6 +37,10 @@ export interface PdfTextRun {
   color?: { r: number; g: number; b: number };
   /** true = 位图承载视觉、此处只铺 Tr 3 影子（旧满铺行为/降级域文本）。 */
   shadow?: boolean;
+  /** 合成加粗（RV 阶四）：Tr 2 FillAndStroke + ~0.026em 细描边。 */
+  syntheticBold?: boolean;
+  /** 合成斜体（RV 阶四）：xSkew 12° 剪切。 */
+  syntheticItalic?: boolean;
   /** 装饰线（下划线/删除线；shadow run 也画——位图已统一摘线）。 */
   decor?: { kinds: Array<"underline" | "line-through">; color: { r: number; g: number; b: number } };
   /** inline 背景（mark 高亮等；rect = 片段行盒）。 */
@@ -270,9 +274,17 @@ export async function createPdfAssembler(
         });
       }
       // 文本渲染模式（RV 轮）：可见矢量 run 用 Fill（显式重推——Tr 状态跨
-      // 文本对象持久，防止前序 3 Tr 污染后续绘制）；影子 run 用 Tr 3。
+      // 文本对象持久，防止前序 3 Tr 污染后续绘制）；合成加粗用 FillAndStroke
+      // + ~0.026em 细描边（描边同填色）；影子 run 用 Tr 3。
       const trFill = () =>
         page.pushOperators(pdfLib.setTextRenderingMode(TextRenderingMode.Fill));
+      const trBold = (sizePt: number, c: { r: number; g: number; b: number }): void => {
+        page.pushOperators(
+          pdfLib.setTextRenderingMode(TextRenderingMode.FillAndOutline),
+          pdfLib.setLineWidth(Math.max(sizePt * 0.026, 0.24)),
+          pdfLib.setStrokingColor(pdfLib.rgb(c.r / 255, c.g / 255, c.b / 255))
+        );
+      };
       // 隐形文本层（EX-P）：Tr 3 对后续文本对象生效（文本状态可设于 BT
       // 外）。逐 run 重推一次（4 字节/run）——对 pdf-lib 内部可能的 q/Q
       // 包裹免疫，不依赖跨 BT/ET 的状态持久假设。
@@ -322,7 +334,8 @@ export async function createPdfAssembler(
             if (end <= start) return;
             const s = chars.slice(start, end).join("");
             if (visible) {
-              trFill();
+              if (run.syntheticBold && run.color) trBold(sizePt, run.color);
+              else trFill();
               info.visibleGlyphsPlaced += end - start;
             } else {
               tr3();
@@ -333,6 +346,7 @@ export async function createPdfAssembler(
               size: sizePt,
               font,
               ...(fillColor ? { color: fillColor } : {}),
+              ...(run.syntheticItalic ? { xSkew: pdfLib.degrees(12) } : {}),
             });
             info.textOpsPlaced++;
             info.glyphsPlaced += end - start;
@@ -354,7 +368,8 @@ export async function createPdfAssembler(
           emit(chars.length);
         } else {
           if (visible) {
-            trFill();
+            if (run.syntheticBold && run.color) trBold(sizePt, run.color);
+            else trFill();
             info.visibleGlyphsPlaced += chars.length;
           } else {
             tr3();
@@ -365,6 +380,7 @@ export async function createPdfAssembler(
             size: sizePt,
             font,
             ...(fillColor ? { color: fillColor } : {}),
+            ...(run.syntheticItalic ? { xSkew: pdfLib.degrees(12) } : {}),
           });
           info.textOpsPlaced++;
           info.glyphsPlaced += chars.length;

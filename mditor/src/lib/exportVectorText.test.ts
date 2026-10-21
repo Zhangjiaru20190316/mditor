@@ -60,25 +60,41 @@ describe("decideTextVectorization（阶段一口径）", () => {
     });
   });
 
-  it(`字重 ≥${BOLD_WEIGHT_MIN}（bold 标题/加粗/th）→ 留位图（阶段四合成前）`, () => {
+  it(`字重 ≥${BOLD_WEIGHT_MIN}（bold 标题/加粗/th）→ 矢量 + 合成加粗（阶段四）`, () => {
     expect(decideTextVectorization({ ...plain, fontWeight: 700 })).toEqual({
-      vector: false,
-      reason: "bold",
+      vector: true,
+      reason: "ok",
+      syntheticBold: true,
     });
     expect(decideTextVectorization({ ...plain, fontWeight: 500 })).toEqual({
       vector: true,
       reason: "ok",
     });
+    expect(
+      decideTextVectorization({ ...plain, fontWeight: 500 }).syntheticBold
+    ).toBeUndefined();
   });
 
-  it("斜体 / 等宽（行内代码）→ 留位图", () => {
+  it("斜体 → 矢量 + 合成斜体（阶段四）；等宽（行内代码）→ 留位图", () => {
     expect(decideTextVectorization({ ...plain, fontStyle: "italic" })).toEqual({
-      vector: false,
-      reason: "italic",
+      vector: true,
+      reason: "ok",
+      syntheticItalic: true,
     });
     expect(
       decideTextVectorization({ ...plain, fontFamily: "ui-monospace, Consolas, monospace" })
     ).toEqual({ vector: false, reason: "mono-font" });
+  });
+
+  it("缺字形（glyphsCovered=false，emoji 等）→ 留位图走残留补丁", () => {
+    expect(decideTextVectorization({ ...plain, glyphsCovered: false })).toEqual({
+      vector: false,
+      reason: "no-glyph",
+    });
+    expect(decideTextVectorization({ ...plain, glyphsCovered: true })).toEqual({
+      vector: true,
+      reason: "ok",
+    });
   });
 
   it("文本装饰线：underline/line-through 可矢量（阶段二矢量画线）；overline 等罕见形态留位图", () => {

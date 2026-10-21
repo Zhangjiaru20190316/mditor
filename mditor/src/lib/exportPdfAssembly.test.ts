@@ -8,12 +8,11 @@ import { join } from "node:path";
 import { createPdfAssembler } from "./exportPdfAssembly";
 
 // 1×1 PNG（合法最小位图；组装器只关心 embedPng 可解码）。
-const TINY_PNG = Uint8Array.from(
-  atob(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
-  ),
-  (c) => c.charCodeAt(0)
-);
+const PNG_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+const TINY_PNG = Uint8Array.from(atob(PNG_B64), (c) => c.charCodeAt(0));
+// 同一字节的 data URL 形态（原生嵌入路径用）。
+const PNG_DATAURL = `data:image/png;base64,${PNG_B64}`;
 
 const A4 = { width: 595.28, height: 841.89 };
 const MARGIN = { top: 42.52, right: 42.52, bottom: 42.52, left: 42.52 }; // 15mm
@@ -233,5 +232,78 @@ describe("createPdfAssembler", () => {
     const streamText = await contentStreamText(bytes);
     expect(streamText).toContain("3 Tr");
     expect(streamText).not.toMatch(/\drg/); // 无填色算子
+  });
+
+  // ---- RV 轮阶段四：合成字重/斜体 + 补丁/原生图 ----
+  it("合成加粗：FillAndOutline（2 Tr）+ 线宽 + 描边色进内容流", async () => {
+    if (!fontBytes) return;
+    const a = await createPdfAssembler({
+      pageWidthPt: A4.width,
+      pageHeightPt: A4.height,
+      marginPt: MARGIN,
+      contentWidthPx: CONTENT_PX.w,
+      contentHeightPx: CONTENT_PX.h,
+      fontBytes,
+      vectorText: true,
+    });
+    await a.addPage({ bytes: TINY_PNG, mime: "image/png" }, [
+      { text: "加粗标题", x: 24, baselineY: 40, size: 20, color: { r: 31, g: 35, b: 40 }, syntheticBold: true },
+    ]);
+    expect(a.info().visibleGlyphsPlaced).toBe(4);
+    const streamText = await contentStreamText(await a.save());
+    expect(streamText).toContain("2 Tr");
+    expect(streamText).toMatch(/ w\n/); // setLineWidth
+    expect(streamText).toMatch(/ RG\n/); // setStrokingColor
+  });
+
+  it("合成斜体：文本矩阵带剪切（xSkew → Tm 的 b 分量非零）", async () => {
+    if (!fontBytes) return;
+    const a = await createPdfAssembler({
+      pageWidthPt: A4.width,
+      pageHeightPt: A4.height,
+      marginPt: MARGIN,
+      contentWidthPx: CONTENT_PX.w,
+      contentHeightPx: CONTENT_PX.h,
+      fontBytes,
+      vectorText: true,
+    });
+    await a.addPage({ bytes: TINY_PNG, mime: "image/png" }, [
+      { text: "italic", x: 24, baselineY: 40, size: 16, color: { r: 0, g: 0, b: 0 }, syntheticItalic: true },
+    ]);
+    const streamText = await contentStreamText(await a.save());
+    // Tm = [a b c d e f]；xSkew 使 b（第二分量）非零。
+    const m = streamText.match(/([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+) Tm/);
+    expect(m).toBeTruthy();
+    expect(parseFloat(m![2])).toBeGreaterThan(0.05); // b = tan(12°) ≈ 0.2126 × size 缩放
+  });
+
+  it("满铺位图退位：image=null + 补丁/原生图入册（页数与图片计数）", async () => {
+    if (!fontBytes) return;
+    const a = await createPdfAssembler({
+      pageWidthPt: A4.width,
+      pageHeightPt: A4.height,
+      marginPt: MARGIN,
+      contentWidthPx: CONTENT_PX.w,
+      contentHeightPx: CONTENT_PX.h,
+      fontBytes,
+      vectorText: true,
+    });
+    await a.addPage(
+      null,
+      [{ text: "补丁页", x: 24, baselineY: 40, size: 16, color: { r: 0, g: 0, b: 0 } }],
+      { rects: [{ x: 0, y: 0, w: CONTENT_PX.w, h: CONTENT_PX.h, color: { r: 250, g: 249, b: 245 } }], lines: [] },
+      [{ bytes: TINY_PNG, mime: "image/png", x: 10, y: 10, w: 20, h: 20 }],
+      [{ id: "native-1", src: PNG_DATAURL, mime: "image/png", x: 40, y: 10, w: 30, h: 30 }]
+    );
+    expect(a.info().pages).toBe(1);
+    const bytes = await a.save();
+    const { PDFDocument } = await import("pdf-lib");
+    const doc = await PDFDocument.load(bytes);
+    // 1 补丁 + 1 原生 = 2 张图（无满铺）。
+    const imgs = doc.context.enumerateIndirectObjects().filter(([, o]) => {
+      const s = String(o);
+      return s.includes("/Subtype") && s.includes("/Image");
+    });
+    expect(imgs.length).toBe(2);
   });
 });
