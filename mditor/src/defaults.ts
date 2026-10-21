@@ -208,6 +208,8 @@ export const DEFAULT_SETTINGS: Settings = {
   exportPdfPaper: "A4",
   exportPdfMarginMm: 15,
   exportPdfRasterScale: 2,
+  // RV 轮：矢量导出默认开启（文字可选中/复制/搜索、缩放锐利、体积小）。
+  exportPdfMode: "vector",
   mathAutoNumber: false,
   mathMacros: "",
   memoryGuard: true,

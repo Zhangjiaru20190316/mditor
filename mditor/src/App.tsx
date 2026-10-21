@@ -1877,9 +1877,15 @@ function App() {
               paper: settingsApi.settings.exportPdfPaper,
               marginMm: settingsApi.settings.exportPdfMarginMm,
               rasterScale: settingsApi.settings.exportPdfRasterScale,
+              mode: settingsApi.settings.exportPdfMode,
               textLayer: true,
             });
             missing = out.missing;
+            // RV 轮：矢量路径失败 → 管线已自动回退位图完成导出；如实告知。
+            const fb = out.meta?.vectorFallback;
+            if (typeof fb === "string" && fb) {
+              flashStatus(`矢量导出失败，已自动回退位图模式完成（${fb.slice(0, 80)}）`, 8000);
+            }
           } finally {
             setPdfProg(null);
           }

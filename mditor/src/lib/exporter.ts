@@ -348,6 +348,8 @@ export interface ExportOutcome {
   path: string | null;
   /** 未内联进产物的图片（空 = 图片全部就位或文档无图）。 */
   missing: ExportImageReportItem[];
+  /** PDF 管线 meta（RV 轮：vectorFallback 回退原因等；其他格式缺省）。 */
+  meta?: Record<string, unknown>;
 }
 
 /** Active theme id（与 collectThemeCss 同源：<html data-theme>）。 */
@@ -494,7 +496,7 @@ export async function exportPdf(
   if (!path) return { path: null, missing: [] };
   const r = await buildPdf(ctx, o);
   await getAdapter().fs.writeFile(path, r.bytes);
-  return { path, missing: r.missing };
+  return { path, missing: r.missing, meta: r.meta };
 }
 
 /**

@@ -700,6 +700,22 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                     搜索始终可用）。
                   </span>
                 </Field>
+                <Field label="PDF 导出模式">
+                  <select
+                    value={draft.exportPdfMode}
+                    onChange={(e) =>
+                      set("exportPdfMode", e.target.value as Settings["exportPdfMode"])
+                    }
+                  >
+                    <option value="vector">矢量（默认：文字可选中/复制/搜索，缩放锐利）</option>
+                    <option value="raster">位图（兼容模式：整页截图拼接）</option>
+                  </select>
+                  <span className="hint">
+                    矢量模式下正文文字以矢量绘制（公式/代码块等复杂块按块
+                    局部光栅兜底），体积显著更小；任何失败自动回退位图模式
+                    完成导出并告知。「清晰度」档位只影响位图部分。
+                  </span>
+                </Field>
               </>
             )}
 

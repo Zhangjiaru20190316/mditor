@@ -220,6 +220,12 @@ export interface Settings {
   exportPdfMarginMm: number;
   exportPdfRasterScale: number;
   /**
+   * PDF 导出模式（RV 轮）：vector = 文字矢量绘制（默认——可选中/复制/
+   * 搜索、任意缩放锐利、体积小）；raster = 旧满铺位图兼容模式。矢量
+   * 路径任何阶段失败自动回退 raster 完成导出并状态栏告知。
+   */
+  exportPdfMode: "vector" | "raster";
+  /**
    * 公式自动编号（v4.6，默认关）：开启后展示公式（$$...$$ / ```math）在静
    * 态渲染（AI 面板/批注预览）与导出（HTML/PDF/DOCX/复制富文本）中按序自
    * 动编号（注入 \tag），\label{key} 收集建表、正文与公式里的 \ref/\eqref
