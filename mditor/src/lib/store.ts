@@ -143,6 +143,12 @@ function migrateSettings(s: Settings, raw: Partial<Settings>): Settings {
   if (s.aiPanelMode !== "agent") s.aiPanelMode = "chat";
   if (s.agentWriteMode !== "auto") s.agentWriteMode = "confirm";
 
+  // v5.0.6 锁定迁移：「大文档视口渲染」2026-10-21 拍板默认开启且不可关闭。
+  // 设置 UI 已移除该开关；遗留持久化值（含 false）一律强制 true——视口档是
+  // R5~R11 滚动/闪刷全部优化的载体（含公式块预挂载），不再提供关闭路径。
+  // 幂等：每次加载都跑，等价于字段退役。
+  s.bigDocViewport = true;
+
   // v4.12 云同步：sync 子对象幂等归一（缺失补默认 / prefix 规范化 / 非法
   // interval 归 10）。纯数据操作，鸿蒙运行同样无副作用。
   s.sync = normalizeSyncSettings(s.sync);

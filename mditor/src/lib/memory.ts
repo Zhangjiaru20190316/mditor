@@ -106,11 +106,15 @@ export function setBigDocModeEnabled(v: boolean): void {
 // 三击/点公式）的 0.7~1.7s 卡顿全部来自全量渲染 DOM（21 万节点）的布局款，
 // big 总开关实测能把同类交互压到 ≤16ms，但它同时砍掉公式渲染——对公式
 // 密集文档不可接受；此开关让用户只拿视口化收益。
-let bigDocViewportEnabled = false;
+// v5.0.6（2026-10-21 拍板）：默认开启且锁定——视口档是 R5~R11 滚动/闪刷
+// 全部优化的载体（含公式块预挂载 E-a），不再提供关闭路径；设置 UI 已移除，
+// 遗留持久化值经 migrateSettings 强制 true，此 setter 为运行期双保险。
+let bigDocViewportEnabled = true;
 
-/** 设置「大文档视口渲染」子开关；不影响 isBigDoc（减配档）。 */
+/** 设置「大文档视口渲染」子开关；v5.0.6 起锁定为开，参数被忽略。 */
 export function setBigDocViewportEnabled(v: boolean): void {
-  bigDocViewportEnabled = v;
+  void v;
+  bigDocViewportEnabled = true;
 }
 
 /** Pure size test: big enough to warrant big-doc handling (no setting gate). */

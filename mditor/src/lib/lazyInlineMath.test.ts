@@ -174,12 +174,11 @@ describe("R1 行内公式懒渲染", () => {
     expect(lazyInlineMathEnabled()).toBe(false); // 小文档
     setLazyMathBySize("x".repeat(600_000));
     expect(lazyInlineMathEnabled()).toBe(true); // 大文档 + cv 档
+    // v5.0.6 锁定：尝试关闭子开关无效（视口档是 R5~R11 优化载体）。
     setBigDocViewportEnabled(false);
-    setLazyMathBySize("x".repeat(600_000));
-    expect(lazyInlineMathEnabled()).toBe(false); // 大文档但默认档 → 急切渲染
+    expect(lazyInlineMathEnabled()).toBe(true);
     setLazyMathBySize(null);
     expect(lazyInlineMathEnabled()).toBe(false);
-    setBigDocViewportEnabled(false);
   });
 
   it("占位保留源文本（window.find/选区/复制语义），静止后渲染 KaTeX，滚出延迟降级", () => {

@@ -201,7 +201,9 @@ export const DEFAULT_SETTINGS: Settings = {
   annoDiagPanel: false,
   devMode: false,
   bigDocPerformance: false,
-  bigDocViewport: false,
+  // v5.0.6 锁定开启（2026-10-21 拍板）：设置 UI 无此开关，迁移强制 true，
+  // 仅作为持久化字段存在（见 store.ts migrateSettings / memory.ts 模块门）。
+  bigDocViewport: true,
   // EX 轮 U2：PDF 自研管线默认（A4 / 15mm / 2x = 192dpi 等效）——未拍板清单项。
   exportPdfPaper: "A4",
   exportPdfMarginMm: 15,

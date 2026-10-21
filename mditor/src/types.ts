@@ -199,15 +199,15 @@ export interface Settings {
    */
   bigDocPerformance: boolean;
   /**
-   * 大文档视口渲染（v4.6.1，默认关）：与「大文档性能模式」的减配解耦——
-   * 文档超过 3000 行、500KB，或行内公式 ≈400 个以上（公式密度旁路，
-   * v4.18.1：KaTeX 的 DOM 成本由公式数主导，35KB/700 公式文档的节点量
-   * 与 500KB 纯文本同量级）时，只启用 content-visibility 视口化（data-big
-   * CSS + cvMemory 高度记忆），保留 CodeMirror 代码高亮与 KaTeX 公式渲染。
-   * 动机：选中链路（拖选/三击/点公式）在 154KB KaTeX 密集文档上的 0.7~1.7s
-   * 卡顿全部来自全量渲染 DOM（21 万节点）的布局款，视口化实测压到 ≤16ms；
-   * 而总开关同时砍掉公式渲染，对公式密集文档不可接受。两者同开时行为与
-   * 总开关单开一致（总开关蕴含视口化）。
+   * 大文档视口渲染（v4.6.1 引入；v5.0.6 起默认开启且锁定，UI 无此开关）：
+   * 与「大文档性能模式」的减配解耦——文档超过 3000 行、500KB，或行内公式
+   * ≈400 个以上（公式密度旁路，v4.18.1：KaTeX 的 DOM 成本由公式数主导，
+   * 35KB/700 公式文档的节点量与 500KB 纯文本同量级）时，只启用
+   * content-visibility 视口化（data-big CSS + cvMemory 高度记忆），保留
+   * CodeMirror 代码高亮与 KaTeX 公式渲染。锁定理由：视口档是 R5~R11 滚动/
+   * 闪刷全部优化的载体（含公式块预挂载），不再提供关闭路径。字段保留仅作
+   * 持久化兼容——加载时经 migrateSettings 强制 true（store.ts），遗留
+   * false 值一律按开处理。
    */
   bigDocViewport: boolean;
   /**

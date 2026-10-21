@@ -600,21 +600,8 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                     切换后当前文档会自动重建编辑器（撤销历史清空）。
                   </span>
                 </Field>
-                <Field label="大文档视口渲染">
-                  <input
-                    type="checkbox"
-                    checked={draft.bigDocViewport}
-                    onChange={(e) => set("bigDocViewport", e.target.checked)}
-                  />
-                  <span className="hint">
-                    与上面的减配解耦：文档超过 3000 行、500KB
-                    或行内公式约 400 个以上时，只对视口外内容跳过布局与
-                    绘制（content-visibility），保留代码高亮与公式渲染。
-                    适合公式/代码密集的大文档——拖选、三击选段、点击公式
-                    等交互在超大文档上可从秒级卡顿降到无感。切换后当前
-                    文档会自动重建编辑器（撤销历史清空）。
-                  </span>
-                </Field>
+                {/* v5.0.6：「大文档视口渲染」锁定开启（2026-10-21 拍板），UI 无
+                    此开关——达标文档恒走视口档，迁移强制遗留持久化值为 true。 */}
                 <Field label="内存自动优化">
                   <input
                     type="checkbox"

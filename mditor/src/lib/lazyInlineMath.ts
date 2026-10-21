@@ -8,9 +8,10 @@
 //
 // 机制：nodeview 占位（span 内放公式源码文本）+ IntersectionObserver（余量
 // 800px）临近渲染 KaTeX、远离延迟降级回占位（TEARDOWN_DELAY，与 code-block
-// teardown 同款思想）。仅 cv 档大文档启用（isBigDocCv：体量 + bigDocViewport；
-// 默认档急切渲染——无 content-visibility 时懒渲染的块高变化是全文档回流，
-// scroll-abab 实测默认档滚动 p50 4.2→41.7ms，得不偿失）。
+// teardown 同款思想）。仅 cv 档大文档启用（isBigDocCv：体量/密度判据；
+// 开关 v5.0.6 起锁定开启。默认档急切渲染——无 content-visibility 时懒渲染
+// 的块高变化是全文档回流，scroll-abab 实测默认档滚动 p50 4.2→41.7ms，
+// 得不偿失）。
 //
 // 渲染泵（R1b，公式密集文档滚动回归修复；R3 接缓存 + 滚动中小额渲染）：
 // IO 回调只入队，不同步渲染。滚动进行中（SCROLL_QUIET_MS 内有滚动事件）

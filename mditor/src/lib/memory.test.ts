@@ -1,7 +1,9 @@
 // 大文档档位判定（lib/memory.ts）：
 //  * 减配档 isBigDoc = 总开关 ∧（>500KB ∨ >3000 行）——公式密度绝不触发
 //    （那会关掉 KaTeX，对公式密集文档不可接受）。
-//  * 视口档 isBigDocCv = 任一开关 ∧（体量 ∨ 公式密度 ≥800 个 `$`）。
+//  * 视口档 isBigDocCv =（体量 ∨ 公式密度 ≥800 个 `$`）；视口子开关 v5.0.6
+//    起默认开启且锁定（2026-10-21 拍板：视口档是 R5~R11 滚动/闪刷优化载体，
+//    不再提供关闭路径），总开关单开仍蕴含视口档（历史语义不变）。
 // 阈值校准依据生产日志（2026-09-26~28）：6KB/170 公式无异常，
 // 35KB/732 公式 1~4.5s 阻塞，104KB/2356 公式掉帧风暴——间隙中段取 800。
 import { describe, expect, it, afterEach } from "vitest";
@@ -19,7 +21,7 @@ const dollars = (n: number): string => "a $ x".repeat(n);
 
 afterEach(() => {
   setBigDocModeEnabled(false);
-  setBigDocViewportEnabled(false);
+  setBigDocViewportEnabled(true);
 });
 
 describe("sizeIsMathDenseDoc（纯密度测试，无设置门）", () => {
@@ -37,24 +39,21 @@ describe("sizeIsMathDenseDoc（纯密度测试，无设置门）", () => {
   });
 });
 
-describe("isBigDocCv（视口档：体量 ∨ 公式密度，受开关门控）", () => {
-  it("开关全关时恒为假（密度再高也不启用）", () => {
-    expect(isBigDocCv(dollars(5000))).toBe(false);
+describe("isBigDocCv（视口档：体量 ∨ 公式密度；子开关锁定开启）", () => {
+  it("v5.0.6 锁定：尝试关闭子开关无效，密度达标小文档恒进视口档", () => {
+    setBigDocViewportEnabled(false);
+    expect(isBigDocCv(dollars(5000))).toBe(true);
   });
 
-  it("视口子开关开启后，密度达标的小文档进入视口档", () => {
-    setBigDocViewportEnabled(true);
-    // ≈400 公式 ≈4KB 体量，远低于 500KB/3000 行——只有密度路可命中。
+  it("密度达标的小文档进入视口档（≈400 公式 ≈4KB，只有密度路可命中）", () => {
     expect(isBigDocCv(dollars(BIG_DOC_MATH_DOLLARS))).toBe(true);
   });
 
-  it("视口子开关开启后，密度不达标的普通文档仍为假", () => {
-    setBigDocViewportEnabled(true);
+  it("密度不达标的普通文档仍为假", () => {
     expect(isBigDocCv("普通笔记，一个公式 $x$ 而已")).toBe(false);
   });
 
   it("体量路不受密度影响（>500KB 纯文本照常触发）", () => {
-    setBigDocViewportEnabled(true);
     expect(isBigDocCv("x".repeat(500_001))).toBe(true);
   });
 

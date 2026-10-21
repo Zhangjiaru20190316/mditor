@@ -2628,12 +2628,13 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     setRecreateToken((t) => t + 1);
   }, [svSurface]);
 
-  // 设置里切换「大文档性能模式」/「大文档视口渲染」时重估当前文档档位：开关
-  // 由 useSettings 同步写入 memory.ts 模块开关，isBigDoc / isBigDocCv 结果可
-  // 能随之翻转，而 CodeMirror/KaTeX 是 create-time 特性位、c-v 是 data-big
-  // CSS + cvIntrinsicPlugin（也是 create-time 注册）——任一档翻转则走
-  // recreate()（含内容快照与光标/滚动恢复，新实例按新档位决定特性）。文档
-  // 不大 / 无文档时不翻转，零开销。
+  // 设置里切换「大文档性能模式」时重估当前文档档位：开关由 useSettings 同步
+  // 写入 memory.ts 模块开关，isBigDoc 结果可能随之翻转，而 CodeMirror/KaTeX
+  // 是 create-time 特性位、c-v 是 data-big CSS + cvIntrinsicPlugin（也是
+  // create-time 注册）——档翻转则走 recreate()（含内容快照与光标/滚动恢复，
+  // 新实例按新档位决定特性）。「大文档视口渲染」v5.0.6 起锁定开启（UI 已
+  // 移除），isBigDocCv 只随文档体量/密度变化，不在依赖列表。文档不大 /
+  // 无文档时不翻转，零开销。
   useEffect(() => {
     const md =
       modeRef.current === "sv"
@@ -2645,7 +2646,7 @@ export function useMilkdown(opts: Options): MilkdownHandle {
     )
       recreate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opts.settings.bigDocPerformance, opts.settings.bigDocViewport]);
+  }, [opts.settings.bigDocPerformance]);
 
   // v4.6：KaTeX 宏设置变化 → 重建编辑器（公式块的 katexOptions 在 Crepe 创
   // 建时固化，无法原地更新）。比对「解析结果」而非原始字符串：格式错误被
