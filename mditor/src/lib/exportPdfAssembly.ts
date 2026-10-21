@@ -352,8 +352,11 @@ export async function createPdfAssembler(
             info.glyphsPlaced += end - start;
           };
           for (let i = 0; i < chars.length - 1; i++) {
-            if (chars[i] === " ") {
-              // 空格不铺字（词距即位置差，抽取器按间隙还原词边界）。
+            if (chars[i] === " " && !run.syntheticItalic) {
+              // 空格不铺字（词距即位置差，抽取器按间隙还原词边界）。合成
+              // 斜体例外：xSkew 使字形盒错位，抽取器的间隙推断失效会把
+              // 「italic text」粘成「italictext」——空格照铺（字形空白，
+              // 视觉不变）保词界。
               emit(i);
               start = i + 1;
               continue;
