@@ -24,6 +24,7 @@ import { getAdapter } from "../platform";
 import { sniffImageMime } from "./imageSniff";
 import { cleanLocalRef, normalizeLocalPath } from "./imageManager";
 import { sanitizeExportHtml } from "./exportSanitize";
+import { EXPORT_PROSE_CSS } from "./exportProseCss";
 // type-only：编译期擦除，不把 pdf/png 管线块拉进首屏（依赖纪律见下）。
 import type { PdfPipelineOptions } from "./exportPdfPipeline";
 import type { PngPipelineOptions } from "./exportPngPipeline";
@@ -369,6 +370,7 @@ export function wrapHtml(
 <title>${escapeHtml(title)}</title>
 <style>
 ${css}
+${EXPORT_PROSE_CSS}
 /* export-friendly defaults. 主题变量全部挂在 [data-theme=...] 下，html 不带
    该属性时 var(--bg)/var(--fg) 全部退化到 :root 浅色兜底——任何主题导出都
    变成默认浅色。此处必须回写 data-theme。 */

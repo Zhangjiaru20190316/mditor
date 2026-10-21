@@ -18,6 +18,7 @@
 // 解析亦不跑脚本），渲染是纯静态布局。
 
 import { sanitizeExportHtml } from "./exportSanitize";
+import { EXPORT_PROSE_CSS } from "./exportProseCss";
 
 /** 资源就绪总上限（文档化超时策略：超时不是失败，是「显式带清单继续」）。 */
 export const FACTORY_READY_TIMEOUT_MS = 20_000;
@@ -75,6 +76,7 @@ export function buildFactoryDocumentHtml(
 <title>${escapeAttr(o.title ?? "export")}</title>
 <style>
 ${o.css}
+${EXPORT_PROSE_CSS}
 /* 工厂版式：真实内容宽 + 零边距（页边距由 PDF 组装负责，布局只管内容）。
    print-color-adjust 沿 wrapHtml 语义保留（无害：工厂不走打印管线）。 */
 html { background: var(--bg); }
