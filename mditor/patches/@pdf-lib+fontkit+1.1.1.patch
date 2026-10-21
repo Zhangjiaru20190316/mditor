@@ -1,0 +1,26 @@
+diff --git a/node_modules/@pdf-lib/fontkit/dist/fontkit.es.js b/node_modules/@pdf-lib/fontkit/dist/fontkit.es.js
+index 2711b07..c05f5f9 100644
+--- a/node_modules/@pdf-lib/fontkit/dist/fontkit.es.js
++++ b/node_modules/@pdf-lib/fontkit/dist/fontkit.es.js
+@@ -33038,7 +33038,7 @@ var CFFSubset = /*#__PURE__*/function (_Subset) {
+     var top = {
+       version: 1,
+       hdrSize: this.cff.hdrSize,
+-      offSize: this.cff.length,
++      offSize: this.cff.offSize,
+       header: this.cff.header,
+       nameIndex: [this.cff.postscriptName],
+       topDictIndex: [topDict],
+diff --git a/node_modules/@pdf-lib/fontkit/dist/fontkit.umd.js b/node_modules/@pdf-lib/fontkit/dist/fontkit.umd.js
+index c18af0e..583d7f2 100644
+--- a/node_modules/@pdf-lib/fontkit/dist/fontkit.umd.js
++++ b/node_modules/@pdf-lib/fontkit/dist/fontkit.umd.js
+@@ -41188,7 +41188,7 @@
+ 	    var top = {
+ 	      version: 1,
+ 	      hdrSize: this.cff.hdrSize,
+-	      offSize: this.cff.length,
++	      offSize: this.cff.offSize,
+ 	      header: this.cff.header,
+ 	      nameIndex: [this.cff.postscriptName],
+ 	      topDictIndex: [topDict],

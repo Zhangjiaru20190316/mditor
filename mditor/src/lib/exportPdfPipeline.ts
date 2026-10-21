@@ -26,6 +26,7 @@ import {
   type PdfAssembleInfo,
   type PdfTextRun,
 } from "./exportPdfAssembly";
+import { decideTextVectorization, parseCssColor } from "./exportVectorText";
 
 export const PDF_PAPERS = {
   A4: { widthPt: 595.28, heightPt: 841.89, label: "A4（210×297mm）" },
@@ -65,6 +66,9 @@ export interface PdfPipelineOptions {
   rasterScale?: number;
   /** 隐形文本层开关（EX-P 拍板前原型位；false = 纯光栅）。 */
   textLayer?: boolean;
+  /** 导出模式（RV 轮）：vector = 文字矢量绘制（默认）；raster = 旧满铺
+   *  位图 + Tr 3 影子层。矢量路径任何阶段失败自动整体回退 raster。 */
+  mode?: "vector" | "raster";
   signal?: AbortSignal;
   onProgress?: (p: PdfExportProgress) => void;
   title?: string;
@@ -83,6 +87,12 @@ export interface PdfPipelineResult {
     paginate: ReturnType<typeof paginateBlocks>["stats"];
     assemble: PdfAssembleInfo;
     textFragments: number;
+    /** 矢量化覆盖统计（RV 轮：结题报告的降级占比口径）。 */
+    textPlan?: TextPlanStats;
+    /** 本次导出是否真正走了矢量文本路径（字体缺位/回退时为 false）。 */
+    vectorMode?: boolean;
+    /** 矢量路径失败 → raster 重跑的原因（成功时缺省）。 */
+    vectorFallback?: string;
     timings: Record<string, number>;
   };
 }
@@ -90,10 +100,41 @@ export interface PdfPipelineResult {
 /** mm → pt。 */
 export const mmToPt = (mm: number): number => (mm * 72) / 25.4;
 
+/**
+ * 管线入口（RV 轮起带模式分发）：vector（默认）= 文本矢量绘制 + 位图只承载
+ * 装饰/降级域；raster = 旧满铺位图 + Tr 3 影子层。矢量路径任何阶段失败
+ * （AbortError 除外）自动整体回退 raster 重跑——绝不丢导出，回退原因入 meta。
+ */
 export async function runPdfPipeline(
   html: string,
   css: string,
   o: PdfPipelineOptions = {}
+): Promise<PdfPipelineResult> {
+  if (o.mode === "raster") {
+    return runPdfPipelineOnce(html, css, o, false);
+  }
+  try {
+    return await runPdfPipelineOnce(html, css, o, true);
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") throw e;
+    // 矢量失败兜底：完整重跑 raster（工厂/测量/分页全部重来——矢量路径可能
+    // 已在 DOM 上做过透明化摘除，工厂必须重建）。
+    const r = await runPdfPipelineOnce(html, css, o, false);
+    return {
+      ...r,
+      meta: {
+        ...r.meta,
+        vectorFallback: String(e).slice(0, 200),
+      },
+    };
+  }
+}
+
+async function runPdfPipelineOnce(
+  html: string,
+  css: string,
+  o: PdfPipelineOptions,
+  vector: boolean
 ): Promise<PdfPipelineResult> {
   const t = { factory: 0, measure: 0, paginate: 0, text: 0, raster: 0, assemble: 0 };
   const paper = PDF_PAPERS[o.paper ?? "A4"];
@@ -146,17 +187,22 @@ export async function runPdfPipeline(
     });
     checkAbort();
 
-    // ---- 4. 文本层素材（可选；一次全量收集，页窗口二分归属）----
+    // ---- 4. 字体（懒加载；矢量模式下字体缺位 = 退化纯光栅，不做摘除）----
+    let fontBytes: Uint8Array | null = null;
+    const wantText = o.textLayer !== false;
+    if (wantText) fontBytes = await loadFontBytes();
+    const vectorActive = vector && wantText && !!fontBytes;
+
+    // ---- 5. 文本素材（一次全量收集，页窗口二分归属；textLayer=false 跳过）----
     t0 = performance.now();
-    const fragments = o.textLayer === false ? [] : collectTextFragments(handle);
+    const material = wantText
+      ? collectTextMaterial(handle, { vector: vectorActive })
+      : { fragments: [] as TextFragment[], vectorNodes: [] as Text[], stats: {
+          totalChars: 0, vectorChars: 0, shadowChars: 0, reasons: {} as Record<string, number>,
+        } };
+    const fragments = material.fragments;
     t.text = performance.now() - t0;
     progress({ stage: "text", done: fragments.length, total: fragments.length });
-
-    // ---- 5. 字体（懒加载；失败 = 纯光栅）----
-    let fontBytes: Uint8Array | null = null;
-    if (o.textLayer !== false && fragments.length > 0) {
-      fontBytes = await loadFontBytes();
-    }
 
     // ---- 6. 组装器 ----
     const assembler = await createPdfAssembler({
@@ -167,6 +213,7 @@ export async function runPdfPipeline(
       contentHeightPx,
       fontBytes,
       title: o.title,
+      vectorText: vectorActive,
     });
 
     // ---- 7. 分块光栅 + 逐页入册 ----
@@ -176,6 +223,7 @@ export async function runPdfPipeline(
       contentHeightPx,
       scale,
       fragments,
+      vectorNodes: vectorActive ? material.vectorNodes : [],
       assembler,
       signal,
       onProgress: (done, total, note) =>
@@ -198,6 +246,8 @@ export async function runPdfPipeline(
         paginate: paginated.stats,
         assemble: assembler.info(),
         textFragments: fragments.length,
+        textPlan: material.stats,
+        vectorMode: vectorActive,
         timings: t,
       },
     };
@@ -423,9 +473,14 @@ function textRectsOf(doc: Document, el: HTMLElement): DOMRect[] {
 }
 
 // ---------------------------------------------------------------------------
-// 文本层素材：全量收集文本片段（content 坐标 + 字体/字号 + 逐字符实测
+// 文本素材：全量收集文本片段（content 坐标 + 字体/字号/颜色 + 逐字符实测
 // advance），页窗口过滤后映射为 PdfTextRun。advance 用工厂 iframe 的 canvas
 // measureText（与布局同引擎同字体→位置按构造一致），(font,char) 级缓存。
+//
+// RV 轮矢量扩展（阶段一）：逐文本结点过 decideTextVectorization 判定——
+// vector 片段记录颜色由组装器可见绘制，并在光栅前把该文本结点包进
+// color:transparent 的 span（位图摘除，布局零扰动）；shadow 片段留位图视觉
+// + Tr 3 影子层。块级降级域（公式/图/代码块所在顶层块）整体 shadow。
 // ---------------------------------------------------------------------------
 
 interface TextFragment {
@@ -438,6 +493,25 @@ interface TextFragment {
   /** 基线（content 坐标，向下正）。 */
   baselineY: number;
   advances: number[];
+  /** 矢量绘制色（vector=true 时必有）。 */
+  color?: { r: number; g: number; b: number };
+  /** true = 矢量可见绘制；false/缺省 = 位图承载视觉 + Tr 3 影子（旧形态）。 */
+  vector?: boolean;
+  skipReason?: string;
+}
+
+export interface TextPlanStats {
+  totalChars: number;
+  vectorChars: number;
+  shadowChars: number;
+  reasons: Record<string, number>;
+}
+
+export interface TextMaterial {
+  fragments: TextFragment[];
+  /** 矢量文本结点（光栅前包 span 摘除位图墨迹用）。 */
+  vectorNodes: Text[];
+  stats: TextPlanStats;
 }
 
 interface FontMetrics {
@@ -445,19 +519,57 @@ interface FontMetrics {
   descent: number;
 }
 
-export function collectTextFragments(handle: RenderFactoryHandle): TextFragment[] {
+/** 块级降级域选择器：含这些后代/自身即此形状的顶层块，其文本全部 shadow。 */
+const RASTER_SCOPE_SELECTOR =
+  "pre, img, svg, video, iframe, canvas, object, embed, .katex";
+
+/**
+ * 全量文本素材 + 矢量化判定（vector=false 时退化为旧采集：全部 shadow、
+ * 不采集额外样式——与 EX 轮行为逐字节等价）。
+ */
+export function collectTextMaterial(
+  handle: RenderFactoryHandle,
+  o: { vector: boolean }
+): TextMaterial {
   const content = handle.content;
   const doc = handle.doc;
   const win = handle.iframe.contentWindow;
-  if (!win) return [];
+  const stats: TextPlanStats = { totalChars: 0, vectorChars: 0, shadowChars: 0, reasons: {} };
+  const bump = (reason: string, chars: number): void => {
+    stats.reasons[reason] = (stats.reasons[reason] ?? 0) + chars;
+  };
+  if (!win) return { fragments: [], vectorNodes: [], stats };
   const base = content.getBoundingClientRect();
   const canvas = doc.createElement("canvas");
   const ctx = canvas.getContext("2d");
-  if (!ctx) return [];
+  if (!ctx) return { fragments: [], vectorNodes: [], stats };
   const fontMetrics = new Map<string, FontMetrics>();
   const advanceCache = new Map<string, number>();
-  const styleCache = new Map<HTMLElement, { font: string; size: number }>();
+  interface StyleInfo {
+    font: string;
+    size: number;
+    weight: number;
+    style: string;
+    decoration: string;
+    family: string;
+    colorStr: string;
+  }
+  const styleCache = new Map<HTMLElement, StyleInfo>();
+  // 块级降级域：content 直接子元素级判定一次。
+  const rasterScope = new Set<Element>();
+  for (const kid of Array.from(content.children)) {
+    const el = kid as Element;
+    if (el.matches?.(RASTER_SCOPE_SELECTOR) || el.querySelector?.(RASTER_SCOPE_SELECTOR)) {
+      rasterScope.add(el);
+    }
+  }
+  const inRasterScopeOf = (el: Element): boolean => {
+    let e: Element | null = el;
+    while (e && e.parentElement && e.parentElement !== content) e = e.parentElement;
+    return e ? rasterScope.has(e) : false;
+  };
   const fragments: TextFragment[] = [];
+  const vectorNodes: Text[] = [];
   const walker = doc.createTreeWalker(content, NodeFilter.SHOW_TEXT);
   const range = doc.createRange();
   while (walker.nextNode()) {
@@ -469,7 +581,18 @@ export function collectTextFragments(handle: RenderFactoryHandle): TextFragment[
     let style = styleCache.get(p);
     if (!style) {
       const cs = win.getComputedStyle(p);
-      style = { font: cs.font, size: parseFloat(cs.fontSize) || 16 };
+      const weightStr = cs.fontWeight;
+      const weight =
+        weightStr === "bold" ? 700 : weightStr === "normal" ? 400 : parseFloat(weightStr) || 400;
+      style = {
+        font: cs.font,
+        size: parseFloat(cs.fontSize) || 16,
+        weight: Number.isFinite(weight) ? weight : 400,
+        style: cs.fontStyle,
+        decoration: cs.textDecorationLine,
+        family: cs.fontFamily,
+        colorStr: cs.color,
+      };
       styleCache.set(p, style);
     }
     if (!Number.isFinite(style.size) || style.size <= 0) continue;
@@ -486,6 +609,53 @@ export function collectTextFragments(handle: RenderFactoryHandle): TextFragment[
       fm = { ascent, descent };
       fontMetrics.set(style.font, fm);
     }
+    // 矢量化判定（纯逻辑见 exportVectorText.ts——采集与组装共享同一批）。
+    let vector = false;
+    let skipReason = "";
+    if (o.vector) {
+      const d = decideTextVectorization({
+        inRasterScope: inRasterScopeOf(p),
+        inKatex: !!p.closest(".katex"),
+        fontWeight: style.weight,
+        fontStyle: style.style,
+        textDecorationLine: style.decoration,
+        fontFamily: style.family,
+        color: parseCssColor(style.colorStr),
+      });
+      vector = d.vector;
+      skipReason = d.reason;
+    }
+    const charCount = Array.from(data).length;
+    stats.totalChars += charCount;
+    if (vector) {
+      stats.vectorChars += charCount;
+      vectorNodes.push(node);
+    } else {
+      stats.shadowChars += charCount;
+      if (skipReason) bump(skipReason, charCount);
+    }
+    /** 字符区间 [i, j) + 行几何 → 片段（文本/advances 同步切片）。 */
+    const pushFragment = (
+      i: number,
+      j: number,
+      r: { left: number; top: number; bottom: number }
+    ): void => {
+      if (j <= i) return;
+      const top = r.top - base.top;
+      const height = r.bottom - r.top;
+      fragments.push({
+        text: chars.slice(i, j).join(""),
+        x: r.left - base.left,
+        top,
+        height,
+        size: style.size,
+        baselineY: top + (height - (fm.ascent + fm.descent)) / 2 + fm.ascent,
+        advances: advances.slice(i, j),
+        ...(vector ? { color: pickColor(style.colorStr) } : {}),
+        vector,
+        skipReason,
+      });
+    };
     // 逐字符 advance（(font,char) 缓存——CJK 重复率高）。
     const chars = Array.from(data);
     const advances = chars.map((ch) => {
@@ -498,21 +668,107 @@ export function collectTextFragments(handle: RenderFactoryHandle): TextFragment[
       return w;
     });
     range.selectNodeContents(node);
-    for (const r of Array.from(range.getClientRects())) {
-      if (r.width <= 0 || r.height <= 0) continue;
-      fragments.push({
-        text: data,
-        x: r.left - base.left,
-        top: r.top - base.top,
-        height: r.height,
-        size: style.size,
-        baselineY:
-          r.top - base.top + (r.height - (fm.ascent + fm.descent)) / 2 + fm.ascent,
-        advances,
-      });
+    const nodeRects = Array.from(range.getClientRects()).filter(
+      (r) => r.width > 0 && r.height > 0
+    );
+    if (nodeRects.length <= 1) {
+      // 单行：整文一个片段（快路径）。
+      const r = nodeRects[0];
+      if (r) pushFragment(0, chars.length, r);
+      continue;
     }
+    // 多行（RV 定罪修复：按行重复铺设整文——隐形层时代即存在的重复缺陷，
+    // 矢量可见化后必须消除）：逐 code point 取 rect，按垂直重叠分行出段，
+    // 每段只画本行字符。Range 偏移按 UTF-16 code unit 计。
+    interface CharBox {
+      top: number;
+      bottom: number;
+      left: number;
+    }
+    const boxes: CharBox[] = [];
+    {
+      let cu = 0;
+      for (const ch of chars) {
+        range.setStart(node, cu);
+        range.setEnd(node, cu + ch.length);
+        const b = range.getBoundingClientRect();
+        boxes.push({ top: b.top, bottom: b.bottom, left: b.left });
+        cu += ch.length;
+      }
+    }
+    let segTop = boxes[0].top;
+    let segBottom = boxes[0].bottom;
+    let segLeft = boxes[0].left;
+    let segStart = 0;
+    const closeSegment = (end: number): void => {
+      if (end <= segStart) return;
+      pushFragment(segStart, end, {
+        left: segLeft,
+        top: segTop,
+        bottom: segBottom,
+      });
+    };
+    for (let i = 1; i <= boxes.length; i++) {
+      const b = boxes[i];
+      // 与 lineBoxes 同判：顶落在当前行带底 +1 内 → 同行（吸收上下标微差）。
+      if (i < boxes.length && b.top <= segBottom + 1) {
+        segBottom = Math.max(segBottom, b.bottom);
+      } else {
+        closeSegment(i);
+        if (i < boxes.length) {
+          segTop = b.top;
+          segBottom = b.bottom;
+          segLeft = b.left;
+          segStart = i;
+        }
+      }
+    }
+    continue;
   }
-  return fragments;
+  return { fragments, vectorNodes, stats };
+}
+
+/** 文本颜色（rgb → {r,g,b}；解析失败给黑色兜底——判定已保证 vector 必有色）。 */
+function pickColor(cssColor: string): { r: number; g: number; b: number } | undefined {
+  const c = parseCssColor(cssColor);
+  return c ? { r: c.r, g: c.g, b: c.b } : undefined;
+}
+
+/** 兼容包装：仅取片段（旧调用方/测试）。 */
+export function collectTextFragments(handle: RenderFactoryHandle): TextFragment[] {
+  return collectTextMaterial(handle, { vector: false }).fragments;
+}
+
+/**
+ * 位图文字摘除（RV 阶段一核心机制）：把矢量文本结点逐个包进
+ * `<span style="color:transparent">`——只隐藏字形墨迹，不影响布局（颜色
+ * 不参与排版→页数/坐标零扰动）、不误伤列表标记（::marker 继承的是原父级
+ * 颜色）、不误伤 currentColor 边框与装饰线（它们由各自宿主元素绘制）。
+ * 返回还原函数（幂等安全：工厂已销毁时静默）。
+ */
+export function applyTextTransparency(doc: Document, nodes: Text[]): () => void {
+  const wraps: Array<{ span: HTMLElement; node: Text }> = [];
+  for (const node of nodes) {
+    const parent = node.parentNode;
+    if (!parent) continue;
+    const span = doc.createElement("span");
+    span.setAttribute("style", "color:transparent");
+    parent.insertBefore(span, node);
+    span.appendChild(node);
+    wraps.push({ span, node });
+  }
+  return () => {
+    for (const { span, node } of wraps) {
+      try {
+        if (span.parentNode) {
+          span.parentNode.insertBefore(node, span);
+          span.remove();
+        }
+      } catch {
+        /* 已随工厂销毁 */
+      }
+    }
+  };
 }
 
 /** 页窗口 → 文本 run（片段与窗口相交即入；整行原子，归属重叠最多的一页）。 */
@@ -554,6 +810,8 @@ export function fragmentsToPageRuns(
           baselineY: f.baselineY - pages[best].top,
           size: f.size,
           advances: f.advances,
+          ...(f.vector ? { color: f.color ?? { r: 0, g: 0, b: 0 } } : {}),
+          shadow: f.vector !== true,
         });
         break;
       }
@@ -645,6 +903,8 @@ interface RasterizeArgs {
   contentHeightPx: number;
   scale: number;
   fragments: TextFragment[];
+  /** 矢量文本结点：光栅前包 span 摘除位图墨迹（空 = 旧满铺行为）。 */
+  vectorNodes: Text[];
   assembler: Awaited<ReturnType<typeof createPdfAssembler>>;
   signal?: AbortSignal;
   onProgress: (done: number, total: number, note?: string) => void;
@@ -777,6 +1037,10 @@ async function rasterizeAndAssemble(
   const ph = pageCanvas.height;
 
   const trim = new ChunkTrim(content);
+  // 矢量文本摘除：整段光栅期间统一生效（颜色不参与布局，块测量/文本素材
+  // 均在此之前完成——坐标面不受影响）。还原在 finally（含异常/取消路径）。
+  const undoTransparency =
+    a.vectorNodes.length > 0 ? applyTextTransparency(doc, a.vectorNodes) : null;
   try {
     for (let start = 0; start < pages.length; start += perChunk) {
       if (a.signal?.aborted) throw new DOMException("导出已取消", "AbortError");
@@ -837,6 +1101,7 @@ async function rasterizeAndAssemble(
       img.src = "";
     }
   } finally {
+    undoTransparency?.();
     trim.restore();
     // 工厂回收前把 content 归位（destroy 只移除 iframe，无副作用亦可）。
     try {

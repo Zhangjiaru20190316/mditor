@@ -27,6 +27,10 @@ export interface PdfTextRun {
   size: number;
   /** 逐字符期望宽度（px，与 text 等长）。给出则逐字锚定，否则 run 单锚。 */
   advances?: number[];
+  /** 矢量可见绘制色（RV 轮）：给出且非 shadow 时正常 Tr 模式绘制。 */
+  color?: { r: number; g: number; b: number };
+  /** true = 位图承载视觉、此处只铺 Tr 3 影子（旧满铺行为/降级域文本）。 */
+  shadow?: boolean;
 }
 
 export interface PdfAssemblerOptions {
@@ -39,6 +43,9 @@ export interface PdfAssemblerOptions {
   /** 文本层字体字节（null/undefined/嵌入失败 = 纯光栅）。 */
   fontBytes?: Uint8Array | null;
   title?: string;
+  /** 矢量文本模式（RV 轮）：非 shadow 且带色的 run 以正常 Tr 可见绘制；
+   *  false（缺省）= 旧行为，全部 Tr 3 影子。 */
+  vectorText?: boolean;
 }
 
 export interface PdfAssembleInfo {
@@ -49,6 +56,9 @@ export interface PdfAssembleInfo {
   glyphsPlaced: number;
   /** 实际铺字 drawText 调用数（ε-合并组数；D-2 粒度/性能口径）。 */
   textOpsPlaced: number;
+  /** 矢量可见绘制（RV 轮）：可见 run 数与字形数（覆盖率报告口径）。 */
+  visibleRunsPlaced: number;
+  visibleGlyphsPlaced: number;
 }
 
 /** 逐页喂图（pipeline 分块光栅后即喂即释放，不整本驻留内存）。 */
@@ -105,6 +115,8 @@ export async function createPdfAssembler(
     textRunsPlaced: 0,
     glyphsPlaced: 0,
     textOpsPlaced: 0,
+    visibleRunsPlaced: 0,
+    visibleGlyphsPlaced: 0,
   };
 
   return {
@@ -131,6 +143,10 @@ export async function createPdfAssembler(
       info.pages++;
       if (!font) return;
 
+      // 文本渲染模式（RV 轮）：可见矢量 run 用 Fill（显式重推——Tr 状态跨
+      // 文本对象持久，防止前序 3 Tr 污染后续绘制）；影子 run 用 Tr 3。
+      const trFill = () =>
+        page.pushOperators(pdfLib.setTextRenderingMode(TextRenderingMode.Fill));
       // 隐形文本层（EX-P）：Tr 3 对后续文本对象生效（文本状态可设于 BT
       // 外）。逐 run 重推一次（4 字节/run）——对 pdf-lib 内部可能的 q/Q
       // 包裹免疫，不依赖跨 BT/ET 的状态持久假设。
@@ -159,6 +175,12 @@ export async function createPdfAssembler(
         const sizePt = Math.max(run.size * k, 0.1);
         const yPt = o.pageHeightPt - o.marginPt.top - run.baselineY * k;
         const chars = Array.from(run.text);
+        // 可见矢量 or Tr 3 影子（vectorText 关闭 = 全影子，旧满铺行为）。
+        const visible = !!(o.vectorText && !run.shadow && run.color);
+        const fillColor = visible
+          ? pdfLib.rgb(run.color!.r / 255, run.color!.g / 255, run.color!.b / 255)
+          : undefined;
+        if (visible) info.visibleRunsPlaced++;
         info.textRunsPlaced++;
         if (run.advances && run.advances.length === chars.length) {
           const positions: number[] = new Array(chars.length);
@@ -173,12 +195,18 @@ export async function createPdfAssembler(
           const emit = (end: number): void => {
             if (end <= start) return;
             const s = chars.slice(start, end).join("");
-            tr3();
+            if (visible) {
+              trFill();
+              info.visibleGlyphsPlaced += end - start;
+            } else {
+              tr3();
+            }
             page.drawText(s, {
               x: o.marginPt.left + positions[start] * k,
               y: yPt,
               size: sizePt,
               font,
+              ...(fillColor ? { color: fillColor } : {}),
             });
             info.textOpsPlaced++;
             info.glyphsPlaced += end - start;
@@ -199,12 +227,18 @@ export async function createPdfAssembler(
           }
           emit(chars.length);
         } else {
-          tr3();
+          if (visible) {
+            trFill();
+            info.visibleGlyphsPlaced += chars.length;
+          } else {
+            tr3();
+          }
           page.drawText(run.text, {
             x: o.marginPt.left + run.x * k,
             y: yPt,
             size: sizePt,
             font,
+            ...(fillColor ? { color: fillColor } : {}),
           });
           info.textOpsPlaced++;
           info.glyphsPlaced += chars.length;

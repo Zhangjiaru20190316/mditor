@@ -6,6 +6,7 @@
 import { describe, expect, it, afterEach } from "vitest";
 import {
   PDF_PAPERS,
+  applyTextTransparency,
   blockIntersectsWindow,
   dataUrlToBytes,
   fragmentsToPageRuns,
@@ -360,6 +361,7 @@ describe("fragmentsToPageRuns（页窗口二分归属）", () => {
       baselineY: 65,
       size: 17,
       advances: [17, 17, 17, 17],
+      shadow: true, // RV 轮：无 vector 标记的片段 = 影子（旧满铺行为）
     });
   });
 
@@ -428,6 +430,43 @@ describe("dataUrlToBytes", () => {
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ";
     const b = dataUrlToBytes(url);
     expect(Array.from(b.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+  });
+});
+
+// ---- RV 轮阶段一：位图文字摘除（span 包裹法）----
+describe("applyTextTransparency", () => {
+  it("包住矢量文本结点（color:transparent）且还原后逐字节复原（结点身份不变）", () => {
+    const doc = document.implementation.createHTMLDocument("fac");
+    const root = doc.createElement("div");
+    const p = doc.createElement("p");
+    const bold = doc.createElement("strong");
+    const t1 = doc.createTextNode("矢量正文 ");
+    const t2 = doc.createTextNode("加粗留影");
+    const t3 = doc.createTextNode(" 矢量续");
+    p.append(t1, t2, t3);
+    bold.appendChild(t2); // t2 移入 strong
+    root.appendChild(p);
+    doc.body.appendChild(root);
+    const before = root.innerHTML;
+    const undo = applyTextTransparency(doc, [t1, t3]);
+    // 两个矢量结点被 span 包住（strong 内的 t2 不动）
+    const spans = root.querySelectorAll("span");
+    expect(spans).toHaveLength(2);
+    expect(spans[0].getAttribute("style")).toBe("color:transparent");
+    expect(spans[0].firstChild).toBe(t1);
+    expect(t2.parentNode).toBe(bold);
+    undo();
+    expect(root.innerHTML).toBe(before);
+    expect(p.firstChild).toBe(t1);
+    expect(p.lastChild).toBe(t3);
+  });
+
+  it("无父结点/重复还原：安全无操作", () => {
+    const doc = document.implementation.createHTMLDocument("fac");
+    const t = doc.createTextNode("孤儿");
+    const undo = applyTextTransparency(doc, [t]);
+    expect(() => undo()).not.toThrow();
+    expect(() => undo()).not.toThrow();
   });
 });
 

@@ -183,4 +183,55 @@ describe("createPdfAssembler", () => {
     expect(a.info().textRunsPlaced).toBe(1); // 空 run 不计
     expect(a.info().glyphsPlaced).toBe(2); // 空格不铺
   });
+
+  // ---- RV 轮阶段一：矢量可见绘制（正常 Tr + 填色）----
+  it("vectorText 模式：非 shadow 带色 run 可见绘制（0 Tr + rg 填色 + 可见计数）", async () => {
+    if (!fontBytes) return;
+    const a = await createPdfAssembler({
+      pageWidthPt: A4.width,
+      pageHeightPt: A4.height,
+      marginPt: MARGIN,
+      contentWidthPx: CONTENT_PX.w,
+      contentHeightPx: CONTENT_PX.h,
+      fontBytes,
+      vectorText: true,
+    });
+    await a.addPage({ bytes: TINY_PNG, mime: "image/png" }, [
+      // 可见矢量 run（正文色 #1f2328）
+      { text: "矢量正文", x: 24, baselineY: 40, size: 16, color: { r: 31, g: 35, b: 40 } },
+      // 影子 run（位图承载视觉）
+      { text: "影子", x: 24, baselineY: 70, size: 16, shadow: true },
+    ]);
+    const info = a.info();
+    expect(info.visibleRunsPlaced).toBe(1);
+    expect(info.visibleGlyphsPlaced).toBe(4);
+    expect(info.textRunsPlaced).toBe(2);
+    const bytes = await a.save();
+    const streamText = await contentStreamText(bytes);
+    // 可见 run：Fill 模式（0 Tr）+ 非灰填色算子（rg）；影子 run：3 Tr。
+    expect(streamText).toContain("0 Tr");
+    expect(streamText).toContain("3 Tr");
+    expect(streamText).toMatch(/0\.121569 0\.137255 0\.156863 rg/); // 31/35/40
+  });
+
+  it("vectorText 关闭（缺省）：带色 run 也走 Tr 3（旧满铺行为零扰动）", async () => {
+    if (!fontBytes) return;
+    const a = await createPdfAssembler({
+      pageWidthPt: A4.width,
+      pageHeightPt: A4.height,
+      marginPt: MARGIN,
+      contentWidthPx: CONTENT_PX.w,
+      contentHeightPx: CONTENT_PX.h,
+      fontBytes,
+    });
+    await a.addPage({ bytes: TINY_PNG, mime: "image/png" }, [
+      { text: "颜色不生效", x: 0, baselineY: 20, size: 16, color: { r: 31, g: 35, b: 40 } },
+    ]);
+    const info = a.info();
+    expect(info.visibleRunsPlaced).toBe(0);
+    const bytes = await a.save();
+    const streamText = await contentStreamText(bytes);
+    expect(streamText).toContain("3 Tr");
+    expect(streamText).not.toMatch(/\drg/); // 无填色算子
+  });
 });

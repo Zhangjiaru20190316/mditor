@@ -27,6 +27,8 @@ export interface ExportDebugHandle {
       marginMm?: number;
       rasterScale?: number;
       textLayer?: boolean;
+      /** RV 轮：导出模式对照（vector 默认 / raster 旧满铺基线）。 */
+      mode?: PdfPipelineOptions["mode"];
       /** 进度事件透传（perf 侧逐块观测/冻点定位用）。 */
       onProgress?: PdfPipelineOptions["onProgress"];
       /** 调试：把指定页（0 基）的页位图 PNG 写到 dir（C1 视觉抽检）。 */
