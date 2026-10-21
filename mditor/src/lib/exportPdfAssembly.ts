@@ -78,11 +78,30 @@ export interface PdfPageImage {
   mime: "image/png" | "image/jpeg";
 }
 
+/** 局部补丁（RV 阶段三）：非矢量视觉的位图裁片（页坐标 CSS px）。 */
+export type PdfPatchImage = import("./exportVectorPatch").PatchSource & {
+  bytes: Uint8Array;
+  mime: "image/png";
+};
+
+/** 原生嵌入图片（png/jpeg 字节 + 页内放置矩形）。 */
+export interface PdfNativeImage {
+  id: string;
+  src: string;
+  mime: "image/png" | "image/jpeg";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface PdfAssembler {
   addPage(
-    image: PdfPageImage,
+    image: PdfPageImage | null,
     textRuns: PdfTextRun[],
-    deco?: import("./exportVectorDecor").PageDeco
+    deco?: import("./exportVectorDecor").PageDeco,
+    patches?: PdfPatchImage[],
+    natives?: PdfNativeImage[]
   ): Promise<void>;
   save(): Promise<Uint8Array>;
   info(): PdfAssembleInfo;
@@ -94,6 +113,16 @@ function runWidthPx(run: PdfTextRun): number {
     return run.advances.reduce((s, v) => s + v, 0);
   }
   return Array.from(run.text).length * run.size * 0.6;
+}
+
+/** data URL → 字节（原生嵌入图片解码用）。 */
+function dataUrlToBytes(dataUrl: string): Uint8Array {
+  const i = dataUrl.indexOf(",");
+  const b64 = i >= 0 ? dataUrl.slice(i + 1) : dataUrl;
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
+  return bytes;
 }
 
 export async function createPdfAssembler(
@@ -129,6 +158,8 @@ export async function createPdfAssembler(
     (o.pageWidthPt - o.marginPt.left - o.marginPt.right) / o.contentWidthPx;
   const contentWpt = o.contentWidthPx * k;
   const contentHpt = o.contentHeightPx * k;
+  // 原生图片嵌入缓存（同图多次引用只嵌一次）。
+  const nativeCache = new Map<string, Awaited<ReturnType<typeof doc.embedPng>>>();
 
   const info: PdfAssembleInfo = {
     pages: 0,
@@ -142,7 +173,7 @@ export async function createPdfAssembler(
   };
 
   return {
-    async addPage(image, textRuns, deco) {
+    async addPage(image, textRuns, deco, patches, natives) {
       // 宏任务让渡（EX-P 实测教训：pdf-lib 铺字/编码是重同步 JS，不让渡
       // 会饱和主线程——进度 UI 冻结、取消信号无机会处理、CDP 观测饿死）。
       // 逐页一次：粒度 ≈ 每页铺字时长（亚秒~秒级），UI 呼吸感足够。
@@ -153,22 +184,27 @@ export async function createPdfAssembler(
       // px→pt 辅助：x 水平、y 自内容盒顶向下（PDF 原点左下，翻转）。
       const px = (v: number): number => o.marginPt.left + v * k;
       const py = (v: number): number => o.pageHeightPt - o.marginPt.top - v * k;
-      // embedJpg 直通压缩字节（DCTDecode），embedPng 会解码并驻留 RGBA 到
-      // save——大文档 JPEG 档是内存护栏（EX-P 实测：87 页 × 2x PNG 解码
-      // 驻留 ~1GB 撞内存墙）。
-      const img =
-        image.mime === "image/jpeg"
-          ? await doc.embedJpg(image.bytes)
-          : await doc.embedPng(image.bytes);
-      // PDF 原点在左下：内容盒左上 = (marginL, pageH - marginT)。
-      page.drawImage(img, {
-        x: o.marginPt.left,
-        y: o.pageHeightPt - o.marginPt.top - contentHpt,
-        width: contentWpt,
-        height: contentHpt,
-      });
+      // 满铺位图（raster 模式；vector 模式 image=null，底色走 deco.rects[0]）。
+      if (image) {
+        // embedJpg 直通压缩字节（DCTDecode），embedPng 会解码并驻留 RGBA 到
+        // save——大文档 JPEG 档是内存护栏（EX-P 实测：87 页 × 2x PNG 解码
+        // 驻留 ~1GB 撞内存墙）。
+        const img =
+          image.mime === "image/jpeg"
+            ? await doc.embedJpg(image.bytes)
+            : await doc.embedPng(image.bytes);
+        // PDF 原点在左下：内容盒左上 = (marginL, pageH - marginT)。
+        page.drawImage(img, {
+          x: o.marginPt.left,
+          y: o.pageHeightPt - o.marginPt.top - contentHpt,
+          width: contentWpt,
+          height: contentHpt,
+        });
+      }
       info.pages++;
-      // ---- 块级矢量装饰（RV 阶段二）：引用底色/竖条 rect → 表格边框/hr 线 ----
+      // ---- 块级矢量装饰（RV 阶段二）：页底色（rects[0]）→ 引用底色/竖条 →
+      // 表格边框/hr 线。底色必须垫底（vector 模式无满铺位图，它就是纸面）；
+      // 补丁/原生图随后压上（补丁自带块底色，如代码块底）。----
       if (deco) {
         for (const r of deco.rects) {
           page.drawRectangle({
@@ -185,6 +221,36 @@ export async function createPdfAssembler(
             end: { x: px(l.x2), y: py(l.y2) },
             thickness: Math.max(l.width * k, 0.3),
             color: toRgb(l.color),
+          });
+        }
+      }
+      // ---- 局部补丁 + 原生图片（RV 阶段三）：装饰之上、文本之下 ----
+      if (patches) {
+        for (const p of patches) {
+          const img = await doc.embedPng(p.bytes);
+          page.drawImage(img, {
+            x: px(p.x),
+            y: py(p.y + p.h),
+            width: Math.max(p.w * k, 0.1),
+            height: Math.max(p.h * k, 0.1),
+          });
+        }
+      }
+      if (natives) {
+        for (const n of natives) {
+          let img = nativeCache.get(n.id);
+          if (!img) {
+            img =
+              n.mime === "image/jpeg"
+                ? await doc.embedJpg(dataUrlToBytes(n.src))
+                : await doc.embedPng(dataUrlToBytes(n.src));
+            nativeCache.set(n.id, img);
+          }
+          page.drawImage(img, {
+            x: px(n.x),
+            y: py(n.y + n.h),
+            width: Math.max(n.w * k, 0.1),
+            height: Math.max(n.h * k, 0.1),
           });
         }
       }

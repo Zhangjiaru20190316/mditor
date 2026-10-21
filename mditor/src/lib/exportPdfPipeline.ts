@@ -28,6 +28,12 @@ import {
 } from "./exportPdfAssembly";
 import { decideTextVectorization, parseCssColor } from "./exportVectorText";
 import { decorationsToPageDecos, type PageDeco } from "./exportVectorDecor";
+import {
+  mergeRectsVertically,
+  patchWindowSeg,
+  patchesToPagePlacements,
+  type PatchSource,
+} from "./exportVectorPatch";
 
 export const PDF_PAPERS = {
   A4: { widthPt: 595.28, heightPt: 841.89, label: "A4（210×297mm）" },
@@ -90,6 +96,13 @@ export interface PdfPipelineResult {
     textFragments: number;
     /** 矢量化覆盖统计（RV 轮：结题报告的降级占比口径）。 */
     textPlan?: TextPlanStats;
+    /** 局部补丁统计（RV 阶三：块/行内/残留补丁数 + 原生图片数）。 */
+    patchPlan?: {
+      blockPatches: number;
+      inlinePatches: number;
+      residualPatches: number;
+      nativeImages: number;
+    };
     /** 本次导出是否真正走了矢量文本路径（字体缺位/回退时为 false）。 */
     vectorMode?: boolean;
     /** 矢量路径失败 → raster 重跑的原因（成功时缺省）。 */
@@ -194,21 +207,40 @@ async function runPdfPipelineOnce(
     if (wantText) fontBytes = await loadFontBytes();
     const vectorActive = vector && wantText && !!fontBytes;
 
-    // ---- 5. 文本素材 + 块装饰（一次全量收集，页窗口二分归属；textLayer=false 跳过）----
+    // ---- 5. 文本素材 + 补丁计划 + 块装饰（一次全量收集；textLayer=false 跳过）----
     t0 = performance.now();
-    const emptyHiding: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [] };
+    const emptyHiding: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [], imgEls: [] };
+    const patchPlan = vectorActive ? collectPatchPlan(handle) : null;
     const material = wantText
-      ? collectTextMaterial(handle, { vector: vectorActive })
+      ? collectTextMaterial(handle, { vector: vectorActive, patchPlan: patchPlan ?? undefined })
       : {
           fragments: [] as TextFragment[],
           vectorNodes: [] as Text[],
           hiding: emptyHiding,
+          residualPatches: [] as PatchSource[],
           stats: {
             totalChars: 0, vectorChars: 0, shadowChars: 0, reasons: {} as Record<string, number>,
           },
         };
     const fragments = material.fragments;
     const blockDecor = vectorActive ? collectBlockDecorations(handle) : null;
+    // 满铺位图退位（RV 阶三）：页底色改矢量矩形（内容盒同尺寸）。
+    const patchSources: PatchSource[] = patchPlan
+      ? [
+          ...patchPlan.blockPatches,
+          ...patchPlan.inlinePatches,
+          ...material.residualPatches,
+        ]
+      : [];
+    if (blockDecor) {
+      blockDecor.rects.unshift({
+        x: 0,
+        y: 0,
+        w: contentWidthPx,
+        h: contentHeightPx,
+        color: blockDecor.pageBg,
+      });
+    }
     t.text = performance.now() - t0;
     progress({ stage: "text", done: fragments.length, total: fragments.length });
 
@@ -233,9 +265,18 @@ async function runPdfPipelineOnce(
       fragments,
       vectorNodes: vectorActive ? material.vectorNodes : [],
       hiding: vectorActive
-        ? [material.hiding, ...(blockDecor ? [blockDecor.hiding] : [])]
+        ? [
+            material.hiding,
+            ...(blockDecor ? [blockDecor.hiding] : []),
+            ...(patchPlan
+              ? [{ ...emptyHiding, imgEls: patchPlan.imgEls } as DecorationHiding]
+              : []),
+          ]
         : [],
       blockDecor,
+      patchSources: vectorActive ? patchSources : [],
+      nativeImages: patchPlan?.nativeImages ?? [],
+      vectorActive,
       assembler,
       signal,
       onProgress: (done, total, note) =>
@@ -259,6 +300,14 @@ async function runPdfPipelineOnce(
         assemble: assembler.info(),
         textFragments: fragments.length,
         textPlan: material.stats,
+        patchPlan: patchPlan
+          ? {
+              blockPatches: patchPlan.stats.blockPatches,
+              inlinePatches: patchPlan.stats.inlinePatches,
+              residualPatches: material.residualPatches.length,
+              nativeImages: patchPlan.stats.nativeImages,
+            }
+          : undefined,
         vectorMode: vectorActive,
         timings: t,
       },
@@ -530,6 +579,9 @@ export interface TextMaterial {
   vectorNodes: Text[];
   /** 装饰遮蔽面（光栅期间对位图隐藏、由矢量补画的元素清单）。 */
   hiding: DecorationHiding;
+  /** 残留影子文本的补丁源（非矢量化文字的行盒并集；满铺位图退位后由
+   *  局部补丁承载其墨迹——粗体/斜体阶段四放开前的主要成分）。 */
+  residualPatches: PatchSource[];
   stats: TextPlanStats;
 }
 
@@ -543,6 +595,8 @@ export interface DecorationHiding {
   bgEls: HTMLElement[];
   /** 装饰线（下划线/删除线绘制宿主）→ text-decoration-color transparent。 */
   decorEls: HTMLElement[];
+  /** 原生嵌入图片 → visibility:hidden（保留布局，摘除位图墨迹）。 */
+  imgEls: HTMLElement[];
 }
 
 interface FontMetrics {
@@ -550,17 +604,167 @@ interface FontMetrics {
   descent: number;
 }
 
-/** 块级降级域选择器：含这些后代/自身即此形状的顶层块，其文本全部 shadow。 */
+/** 块级降级域选择器（RV 阶三起不含 img——可原生嵌入的图不再拖垮整块，
+ *  也不含 .katex——公式走行内补丁，不再把整个段落拖进位图）。 */
 const RASTER_SCOPE_SELECTOR =
-  "pre, img, svg, video, iframe, canvas, object, embed, .katex";
+  "pre, svg, video, iframe, canvas, object, embed";
+
+/** 原生嵌入判定：data URL 的 PNG/JPEG 才能走 embedPng/embedJpg。 */
+function nativeEmbeddableSrc(src: string | null): "image/png" | "image/jpeg" | null {
+  if (!src) return null;
+  const m = src.match(/^data:(image\/(?:png|jpe?g));base64,/i);
+  if (!m) return null;
+  return /png/i.test(m[1]) ? "image/png" : "image/jpeg";
+}
+
+/** 原生嵌入图片描述（content 坐标）。 */
+export interface NativeImageDesc {
+  id: string;
+  src: string;
+  mime: "image/png" | "image/jpeg";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** 补丁计划（RV 阶段三）：块级/行内补丁源 + 原生图片 + 降级域集合。 */
+export interface PatchPlan {
+  /** 块级降级域（content 直接子元素；其内文本全部 shadow，整块补丁）。 */
+  rasterBlocks: Set<Element>;
+  /** 全部补丁元素（块级子元素 + 行内 .katex/.katex-display/svg）。 */
+  patchEls: Set<Element>;
+  blockPatches: PatchSource[];
+  inlinePatches: PatchSource[];
+  nativeImages: NativeImageDesc[];
+  /** 原生嵌入图元素（光栅期间 visibility:hidden）。 */
+  imgEls: HTMLElement[];
+  stats: { blockPatches: number; inlinePatches: number; nativeImages: number };
+}
+
+/** 补丁计划采集（纯 DOM 读，无副作用）。图片分类：顶层 image-block（分页
+ *  keepTogether，永不跨页）且 png/jpeg data URL → 原生嵌入；其余（行内嵌
+ *  入/不可嵌入格式）→ 所在块整块补丁承载。 */
+export function collectPatchPlan(handle: RenderFactoryHandle): PatchPlan {
+  const content = handle.content;
+  const base = content.getBoundingClientRect();
+  const rasterBlocks = new Set<Element>();
+  const patchEls = new Set<Element>();
+  const blockPatches: PatchSource[] = [];
+  const inlinePatches: PatchSource[] = [];
+  const nativeImages: NativeImageDesc[] = [];
+  const imgEls: HTMLElement[] = [];
+  for (const kid of Array.from(content.children)) {
+    const el = kid as HTMLElement;
+    const rect = el.getBoundingClientRect();
+    const imgs = Array.from(el.querySelectorAll?.("img") ?? []) as HTMLElement[];
+    // 顶层独立图（image-block）：无其他内容、可原生嵌入 → 原生。
+    const standalone =
+      el.tagName === "IMG" &&
+      Array.from(el.childNodes).every(
+        (n) => n.nodeType !== Node.TEXT_NODE || !(n.textContent ?? "").trim()
+      );
+    if (standalone) {
+      const src = el.getAttribute("src");
+      const mime = nativeEmbeddableSrc(src);
+      if (mime) {
+        if (rect.width > 0 && rect.height > 0) {
+          nativeImages.push({
+            id: src!.slice(0, 96) + rect.width + "x" + rect.height,
+            src: src!,
+            mime,
+            x: rect.left - base.left,
+            y: rect.top - base.top,
+            w: rect.width,
+            h: rect.height,
+          });
+          imgEls.push(el);
+        }
+        continue;
+      }
+      // 不可嵌入（gif/webp/引用失败占位前的原始形态）→ 整块补丁。
+      rasterBlocks.add(el);
+      patchEls.add(el);
+      blockPatches.push({
+        x: rect.left - base.left,
+        y: rect.top - base.top,
+        w: rect.width,
+        h: rect.height,
+      });
+      continue;
+    }
+    const inScope =
+      el.matches?.(RASTER_SCOPE_SELECTOR) ||
+      !!el.querySelector?.(RASTER_SCOPE_SELECTOR) ||
+      // 任何嵌套图（行内/段落内）都走位图（跨页裁切由补丁窗口完成）
+      imgs.length > 0;
+    if (inScope) {
+      rasterBlocks.add(el);
+      patchEls.add(el);
+      blockPatches.push({
+        x: rect.left - base.left,
+        y: rect.top - base.top,
+        w: rect.width,
+        h: rect.height,
+      });
+    }
+  }
+  // 行内补丁：.katex（非 display 内部）、.katex-display、独立 svg——不在
+  // 任何块补丁内（祖先也不在，防嵌套双画）。
+  const inPatchTree = (el: Element): boolean => {
+    let e: Element | null = el;
+    while (e && e !== content) {
+      if (patchEls.has(e)) return true;
+      e = e.parentElement;
+    }
+    return false;
+  };
+  for (const node of Array.from(
+    content.querySelectorAll(".katex, .katex-display, svg")
+  )) {
+    const el = node as HTMLElement;
+    if (inPatchTree(el)) continue;
+    // .katex 在 .katex-display 内 → 由 display 补丁覆盖；svg 在 katex 内同理。
+    if (
+      (el.classList.contains("katex") && el.closest(".katex-display")) ||
+      (el.tagName === "SVG" && el.closest(".katex"))
+    ) {
+      continue;
+    }
+    patchEls.add(el);
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) {
+      inlinePatches.push({
+        x: r.left - base.left,
+        y: r.top - base.top,
+        w: r.width,
+        h: r.height,
+      });
+    }
+  }
+  return {
+    rasterBlocks,
+    patchEls,
+    blockPatches,
+    inlinePatches,
+    nativeImages,
+    imgEls,
+    stats: {
+      blockPatches: blockPatches.length,
+      inlinePatches: inlinePatches.length,
+      nativeImages: nativeImages.length,
+    },
+  };
+}
 
 /**
  * 全量文本素材 + 矢量化判定（vector=false 时退化为旧采集：全部 shadow、
- * 不采集额外样式——与 EX 轮行为逐字节等价）。
+ * 不采集额外样式——与 EX 轮行为逐字节等价）。patchPlan 给出降级域与补丁
+ * 元素（RV 阶三）；残留影子文本（不在任何补丁内）就地聚成 residual 补丁。
  */
 export function collectTextMaterial(
   handle: RenderFactoryHandle,
-  o: { vector: boolean }
+  o: { vector: boolean; patchPlan?: PatchPlan }
 ): TextMaterial {
   const content = handle.content;
   const doc = handle.doc;
@@ -569,12 +773,12 @@ export function collectTextMaterial(
   const bump = (reason: string, chars: number): void => {
     stats.reasons[reason] = (stats.reasons[reason] ?? 0) + chars;
   };
-  const noHiding: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [] };
-  if (!win) return { fragments: [], vectorNodes: [], hiding: noHiding, stats };
+  const noHiding: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [], imgEls: [] };
+  if (!win) return { fragments: [], vectorNodes: [], hiding: noHiding, residualPatches: [], stats };
   const base = content.getBoundingClientRect();
   const canvas = doc.createElement("canvas");
   const ctx = canvas.getContext("2d");
-  if (!ctx) return { fragments: [], vectorNodes: [], hiding: noHiding, stats };
+  if (!ctx) return { fragments: [], vectorNodes: [], hiding: noHiding, residualPatches: [], stats };
   const fontMetrics = new Map<string, FontMetrics>();
   const advanceCache = new Map<string, number>();
   interface StyleInfo {
@@ -588,21 +792,32 @@ export function collectTextMaterial(
   }
   const styleCache = new Map<HTMLElement, StyleInfo>();
   // 块级降级域：content 直接子元素级判定一次。
-  const rasterScope = new Set<Element>();
-  for (const kid of Array.from(content.children)) {
-    const el = kid as Element;
-    if (el.matches?.(RASTER_SCOPE_SELECTOR) || el.querySelector?.(RASTER_SCOPE_SELECTOR)) {
-      rasterScope.add(el);
-    }
-  }
-  const inRasterScopeOf = (el: Element): boolean => {
-    let e: Element | null = el;
-    while (e && e.parentElement && e.parentElement !== content) e = e.parentElement;
-    return e ? rasterScope.has(e) : false;
-  };
   const fragments: TextFragment[] = [];
   const vectorNodes: Text[] = [];
-  const hiding: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [] };
+  const hiding: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [], imgEls: [] };
+  const residualByExtent = new Map<Element | null, PatchSource[]>();
+  // 降级域（阶段三：块级集合来自补丁计划；无计划时回退旧选择器语义）。
+  const rasterBlocks = o.patchPlan?.rasterBlocks;
+  const patchEls = o.patchPlan?.patchEls;
+  const inRasterScopeOf = (el: Element): boolean => {
+    if (rasterBlocks) {
+      let e: Element | null = el;
+      while (e && e.parentElement && e.parentElement !== content) e = e.parentElement;
+      return e ? rasterBlocks.has(e) : false;
+    }
+    let e: Element | null = el;
+    while (e && e.parentElement && e.parentElement !== content) e = e.parentElement;
+    return e ? e.matches?.(RASTER_SCOPE_SELECTOR) || !!e.querySelector?.(RASTER_SCOPE_SELECTOR) : false;
+  };
+  const inPatchTree = (el: Element): boolean => {
+    if (!patchEls) return false;
+    let e: Element | null = el;
+    while (e && e !== content) {
+      if (patchEls.has(e)) return true;
+      e = e.parentElement;
+    }
+    return false;
+  };
   // 有效装饰线：最近带线祖先（含 parent；传播语义近似——GFM 的 a/del/u 命中）。
   // 返回宿主元素（线的绘制者——遮蔽与取色都指向它）。
   const decorLineCache = new Map<HTMLElement, string>();
@@ -789,6 +1004,20 @@ export function collectTextMaterial(
         ...(fragDecor ? { decor: fragDecor } : {}),
         ...(fragBg ? { bg: fragBg } : {}),
       });
+      // 残留影子文本 → 补丁源（不在任何补丁元素内的部分；按 extent 元素
+      // 分组取并集——行内代码 chip 的底/边框随 extent 全覆盖）。
+      if (o.vector && !vector && !inPatchTree(p)) {
+        const key = bgProvider ?? null;
+        const rect: PatchSource = {
+          x: r.left - base.left,
+          y: top,
+          w: advances.slice(i, j).reduce((s, v) => s + v, 0),
+          h: height,
+        };
+        const list = residualByExtent.get(key);
+        if (list) list.push(rect);
+        else residualByExtent.set(key, [rect]);
+      }
     };
     // 逐字符 advance（(font,char) 缓存——CJK 重复率高）。
     const chars = Array.from(data);
@@ -859,7 +1088,18 @@ export function collectTextMaterial(
     }
     continue;
   }
-  return { fragments, vectorNodes, hiding, stats };
+  // 残留补丁：同 extent 元素（行内代码 chip 等）的矩形与其元素盒一起纵向
+  // 邻近合并（gap ≤ 6px 并入，避免补丁缝露底；chip 的底/边框全覆盖）。
+  const residualPatches: PatchSource[] = [];
+  for (const [el, rects] of residualByExtent) {
+    const all = [...rects];
+    if (el) {
+      const er = el.getBoundingClientRect();
+      all.push({ x: er.left - base.left, y: er.top - base.top, w: er.width, h: er.height });
+    }
+    residualPatches.push(...mergeRectsVertically(all, 6));
+  }
+  return { fragments, vectorNodes, hiding, residualPatches, stats };
 }
 
 /** 文本颜色（rgb → {r,g,b}；解析失败给黑色兜底——判定已保证 vector 必有色）。 */
@@ -915,6 +1155,8 @@ export interface BlockDecorationMaterial {
   lines: import("./exportVectorDecor").DecoLine[];
   tables: import("./exportVectorDecor").TableSpan[];
   hiding: DecorationHiding;
+  /** 页面底色（满铺位图退位后的矢量底矩形色）。 */
+  pageBg: { r: number; g: number; b: number };
 }
 
 export function collectBlockDecorations(
@@ -926,8 +1168,8 @@ export function collectBlockDecorations(
   const rects: BlockDecorationMaterial["rects"] = [];
   const lines: BlockDecorationMaterial["lines"] = [];
   const tables: BlockDecorationMaterial["tables"] = [];
-  const hiding: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [] };
-  if (!win) return { rects, lines, tables, hiding };
+  const hiding: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [], imgEls: [] };
+  if (!win) return { rects, lines, tables, hiding, pageBg: { r: 255, g: 255, b: 255 } };
   const base = content.getBoundingClientRect();
   const pageBgC = parseCssColor(
     win.getComputedStyle(doc.documentElement).backgroundColor || "#ffffff"
@@ -1016,7 +1258,7 @@ export function collectBlockDecorations(
     hiding.borderEls.push(el);
   }
 
-  return { rects, lines, tables, hiding };
+  return { rects, lines, tables, hiding, pageBg: { r: pageBg.r, g: pageBg.g, b: pageBg.b } };
 }
 
 /**
@@ -1028,12 +1270,13 @@ export function applyDecorationTransparency(
   hiding: DecorationHiding,
   more: DecorationHiding[] = []
 ): () => void {
-  const all: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [] };
+  const all: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [], imgEls: [] };
   for (const h of [hiding, ...more]) {
     all.borderEls.push(...h.borderEls);
     all.quoteEls.push(...h.quoteEls);
     all.bgEls.push(...h.bgEls);
     all.decorEls.push(...h.decorEls);
+    all.imgEls.push(...h.imgEls);
   }
   const saved: Array<[HTMLElement, string]> = [];
   const push = (el: HTMLElement): void => {
@@ -1055,6 +1298,10 @@ export function applyDecorationTransparency(
   for (const el of all.decorEls) {
     push(el);
     el.style.textDecorationColor = "transparent";
+  }
+  for (const el of all.imgEls) {
+    push(el);
+    el.style.visibility = "hidden"; // 保留布局（原生嵌入按 rect 放置）
   }
   return () => {
     for (const [el, css] of saved) {
@@ -1209,6 +1456,12 @@ interface RasterizeArgs {
   hiding: DecorationHiding[];
   /** 块装饰（矢量 rect/line + 表格断口补线输入；null = 关闭）。 */
   blockDecor: BlockDecorationMaterial | null;
+  /** 局部补丁源（块/行内/残留；vector 模式下满铺位图退位）。 */
+  patchSources: PatchSource[];
+  /** 原生嵌入图片（png/jpeg data URL；位图墨迹摘除）。 */
+  nativeImages: NativeImageDesc[];
+  /** 矢量模式（false = 旧满铺位图路径，逐字节等价）。 */
+  vectorActive: boolean;
   assembler: Awaited<ReturnType<typeof createPdfAssembler>>;
   signal?: AbortSignal;
   onProgress: (done: number, total: number, note?: string) => void;
@@ -1310,10 +1563,26 @@ async function rasterizeAndAssemble(
   const decosPerPage = a.blockDecor
     ? decorationsToPageDecos(a.blockDecor, pages)
     : (pages.map(() => null) as Array<PageDeco | null>);
-  // 内存护栏：整本解码位图预算超限 → JPEG 档（视觉质量权衡记录于结题
-  // 报告 Q3；未拍板清单含「阈值与质量参数」）。
+  // 补丁的逐页放置（纯几何；vector 模式核心输出）。原生图片不跨页（顶层
+  // keepTogether），按包含窗口整图入页。
+  const patchPlacements = a.vectorActive
+    ? patchesToPagePlacements(a.patchSources, pages)
+    : null;
+  const nativePerPage: Array<Array<NativeImageDesc & { pageY: number }>> =
+    pages.map(() => []);
+  if (a.vectorActive) {
+    for (const n of a.nativeImages) {
+      for (let i = 0; i < pages.length; i++) {
+        const seg = patchWindowSeg(n.y, n.h, pages[i].top, pages[i].bottom);
+        if (!seg) continue;
+        nativePerPage[i].push({ ...n, pageY: seg[0] - pages[i].top });
+      }
+    }
+  }
+  // 内存护栏：整本解码位图预算超限 → JPEG 档（仅满铺路径；补丁路径页图
+  // 是小裁片，不受此约束）。
   const pagePx = a.contentWidthPx * a.scale * a.contentHeightPx * a.scale;
-  const useJpeg = pages.length * pagePx * 4 > JPEG_GUARD_BYTES;
+  const useJpeg = !a.vectorActive && pages.length * pagePx * 4 > JPEG_GUARD_BYTES;
 
   // 裁剪窗口就位（把 content 挪进窗口容器；同文档内移动，样式不丢）。
   const win = doc.createElement("div");
@@ -1342,6 +1611,29 @@ async function rasterizeAndAssemble(
   pageCtx.fillStyle = bg;
   const pw = pageCanvas.width;
   const ph = pageCanvas.height;
+  // 补丁裁片画布（按需建；每片独立尺寸）。
+  const patchCanvas = document.createElement("canvas");
+  const patchCtx = patchCanvas.getContext("2d");
+  if (!patchCtx) throw new Error("无法创建补丁画布（2D 上下文不可用）");
+  /** chunk 位图内裁片 → PNG 字节。 */
+  const cropPatch = (
+    img: HTMLImageElement,
+    sx: number,
+    sy: number,
+    sw: number,
+    sh: number
+  ): { bytes: Uint8Array; mime: "image/png" } | null => {
+    const cx = Math.max(0, Math.round(sx));
+    const cy = Math.max(0, Math.round(sy));
+    const cw = Math.max(1, Math.min(Math.round(sw), img.width - cx));
+    const ch = Math.max(1, Math.min(Math.round(sh), img.height - cy));
+    if (cw <= 0 || ch <= 0 || cx >= img.width || cy >= img.height) return null;
+    patchCanvas.width = cw;
+    patchCanvas.height = ch;
+    patchCtx.clearRect(0, 0, cw, ch);
+    patchCtx.drawImage(img, cx, cy, cw, ch, 0, 0, cw, ch);
+    return { bytes: dataUrlToBytes(patchCanvas.toDataURL("image/png")), mime: "image/png" };
+  };
 
   const trim = new ChunkTrim(content);
   // 矢量文本摘除 + 装饰遮蔽：整段光栅期间统一生效（颜色/边框色不参与布局，
@@ -1382,28 +1674,77 @@ async function rasterizeAndAssemble(
       const plan = pageSlicePlan(chunk, chunkTop, a.scale);
       for (let i = 0; i < chunk.length; i++) {
         const pageIndex = start + i;
-        pageCtx.fillRect(0, 0, pw, ph);
-        pageCtx.drawImage(
-          img,
-          0,
-          plan[i].sy,
-          img.width,
-          plan[i].sh,
-          0,
-          0,
-          pw,
-          plan[i].sh
-        );
-        const pageDataUrl = pageCanvas.toDataURL(
-          useJpeg ? "image/jpeg" : "image/png",
-          0.92
-        );
-        a.onPagePng?.(pageIndex, pageDataUrl);
-        const bytes = dataUrlToBytes(pageDataUrl);
+        const wTop = chunk[i].top;
+        // 矢量模式：补丁裁片（页窗口可见部分从 chunk 位图裁出）+ 原生图；
+        // 满铺位图退位。raster 模式：整页位图不变。
+        let pageImage: { bytes: Uint8Array; mime: "image/png" | "image/jpeg" } | null = null;
+        const patches: Array<{ bytes: Uint8Array; mime: "image/png" } & PatchSource> = [];
+        if (a.vectorActive && patchPlacements) {
+          for (const p of patchPlacements[pageIndex]) {
+            const crop = cropPatch(
+              img,
+              p.x * a.scale,
+              (wTop + p.y - chunkTop) * a.scale,
+              p.w * a.scale,
+              p.h * a.scale
+            );
+            if (crop) patches.push({ ...crop, x: p.x, y: p.y, w: p.w, h: p.h });
+          }
+        } else {
+          pageCtx.fillRect(0, 0, pw, ph);
+          pageCtx.drawImage(
+            img,
+            0,
+            plan[i].sy,
+            img.width,
+            plan[i].sh,
+            0,
+            0,
+            pw,
+            plan[i].sh
+          );
+          const pageDataUrl = pageCanvas.toDataURL(
+            useJpeg ? "image/jpeg" : "image/png",
+            0.92
+          );
+          pageImage = { bytes: dataUrlToBytes(pageDataUrl), mime: useJpeg ? "image/jpeg" : "image/png" };
+          a.onPagePng?.(pageIndex, pageDataUrl);
+        }
+        // 调试页图（矢量模式）：底色 + 补丁合成（近似位图层视图）。
+        if (a.vectorActive && a.onPagePng) {
+          pageCtx.fillStyle = bg;
+          pageCtx.fillRect(0, 0, pw, ph);
+          for (const p of patches) {
+            pageCtx.drawImage(
+              img,
+              p.x * a.scale,
+              (wTop + p.y - chunkTop) * a.scale,
+              p.w * a.scale,
+              p.h * a.scale,
+              p.x * a.scale,
+              p.y * a.scale,
+              p.w * a.scale,
+              p.h * a.scale
+            );
+          }
+          a.onPagePng(pageIndex, pageCanvas.toDataURL("image/png"));
+        }
         await a.assembler.addPage(
-          { bytes, mime: useJpeg ? "image/jpeg" : "image/png" },
+          pageImage,
           runsPerPage[pageIndex],
-          decosPerPage[pageIndex] ?? undefined
+          decosPerPage[pageIndex] ?? undefined,
+          patches.length > 0 ? patches : undefined,
+          nativePerPage[pageIndex].length > 0
+            ? nativePerPage[pageIndex].map((n) => ({
+                id: n.id,
+                src: n.src,
+                mime: n.mime,
+                x: n.x,
+                y: n.pageY,
+                w: n.w,
+                h: n.h,
+              }))
+            : undefined
         );
         a.onProgress(pageIndex + 1, pages.length);
       }

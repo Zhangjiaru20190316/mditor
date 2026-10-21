@@ -67,8 +67,10 @@ export function buildFactoryDocumentHtml(
   const theme =
     o.theme ?? document.documentElement.getAttribute("data-theme") ?? "light";
   const clamp = Number.isFinite(o.maxImageHeightPx)
-    ? `\n/* 分页护栏：单图不得高于一页内容高（按构造不可能整图被截）。 */\nimg, video { max-height: ${o.maxImageHeightPx}px; }`
-    : "";
+    ? `\n/* 分页护栏：单图不得高于一页内容高（按构造不可能整图被截）；宽度
+       钳制在版心内（无尺寸属性的 svg 自然宽度可超出版心溢出页缘）。 */
+img, video { max-height: ${o.maxImageHeightPx}px; max-width: 100%; }`
+    : `\nimg, video { max-width: 100%; }`;
   return `<!DOCTYPE html>
 <html lang="zh-CN" data-theme="${theme}">
 <head>
