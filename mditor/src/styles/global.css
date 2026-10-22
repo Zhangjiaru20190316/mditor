@@ -6191,3 +6191,130 @@ span.mditor-math-inline-lazy.mditor-math-inline-ready {
   font-family: Consolas, monospace;
   font-size: 12px;
 }
+
+/* ---------- HTML 笔记搜索结果标记（HN 轮阶段 2） ---------- */
+
+.ws-file-kind {
+  display: inline-block;
+  margin-right: 5px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  color: #b45309;
+  border: 1px solid #b45309;
+  border-radius: 4px;
+  vertical-align: 1px;
+}
+
+/* ---------- 转为 Markdown 对话框（HN 轮阶段 2） ---------- */
+
+.htm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.htm-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(760px, calc(100vw - 64px));
+  height: min(560px, calc(100vh - 96px));
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.htm-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.htm-title {
+  font-weight: 700;
+}
+
+.htm-sub {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--fg-dim, var(--fg));
+  opacity: 0.7;
+}
+
+.htm-close {
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.htm-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 18px;
+}
+
+.htm-status {
+  padding: 24px;
+  text-align: center;
+  color: var(--fg-dim, var(--fg));
+}
+
+.htm-error {
+  color: #b91c1c;
+}
+
+.htm-preview {
+  max-width: none;
+}
+
+.htm-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.htm-note {
+  flex: 1;
+  font-size: 12px;
+  color: var(--fg-dim, var(--fg));
+  opacity: 0.7;
+}
+
+.htm-btn {
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.htm-btn.primary {
+  background: var(--accent, #2563eb);
+  border-color: var(--accent, #2563eb);
+  color: #fff;
+}
+
+.htm-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

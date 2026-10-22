@@ -2,6 +2,10 @@
 // 扫描 .md 文件，按行匹配 query，按文件分组展示；点击命中行打开文件并跳
 // 到对应位置。
 //
+// HN 轮阶段 2：同一关键词并行搜索 HTML 笔记（DOMParser 抽纯文本，见
+// lib/htmlNoteSearch），结果合并展示——html 命中是文本摘录（无行号语义），
+// 点击只打开笔记不定位；两套体系的汇合面只在结果列表。
+//
 // 输入 300ms 防抖后自动搜索（复用上一次结果不重扫）；显示扫描/命中统计与
 // 截断提示（见 lib/workspaceSearch 的上限说明）。React.memo：App 打字期间
 // 重渲染频繁，本面板只在自身状态变化时渲染。
@@ -12,6 +16,8 @@ import {
   type FileHits,
   type WorkspaceSearchResult,
 } from "../lib/workspaceSearch";
+import { searchHtmlNotes } from "../lib/htmlNoteSearch";
+import { isHtmlNote } from "../lib/htmlNote";
 import type { SearchHit } from "../lib/workspaceSearch";
 
 interface Props {
@@ -64,9 +70,18 @@ export const WorkspaceSearch = memo(function WorkspaceSearch({
     const timer = window.setTimeout(() => {
       lastSearchRef.current = key;
       setSearching(true);
-      searchWorkspaces(workspaces, q, { caseSensitive, excluded: excludedPaths })
-        .then((r) => {
-          setResult(r);
+      // HN 轮：md 按行搜索 + html 纯文本搜索并行，结果合并（md 在前）。
+      Promise.all([
+        searchWorkspaces(workspaces, q, { caseSensitive, excluded: excludedPaths }),
+        searchHtmlNotes(workspaces, q, { caseSensitive, excluded: excludedPaths }),
+      ])
+        .then(([md, html]) => {
+          setResult({
+            files: [...md.files, ...html.files],
+            scanned: md.scanned + html.scanned,
+            totalHits: md.totalHits + html.totalHits,
+            truncated: md.truncated || html.truncated,
+          });
           setSearched(true);
         })
         .catch(() => {
@@ -124,32 +139,36 @@ export const WorkspaceSearch = memo(function WorkspaceSearch({
       )}
 
       <div className="ws-results">
-        {filesShown.map((f) => (
+        {filesShown.map((f) => {
+          const html = isHtmlNote(f.name);
+          return (
           <div key={f.path} className="ws-file">
             <div className="ws-file-name" title={f.path}>
+              {html && <span className="ws-file-kind">HTML</span>}
               {f.name}
               <span className="ws-file-count">{f.hits.length}</span>
             </div>
             {f.hits.map((h) => (
               <button
-                key={`${h.line}-${h.col}`}
+                key={`${f.path}-${h.col}`}
                 className="ws-hit"
-                title={`第 ${h.line + 1} 行 · ${f.path}`}
+                title={html ? `HTML 笔记 · ${f.path}` : `第 ${h.line + 1} 行 · ${f.path}`}
                 onClick={() => onOpenResult(f.path, h)}
               >
-                <span className="ws-hit-line">{h.line + 1}</span>
+                <span className="ws-hit-line">{html ? "›" : h.line + 1}</span>
                 <span className="ws-hit-text">{h.text.trim() || "(空行)"}</span>
               </button>
             ))}
           </div>
-        ))}
+          );
+        })}
         {!searching && searched && result.files.length === 0 && query.trim() && (
           <div className="ws-empty">没有匹配的文件</div>
         )}
         {!searched && (
           <div className="ws-empty">
             {hasWs
-              ? "输入关键词，在工作区所有 Markdown 文件中搜索"
+              ? "输入关键词，在工作区所有 Markdown / HTML 笔记中搜索"
               : "打开文件夹后即可跨文件搜索"}
           </div>
         )}

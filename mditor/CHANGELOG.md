@@ -4,6 +4,25 @@
 
 门禁报告 `docs/html-note-spike-report.md`；执行顺序 阶段 0 → 1 → 2（→ 3 仅设计占位）。
 
+### 阶段 2：配套能力——独立窗口 / 搜索索引 / 转 Markdown
+
+- **独立窗口查看**：复用既有 `create_doc_window` 的 `?path=` 启动参数（App
+  启动路由按扩展名分发，无需新增 Rust 命令）；HtmlNoteView 顶栏入口按
+  `capabilities.multiWindow` 守卫（harmony 隐藏）。标签右键「移到新窗口」
+  同样适用 html 标签（handoff 载荷保留 kind，恢复端不进编辑器）。
+- **搜索索引**：`lib/htmlNoteSearch`——DOMParser 抽 textContent + `<h1>`-`<h6>`
+  大纲（script/style 剥除，纯主线程，超 2MB 跳过），与 md 搜索并行执行、
+  结果合并展示（HTML 徽标 + 文本摘录命中，点击打开笔记不定位——html 无
+  行号语义）。摘要是纯文本，经 React 文本节点承载（无标记进入主 DOM）。
+- **转为 Markdown**（可选工具，非导入路径）：turndown + gfm 插件（惰性
+  import，不进主包）；转换前剥 script/style + 空 table（turndown-plugin-gfm
+  对无单元格空表崩溃的已知缺陷，内容无损预处理）；预览经 renderMarkdown
+  现有消毒管线渲染；确认后另存 .md 并打开，原 HTML 笔记不动。
+- 真机 E2E：新窗口（?path= → 独立窗显示同一笔记）、搜索（「官方测试页」
+  命中 + HTML 徽标 + 摘录）、转换对话框（消毒预览含 h1/正文）全部通过。
+- 单测 +9（DOMParser 抽取/命中收集/磁盘搜索/转换——含空表回归钉与官方
+  测试页整页转换回归钉）。
+
 ### 阶段 1：MVP——导入 + 文件库 + 应用内交互预览
 
 **HTML 笔记 = 只读视图对象**：`.html/.htm` 进文件库（专属图标），点击在

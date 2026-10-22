@@ -68,6 +68,7 @@ import {
   importHtmlNotes,
 } from "./lib/htmlNote";
 import { HtmlNoteView } from "./components/HtmlNoteView";
+import { HtmlToMdDialog } from "./components/HtmlToMdDialog";
 import { readFresh, peekHoverContent } from "./lib/filePrefetch";
 import { prepareDoc } from "./lib/parsePipeline";
 import { toPosix } from "./lib/path-shim";
@@ -294,6 +295,8 @@ function App() {
   const [templateOpen, setTemplateOpen] = useState(false);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [linkDialogText, setLinkDialogText] = useState("");
+  // HN 轮阶段 2：「转为 Markdown」对话框目标（null = 关闭）。
+  const [htmlToMd, setHtmlToMd] = useState<string | null>(null);
 
   // ---- iOS-style 「先响应动画，再加载内容」file switching -------------------
   // 状态机本体在 hooks/useSwitchFlow.ts（token / 最短可见时长 / 大文档遮罩
@@ -2709,13 +2712,18 @@ function App() {
   // 移入 Editor 的执行点，与真正的滚动写入同步。
   const onOpenSearchResult = useCallback(
     async (path: string, hit: SearchHit) => {
+      // HN 轮：html 命中只打开笔记（只读视图无行号定位语义）。
+      if (isHtmlNote(path)) {
+        await openHtmlNote(path);
+        return;
+      }
       await openPath(path);
       editorRef.current?.revealAfterLoad({
         line: hit.line,
         text: hit.full.trim(),
       });
     },
-    [openPath]
+    [openPath, openHtmlNote]
   );
 
   // ---- v4.7 双链：跳转 / 消歧 / 补全 ----------------------------------------
@@ -3189,7 +3197,14 @@ function App() {
         {/* HN 轮：html 标签的活动视图（编辑器经 data-html-note 隐藏；卸载随
             标签关闭/切换——iframe 生命周严格跟标签走，无泄漏滞留）。 */}
         {htmlActive && activeTabForTitle?.path && (
-          <HtmlNoteView path={activeTabForTitle.path} onOpenExternal={openExternalNote} />
+          <HtmlNoteView
+            path={activeTabForTitle.path}
+            onOpenExternal={openExternalNote}
+            onOpenInNewWindow={
+              getAdapter().capabilities.multiWindow ? openInNewWindow : undefined
+            }
+            onConvertToMarkdown={setHtmlToMd}
+          />
         )}
       </main>
 
@@ -3368,6 +3383,15 @@ function App() {
         initialText={linkDialogText}
         onConfirm={onInsertLinkConfirm}
         onClose={() => setLinkDialogOpen(false)}
+      />
+
+      {/* HN 轮阶段 2：HTML 笔记 → Markdown（预览经 renderMarkdown 消毒管线） */}
+      <HtmlToMdDialog
+        open={htmlToMd != null}
+        path={htmlToMd}
+        theme={settingsApi.settings.theme}
+        onClose={() => setHtmlToMd(null)}
+        onSaved={(p) => void openPath(p)}
       />
 
       {/* v4.7 知识功能：Ctrl+P 快速切换器 */}

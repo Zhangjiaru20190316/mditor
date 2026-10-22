@@ -16,9 +16,13 @@ interface Props {
   path: string;
   /** 用系统浏览器打开（App 注入 openExternal 封装，稳定引用）。 */
   onOpenExternal: (path: string) => void;
+  /** 阶段 2：在新窗口查看（capabilities.multiWindow 为 false 时不传）。 */
+  onOpenInNewWindow?: (path: string) => void;
+  /** 阶段 2：转为 Markdown（打开对话框）。 */
+  onConvertToMarkdown?: (path: string) => void;
 }
 
-export const HtmlNoteView = memo(function HtmlNoteView({ path, onOpenExternal }: Props) {
+export const HtmlNoteView = memo(function HtmlNoteView({ path, onOpenExternal, onOpenInNewWindow, onConvertToMarkdown }: Props) {
   const caps = getAdapter().capabilities;
   const [reloadKey, setReloadKey] = useState(0);
   const [missing, setMissing] = useState(false);
@@ -82,6 +86,24 @@ export const HtmlNoteView = memo(function HtmlNoteView({ path, onOpenExternal }:
         <button className="html-note-btn" title="重新加载" onClick={reload}>
           <RefreshIcon size={13} />
         </button>
+        {onOpenInNewWindow && (
+          <button
+            className="html-note-btn"
+            title="在新窗口查看"
+            onClick={() => onOpenInNewWindow(path)}
+          >
+            新窗口
+          </button>
+        )}
+        {onConvertToMarkdown && (
+          <button
+            className="html-note-btn"
+            title="转换为 Markdown（另存为 .md，原笔记不动）"
+            onClick={() => onConvertToMarkdown(path)}
+          >
+            转 Markdown
+          </button>
+        )}
         <button
           className="html-note-btn"
           title="用系统浏览器打开"
@@ -89,7 +111,6 @@ export const HtmlNoteView = memo(function HtmlNoteView({ path, onOpenExternal }:
         >
           <ExpandIcon size={13} />
         </button>
-        {/* 阶段 2 占位（隐藏）：独立窗口查看 / 转为 Markdown */}
       </div>
       <iframe
         key={`${path}#${reloadKey}`}
