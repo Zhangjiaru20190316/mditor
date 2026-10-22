@@ -4,6 +4,35 @@
 
 门禁报告 `docs/html-note-spike-report.md`；执行顺序 阶段 0 → 1 → 2（→ 3 仅设计占位）。
 
+### 阶段 1：MVP——导入 + 文件库 + 应用内交互预览
+
+**HTML 笔记 = 只读视图对象**：`.html/.htm` 进文件库（专属图标），点击在
+`HtmlNoteView`（iframe，asset 协议 URL + sandbox 无 allow-same-origin）中打
+开——笔记自带 CSS/JS 交互完整生效，内容与主应用完全隔离；不进
+Milkdown/双链/闪卡/批注/RAG/md 导出链路（md 是 md，html 是 html）。
+
+- 导入两入口：菜单「文件 → 导入 HTML 笔记…」（对话框选单文件或文件夹）
+  + 拖拽（.html 文件 / 顶层含 html 的文件夹）；导入 = 拷贝入工作区首根，
+  原文件不动，同名冲突自动改名（绝不覆盖）；浏览器「保存完整网页」伴随
+  目录惯例（`<stem>_files` / `<stem>.assets`）随单文件一并带走。
+- TabItem 增 `kind: "md" | "html"` 判别：html 标签绕开 useFile/dirty/
+  docCache 全套，dirty 恒 false、content 恒空；App 编辑区按 kind 分发，
+  关闭即卸载 iframe；窗口标题随标签类型同步。
+- vaultIndex 平行收集：HTML 与 md 同一次目录遍历（零额外目录 IO），条目
+  只记 path/name/mtime（stat-only，无内容解析/读取）；`htmlNotes()` /
+  `stats().htmlTotal` 只读快照；watch 增量与 noteSaved（no-op）按扩展名分支。
+- 文件树/标签栏 HTML 专属图标；删除清单（collectMdPathsFromDisk）纳入 html
+  （删笔记后 html 标签正确关闭）。
+- 平台能力位 `capabilities.htmlNoteView`：Windows true（spike 结论 A）；
+  harmony false（未验证，降级为「用系统浏览器打开」提示页，不假成功）。
+- 真机回归（dev + 真实 vault E:\笔记）：菜单→原生对话框→拷贝→文件树→
+  应用内打开→测试页全绿（隔离/相对资源/CDN）端到端通过；16 轮开/关
+  iframe 严格 1→0、JS 堆 36–39MB 震荡无单调增长；md 打开/保存/往返切换
+  冒烟通过；打包版（tauri://localhost + 注入 CSP）frame-src 复验通过。
+- 单测 +16：HTML_EXTS/TabItem kind/assetFrameUrl 相对解析钉/冲突改名/
+  导入拷贝（含伴随目录、不覆盖）/vaultIndex 平行收集；tsc 0 错、全量
+  vitest 1152 通过（exporterImages 一例为并行负载超时抖动，单跑通过）。
+
 ### 阶段 0：Spike 验证（闸门）——结论 A：iframe + asset 协议路线成立
 
 官方测试页 `public/html-note-demo/`（内联脚本计数 / `<details>` / JS 选项卡 /

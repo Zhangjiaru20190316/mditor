@@ -92,6 +92,8 @@ export interface UseMenuCommandsDeps {
   addFolderFromDialog: () => Promise<void>;
   /** 「打开文件夹（替换工作区）」对话框入口（稳定链路见 App.tsx）。 */
   replaceFolderFromDialog: () => Promise<void>;
+  /** HN 轮：「导入 HTML 笔记…」（稳定链路：workspacesRef/openHtmlNote）。 */
+  importHtmlNote: () => Promise<void>;
 }
 
 export function useMenuCommands(deps: UseMenuCommandsDeps) {
@@ -126,6 +128,7 @@ export function useMenuCommands(deps: UseMenuCommandsDeps) {
     doCopyRich,
     addFolderFromDialog,
     replaceFolderFromDialog,
+    importHtmlNote,
   } = deps;
 
   // ----- 统一菜单分发器：原生 `menu` 事件（macOS）与前端菜单栏（Windows）共用 -----
@@ -162,6 +165,10 @@ export function useMenuCommands(deps: UseMenuCommandsDeps) {
         break;
       case "file_add_folder":
         void addFolderFromDialog();
+        break;
+      case "file_import_html":
+        // HN 轮：导入 = 拷贝入 vault（对话框选单文件/文件夹在回调内分流）。
+        void importHtmlNote();
         break;
       case "file_quick_open":
         setQuickOpen(true);
@@ -394,11 +401,12 @@ export function useMenuCommands(deps: UseMenuCommandsDeps) {
     }
     // 全部依赖都是稳定 useCallback（doCopyRich←flashStatus、newUntitledTab←
     // snapshotActiveTab←getCurrentContent、addFolder/replaceFolder←addWorkspaceRoot
-    // /replaceWorkspace←flashStatus+refreshRecentWs），列出只为满足
+    // /replaceWorkspace←flashStatus+refreshRecentWs、importHtmlNote←
+    // doImportHtmlNotes←flashStatus+openHtmlNote），列出只为满足
     // exhaustive-deps —— dispatchMenu 的身份仍然不变。refs / setters 经 deps
     // 对象注入后 eslint 无法识别其稳定性，依赖数组维持拆分前原样。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doCopyRich, flashStatus, newUntitledTab, addFolderFromDialog, replaceFolderFromDialog]); // ← stable — reads live state via refs
+  }, [doCopyRich, flashStatus, newUntitledTab, addFolderFromDialog, replaceFolderFromDialog, importHtmlNote]); // ← stable — reads live state via refs
   // 上面「注册一次」的事件监听（menu 事件 / 全局快捷键）只在提交后才执行 ——
   // 经 ref 镜像取调用时的最新 dispatchMenu。
   const dispatchMenuRef = useRef(dispatchMenu);

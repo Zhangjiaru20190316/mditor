@@ -358,3 +358,57 @@ describe("VaultIndexManager", () => {
     expect(fn.mock.calls.length).toBeGreaterThan(0);
   });
 });
+
+// ---- HN 轮：HTML 笔记平行收集 -------------------------------------------------
+
+describe("VaultIndexManager · HTML 平行收集", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("同一次遍历收集 html（只记路径/名字/mtime，不进 md 索引）", async () => {
+    const files = new Map<string, string>([
+      ["C:/v/a.md", "# 甲"],
+      ["C:/v/demo.html", "<html></html>"],
+      ["C:/v/sub/x.HTM", "<html></html>"],
+    ]);
+    const { io } = makeIO(files);
+    const idx = new VaultIndexManager(io);
+    await idx.setRootsAndWait(["C:/v"]);
+    // md 索引不含 html（md 是 md，html 是 html）。
+    expect(idx.entries().length).toBe(1);
+    expect(idx.entry("C:/v/demo.html")).toBeNull();
+    // html 平行索引齐备。
+    const notes = idx.htmlNotes();
+    expect(notes.length).toBe(2);
+    expect(notes.map((n) => n.name).sort()).toEqual(["demo.html", "x.HTM"]);
+    expect(notes.every((n) => typeof n.mtime === "number")).toBe(true);
+    expect(idx.stats().htmlTotal).toBe(2);
+    expect(idx.stats().total).toBe(1);
+  });
+
+  it("rescanFile 的 html 分支：stat-only 增删", async () => {
+    const files = new Map<string, string>([["C:/v/a.md", "# 甲"]]);
+    const { io } = makeIO(files);
+    const idx = new VaultIndexManager(io);
+    await idx.setRootsAndWait(["C:/v"]);
+    await idx.rescanFile("C:/v/new.html");
+    expect(idx.htmlNotes().some((n) => n.path === "C:/v/new.html")).toBe(true);
+    // 重复扫描幂等（pathKey 归一）。
+    await idx.rescanFile("c:/v/new.html");
+    expect(idx.htmlNotes().filter((n) => n.name === "new.html").length).toBe(1);
+  });
+
+  it("noteSaved 对 html 路径是 no-op", async () => {
+    const files = new Map<string, string>([
+      ["C:/v/a.md", "# 甲"],
+      ["C:/v/b.html", "<html></html>"],
+    ]);
+    const { io } = makeIO(files);
+    const idx = new VaultIndexManager(io);
+    await idx.setRootsAndWait(["C:/v"]);
+    const before = idx.stats().version;
+    idx.noteSaved("C:/v/b.html", "# 不该进来");
+    expect(idx.stats().version).toBe(before);
+    expect(idx.entry("C:/v/b.html")).toBeNull();
+  });
+});

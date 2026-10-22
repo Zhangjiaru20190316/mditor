@@ -83,9 +83,11 @@ import {
   FolderIcon,
   FolderOpenIcon,
   MarkdownFileIcon,
+  HtmlFileIcon,
   ChevronRightIcon,
   CloseIcon,
 } from "./icons";
+import { isHtmlNote } from "../lib/htmlNote";
 
 /** Notification fired up to App after a tree mutation. */
 export type TreeChange =
@@ -940,7 +942,7 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
               </div>
               {!collapsed &&
                 (rows.length === 0 ? (
-                  <div className="ft-empty">没有 Markdown 文件</div>
+                  <div className="ft-empty">没有笔记文件</div>
                 ) : (
                   <ul className="ft-root" role="tree">
                     {rows.map((n) => (
@@ -1225,7 +1227,7 @@ const FileNode = memo(function FileNode({
           />
         )}
         <span className="ft-icon">
-          <MarkdownFileIcon size={15} />
+          {isHtmlNote(node.name) ? <HtmlFileIcon size={15} /> : <MarkdownFileIcon size={15} />}
         </span>
         {renaming ? (
           <RenameInput

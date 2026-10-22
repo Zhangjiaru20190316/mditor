@@ -16,8 +16,9 @@
 
 import { memo, useEffect, useRef, useState } from "react";
 import type { TabItem } from "../types";
-import { CloseIcon, MarkdownFileIcon } from "./icons";
+import { CloseIcon, MarkdownFileIcon, HtmlFileIcon } from "./icons";
 import { ContextMenu, type CtxEntry } from "./ContextMenu";
+import { isHtmlTab } from "../lib/htmlNote";
 
 interface Props {
   tabs: TabItem[];
@@ -115,7 +116,11 @@ export const TabsBar = memo(function TabsBar({
               }
             }}
           >
-            <MarkdownFileIcon size={13} className="tabbar-tab-icon" />
+            {isHtmlTab(t) ? (
+              <HtmlFileIcon size={13} className="tabbar-tab-icon" />
+            ) : (
+              <MarkdownFileIcon size={13} className="tabbar-tab-icon" />
+            )}
             <span className="tabbar-tab-name">{t.name}</span>
             <button
               className={`tabbar-tab-close${t.dirty ? " dirty" : ""}`}
@@ -134,7 +139,11 @@ export const TabsBar = memo(function TabsBar({
       {/* 关闭退场残影：纯视觉，不响应交互、不参与 tablist 语义 */}
       {ghosts.map((t) => (
         <div key={`ghost-${t.key}`} className="tabbar-tab closing" aria-hidden="true">
-          <MarkdownFileIcon size={13} className="tabbar-tab-icon" />
+          {isHtmlTab(t) ? (
+            <HtmlFileIcon size={13} className="tabbar-tab-icon" />
+          ) : (
+            <MarkdownFileIcon size={13} className="tabbar-tab-icon" />
+          )}
           <span className="tabbar-tab-name">{t.name}</span>
           <button className={`tabbar-tab-close${t.dirty ? " dirty" : ""}`} tabIndex={-1}>
             {t.dirty && <span className="tabbar-tab-dot" />}

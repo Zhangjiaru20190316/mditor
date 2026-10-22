@@ -515,6 +515,10 @@ export interface DocState {
  * in the editor / useFile; switching away snapshots the live content here so
  * untitled dirty buffers survive round-trips. `key` is stable across renders —
  * file tabs are keyed by path, untitled tabs by a counter.
+ *
+ * HN 轮（可交互 HTML 笔记）：`kind: "html"` 的标签是只读视图对象——dirty 恒
+ * false、content 恒空，不进编辑器/useFile/docCache 全套（App 按 kind 分发到
+ * HtmlNoteView）。缺省（undefined）= md，兼容既有构造点。
  */
 export interface TabItem {
   key: string;
@@ -526,6 +530,8 @@ export interface TabItem {
   dirty: boolean;
   /** Content snapshot taken when the tab was switched away from / created. */
   content: string;
+  /** HN 轮：标签类型判别（md 缺省 | html 只读视图）。 */
+  kind?: "md" | "html";
 }
 
 /**

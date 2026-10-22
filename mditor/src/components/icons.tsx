@@ -200,6 +200,18 @@ export function MarkdownFileIcon({ size, className }: IconProps) {
   );
 }
 
+/** HTML 笔记：文档 + 角标尖括号（与 md 文件图标明确区分，HN 轮）。 */
+export function HtmlFileIcon({ size, className }: IconProps) {
+  return (
+    <Svg size={size} className={className}>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+      <path d="M14 3v5h5" />
+      <path d="m10 12-1.7 1.7L10 15.4" />
+      <path d="m14 12 1.7 1.7L14 15.4" />
+    </Svg>
+  );
+}
+
 /* ---------------- 面板开关 / AI / 专注 ---------------- */
 
 /** 侧边栏：左分栏面板。 */

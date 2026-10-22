@@ -16,6 +16,8 @@ const ALL_TRUE: PlatformCapabilities = {
   richExport: true,
   remoteImageProxy: true,
   windowControls: true,
+  // HN 轮：Windows spike 结论 A（docs/html-note-spike-report.md）。
+  htmlNoteView: true,
 };
 
 export const tauriAdapter: PlatformAdapter = {

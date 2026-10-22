@@ -19,6 +19,7 @@ import { UnsupportedError } from "../platform/errors";
 import { basename, extname, join, toPosix } from "./path-shim";
 import { isUserActive } from "./activity";
 import { scanFlashcards, type ScannedCard } from "./flashcards";
+import { isHtmlNote } from "./htmlNote";
 
 // ---- 纯函数部分（独立导出以便单测） ------------------------------------------
 
@@ -50,6 +51,15 @@ export interface VaultEntry {
   mtime: number;
   /** 文内 :::flash 闪卡（模块 4：到期扫描遍历索引，不回读文件）。 */
   flashcards: ScannedCard[];
+}
+
+/** HN 轮：HTML 笔记条目——只记路径/名字/mtime，不做任何内容解析（md 是
+ *  md，html 是 html：不进标题/双链/标签/闪卡体系）。收集与 md 同一次目录
+ *  遍历（零额外 IO），扫描成本仅每文件一次 stat。 */
+export interface HtmlNoteEntry {
+  path: string;
+  name: string;
+  mtime: number;
 }
 
 /** 行扫描产物。 */
@@ -277,12 +287,14 @@ const MD_EXTS = new Set([".md", ".markdown", ".mdx", ".mdown"]);
 export interface VaultStats {
   /** 索引条目数。 */
   total: number;
+  /** HTML 笔记条目数（HN 轮，平行收集；不计入 total）。 */
+  htmlTotal: number;
   /** 正在全量扫描。 */
   scanning: boolean;
   /** 全量扫描进度（非扫描期为 0）。 */
   done: number;
   scanTotal: number;
-  /** 索引内容版本（每次变更 +1，订阅方据此刷新）。 */
+  /** 索引内容版本（每次变更 +1，订阅方据 md/html 任一变更刷新）。 */
   version: number;
 }
 
@@ -296,6 +308,10 @@ export interface Backlink {
 export class VaultIndexManager {
   private io: VaultIndexIO;
   private byPath = new Map<string, VaultEntry>();
+  /** HN 轮：HTML 笔记平行索引（pathKey → entry，与 byPath 同一套 bump 失效）。 */
+  private htmlByPath = new Map<string, HtmlNoteEntry>();
+  /** htmlNotes() 只读快照缓存（bump 失效，同 entriesCache 策略）。 */
+  private htmlNotesCache: HtmlNoteEntry[] | null = null;
   /** entries() 只读快照缓存（bump 失效；见 entries() 注释）。 */
   private entriesCache: VaultEntry[] | null = null;
   private roots: string[] = [];
@@ -326,9 +342,10 @@ export class VaultIndexManager {
 
   private bump(): void {
     this.version++;
-    // 快照失效。约定：byPath 的一切变更路径（upsert/delete）最终都会跟随
-    // 一次 bump（rebuild 为批间 bump），缓存因此不会漏失效。
+    // 快照失效。约定：byPath/htmlByPath 的一切变更路径（upsert/delete）最终
+    // 都会跟随一次 bump（rebuild 为批间 bump），缓存因此不会漏失效。
     this.entriesCache = null;
+    this.htmlNotesCache = null;
     for (const fn of this.listeners) {
       try {
         fn();
@@ -341,6 +358,7 @@ export class VaultIndexManager {
   stats(): VaultStats {
     return {
       total: this.byPath.size,
+      htmlTotal: this.htmlByPath.size,
       scanning: this.scanning,
       done: this.progress.done,
       scanTotal: this.progress.total,
@@ -360,6 +378,14 @@ export class VaultIndexManager {
 
   entry(path: string): VaultEntry | null {
     return this.byPath.get(pathKey(path)) ?? null;
+  }
+
+  /** HN 轮：HTML 笔记只读快照（frozen；订阅 stats().version 刷新）。 */
+  htmlNotes(): HtmlNoteEntry[] {
+    if (this.htmlNotesCache === null) {
+      this.htmlNotesCache = Object.freeze([...this.htmlByPath.values()]) as HtmlNoteEntry[];
+    }
+    return this.htmlNotesCache;
   }
 
   /** 随 setRoots 启动的全量扫描 promise（setRootsAndWait 用）。 */
@@ -425,7 +451,9 @@ export class VaultIndexManager {
     const kind = ev.type?.kind ?? "any";
     if (kind !== "modify" && kind !== "create" && kind !== "remove" && kind !== "any") return;
     for (const p of ev.paths) {
-      if (!MD_EXTS.has(extname(p).toLowerCase())) continue;
+      // HN 轮：HTML 笔记同享监听增量（rescanFile 内按扩展名走 stat-only 分支）。
+      const ext = extname(p).toLowerCase();
+      if (!MD_EXTS.has(ext) && !isHtmlNote(p)) continue;
       this.pendingRescans.add(toPosix(p));
     }
     if (this.pendingRescans.size === 0) return;
@@ -447,19 +475,35 @@ export class VaultIndexManager {
     this.bump();
 
     // 收集文件清单（多根共享预算，跳过黑名单/排除项——同 workspaceSearch）。
+    // HN 轮：HTML 与 md 同一次遍历收集（零额外目录 IO）。
     const files: string[] = [];
+    const htmlFiles: string[] = [];
     for (const root of this.roots) {
-      await this.collectMdFiles(root, files, gen);
+      await this.collectMdFiles(root, files, htmlFiles, gen);
       if (this.generation !== gen) return;
     }
     // 全量重建以本次清单为准：清单外的旧条目删除（根被移除等场景）。
-    const keep = new Set(files.map(pathKey));
+    const keep = new Set([...files.map(pathKey), ...htmlFiles.map(pathKey)]);
     for (const k of [...this.byPath.keys()]) {
       if (!keep.has(k)) this.byPath.delete(k);
+    }
+    for (const k of [...this.htmlByPath.keys()]) {
+      if (!keep.has(k)) this.htmlByPath.delete(k);
     }
 
     this.progress = { done: 0, total: files.length };
     this.bump();
+
+    // HTML 条目先行入库（每文件仅一次 stat，无内容读取——批处理里最便宜的）。
+    for (const f of htmlFiles) {
+      if (this.generation !== gen) return;
+      const st = await this.io.stat(f).catch(() => null);
+      this.htmlByPath.set(pathKey(f), {
+        path: f,
+        name: basename(f),
+        mtime: st?.mtime ?? 0,
+      });
+    }
 
     const BATCH = 50;
     for (let i = 0; i < files.length; i += BATCH) {
@@ -494,7 +538,12 @@ export class VaultIndexManager {
     });
   }
 
-  private async collectMdFiles(dir: string, out: string[], gen: number): Promise<void> {
+  private async collectMdFiles(
+    dir: string,
+    out: string[],
+    htmlOut: string[],
+    gen: number
+  ): Promise<void> {
     const stack = [dir];
     while (stack.length > 0 && out.length < 10_000) {
       if (this.generation !== gen) return;
@@ -512,6 +561,7 @@ export class VaultIndexManager {
         if (this.isExcluded(full)) continue;
         if (e.isDirectory) dirs.push(full);
         else if (MD_EXTS.has(extname(e.name).toLowerCase())) out.push(full);
+        else if (isHtmlNote(e.name)) htmlOut.push(full);
       }
       dirs.sort((a, b) => -a.localeCompare(b, "en"));
       stack.push(...dirs);
@@ -556,9 +606,21 @@ export class VaultIndexManager {
     });
   }
 
-  /** 单文件增量重扫（文件监听事件用）。读失败视为删除。 */
+  /** 单文件增量重扫（文件监听事件用）。读失败视为删除。HN 轮：HTML 走
+   *  stat-only 分支（不读内容——索引只记路径/名字/mtime）。 */
   async rescanFile(path: string): Promise<void> {
     if (!this.enabled) return;
+    const key = pathKey(path);
+    if (isHtmlNote(path)) {
+      const st = await this.io.stat(path).catch(() => null);
+      if (st) {
+        this.htmlByPath.set(key, { path, name: basename(path), mtime: st.mtime ?? 0 });
+      } else if (this.htmlByPath.delete(key)) {
+        // fallthrough：删除也要 bump
+      }
+      this.bump();
+      return;
+    }
     try {
       const [content, st] = await Promise.all([
         this.io.readTextFile(path),
@@ -568,7 +630,7 @@ export class VaultIndexManager {
       this.upsert(path, content, st?.mtime ?? 0);
       this.bump();
     } catch {
-      if (this.byPath.delete(pathKey(path))) this.bump();
+      if (this.byPath.delete(key)) this.bump();
     }
   }
 
@@ -578,6 +640,8 @@ export class VaultIndexManager {
    */
   noteSaved(path: string, content: string): void {
     if (!this.enabled || !path) return;
+    // HN 轮：HTML 笔记不进内容索引（保存语义也不存在——只读视图）。
+    if (isHtmlNote(path)) return;
     this.upsert(path, content, Date.now());
     this.bump();
   }

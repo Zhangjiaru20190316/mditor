@@ -218,6 +218,10 @@ export interface PlatformCapabilities {
   remoteImageProxy: boolean;
   /** 自绘窗口控制按钮（最小化/最大化/关闭）。false = 系统窗口管理接管。 */
   windowControls: boolean;
+  /** HN 轮：应用内 HTML 笔记视图（asset 协议 iframe）。Windows 已 spike
+   *  实测（docs/html-note-spike-report.md）；harmony 未验证（mditor-asset://
+   *  的相对解析/隔离行为待真机）——保守关，UI 降级为「外部浏览器打开」。 */
+  htmlNoteView: boolean;
 }
 
 /** 平台适配器：业务代码唯一入口（经 platform/index.getAdapter()）。 */

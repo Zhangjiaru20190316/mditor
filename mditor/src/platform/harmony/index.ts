@@ -231,6 +231,9 @@ const HARMONY_CAPS: PlatformCapabilities = {
   richExport: true, // exporter.ts 纯前端（LaTeX/DOCX/PNG 桥依赖已具备）
   remoteImageProxy: false,
   windowControls: false,
+  // HN 轮：mditor-asset:// 下 iframe 相对解析/隔离未真机验证（spike ④）——
+  // 保守关：HTML 笔记标签降级为「用系统浏览器打开」提示页，不假成功。
+  htmlNoteView: false,
 };
 
 export const harmonyAdapter: PlatformAdapter = {

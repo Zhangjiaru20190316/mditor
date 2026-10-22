@@ -60,7 +60,14 @@ import { resolveCodeLines, highlightCodeLines } from "./lib/codeAnno";
 import { findHeadingLine } from "./lib/outline";
 import { buildAnnotationMessages, chatStream, isAiConfigured } from "./lib/ai";
 import { normalizeAnchorText } from "./lib/anchorSearch";
-import { baseName, pickFolder, MD_EXT_RE } from "./lib/tauriFs";
+import { baseName, pickFolder, dirOf, MD_EXT_RE, HTML_FILTERS } from "./lib/tauriFs";
+import {
+  isHtmlNote,
+  isHtmlTab,
+  makeHtmlTab,
+  importHtmlNotes,
+} from "./lib/htmlNote";
+import { HtmlNoteView } from "./components/HtmlNoteView";
 import { readFresh, peekHoverContent } from "./lib/filePrefetch";
 import { prepareDoc } from "./lib/parsePipeline";
 import { toPosix } from "./lib/path-shim";
@@ -417,6 +424,36 @@ function App() {
       if (key === activeKeyRef.current) return;
       const target = tabsRef.current.find((t) => t.key === key);
       if (!target) return;
+      // HN 轮：html 标签激活——不进编辑器/showDoc（只读视图，iframe 承载）。
+      // 切走前的 md 标签照常「落盘优于弹窗」；切到 html 后 fileApi.doc 仍保留
+      // 上一篇 md 的状态（编辑器隐藏，切回 md 标签时 showDoc 重建）。
+      if (isHtmlTab(target)) {
+        const curDoc = fileApiRef.current.doc;
+        const curKey = activeKeyRef.current;
+        const curIsHtml = isHtmlTab(tabsRef.current.find((t) => t.key === curKey));
+        if (!curIsHtml) {
+          const curContent = curDoc.dirty ? getCurrentContent() : curDoc.content;
+          let curDirty = curDoc.dirty;
+          if (curDoc.dirty && curDoc.path) {
+            try {
+              await fileApiRef.current.writeOnly(() => curContent);
+              curDirty = false;
+            } catch {
+              /* 写失败：保留脏快照，切回来还在 */
+            }
+          }
+          setTabs((ts) =>
+            ts.map((t) =>
+              t.key === curKey
+                ? { ...t, path: curDoc.path, dirty: curDirty, content: curContent }
+                : t
+            )
+          );
+        }
+        setActiveKey(key);
+        activeKeyRef.current = key;
+        return;
+      }
       const startedAt = performance.now();
       const heavy = isBigDoc(freshContent ?? target.content);
       const token = beginSwitch(target.path, heavy);
@@ -465,13 +502,18 @@ function App() {
           if (isStale(token)) return;
         }
       }
-      setTabs((ts) =>
-        ts.map((t) =>
-          t.key === curKey
-            ? { ...t, path: curDoc.path, dirty: curDirty, content: curContent }
-            : t
-        )
-      );
+      // HN 轮：从 html 标签切回 md 时，curKey 是 html 标签——它没有可写回的
+      // 编辑器状态（上面的 flush 已把背后 md 的脏内容落盘），不能被 md 快照
+      // 覆写。
+      if (!isHtmlTab(tabsRef.current.find((t) => t.key === curKey))) {
+        setTabs((ts) =>
+          ts.map((t) =>
+            t.key === curKey
+              ? { ...t, path: curDoc.path, dirty: curDirty, content: curContent }
+              : t
+          )
+        );
+      }
       setActiveKey(key);
       activeKeyRef.current = key;
       // tabKey 透传：Editor 的 per-tab 滚动记忆按它索引（切回恢复原位）。
@@ -532,6 +574,33 @@ function App() {
       const idx = cur.findIndex((t) => t.key === key);
       if (idx < 0) return;
       const target = cur[idx];
+      // HN 轮：html 标签——只读视图，无脏态无保存（编辑器读取全绕开），直接
+      // 移除；关活动标签时邻居接管：md 邻居要 showDoc 重建编辑器内容（编辑器
+      // 此前显示的是切换前的旧 md），html 邻居仅切 key。
+      if (isHtmlTab(target)) {
+        const remaining0 = cur.filter((t) => t.key !== key);
+        if (remaining0.length === 0) {
+          const k = `untitled-${++untitledSeqRef.current}`;
+          setTabs([{ key: k, path: null, name: "未命名.md", dirty: false, content: "" }]);
+          setActiveKey(k);
+          activeKeyRef.current = k;
+          fileApiRef.current.newDoc(k);
+          return;
+        }
+        setTabs(remaining0);
+        if (key === activeKeyRef.current) {
+          const next = remaining0[Math.min(idx, remaining0.length - 1)];
+          setActiveKey(next.key);
+          activeKeyRef.current = next.key;
+          if (!isHtmlTab(next)) {
+            fileApiRef.current.showDoc(
+              { path: next.path, content: next.content, dirty: next.dirty },
+              next.key
+            );
+          }
+        }
+        return;
+      }
       let content = target.content;
       let dirty = target.dirty;
       const isActive = key === activeKeyRef.current;
@@ -611,7 +680,9 @@ function App() {
       let path = target.path;
       let content = target.content;
       let dirty = target.dirty;
-      if (isActive) {
+      // HN 轮：html 标签即使在活动位也没有编辑器状态——fileApi.doc 属于上一篇
+      // md，不参与迁移。
+      if (isActive && !isHtmlTab(target)) {
         const d = fa.doc;
         path = d.path;
         dirty = d.dirty;
@@ -633,10 +704,12 @@ function App() {
       const scrollTop = isActive
         ? (document.querySelector<HTMLElement>(".mditor-editor-host")?.scrollTop ?? 0)
         : 0;
+      // HN 轮：html 标签迁移——无脏态无编辑器内容，载荷原样（kind 保留），
+      // 新窗恢复时走 html 分支不进编辑器。
       try {
         await moveTabToNewWindow(
-          { key: target.key, path, name: target.name, dirty, content },
-          scrollTop
+          { key: target.key, path, name: target.name, dirty, content, ...(target.kind ? { kind: target.kind } : {}) },
+          isActive && !isHtmlTab(target) ? scrollTop : 0
         );
       } catch (e) {
         noteOpError("move-tab-window", e);
@@ -661,7 +734,9 @@ function App() {
     let savedFailed = false;
     let hasDirtyUntitled = false;
     for (const t of tabsRef.current) {
-      if (t.key === activeKeyRef.current) {
+      // HN 轮：html 标签恒干净（只读视图），活动 html 标签也不读编辑器——
+      // fileApi.doc 属于上一篇 md，不能算到 html 头上。
+      if (t.key === activeKeyRef.current && !isHtmlTab(t)) {
         const d = fa.doc;
         if (!d.dirty) continue;
         if (d.path) {
@@ -820,11 +895,14 @@ function App() {
   }, []);
 
   // 活动 useFile 状态（saveAs 改路径 / dirty 变化）同步回标签记录。
+  // HN 轮：活动标签为 html 时不同步——fileApi.doc 属于切到 html 前的那篇 md，
+  // 写回会把只读视图标签的 path/name 覆盖成 md 的。
   useEffect(() => {
     const doc = fileApi.doc;
     setTabs((ts) =>
       ts.map((t) => {
         if (t.key !== activeKeyRef.current) return t;
+        if (isHtmlTab(t)) return t;
         const name = doc.path ? baseName(doc.path) : "未命名.md";
         if (t.path === doc.path && t.dirty === doc.dirty && t.name === name) return t;
         return { ...t, path: doc.path, name, dirty: doc.dirty };
@@ -1067,6 +1145,54 @@ function App() {
     [activateTab, beginSwitch, updateSwitchHeavy, finishSwitch, snapshotActiveTab, isStale, scheduleFollowUpPreparse] // 均 stable —— openPath 身份保持稳定
   );
 
+  // ---- HN 轮：HTML 笔记标签（只读视图，不进编辑器/useFile）------------------
+  /** 打开（或激活）一篇 HTML 笔记。目录级授权——伴随资源（同目录子文件）必须
+   *  随文档一起可访问；不触发切换动画（iframe 自带加载），不触碰 fileApi。 */
+  const openHtmlNote = useCallback(
+    async (path: string) => {
+      getAdapter()
+        .app.grantFsScope?.([dirOf(path)], true)
+        ?.catch(() => undefined);
+      const pk = tabPathKey(path);
+      const existing = tabsRef.current.find(
+        (t) => t.path != null && tabPathKey(t.path) === pk
+      );
+      if (existing) {
+        if (existing.key !== activeKeyRef.current) await activateTab(existing.key);
+        return;
+      }
+      const curActive = tabsRef.current.find((t) => t.key === activeKeyRef.current);
+      const replaceCurrent =
+        !!curActive &&
+        !isHtmlTab(curActive) &&
+        curActive.path == null &&
+        !curActive.dirty &&
+        curActive.content === "";
+      const tab = makeHtmlTab(path);
+      const key = replaceCurrent && curActive ? curActive.key : tab.key;
+      const finalTab = { ...tab, key };
+      if (replaceCurrent && curActive) {
+        // 原位替换空未命名标签（沿用旧 key，与 openPath 同策略）。
+        setTabs((ts) => ts.map((t) => (t.key === key ? finalTab : t)));
+      } else {
+        snapshotActiveTab();
+        setTabs((ts) => [...ts, finalTab]);
+      }
+      setActiveKey(key);
+      activeKeyRef.current = key;
+    },
+    [activateTab, snapshotActiveTab]
+  );
+
+  /** FileTree / 最近列表 / 启动参数的统一路由：html → 只读视图，md → 编辑器。 */
+  const openNoteAny = useCallback(
+    (path: string) => {
+      if (isHtmlNote(path)) void openHtmlNote(path);
+      else void openPath(path);
+    },
+    [openPath, openHtmlNote]
+  );
+
   // 导出诊断把手（EX 轮观测）：把编辑器真源只读暴露给 window.__exportDebug
   // （perf/ CDP 复现与验收走模型序列化 getHTML，而非实时 DOM），外加 open(path)
   // ——perf 脚本用与文件树点击完全相同的打开流程加载 fixture（工作区外的
@@ -1305,10 +1431,14 @@ function App() {
       setTabs([tab]);
       setActiveKey(tab.key);
       activeKeyRef.current = tab.key;
-      fileApiRef.current.showDoc(
-        { path: tab.path, content: tab.content, dirty: tab.dirty },
-        tab.key
-      );
+      // HN 轮：html 标签恢复——不进编辑器（新窗的空白缓冲保留在隐藏编辑器里，
+      // html 视图按 kind 直接接管）。
+      if (!isHtmlTab(tab)) {
+        fileApiRef.current.showDoc(
+          { path: tab.path, content: tab.content, dirty: tab.dirty },
+          tab.key
+        );
+      }
       finishSwitch(token, startedAt);
       restoreScrollTo(scrollTop, "handoff-restore");
     };
@@ -1316,7 +1446,7 @@ function App() {
     const apply = async () => {
       if (snap) {
         if (snap.path) {
-          await openPath(snap.path);
+          await openNoteAny(snap.path);
           if (cancelled) return;
           restoreScrollTo(snap.scrollTop, "heal-restore");
           return;
@@ -1339,9 +1469,10 @@ function App() {
         return;
       }
       if (boot.path) {
-        // 复用 openPath 全语义（同路径去重 / 预读缓存 / 切换动画）；挂载时的
-        // 干净空未命名标签被原位替换，不叠加多余标签。
-        await openPath(boot.path);
+        // 复用 openPath/openHtmlNote 全语义（同路径去重 / 预读缓存 / 切换动画
+        // / HN 轮按扩展名路由）；挂载时的干净空未命名标签被原位替换，不叠加
+        // 多余标签。阶段 2 的「独立窗口查看 HTML 笔记」走同一条启动路径。
+        await openNoteAny(boot.path);
       }
     };
 
@@ -1349,7 +1480,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [openPath, beginSwitch, finishSwitch, whenEditorReady]);
+  }, [openNoteAny, beginSwitch, finishSwitch, whenEditorReady]);
 
   // React to file-tree mutations (delete / rename) coming from FileTree.
   //   * deleted: drop every tab whose file vanished (dirty tabs with a path
@@ -1385,7 +1516,10 @@ function App() {
         const next = remaining[Math.min(idx, remaining.length - 1)];
         setActiveKey(next.key);
         activeKeyRef.current = next.key;
-        fa.showDoc({ path: next.path, content: next.content, dirty: next.dirty });
+        // HN 轮：接管的邻居可能是 html 标签——不进编辑器。
+        if (!isHtmlTab(next)) {
+          fa.showDoc({ path: next.path, content: next.content, dirty: next.dirty });
+        }
       }
     } else if (change.type === "renamed") {
       if (fa.doc.path === change.from) {
@@ -1609,6 +1743,9 @@ function App() {
   // ----- 拖放 .md 文件到窗口 = 打开标签页（V3.6）-----------------------------
   // 走 Tauri 的原生 drag-drop 事件（webview 默认启用 dragDropEnabled，HTML5
   // drop 反而收不到），能直接拿到绝对路径。拖拽期间给 body 加类显示提示层。
+  // HN 轮：拖入 .html = 导入（doImportHtmlNotes 定义在 flashStatus 之后，
+  // 这里经 ref 镜像调用，避免声明顺序耦合）。
+  const htmlImportRef = useRef<((srcs: string[], vaultRoot: string) => void) | null>(null);
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let over = false;
@@ -1629,6 +1766,24 @@ function App() {
           for (const path of p.paths ?? []) {
             if (/\.(md|markdown|mdx|mdown)$/i.test(path)) void openPath(path);
           }
+          // HTML 导入：文件直接进；无扩展名路径异步探测目录且要求顶层有 html。
+          const vault = workspacesRef.current[0];
+          if (!vault) return;
+          void (async () => {
+            const srcs: string[] = [];
+            for (const path of p.paths ?? []) {
+              if (/\.(html?)$/i.test(path)) {
+                srcs.push(path);
+                continue;
+              }
+              if (/\.(md|markdown|mdx|mdown)$/i.test(path) || path.includes(".")) continue;
+              const st = await getAdapter().fs.stat(path).catch(() => null);
+              if (!st?.isDirectory) continue;
+              const entries = await getAdapter().fs.readDir(path).catch(() => []);
+              if (entries.some((e) => /\.(html?)$/i.test(e.name))) srcs.push(path);
+            }
+            if (srcs.length > 0) htmlImportRef.current?.(srcs, vault);
+          })();
         }
       })
       .then((fn) => {
@@ -1658,6 +1813,60 @@ function App() {
     }, ms);
   }, []);
 
+  // ---- HN 轮：HTML 笔记导入（= 拷贝入 vault；原文件不动，冲突自动改名）------
+  // 菜单与拖放两个入口共用；完成后广播 vault-mutated 刷新文件树并打开首篇。
+  const doImportHtmlNotes = useCallback(
+    async (srcs: string[], vaultRoot: string) => {
+      try {
+        const r = await importHtmlNotes(srcs, vaultRoot);
+        // FileTree 自身不监听磁盘，靠全局事件刷新已加载层级。
+        window.dispatchEvent(new CustomEvent("mditor:vault-mutated"));
+        setSidebarOpen(true);
+        setSidebarTab("tree");
+        if (r.htmlFiles.length === 0) {
+          flashStatus("导入完成，但未发现 HTML 文件", 5000);
+          return;
+        }
+        flashStatus(
+          `已导入 ${r.htmlFiles.length} 个 HTML 笔记${r.renamed.length > 0 ? "（同名已自动改名）" : ""}`,
+          5000
+        );
+        await openHtmlNote(r.htmlFiles[0]);
+      } catch (e) {
+        noteOpError("import-html-note", e);
+        void showAlert(`导入失败：${String(e)}`, "Mditor", "error");
+      }
+    },
+    [flashStatus, openHtmlNote]
+  );
+  // 拖放 effect 定义在 flashStatus 之前——经 ref 镜像解耦声明顺序（同惯例）。
+  htmlImportRef.current = (srcs, root) => void doImportHtmlNotes(srcs, root);
+
+  /** 菜单「导入 HTML 笔记…」：选单文件或文件夹（二选一对话框 → 对应选择器）。 */
+  const importHtmlNote = useCallback(async () => {
+    const root = workspacesRef.current[0];
+    if (!root) {
+      flashStatus("请先打开一个工作区文件夹（工作区即导入目的地）", 5000);
+      return;
+    }
+    const asFolder = await choiceDialog(
+      "导入「单个 HTML 文件」还是「包含 HTML 与资源的文件夹」？\n（导入 = 拷贝进当前工作区第一个根目录，原文件不动）",
+      "单个文件",
+      "文件夹"
+    );
+    try {
+      if (asFolder) {
+        const picked = await getAdapter().dialog.pickOpenFile(HTML_FILTERS);
+        if (picked) await doImportHtmlNotes([picked], root);
+      } else {
+        const picked = await pickFolder();
+        if (picked) await doImportHtmlNotes([picked], root);
+      }
+    } catch (e) {
+      noteOpError("import-html-dialog", e);
+    }
+  }, [doImportHtmlNotes, flashStatus]);
+
   // v4.8 多窗口：在新窗口打开文档（文件树 / 最近列表右键共用入口）。
   // 稳定引用（flashStatus 空依赖）——FileTree/RecentList 均 memo，打字期间
   // 不穿透重渲染。
@@ -1667,6 +1876,19 @@ function App() {
         noteOpError("open-in-new-window", e);
         flashStatus("打开新窗口失败", 5000);
       });
+    },
+    [flashStatus]
+  );
+
+  // HN 轮：HtmlNoteView 顶栏「用系统浏览器打开」（稳定引用，memo 不打穿）。
+  const openExternalNote = useCallback(
+    (p: string) => {
+      void getAdapter()
+        .app.openExternal(p)
+        .catch((e) => {
+          noteOpError("open-external-note", e);
+          flashStatus("打开失败", 5000);
+        });
     },
     [flashStatus]
   );
@@ -2028,6 +2250,7 @@ function App() {
     doCopyRich,
     addFolderFromDialog,
     replaceFolderFromDialog,
+    importHtmlNote,
   });
 
   const jumpToHeading = useCallback(
@@ -2720,13 +2943,18 @@ function App() {
   const openCitePanel = useCallback(() => setCiteOpen(true), []);
   const aiFlashcardStable = useCallback(() => void aiMakeFlashcard(), [aiMakeFlashcard]);
 
-  const docName = fileApi.doc.path ? baseName(fileApi.doc.path) : "未命名.md";
+  // HN 轮：标题/状态栏以活动标签为准（html 标签显示笔记名、恒干净；md 标签
+  // 与旧值一致——fileApi.doc 本就镜像活动 md）。
+  const htmlActive = isHtmlTab(activeTabForTitle);
+  const docName =
+    activeTabForTitle?.name ??
+    (fileApi.doc.path ? baseName(fileApi.doc.path) : "未命名.md");
 
   return (
     <div className={`app ${settingsApi.settings.focusMode ? "is-focus" : ""}`}>
       <TitleBar
         name={docName}
-        dirty={fileApi.doc.dirty}
+        dirty={htmlActive ? false : fileApi.doc.dirty}
         focusMode={focusMode}
         theme={settingsApi.settings.theme}
         typewriter={settingsApi.settings.typewriterMode}
@@ -2829,7 +3057,7 @@ function App() {
                 <FileTree
                   roots={workspaces}
                   activePath={pendingPath ?? fileApi.doc.path}
-                  onOpen={openPath}
+                  onOpen={openNoteAny}
                   onOpenNewWindow={openInNewWindow}
                   onChanged={onTreeChange}
                   excludedPaths={excludedSet}
@@ -2869,7 +3097,7 @@ function App() {
             />
           )}
           {sidebarTab === "recent" && (
-            <RecentList onOpen={openPath} refreshKey={recentKey} onOpenNewWindow={openInNewWindow} />
+            <RecentList onOpen={openNoteAny} refreshKey={recentKey} onOpenNewWindow={openInNewWindow} />
           )}
           {sidebarTab === "search" && (
             <>
@@ -2938,6 +3166,7 @@ function App() {
       <main
         className={`main${docSwitching ? " is-switching" : ""}`}
         data-heavy={switchHeavy ? "" : undefined}
+        data-html-note={htmlActive ? "" : undefined}
       >
         <SearchBar
           open={searchOpen}
@@ -2957,6 +3186,11 @@ function App() {
           onWatcherStatus={onWatcherStatus}
           onModeChange={setEditMode}
         />
+        {/* HN 轮：html 标签的活动视图（编辑器经 data-html-note 隐藏；卸载随
+            标签关闭/切换——iframe 生命周严格跟标签走，无泄漏滞留）。 */}
+        {htmlActive && activeTabForTitle?.path && (
+          <HtmlNoteView path={activeTabForTitle.path} onOpenExternal={openExternalNote} />
+        )}
       </main>
 
       {/* AI 面板宽度拖拽分隔条（AI 面板打开且非焦点模式时显示） */}
@@ -3087,8 +3321,8 @@ function App() {
 
       <StatusBar
         name={docName}
-        path={fileApi.doc.path}
-        dirty={fileApi.doc.dirty}
+        path={htmlActive ? activeTabForTitle?.path ?? null : fileApi.doc.path}
+        dirty={htmlActive ? false : fileApi.doc.dirty}
         words={words}
         mode={editMode}
         autosaveMsg={autosaveMsg}

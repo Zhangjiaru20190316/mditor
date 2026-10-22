@@ -6101,3 +6101,93 @@ span.mditor-math-inline-lazy.mditor-math-inline-ready {
   outline: 2px solid var(--accent, var(--fg));
   outline-offset: 1px;
 }
+
+/* ---------- HTML 笔记视图（HN 轮阶段 1） ---------- */
+
+/* 活动标签为 html 时由 App 在 <main> 上挂 data-html-note：编辑器让位。 */
+.main[data-html-note] .mditor-editor-host {
+  display: none;
+}
+
+.html-note-view {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.html-note-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--fg-dim, var(--fg));
+}
+
+.html-note-bar-icon {
+  flex: none;
+}
+
+.html-note-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* 长路径时优先显示文件名一端 */
+  text-align: left;
+}
+
+.html-note-hint {
+  flex: none;
+  opacity: 0.65;
+  font-size: 11px;
+}
+
+.html-note-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.html-note-btn:hover {
+  background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.html-note-frame {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #fff;
+}
+
+/* 降级 / 缺失态（能力位不足或文件被移走） */
+.html-note-view.is-degraded {
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 24px;
+  color: var(--fg-dim, var(--fg));
+}
+
+.html-note-view.is-degraded .html-note-title {
+  max-width: 80%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}

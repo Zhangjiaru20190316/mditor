@@ -73,6 +73,8 @@ function buildMenus(focusMode: boolean, theme: string, typewriter: boolean): Men
         item("file_open", "打开文件…", "Ctrl+O"),
         item("file_open_folder", "打开文件夹…", "Ctrl+Shift+O"),
         item("file_add_folder", "添加文件夹到工作区…"),
+        // HN 轮：导入 HTML 笔记（能力位门控——不支持应用内视图的平台不显示）。
+        ...(caps.htmlNoteView ? [item("file_import_html", "导入 HTML 笔记…")] : []),
         item("file_quick_open", "快速打开…", "Ctrl+P"),
         sep(),
         item("file_save", "保存", "Ctrl+S"),

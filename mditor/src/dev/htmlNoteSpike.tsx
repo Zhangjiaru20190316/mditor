@@ -15,29 +15,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { getAdapter } from "../platform";
 import { join } from "../lib/path-shim";
+// 阶段 1 起 URL 构造与 sandbox 形态以 lib/htmlNote 为单一来源（spike 通道
+// 与生产 HtmlNoteView 共用同一实现，防两处漂移）。
+import { assetFrameUrl, HTML_NOTE_SANDBOX as SANDBOX } from "../lib/htmlNote";
 
 const LS_KEY = "mditor.spike.htmlNoteDir";
 const DEFAULT_DIR = "C:\\Users\\hh\\Desktop\\Tp\\mditor\\public\\html-note-demo";
-
-/** 与阶段 1 HtmlNoteView 计划一致的生产 sandbox 形态：允许脚本/表单/弹窗，
- *  不给 allow-same-origin（独立 origin 已由 asset 协议保证，双重隔离）。 */
-const SANDBOX = "allow-scripts allow-forms allow-popups";
-
-/**
- * asset 协议的「目录友好」URL：按路径段编码、保留字面 `/`。
- * convertFileSrc 的 encodeURIComponent 会把分隔符也编成 %2F —— 文档 URL 里
- * 没有字面斜杠，相对引用（img/link/script src）会全部解析到根目录（spike
- * ②实测失败根因）。保留斜杠后 RFC 3986 相对解析按目录层级自然工作。
- * 仅 Tauri 运行时使用；其余运行时原样返回适配器输出。
- */
-export function assetFrameUrl(path: string): string {
-  const raw = getAdapter().app.convertFileSrc(path);
-  if (getAdapter().runtime !== "tauri") return raw;
-  const m = raw.match(/^([a-zA-Z][\w+.-]*:\/\/[^/]*\/)(.*)$/);
-  if (!m) return raw;
-  const segments = path.split(/[\\/]+/).filter(Boolean).map(encodeURIComponent);
-  return m[1] + segments.join("/");
-}
 
 export function HtmlNoteSpike() {
   const [open, setOpen] = useState(false);
@@ -48,11 +31,13 @@ export function HtmlNoteSpike() {
   useEffect(() => {
     const saved = window.localStorage.getItem(LS_KEY);
     if (saved) setDir(saved);
-    // 跑批采证：public/html-note-spike-auto.flag 存在即自动弹出并加载
-    // （404 = 普通开发日，只留右下角按钮）。
+    // 跑批采证：public/html-note-spike-auto.flag 存在即自动弹出并加载。
+    // 注意 vite 的 SPA fallback 对任意不存在路径都回 200（index.html），
+    // 必须校验 content-type 排除 html——否则每次 dev 启动都会误弹。
     fetch("/html-note-spike-auto.flag")
       .then((r) => {
-        if (r.ok) {
+        const ct = r.headers.get("content-type") ?? "";
+        if (r.ok && !ct.includes("text/html")) {
           setOpen(true);
           start(saved ?? DEFAULT_DIR);
         }

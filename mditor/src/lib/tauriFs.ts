@@ -7,6 +7,7 @@ import { getAdapter } from "../platform";
 import type { DirEntry } from "../platform/types";
 import { dirname, basename, join, extname } from "./path-shim";
 import { tracedIo } from "./ipcTrace";
+import { isHtmlNote } from "./htmlNote";
 
 export interface TreeNode {
   name: string;
@@ -17,6 +18,11 @@ export interface TreeNode {
 
 const MD_FILTERS = [
   { name: "Markdown", extensions: ["md", "markdown", "mdx", "mdown"] },
+];
+
+/** HTML 笔记选择器的过滤组（HN 轮）。 */
+export const HTML_FILTERS = [
+  { name: "HTML", extensions: ["html", "htm"] },
 ];
 
 /** 单一来源的 Markdown 扩展名集合。Rust lib.rs 的 MD_EXTS 与 tauri.conf.json
@@ -89,11 +95,12 @@ export async function saveMdAs(
  * Read a SINGLE level of `dir` (non-recursive) for the lazy file tree.
  *
  * Skips `.`-hidden entries, `node_modules`, and excludedPaths; keeps only `.md`
- * files + directories. Directories are returned with `children: undefined` —
- * their contents are loaded on demand when expanded (see FileTree). Directories
- * are always included (even ones that may be empty) so the user can expand them
- * to find out; emptiness is revealed at expand time rather than hiding the
- * folder outright.
+ * files + directories（HN 轮：外加 .html/.htm 笔记——文件树是两套体系的
+ * 汇合面，图标由 FileTree 按扩展名区分）. Directories are returned with
+ * `children: undefined` — their contents are loaded on demand when expanded
+ * (see FileTree). Directories are always included (even ones that may be empty)
+ * so the user can expand them to find out; emptiness is revealed at expand time
+ * rather than hiding the folder outright.
  */
 export async function readDirLevel(
   dir: string,
@@ -120,7 +127,7 @@ export async function readDirLevel(
     if (e.isDirectory) {
       // children deferred — lazy-loaded when the folder is expanded.
       out.push({ name: e.name, path: fullPath, isDir: true });
-    } else if (isMarkdown(e.name)) {
+    } else if (isMarkdown(e.name) || isHtmlNote(e.name)) {
       out.push({ name: e.name, path: fullPath, isDir: false });
     }
   }
@@ -135,6 +142,9 @@ export async function readDirLevel(
  * Used before a delete so the App notification (close the buffer if the open
  * file vanished, prune the recent list) gets the COMPLETE set of removed md
  * paths regardless of which folders were expanded in the tree.
+ *
+ * HN 轮：同时收集 .html/.htm（html 标签同样要在删除后关闭）——函数名保留
+ * （调用方语义「收集受影响的笔记」不变）。
  *
  * `hintIsDir` (when known) skips the directory auto-detect probe; left
  * undefined, it is inferred by attempting to read `path` as a directory.
@@ -161,7 +171,7 @@ export async function collectMdPathsFromDisk(
   }
 
   if (!isDir) {
-    return isMarkdown(path) ? [path] : [];
+    return isMarkdown(path) || isHtmlNote(path) ? [path] : [];
   }
 
   // Walk the directory tree iteratively (skip `.`-hidden + node_modules, same
@@ -187,7 +197,7 @@ export async function collectMdPathsFromDisk(
       if (e.name.startsWith(".") || e.name === "node_modules") continue;
       const full = join(dir, e.name);
       if (e.isDirectory) stack.push({ dir: full });
-      else if (isMarkdown(e.name)) out.push(full);
+      else if (isMarkdown(e.name) || isHtmlNote(e.name)) out.push(full);
     }
   }
   return out;
