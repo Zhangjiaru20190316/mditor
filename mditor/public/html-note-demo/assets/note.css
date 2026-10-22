@@ -1,0 +1,10 @@
+/* html-note-demo 的外链 CSS：徽章染成 #ff7a00（index.html 按精确 rgb 值判定
+ * 「外链 CSS 生效」；改色请同步改两页的检测值）。选择器同时覆盖主页
+ * #css-badge 与子目录页 #css-badge2。 */
+#css-badge,
+#css-badge2 {
+  color: #ff7a00;
+  border: 1px dashed #ff7a00;
+  border-radius: 6px;
+  padding: 2px 10px;
+}

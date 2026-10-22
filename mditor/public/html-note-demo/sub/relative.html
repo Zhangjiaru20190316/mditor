@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>子目录相对路径测试页（../ 上跳）</title>
+<!-- ② 从子目录出发的相对引用：CSS 与图片都必须按本页 URL 解析到上级 assets/ -->
+<link rel="stylesheet" href="../assets/note.css">
+</head>
+<body style="font:14px/1.7 system-ui,sans-serif;max-width:760px;margin:0 auto;padding:24px">
+<h1 style="font-size:18px">sub/relative.html —— 子目录相对路径自检</h1>
+<p>本页位于 <code>html-note-demo/sub/</code>，验证 <code>../assets/…</code> 上跳解析：</p>
+<p><img id="up-img" src="../assets/mditor-demo.png" width="48" height="48" alt="上级图片"
+     style="image-rendering:pixelated;vertical-align:middle">
+   <code>../assets/mditor-demo.png</code> → <span id="img-state" class="st">检测中…</span></p>
+<p><span id="css-badge2">外链 CSS 徽章（../assets/note.css）</span> →
+   <span id="css-state" class="st">检测中…</span></p>
+<p><b>内联脚本：</b><span id="script-state">未执行</span></p>
+<script>
+(function () {
+  var r = { kind: "html-note-spike", page: "sub", at: 0, href: location.href,
+            baseURI: document.baseURI, ua: navigator.userAgent, checks: [] };
+  document.getElementById("script-state").textContent = "✅ 已执行（计数 1→点击递增）";
+  var n = 1;
+  document.getElementById("script-state").addEventListener("click", function () {
+    this.textContent = "✅ 已执行，计数 " + (++n);
+  });
+  r.checks.push({ id: "inline-script", pass: true, hard: false, detail: "" });
+
+  var img = document.getElementById("up-img");
+  function done(ok) {
+    var s = document.getElementById("img-state");
+    s.textContent = ok ? "✅ 已加载" : "❌ 加载失败";
+    r.checks.push({ id: "img-dotdot-real", pass: ok, hard: false, detail: "" });
+    fire();
+  }
+  img.addEventListener("load", function () { done(img.naturalWidth > 0); });
+  img.addEventListener("error", function () { done(false); });
+
+  window.setTimeout(function () {
+    var color = getComputedStyle(document.getElementById("css-badge2")).color;
+    var ok = color === "rgb(255, 122, 0)";
+    var s = document.getElementById("css-state");
+    s.textContent = ok ? "✅ 已生效" : "❌ 未生效（" + color + "）";
+    r.checks.push({ id: "css-dotdot", pass: ok, hard: false, detail: color });
+    fire();
+  }, 1000);
+
+  function fire() {
+    try {
+      r.at = Date.now();
+      var body = JSON.stringify(r);
+      if (navigator.sendBeacon) navigator.sendBeacon("http://127.0.0.1:8901/report", body);
+      fetch("http://127.0.0.1:8901/report", { method: "POST", body: body, mode: "no-cors" }).catch(function () {});
+    } catch (e) { /* 静默 */ }
+  }
+})();
+</script>
+</body>
+</html>

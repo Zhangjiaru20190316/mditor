@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased：可交互 HTML 笔记（HN 轮）
+
+门禁报告 `docs/html-note-spike-report.md`；执行顺序 阶段 0 → 1 → 2（→ 3 仅设计占位）。
+
+### 阶段 0：Spike 验证（闸门）——结论 A：iframe + asset 协议路线成立
+
+官方测试页 `public/html-note-demo/`（内联脚本计数 / `<details>` / JS 选项卡 /
+相对路径图片与外链 CSS / CDN 图表 / 隔离自检面板，长期保留作回归工具）+
+dev 专用验证通道（`src/dev/htmlNoteSpike.tsx`，DEV 门控）+ 采集器
+（`scripts/spike-collector.mjs`）+ CDP 探针（`scripts/spike-cdp.mjs`）。
+Windows 实测四项：① 内联脚本执行 ✅；② 相对资源按文档 URL 解析 ✅（含 ..
+上跳与子目录页）；③ 隔离全绿（invoke 被 Origin/capability 双层拒绝、父窗/
+顶层窗跨源拦截，另有无 sandbox 纵深探针同样成立）；④ harmony 未验证（无
+设备）→ 能力位保守关。两个必改点随本阶段落地：CSP `frame-src`
+（tauri.conf.json + index.html meta 双份同步 + 指令集一致性测试钉死）与
+`assetFrameUrl`（按路径段编码保留字面 `/`——`convertFileSrc` 的全量
+encodeURIComponent 会把分隔符编成 %2F，令相对引用全部解析到协议根）。
+
 ## 5.0.6-beta（2026-10-21）：RV 矢量 PDF 导出改造 + 导出表格边框修复打包版
 
 门禁：tsc / 全量 vitest 1134 绿；bundle 静态门见结题报告

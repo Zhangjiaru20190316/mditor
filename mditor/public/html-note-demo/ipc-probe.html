@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>无 sandbox IPC 探针</title></head>
+<body style="font:13px/1.6 system-ui,sans-serif;max-width:700px;margin:0 auto;padding:20px">
+<h3 style="font-size:15px">无 sandbox 变体：IPC / 父窗探测</h3>
+<p>本页由 spike 通道以【无 sandbox 属性】的 iframe 加载——验证纵深防御：
+即使不开 sandbox，asset 源的 invoke 也应被 Tauri capability 层拒绝。</p>
+<ul id="out" style="font-family:monospace;font-size:12px"></ul>
+<script>
+(function () {
+  var r = { kind: "html-note-spike", page: "ipc-probe", at: 0, href: location.href,
+            baseURI: document.baseURI, ua: navigator.userAgent, checks: [] };
+  function log(txt) {
+    var li = document.createElement("li");
+    li.textContent = txt;
+    document.getElementById("out").appendChild(li);
+  }
+  function rec(id, pass, hard, detail) {
+    r.checks.push({ id: id, pass: pass, hard: hard, detail: detail || "" });
+    log((pass ? "✅ " : "❌ ") + id + (detail ? " — " + detail : ""));
+  }
+  var internals = window.__TAURI_INTERNALS__;
+  rec("internals-state", !internals, false,
+      internals ? "__TAURI_INTERNALS__ 已注入（无 sandbox，正常——初始化脚本注入所有 frame）" : "未注入");
+
+  var p = internals && typeof internals.invoke === "function"
+    ? internals.invoke("app_data_dir")
+        .then(function (v) { rec("ipc-invoke-nosandbox", false, true, "调用成功！隔离被击穿：" + String(v).slice(0, 80)); })
+        .catch(function (e) { rec("ipc-invoke-nosandbox", true, true, "被拒：" + String(e).slice(0, 110)); })
+    : Promise.resolve(rec("ipc-invoke-nosandbox", true, true, "无 invoke 可用"));
+
+  var blocked = false;
+  try { void window.parent.document; } catch (e) { blocked = true; }
+  rec("parent-dom-nosandbox", blocked, true, blocked ? "跨源拦截" : "可访问（同源泄漏！）");
+
+  p.then(function () {
+    try {
+      var body = JSON.stringify(r); r.at = Date.now();
+      if (navigator.sendBeacon) navigator.sendBeacon("http://127.0.0.1:8901/report", body);
+      fetch("http://127.0.0.1:8901/report", { method: "POST", body: body, mode: "no-cors" }).catch(function () {});
+    } catch (e) { /* 静默 */ }
+  });
+})();
+</script>
+</body>
+</html>

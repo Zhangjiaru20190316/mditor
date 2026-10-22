@@ -17,10 +17,26 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const conf = JSON.parse(
-  readFileSync(new URL("../../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
+  readFileSync(new URL("../../src-tauri/tauri.conf.json", import.meta.url), "utf8")
 ) as {
   app?: { security?: { csp?: string; dangerousDisableAssetCspModification?: string[] } };
 };
+// index.html 的 CSP meta 是 tauri.conf.json 的手动镜像（dev/vite 直连时唯一
+// 生效的一份）。HTML 笔记轮发现：只改配置不动 meta，dev 下 frame-src 缺席
+// 直接拦掉笔记 iframe。此处钉死两份 CSP 指令集一致，防再次漂移。
+const indexHtml = readFileSync(new URL("../../index.html", import.meta.url), "utf8");
+const metaCsp = /http-equiv="Content-Security-Policy"\s+content="([^"]+)"/
+  .exec(indexHtml)?.[1] ?? "";
+
+/** CSP 字符串 → 指令名集合（小写）。 */
+function directiveSet(csp: string): Set<string> {
+  return new Set(
+    csp
+      .split(";")
+      .map((d) => d.trim().split(/\s+/)[0]?.toLowerCase())
+      .filter(Boolean)
+  );
+}
 
 describe("tauri.conf.json CSP 配置（打包版公式渲染命门）", () => {
   it("style-src 被排除在 Tauri 的 CSP 改写之外", () => {
@@ -41,5 +57,27 @@ describe("tauri.conf.json CSP 配置（打包版公式渲染命门）", () => {
   it("script-src 不被放弃改写（Tauri 自身 IPC 脚本的 nonce 保护保留）", () => {
     const disabled = conf.app?.security?.dangerousDisableAssetCspModification ?? [];
     expect(disabled).not.toContain("script-src");
+  });
+
+  // 阶段 0（HTML 笔记）：iframe 加载 asset 协议 URL 是独立 origin 渲染的唯一
+  // 通道，frame-src 缺席时回退 default-src 'self' 会把笔记 iframe 整体拦掉。
+  // Windows = http://asset.localhost；mac/linux = asset:；鸿蒙 = mditor-asset:。
+  it("frame-src 显式放行三平台的 asset 协议源（HTML 笔记 iframe 的命门）", () => {
+    const csp = conf.app?.security?.csp ?? "";
+    const frameSrc = csp
+      .split(";")
+      .map((d) => d.trim())
+      .find((d) => d.startsWith("frame-src"));
+    expect(frameSrc).toBeDefined();
+    expect(frameSrc).toContain("asset:");
+    expect(frameSrc).toContain("http://asset.localhost");
+    expect(frameSrc).toContain("mditor-asset:");
+  });
+
+  it("index.html 的 CSP meta 与 tauri.conf.json 指令集一致（防镜像漂移）", () => {
+    expect(metaCsp.length).toBeGreaterThan(0);
+    expect(directiveSet(metaCsp)).toEqual(directiveSet(conf.app?.security?.csp ?? ""));
+    // frame-src 的镜像必须同样放行三平台 asset 源。
+    expect(metaCsp).toContain("frame-src asset: http://asset.localhost mditor-asset:");
   });
 });

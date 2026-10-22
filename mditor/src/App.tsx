@@ -132,6 +132,11 @@ const AnnoDiagnostics = lazy(() =>
 const DevAlerts = lazy(() =>
   import("./components/DevAlerts").then((m) => ({ default: m.DevAlerts }))
 );
+// 阶段 0 Spike：HTML 笔记验证通道（dev-only；import.meta.env.DEV 在产物
+// 构建中被静态替换为 false，整个挂载点连同 lazy chunk 一并被摇掉）。
+const HtmlNoteSpike = lazy(() =>
+  import("./dev/htmlNoteSpike").then((m) => ({ default: m.HtmlNoteSpike }))
+);
 
 /** 路径 → 标签匹配键（Windows 大小写不敏感 + 分隔符归一）。 */
 function tabPathKey(p: string): string {
@@ -3192,6 +3197,13 @@ function App() {
           }
         />
       </ErrorBoundary>
+
+      {/* 阶段 0：HTML 笔记 spike 通道（dev-only，不进主干 UI/产物构建） */}
+      {import.meta.env.DEV && (
+        <Suspense fallback={null}>
+          <HtmlNoteSpike />
+        </Suspense>
+      )}
     </div>
   );
 }

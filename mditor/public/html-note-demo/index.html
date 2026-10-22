@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mditor HTML 笔记官方测试页</title>
+<!-- ② 相对路径子资源：外链 CSS（与 <img> 同一验证面：按文档 URL 解析） -->
+<link rel="stylesheet" href="assets/note.css">
+<!-- L3 外链 CDN 组件（交互图表）：默认放行，离线时该面板降级标黄 -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer
+        onerror="window.__cdnFailed=true"></script>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 14px/1.7 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+    margin: 0 auto; max-width: 860px; padding: 24px 20px 80px;
+  }
+  h1 { font-size: 22px; } h2 { font-size: 17px; margin-top: 32px; border-bottom: 1px solid #8884; padding-bottom: 4px; }
+  section { margin-bottom: 8px; }
+  code, .mono { font-family: Consolas, monospace; font-size: 12.5px; }
+  .card { border: 1px solid #8886; border-radius: 8px; padding: 12px 16px; margin: 10px 0; }
+  button { font: inherit; padding: 4px 14px; border-radius: 6px; border: 1px solid #8886; cursor: pointer; }
+  button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+  table { border-collapse: collapse; } td, th { border: 1px solid #8886; padding: 4px 10px; }
+  img.demo { width: 48px; height: 48px; image-rendering: pixelated; vertical-align: middle; margin-right: 8px; }
+  .res { font-size: 12.5px; color: #666; }
+  /* 自检面板 */
+  #panel { border: 1px solid #8886; border-radius: 8px; overflow: hidden; }
+  #panel table { width: 100%; border: none; }
+  #panel td { border: none; border-top: 1px solid #8883; padding: 6px 12px; }
+  #panel td.state { width: 6.5em; text-align: center; font-weight: 600; white-space: nowrap; }
+  .pass { color: #15803d; } .fail { color: #b91c1c; } .info { color: #92702c; }
+  #verdict { padding: 10px 14px; font-weight: 700; }
+  #verdict.ok { background: #dcfce7; color: #14532d; }
+  #verdict.bad { background: #fee2e2; color: #7f1d1d; }
+  #verdict.wait { background: #f1f5f9; color: #334155; }
+  /* L1 hover 展开 */
+  .hover-reveal .hidden { opacity: 0; transition: opacity .15s; }
+  .hover-reveal:hover .hidden { opacity: 1; }
+  /* L2 选项卡 */
+  .tabs { display: flex; gap: 6px; }
+  .tabs button { border-radius: 6px 6px 0 0; }
+  .tabs button.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+  .tabpanes > div { display: none; border: 1px solid #8886; border-top: none; border-radius: 0 6px 6px 6px; padding: 10px 14px; }
+  .tabpanes > div.active { display: block; }
+</style>
+</head>
+<body>
+
+<h1>Mditor HTML 笔记官方测试页</h1>
+<p class="res">本页是「可交互 HTML 笔记」功能的长期回归工具（阶段 0 spike 产出）。
+要求在 Mditor 应用内的 iframe 中打开时，以下全部成立：
+内联脚本执行、相对路径资源加载、外链 CDN 生效、隔离三断言全绿。
+文档 URL：<span class="mono" id="doc-url">（等待脚本）</span></p>
+
+<!-- ============ ① 内联 script（L2 基石） ============ -->
+<h2 id="s1">① 内联 script —— 计数按钮</h2>
+<section class="card">
+  <button class="primary" id="counter-btn">点击 +1</button>
+  <span>计数：<b id="counter-val" data-initial="1">0</b></span>
+  <p class="res">页面加载时内联脚本立即把计数置为 1 并给按钮绑定监听；点击后递增。
+  若显示 0 且点击无效 → 内联脚本未执行（CSP/沙箱问题）。</p>
+</section>
+
+<!-- ============ ② 相对路径子资源 ============ -->
+<h2 id="s2">② 相对路径子资源</h2>
+<section class="card">
+  <p><img class="demo" id="img-subdir" src="assets/mditor-demo.png" alt="子目录图片 assets/mditor-demo.png">
+     <code>assets/mditor-demo.png</code> → <span id="img-subdir-state" class="info">检测中…</span></p>
+  <p><img class="demo" id="img-dotdot" src="sub/../assets/mditor-demo.png" alt="点号点号路径 sub/../assets/...">
+     <code>sub/../assets/mditor-demo.png</code>（.. 上跳解析）→ <span id="img-dotdot-state" class="info">检测中…</span></p>
+  <p><span id="css-badge">外链 CSS 徽章</span> <code>assets/note.css</code> →
+     <span id="css-state" class="info">检测中…</span></p>
+  <p class="res">子资源按本页 URL（asset 协议）解析；徽章被外链 CSS 染色即代表
+  <code>&lt;link&gt;</code> 同样命中。子目录场景另见
+  <code>sub/relative.html</code>（独立自检 + 上报）。</p>
+</section>
+
+<!-- ============ L1 纯 CSS 交互 ============ -->
+<h2 id="s3">L1 —— 纯 CSS 交互</h2>
+<section class="card">
+  <details>
+    <summary><b>details 折叠（点我展开）</b></summary>
+    <p>折叠内容：展开成功 = CSS 原生交互在 iframe 内生效。</p>
+  </details>
+  <p class="hover-reveal">hover 显隐：<span class="hidden">鼠标悬停时我才可见 ✅</span></p>
+  <p><label><input type="checkbox" id="l1-check"> 勾选我（纯 CSS 联动下方文字）</label>
+     <span id="l1-check-text">未勾选</span></p>
+</section>
+
+<!-- ============ L2 JS 组件：选项卡 + 目录跳转 ============ -->
+<h2 id="s4">L2 —— JS 组件（选项卡 / 目录跳转）</h2>
+<section class="card">
+  <div class="tabs" id="tabs">
+    <button data-pane="p1" class="active">标签一</button>
+    <button data-pane="p2">标签二</button>
+    <button data-pane="p3">标签三</button>
+  </div>
+  <div class="tabpanes">
+    <div id="p1" class="active">面板一：选项卡由内联 JS 切换。</div>
+    <div id="p2">面板二：切换成功 = JS 正常运行。</div>
+    <div id="p3">面板三：✅</div>
+  </div>
+  <p><a href="#s1">↑ 目录跳转：回到 ①</a>（锚点滚动）</p>
+</section>
+
+<!-- ============ L3 外链 CDN：交互图表 ============ -->
+<h2 id="s5">L3 —— 外链 CDN 交互图表</h2>
+<section class="card">
+  <div style="max-width:420px"><canvas id="chart" width="380" height="180"></canvas></div>
+  <p class="res" id="cdn-state">检测中…（需要网络；离线时此面板标黄，不算隔离失败）</p>
+</section>
+
+<!-- ============ ③ 隔离自检面板 ============ -->
+<h2 id="s6">③ 隔离自检面板（全绿才验收）</h2>
+<div id="panel">
+  <div id="verdict" class="wait">自检运行中…</div>
+  <table id="checks"><tbody></tbody></table>
+</div>
+<p class="res">断言口径（与 docs/html-note-spike-report.md 一致）：硬断言 = Tauri 全局不可见 /
+IPC invoke 被拒 / ipc: fetch 不可达 / 父窗与顶层窗跨源不可访问。
+信息项（黄）只记录不影响验收：__TAURI_INTERNALS__ 是否注入、localStorage 是否被沙箱拦。
+自检完成后会向 <code>http://127.0.0.1:8901/report</code> 上报一份 JSON（无采集器时静默失败）。</p>
+<p><button id="rerun">重跑自检</button></p>
+
+<script>
+/* ==== 本页全部逻辑（内联，验证 ①） ==== */
+(function () {
+  "use strict";
+  var results = { kind: "html-note-spike", page: "index", at: 0, href: location.href,
+                  baseURI: document.baseURI, ua: navigator.userAgent, checks: [] };
+
+  // -- ① 计数按钮 --
+  var val = document.getElementById("counter-val");
+  var n = 1; val.textContent = String(n);
+  document.getElementById("counter-btn").addEventListener("click", function () {
+    val.textContent = String(++n);
+  });
+  document.getElementById("doc-url").textContent = location.href;
+
+  // -- ② 资源检测 --
+  function watchImg(id, stateId, key) {
+    var img = document.getElementById(id), st = document.getElementById(stateId);
+    function done(ok, detail) {
+      st.textContent = ok ? "✅ 已加载" : "❌ " + (detail || "加载失败");
+      st.className = ok ? "pass" : "fail";
+      results[key] = ok;
+      fired++;
+      if (fired <= 6) fireBeacon();
+    }
+    img.addEventListener("load", function () {
+      done(img.naturalWidth > 0, img.naturalWidth > 0 ? "" : "naturalWidth=0");
+    });
+    img.addEventListener("error", function () { done(false); });
+    window.setTimeout(function () { // 8s 兜底
+      if (st.className === "info") done(false, "超时");
+    }, 8000);
+  }
+  watchImg("img-subdir", "img-subdir-state", "imgSubdir");
+  watchImg("img-dotdot", "img-dotdot-state", "imgDotDot");
+
+  window.setTimeout(function () { // CSS 染色检测（note.css 把徽章染成 #ff7a00）
+    var el = document.getElementById("css-badge");
+    var color = getComputedStyle(el).color;
+    var ok = color === "rgb(255, 122, 0)";
+    var st = document.getElementById("css-state");
+    st.textContent = ok ? "✅ 已生效（" + color + "）" : "❌ 未生效（" + color + "）";
+    st.className = ok ? "pass" : "fail";
+    results.cssLink = ok;
+    fired++;
+    if (fired <= 6) fireBeacon();
+  }, 1200);
+
+  // L1 勾选联动：details/hover 本身零 JS，这里只用最小 JS 让勾选状态可见。
+  var cb = document.getElementById("l1-check"), ct = document.getElementById("l1-check-text");
+  function sync() { ct.textContent = cb.checked ? "已勾选 ✅" : "未勾选"; }
+  cb.addEventListener("change", sync); sync();
+
+  // -- L2 选项卡 --
+  var tabs = document.getElementById("tabs");
+  tabs.addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-pane]"); if (!b) return;
+    tabs.querySelectorAll("button").forEach(function (x) { x.classList.toggle("active", x === b); });
+    ["p1", "p2", "p3"].forEach(function (id) {
+      document.getElementById(id).classList.toggle("active", id === b.dataset.pane);
+    });
+  });
+
+  // -- L3 CDN 图表 --
+  var cdnDone = false;
+  function cdnReport(ok, detail) {
+    if (cdnDone) return; cdnDone = true;
+    var st = document.getElementById("cdn-state");
+    st.textContent = ok ? "✅ chart.js 已加载并完成绑定绘制" : "⚠️ CDN 不可用：" + detail + "（离线环境不算隔离失败）";
+    st.className = ok ? "pass" : "info";
+    results.cdnChart = ok;
+    fired++;
+    if (fired <= 6) fireBeacon();
+  }
+  window.addEventListener("load", function () {
+    window.setTimeout(function () {
+      if (window.__cdnFailed) return cdnReport(false, "script onerror");
+      if (typeof window.Chart === "undefined") return cdnReport(false, "8s 未见全局 Chart");
+      try {
+        var c = new window.Chart(document.getElementById("chart"), {
+          type: "bar",
+          data: { labels: ["L1", "L2", "L3"], datasets: [{ label: "交互层级", data: [1, 2, 3] }] },
+          options: { animation: false, responsive: false }
+        });
+        window.setTimeout(function () {
+          try {
+            var px = c.ctx.getImageData(0, 0, c.width, c.height).data;
+            var painted = false;
+            for (var i = 3; i < px.length; i += 4) { if (px[i] !== 0) { painted = true; break; } }
+            cdnReport(painted, painted ? "" : "画布无像素");
+          } catch (err) { cdnReport(false, "像素检测异常 " + err); }
+        }, 150);
+      } catch (err) { cdnReport(false, String(err)); }
+    }, 800);
+  });
+  window.setTimeout(function () { cdnReport(false, "总超时"); }, 15000);
+
+  // -- ③ 隔离自检 --
+  function addRow(id, label, pass, hard, detail) {
+    results.checks.push({ id: id, pass: pass, hard: hard, detail: detail || "" });
+    var tr = document.createElement("tr"); tr.id = "chk-" + id;
+    var cls = pass ? "pass" : (hard ? "fail" : "info");
+    var mark = pass ? "✅" : (hard ? "❌" : "⚠️");
+    tr.innerHTML = '<td class="state ' + cls + '">' + mark + (hard ? (pass ? " 通过" : " 失败") : " 信息") +
+      '</td><td>' + label + (detail ? ' — <span class="res mono">' + detail + "</span>" : "") + "</td>";
+    document.getElementById("checks").querySelector("tbody").appendChild(tr);
+  }
+  function fetchWithTimeout(url, ms) {
+    return new Promise(function (resolve, reject) {
+      var t = window.setTimeout(function () { reject(new Error("timeout")); }, ms);
+      fetch(url).then(function (r) { window.clearTimeout(t); resolve(r); },
+                       function (e) { window.clearTimeout(t); reject(e); });
+    });
+  }
+  function runIsolationChecks() {
+    results.checks = [];
+    document.getElementById("checks").querySelector("tbody").innerHTML = "";
+    document.getElementById("verdict").className = "wait";
+    document.getElementById("verdict").textContent = "自检运行中…";
+
+    // 1. window.__TAURI__（withGlobalTauri 关闭时主窗也没有；出现即失败）
+    var hasTauri = typeof window.__TAURI__ !== "undefined";
+    addRow("tauri-global", "window.__TAURI__ 为 undefined", !hasTauri, true,
+      hasTauri ? "意外出现（withGlobalTauri?）" : "");
+
+    // 2. __TAURI_INTERNALS__（信息项：WebView 会向所有 frame 注入初始化脚本）
+    var internals = window.__TAURI_INTERNALS__;
+    addRow("tauri-internals", "__TAURI_INTERNALS__ 状态", !internals, false,
+      internals ? "已注入（关键看下一条 invoke 是否被拒）" : "未注入");
+
+    // 3. 父窗 DOM 不可访问（跨源硬断言）
+    var parentBlocked = false, parentDetail = "";
+    try { void window.parent.document; parentDetail = "可访问（同源泄漏！）"; }
+    catch (e) { parentBlocked = true; parentDetail = e.name; }
+    addRow("parent-dom", "无法访问父窗（window.parent.document 抛 " + (parentBlocked ? "SecurityError" : "—") + "）",
+      parentBlocked, true, parentDetail);
+
+    // 4. 顶层窗 location 不可读
+    var topBlocked = false;
+    try { void window.top.location.href; }
+    catch (e) { topBlocked = true; }
+    addRow("top-location", "无法读取 window.top.location", topBlocked, true,
+      topBlocked ? "跨源拦截" : "可读（同源泄漏！）");
+
+    // 5. IPC invoke（若注入了 internals，实测调用必须被拒）
+    var p5 = internals
+      ? Promise.resolve(internals.invoke).then(function (invoke) {
+          return invoke("app_data_dir").then(function (v) {
+            addRow("ipc-invoke", "IPC invoke 被拒（asset 源不在 capability 白名单）", false, true, "调用成功返回：" + String(v).slice(0, 60));
+          }, function (e) {
+            addRow("ipc-invoke", "IPC invoke 被拒", true, true, String(e).slice(0, 90));
+          });
+        })
+      : Promise.resolve(addRow("ipc-invoke", "IPC invoke 不可达", true, true, "无 __TAURI_INTERNALS__.invoke 可用"));
+
+    // 6. fetch ipc: 不可达
+    var p6 = fetchWithTimeout("http://ipc.localhost/", 3000).then(function (r) {
+      var ok = r.ok && r.type !== "opaque";
+      addRow("ipc-fetch", "fetch ipc://localhost 不可达", !ok, true,
+        "status=" + r.status + " type=" + r.type);
+    }, function (e) {
+      addRow("ipc-fetch", "fetch ipc://localhost 不可达", true, true, "拒绝：" + e.message);
+    });
+
+    // 7. localStorage（信息项：sandbox 无 allow-same-origin 时应被拦）
+    try { localStorage.setItem("__spike", "1"); localStorage.removeItem("__spike");
+      addRow("storage", "localStorage 访问", true, false, "可访问（跨笔记共享属已知取舍）");
+    } catch (e) { addRow("storage", "localStorage 访问", false, false, "被沙箱拦截：" + e.name); }
+
+    // 汇总裁决（invoke/fetch 异步补完后再判）
+    var settle = function () {
+      var hard = results.checks.filter(function (c) { return c.hard; });
+      var allPass = hard.every(function (c) { return c.pass; });
+      var v = document.getElementById("verdict");
+      v.className = allPass ? "ok" : "bad";
+      v.textContent = allPass
+        ? "✅ 隔离断言全部通过（" + hard.length + " 项硬断言）"
+        : "❌ 存在失败的硬断言（见上表）";
+      fired++;
+      if (fired <= 6) fireBeacon();
+    };
+    Promise.all([p5, p6]).then(settle, settle);
+  }
+
+  // -- 上报（有采集器才有副作用；失败静默）。fired 限流：取最后一次即可。 --
+  function fireBeacon() {
+    try {
+      results.at = Date.now();
+      var body = JSON.stringify(results);
+      if (navigator.sendBeacon) navigator.sendBeacon("http://127.0.0.1:8901/report", body);
+      fetch("http://127.0.0.1:8901/report", { method: "POST", body: body, mode: "no-cors" })
+        .catch(function () {});
+    } catch (e) { /* 无采集器：静默 */ }
+  }
+  var fired = 0;
+  document.getElementById("rerun").addEventListener("click", function () {
+    runIsolationChecks();
+  });
+  runIsolationChecks();
+})();
+</script>
+</body>
+</html>
