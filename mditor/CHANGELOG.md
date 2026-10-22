@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased：可交互 HTML 笔记（HN 轮）
+## 5.0.7-beta（2026-10-22）：可交互 HTML 笔记（HN 轮）打包版
+
+门禁：tsc 0 错 / 全量 vitest 1161 绿（`exporterImages`「总预算」一例在机器
+高负载并行跑下偶发 5s 超时，单跑恒绿，与本次改动无关）。含 HN 轮全部四次
+提交（阶段 0~3）：`3306da7` / `a9115be` / `75f61fc` / `5c322db`。
 
 门禁报告 `docs/html-note-spike-report.md`；执行顺序 阶段 0 → 1 → 2（→ 3 仅设计占位）。
 
