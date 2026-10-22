@@ -4,6 +4,17 @@
 
 门禁报告 `docs/html-note-spike-report.md`；执行顺序 阶段 0 → 1 → 2（→ 3 仅设计占位）。
 
+### 阶段 3：设计占位（不实施）+ 安全文档
+
+- `docs/security.md` 增补「HTML 笔记隔离模型」：威胁面、三层防御（协议
+  origin / sandbox / capability ACL，各自独立成立）、内容策略边界（iframe
+  零消毒；派生物进主 DOM 的两条消毒路径）、外链 https 放行的决策记录、
+  assetFrameUrl 的 URL 形态陷阱。
+- 快照导出 PNG/PDF、md 内嵌 html-block（shadow DOM）、离线模式：设计占位
+  与取舍记录见 `docs/html-note-spike-report.md`「阶段 3 设计占位」，本期
+  不实施（快照受跨 origin iframe 捕获限制，备选 webview2-com
+  CaptureScreenshot 或产品级取舍）。
+
 ### 阶段 2：配套能力——独立窗口 / 搜索索引 / 转 Markdown
 
 - **独立窗口查看**：复用既有 `create_doc_window` 的 `?path=` 启动参数（App

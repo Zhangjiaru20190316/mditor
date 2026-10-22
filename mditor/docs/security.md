@@ -58,3 +58,49 @@ Tauri 版本变化，且会绕过开发者对 CSP 的完全控制。
 
 如需更强隔离：使用支持细粒度限额 / 可随时吊销的 key，并通过系统级凭据
 管理器（如 Windows 凭据管理器）配合本地网关（如 Ollama、one-api）使用。
+
+## HTML 笔记隔离模型（HN 轮）
+
+背景：用户可把 HTML 文件导入 vault 作为「可交互 HTML 笔记」——笔记自带的
+CSS/JS（折叠、选项卡、脚本组件、CDN 图表）必须在应用内完整生效。实测依据
+与复现工具见 `docs/html-note-spike-report.md` 与 `public/html-note-demo/`。
+
+**威胁面**：HTML 笔记是不可信内容（可能来自任意网站/工具的导出）。若其
+脚本进入主窗 origin，可直接调用全部 Tauri IPC（fs 读写、命令执行）——等于
+把应用权限让渡给笔记作者。
+
+**防御层次（相互独立，各自成立）**：
+
+1. **协议 origin 隔离（地基）**：笔记在 iframe 中以 asset 协议 URL 加载
+   （Windows `http://asset.localhost/...`，打包版主窗为
+   `tauri.localhost`——不同源）。主窗 CSP 显式 `frame-src` 放行协议源，
+   除此之外 iframe 通道对主窗不可达（`srcdoc`/`blob:` 会继承主窗 CSP，
+   内联脚本必死，故不可用）。
+2. **sandbox 属性（纵深）**：`allow-scripts allow-forms allow-popups`，不给
+   `allow-same-origin`——opaque origin，父窗/顶层窗互访在浏览器层被拦
+   （SecurityError），笔记间也不共享 storage。
+3. **Tauri capability ACL（保底）**：spike 无 sandbox 探针实测——即使
+   前两层失效，`__TAURI_INTERNALS__.invoke` 仍被拒（`... not allowed`）：
+   asset 源不在任何 capability 的 local/remote 白名单内。IPC 的防护在
+   invoke 校验层，不在网络层（`fetch ipc:` 网络层可达但拿不到命令执行）。
+
+**内容策略（与既有两套 HTML 策略的边界）**：
+
+- 笔记 iframe 内**零转换零消毒**（转换杀交互、消毒杀脚本）；
+- 任何笔记派生物进入主 DOM 前：搜索摘要 = 纯文本（React 转义承载，无标记）；
+  「转 Markdown」预览 = `renderMarkdown` 现有 rehype-sanitize 白名单管线；
+  笔记原文**绝不**注入主文档 innerHTML；
+- 笔记 iframe 不持有任何 Tauri capability / IPC 通道，无跨 frame 桥。
+
+**外链策略（决策记录）**：iframe 文档无 CSP，外链 `https` 资源（CDN 组件）
+默认放行——L3「完整单文件应用」形态是需求的一部分；离线模式涉及加载前
+内容改写（注入 CSP meta 或协议层过滤），与「不转换不消毒」原则冲突，
+留作后续设置项单独设计评审（见 spike 报告「阶段 3 设计占位」）。
+
+**能力位**：`capabilities.htmlNoteView`——Windows true（spike 结论 A）；
+harmony false（`mditor-asset://` 行为未真机验证，保守降级为「用系统浏览器
+打开」，不假成功）。
+
+**URL 形态注意**：iframe src 必须用 `lib/htmlNote.ts` 的 `assetFrameUrl`
+（按路径段编码、保留字面 `/`）——`convertFileSrc` 的全量编码会把分隔符
+编成 `%2F`，文档内相对引用将全部解析到协议根（spike ②实测失败根因）。
