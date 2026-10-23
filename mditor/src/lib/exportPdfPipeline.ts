@@ -1292,6 +1292,10 @@ export interface BlockDecorationMaterial {
   pageBg: { r: number; g: number; b: number };
 }
 
+/** 装饰线宽下限（CSS px）：≈0.5pt@k0.75。发丝线（dpr 1.75 下 1px border
+ *  被 Chromium snap 成 0.5714px）矢量换算后 0.43pt 偏淡（F4）。 */
+const DECOR_MIN_PX = 0.67;
+
 export function collectBlockDecorations(
   handle: RenderFactoryHandle
 ): BlockDecorationMaterial {
@@ -1322,7 +1326,7 @@ export function collectBlockDecorations(
     const el = table as HTMLElement;
     const tcs = win.getComputedStyle(el);
     const tColor = parseCssColor(tcs.borderTopColor);
-    const tWidth = Math.max(parseFloat(tcs.borderTopWidth) || 1, 0.5);
+    const tWidth = Math.max(parseFloat(tcs.borderTopWidth) || 1, DECOR_MIN_PX);
     const tr = el.getBoundingClientRect();
     const L = tr.left - base.left;
     const R = tr.right - base.left;
@@ -1342,7 +1346,7 @@ export function collectBlockDecorations(
         const cell = cellNode as HTMLElement;
         const ccs = win.getComputedStyle(cell);
         const cColor = parseCssColor(ccs.borderBottomColor) ?? color;
-        const cWidth = Math.max(parseFloat(ccs.borderBottomWidth) || tWidth, 0.5);
+        const cWidth = Math.max(parseFloat(ccs.borderBottomWidth) || tWidth, DECOR_MIN_PX);
         const cr = cell.getBoundingClientRect();
         hiding.borderEls.push(cell);
         if (ci < cells.length - 1) {
@@ -1384,7 +1388,7 @@ export function collectBlockDecorations(
     const cs = win.getComputedStyle(el);
     const r = el.getBoundingClientRect();
     const c = parseCssColor(cs.borderTopColor) ?? parseCssColor(cs.color);
-    const w = Math.max(parseFloat(cs.borderTopWidth) || 1, 0.5);
+    const w = Math.max(parseFloat(cs.borderTopWidth) || 1, DECOR_MIN_PX);
     if (c) {
       hline(r.top - base.top + w / 2, r.left - base.left, r.right - base.left, w, { r: c.r, g: c.g, b: c.b });
     }

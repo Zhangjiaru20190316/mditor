@@ -25,6 +25,16 @@ import {
 /** CSS px → pt 的名义比（96dpi 语义下 1px = 0.75pt；实际换算用内容盒比）。 */
 export const PT_PER_PX = 72 / 96;
 
+/** 装饰线宽下限（pt）：发丝线在 100% 缩放目检偏淡（F4，实测矢量线深度
+ *  14 vs 位图 18）——0.5pt 起画，粗于下限的线保持原宽。 */
+export const DECOR_MIN_PT = 0.5;
+
+/** CJK 段墨量补偿描边（RVF 阶段二）：NotoSansSC 渲染墨量低于编辑器
+ *  微软雅黑（换 Inter 后正文区墨量比仍 0.81-0.88 <0.85），极细同色描边
+ *  补偿——0.01em@12pt = 0.12pt，4x 缩放无描边感。0 = 关闭（实测达标
+ *  即归零）。拉丁段 Inter Medium 已对齐 Segoe UI 屏显墨量，不补偿。 */
+export const CJK_INK_STROKE_EM = 0.012;
+
 export interface PdfTextRun {
   text: string;
   /** run 起点 x（CSS px，相对内容盒左上）。 */
@@ -293,7 +303,7 @@ export async function createPdfAssembler(
           page.drawLine({
             start: { x: px(l.x1), y: py(l.y1) },
             end: { x: px(l.x2), y: py(l.y2) },
-            thickness: Math.max(l.width * k, 0.3),
+            thickness: Math.max(l.width * k, DECOR_MIN_PT),
             color: toRgb(l.color),
           });
         }
@@ -470,9 +480,19 @@ export async function createPdfAssembler(
             if (end <= start) return;
             const s = chars.slice(start, end).join("");
             if (visible) {
-              // 合成粗/斜体仅对 CJK 段生效（拉丁段已是 Inter 真变体）。
-              if (!segSlot.latin && run.syntheticBold && run.color) {
-                trBold(sizePt, run.color);
+              // 合成粗/斜体仅对 CJK 段生效（拉丁段已是 Inter 真变体）；
+              // CJK 非粗体段加墨量补偿细描边（RVF 阶段二，F1 残差）。
+              if (!segSlot.latin && run.color) {
+                const em = run.syntheticBold
+                  ? Math.max(sizePt * 0.026, 0.24)
+                  : sizePt * CJK_INK_STROKE_EM;
+                page.pushOperators(
+                  pdfLib.setTextRenderingMode(TextRenderingMode.FillAndOutline),
+                  pdfLib.setLineWidth(Math.max(em, 0.05)),
+                  pdfLib.setStrokingColor(
+                    pdfLib.rgb(run.color.r / 255, run.color.g / 255, run.color.b / 255)
+                  )
+                );
               } else {
                 trFill();
               }
