@@ -86,6 +86,60 @@ export const EXPORT_BLOCK_CSS = `/* mditor-export-prose：R1 同族补齐——�
 }
 `;
 
-/** 导出散文补丁整体（表格边框 + 引用/高光/代码/间距；HTML 导出与
- *  PDF/PNG 工厂同源注入）。 */
-export const EXPORT_PROSE_CSS = EXPORT_TABLE_CSS + EXPORT_BLOCK_CSS;
+/** 代码块语法高亮色板（F5）：token 颜色类名/分组与编辑器静态渲染色板
+ *  （global.css「静态渲染 .hljs」段）逐条对齐，色值走 --tok-* 主题变量
+ *  （collectThemeCss 已带变量定义；极简自定义 CSS 场景退回 VSCode Light+
+ *  浅色基值）。.vditor-reset 前缀使特异性高于 highlight.js 自带 github
+ *  主题与 global.css 的裸 .hljs-* 规则——导出文档内必胜，暗色主题随
+ *  data-theme 变量自动切换。 */
+export const EXPORT_HLJS_CSS = `/* mditor-export-prose：F5 导出代码块语法高亮（--tok-* 色板，兜底 VSCode Light+）。 */
+.vditor-reset .hljs {
+  background: transparent;
+  color: var(--tok-base, #1f2328);
+}
+.vditor-reset .hljs-keyword,
+.vditor-reset .hljs-selector-tag,
+.vditor-reset .hljs-literal,
+.vditor-reset .hljs-doctag,
+.vditor-reset .hljs-name {
+  color: var(--tok-keyword, #0000ff);
+}
+.vditor-reset .hljs-string,
+.vditor-reset .hljs-regexp,
+.vditor-reset .hljs-meta .hljs-string {
+  color: var(--tok-string, #a31515);
+}
+.vditor-reset .hljs-number,
+.vditor-reset .hljs-symbol,
+.vditor-reset .hljs-bullet {
+  color: var(--tok-number, #098658);
+}
+.vditor-reset .hljs-comment,
+.vditor-reset .hljs-quote {
+  color: var(--tok-comment, #008000);
+}
+.vditor-reset .hljs-title,
+.vditor-reset .hljs-title.function_,
+.vditor-reset .hljs-section {
+  color: var(--tok-func, #795e26);
+}
+.vditor-reset .hljs-type,
+.vditor-reset .hljs-built_in,
+.vditor-reset .hljs-class .hljs-title {
+  color: var(--tok-type, #267f99);
+}
+.vditor-reset .hljs-variable,
+.vditor-reset .hljs-template-variable,
+.vditor-reset .hljs-attr,
+.vditor-reset .hljs-attribute {
+  color: var(--tok-attr, #001080);
+}
+.vditor-reset .hljs-meta,
+.vditor-reset .hljs-tag {
+  color: var(--tok-meta, #1f2328);
+}
+`;
+
+/** 导出散文补丁整体（表格边框 + 引用/高光/代码/间距 + hljs 色板；HTML 导出
+ *  与 PDF/PNG 工厂同源注入）。 */
+export const EXPORT_PROSE_CSS = EXPORT_TABLE_CSS + EXPORT_BLOCK_CSS + EXPORT_HLJS_CSS;

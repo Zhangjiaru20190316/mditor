@@ -25,6 +25,7 @@ import { sniffImageMime } from "./imageSniff";
 import { cleanLocalRef, normalizeLocalPath } from "./imageManager";
 import { sanitizeExportHtml } from "./exportSanitize";
 import { EXPORT_PROSE_CSS } from "./exportProseCss";
+import { applyStaticCodeHighlight } from "./exportCodeHighlight";
 // type-only：编译期擦除，不把 pdf/png 管线块拉进首屏（依赖纪律见下）。
 import type { PdfPipelineOptions } from "./exportPdfPipeline";
 import type { PngPipelineOptions } from "./exportPngPipeline";
@@ -417,6 +418,8 @@ export async function exportHtml(
   const title = suggestedName.replace(/\.html?$/i, "");
   // S10：落盘前兜底消毒（raw-HTML 直通漏出时导出文件不再是保护空窗）。
   let html = sanitizeExportHtml(ctx.html);
+  // F5：代码块补静态语法高亮（序列化输出纯文本，色板见 EXPORT_HLJS_CSS）。
+  html = await applyStaticCodeHighlight(html);
   let missing: ExportImageReportItem[] = [];
   if (options.inlineImages) {
     // 内联模式：本地 + 远程全抓（单文件分发语义），失败项列报。
@@ -450,6 +453,8 @@ export async function prepareExportHtml(
   ctx: ExportContext
 ): Promise<{ html: string; missing: ExportImageReportItem[] }> {
   let html = sanitizeExportHtml(ctx.html);
+  // F5：代码块补静态语法高亮（PDF/PNG 工厂与 HTML 出口同源；增强降级不阻断）。
+  html = await applyStaticCodeHighlight(html);
   let missing: ExportImageReportItem[] = [];
   try {
     const r = await inlineExportImages(html, ctx.docPath, { remote: "fetch" });
@@ -512,6 +517,8 @@ export async function buildPng(
   missing: ExportImageReportItem[];
 }> {
   let html = sanitizeExportHtml(ctx.html);
+  // F5：代码块补静态语法高亮（与 prepareExportHtml 同源；PNG 出口）。
+  html = await applyStaticCodeHighlight(html);
   let missing: ExportImageReportItem[] = [];
   try {
     const r = await inlineExportImages(html, ctx.docPath, { remote: "fetch" });

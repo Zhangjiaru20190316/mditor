@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased：矢量 PDF 渲染修复（RVF 轮）
+
+### 阶段 0：导出代码块语法高亮（F5，三出口同修）
+
+- 根因修正：`getHTML()` 序列化的代码块是纯文本 `<pre data-language>`（编辑
+  内 CodeMirror 动态高亮不进序列化），CSS 色板从未有元素可命中——新增
+  `exportCodeHighlight`（rehype-highlight 同款 highlight.js common 语言集，
+  懒加载、失败降级原样）在 `prepareExportHtml` / `buildPng` / `exportHtml`
+  三出口统一补静态 token span。
+- `exportProseCss` 注入 `EXPORT_HLJS_CSS` 显式色板（`.vditor-reset` 作用域
+  `--tok-*` 变量 + VSCode Light+ 浅色兜底），HTML/PDF/PNG 工厂同源注入。
+- 验收（perf/rvf-stage0.mjs + perf/rvf-measure.py）：代码区彩色像素
+  vec 8409 / ras 8171（修复前双模式均为 0），双模式页数一致 4/4。
+
 ## 5.1.2（2026-10-23）：同步安全铁律——永不删除本地文件 + 键编码修复
 
 **事故复盘（2026-10-23 上午）**：5.1.1 首装后首次同步，`E:\笔记\cmc` 328 个、
