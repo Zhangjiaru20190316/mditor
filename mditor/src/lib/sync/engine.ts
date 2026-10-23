@@ -77,6 +77,10 @@ export interface SyncHooks {
   }): void;
   /** 非致命警告（超限跳过 / 脏文件跳过 / 单文件失败等），进摘要 notes。 */
   warn(msg: string): void;
+  /** D1 逃生门：批量删除保险触发时征求放行。返回 true = 本轮放行删除
+   *  （清单随轮落盘，下轮起比例归零自解）；缺省 / false = 维持拦截中止。
+   *  触发层仅在手动同步轮次提供——自动轮次保持纯拦截（防定时器反复弹窗）。 */
+  confirmMassDelete?(info: { root: string; count: number; tracked: number }): Promise<boolean>;
 }
 
 /** moveFileWithFallback 的注入原语（trashMove 用；单测注入内存桩）。 */
@@ -550,12 +554,23 @@ export async function syncWorkspace(
     const tracked = Object.keys(manifest.files).length;
     if (tracked > 0 && destructive.length >= 5 && destructive.length / tracked > 0.1) {
       const pct = Math.round((destructive.length / tracked) * 100);
-      summary.notes.push(
-        `已中止同步：本轮将删除 ${destructive.length}/${tracked} 个已跟踪文件（${pct}%）。` +
-          `这通常是同步前缀/桶配置变更或远端被清空所致。请核对云同步设置；若确属远端丢失，本轮已被安全拦下，云端文件未被改动。`
-      );
-      hooks.onState({ phase: "finalize", done, total: ops.length });
-      return { summary, firstSync, aborted: "mass-delete" };
+      // D1 逃生门（v5.1.1）：真实的大批删除（用户清理库）此前会每轮被此保险
+      // 拦下且清单不落盘 → 永久死锁。手动同步轮次经 confirmMassDelete 征求
+      // 用户确认；未提供钩子（自动轮次）或拒绝 → 维持原有纯拦截语义。
+      const allowed = hooks.confirmMassDelete
+        ? await hooks.confirmMassDelete({ root, count: destructive.length, tracked })
+        : false;
+      if (allowed) {
+        summary.notes.push(`已确认放行批量删除：${destructive.length}/${tracked}（${pct}%）。`);
+      } else {
+        summary.notes.push(
+          `已中止同步：本轮将删除 ${destructive.length}/${tracked} 个已跟踪文件（${pct}%）。` +
+            `若确认这些删除有效，请手动触发同步（点击状态栏云图标）并在确认框中选择「删除」；` +
+            `若非本意，多为同步前缀/桶配置变更或远端被清空所致，请核对云同步设置。云端文件未被改动。`
+        );
+        hooks.onState({ phase: "finalize", done, total: ops.length });
+        return { summary, firstSync, aborted: "mass-delete" };
+      }
     }
   }
   for (const op of deletes) {

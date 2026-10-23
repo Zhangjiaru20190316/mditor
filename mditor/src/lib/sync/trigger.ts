@@ -92,11 +92,13 @@ export function assembleSyncTrigger(opts: SyncTriggerOptions): SyncTrigger | nul
       if (lastPublished?.status === "syncing") await publishSyncState(lastPublished);
       return;
     }
-    await syncAll();
+    await syncAll(true);
   }
 
-  /** 同步全部根（串行）。互斥：running 期间再触发静默跳过（§5.4）。 */
-  async function syncAll(): Promise<void> {
+  /** 同步全部根（串行）。互斥：running 期间再触发静默跳过（§5.4）。
+   *  manual：手动轮次（状态栏/菜单）——唯一允许弹出批量删除确认的轮次；
+   *  自动轮次（保存防抖/定时/启动/offline 恢复）保持纯拦截，防定时器反复弹窗。 */
+  async function syncAll(manual = false): Promise<void> {
     if (disposed || running || !enabled()) return;
     running = true;
     const s = opts.getSettings().sync;
@@ -133,6 +135,33 @@ export function assembleSyncTrigger(opts: SyncTriggerOptions): SyncTrigger | nul
               sysEmit("sync:file-warn", `云同步警告：${msg}`, { level: "warn", data: { root } });
               total.notes.push(msg);
             },
+            // D1 逃生门（v5.1.1）：手动轮次提供确认钩子；弹窗失败/取消一律
+            // 拒绝（安全缺省），不阻断同步轮次本身。
+            ...(manual
+              ? {
+                  confirmMassDelete: async (info: {
+                    root: string;
+                    count: number;
+                    tracked: number;
+                  }) => {
+                    try {
+                      return await getAdapter().dialog.confirm(
+                        `「${info.root}」本轮同步将删除 ${info.count} 个文件` +
+                          `（占已跟踪 ${info.tracked} 个的 ${Math.round((info.count / info.tracked) * 100)}%，含本地回收站与云端两侧）。` +
+                          `若这是你近期的真实删除操作，选择「删除」放行；否则「跳过」。`,
+                        {
+                          title: "云同步：确认批量删除",
+                          kind: "warning",
+                          okLabel: "删除",
+                          cancelLabel: "跳过",
+                        }
+                      );
+                    } catch {
+                      return false;
+                    }
+                  },
+                }
+              : {}),
           }, fingerprint, spec.remoteDir);
           accumulate(total, outcome.summary);
           netErrorStreak = 0; // 任一根成功即视为链路可用

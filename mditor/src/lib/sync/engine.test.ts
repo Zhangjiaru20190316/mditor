@@ -730,6 +730,42 @@ describe("D1/D2/D4 数据安全回归", () => {
     expect(r.summary.notes.join()).toContain("已中止");
   });
 
+  it("D1 逃生门：confirmMassDelete=true → 删除放行执行、清单落盘（死锁自解）", async () => {
+    const keys = Array.from({ length: 10 }, (_, i) => `f${i}.md`);
+    for (const k of keys) {
+      io.putLocal(k, "v");
+      io.putRemote(k, "v");
+    }
+    io.manifests.set(ROOT, syncedManifest(io, keys));
+    io.remote.clear();
+
+    const confirmFn = vi.fn(async () => true);
+    const r = await syncWorkspace(ROOT, PREFIX, io, { ...HOOKS, confirmMassDelete: confirmFn }, "fp-1");
+    // 确认框收到根路径与准确数量。
+    expect(confirmFn).toHaveBeenCalledWith({ root: ROOT, count: 10, tracked: 10 });
+    expect(r.aborted).toBeUndefined();
+    expect(io.trash).toHaveLength(10); // 删除放行：本地文件进回收站
+    expect(io.local.size).toBe(0);
+    expect(io.manifests.get(ROOT)!.lastSyncAt).not.toBe(1_000); // 清单落盘
+    expect(r.summary.notes.join()).toContain("已确认放行");
+    expect(r.summary.deletedLocal).toBe(10);
+  });
+
+  it("D1 逃生门：confirmMassDelete=false → 仍中止（安全缺省）", async () => {
+    const keys = Array.from({ length: 10 }, (_, i) => `f${i}.md`);
+    for (const k of keys) {
+      io.putLocal(k, "v");
+      io.putRemote(k, "v");
+    }
+    io.manifests.set(ROOT, syncedManifest(io, keys));
+    io.remote.clear();
+
+    const r = await syncWorkspace(ROOT, PREFIX, io, { ...HOOKS, confirmMassDelete: async () => false }, "fp-1");
+    expect(r.aborted).toBe("mass-delete");
+    expect(io.trash).toHaveLength(0);
+    expect(io.manifests.get(ROOT)!.lastSyncAt).toBe(1_000);
+  });
+
   it("D1：少量删除（<5 个）不触发保险，正常同步", async () => {
     const keys = Array.from({ length: 10 }, (_, i) => `f${i}.md`);
     for (const k of keys) {

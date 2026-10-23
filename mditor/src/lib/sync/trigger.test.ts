@@ -24,6 +24,8 @@ const invokeMock = vi.fn(
     throw new Error("trigger.test: unexpected invoke");
   }
 );
+// D1 逃生门确认框桩（缺省拒绝 = 安全缺省）。
+const confirmMock = vi.fn(async (_content: string, _options?: unknown): Promise<boolean> => false);
 const memFiles = vi.hoisted(() => new Map<string, string>());
 
 vi.mock("../../platform", () => ({
@@ -34,6 +36,9 @@ vi.mock("../../platform", () => ({
       emit: emitMock,
       invoke: invokeMock,
       appDataDir: async () => "C:/appdata",
+    },
+    dialog: {
+      confirm: confirmMock,
     },
     fs: {
       readTextFile: async (p: string) => {
@@ -54,12 +59,21 @@ vi.mock("../../platform", () => ({
         throw new Error("ENOENT");
       },
       writeFile: async () => undefined,
-      rename: async () => undefined,
+      // writeManifest 是 tmp+rename 原子写：rename 必须真正搬移内容，否则
+      // 清单永远停在 .tmp，readManifest 读到 null（首同步语义）。
+      rename: async (a: string, b: string) => {
+        if (!memFiles.has(a)) throw new Error("ENOENT");
+        memFiles.set(b, memFiles.get(a)!);
+        memFiles.delete(a);
+      },
     },
   }),
 }));
 
 import { assembleSyncTrigger } from "./trigger";
+import { emptyManifest, remoteFingerprint, writeManifest } from "./manifest";
+import { fullPrefixOf } from "./engine";
+import { syncConfigPayload } from "./s3";
 import { DEFAULT_SETTINGS } from "../../defaults";
 
 function settingsWith(sync: Partial<Settings["sync"]>): Settings {
@@ -77,6 +91,8 @@ beforeEach(() => {
   invokeMock.mockImplementation(async () => {
     throw new Error("trigger.test: unexpected invoke");
   });
+  confirmMock.mockReset();
+  confirmMock.mockImplementation(async () => false);
   intervalSpy.mockClear();
   timeoutSpy.mockClear();
   memFiles.clear();
@@ -209,6 +225,86 @@ describe("sync-request 转发与同步执行", () => {
     // 第一次仍 error（streak=1）；第二次 streak=2 → offline。
     expect(states).toContain("error");
     expect(states[states.length - 1]).toBe("offline");
+    t!.dispose();
+  });
+});
+
+describe("D1 逃生门（v5.1.1）：批量删除保险的手动确认放行", () => {
+  /** 场景：清单 10 条记录 + 远端 10 对象 + 本地 0 文件 → deleteRemote×10 命中保险。 */
+  async function setupMassDeleteRoot(autoSync: boolean) {
+    const settings = settingsWith({
+      enabled: true,
+      autoSync,
+      autoSyncIntervalMin: autoSync ? 10 : 0,
+      syncOnStart: false,
+    });
+    const root = "C:/ws/notes";
+    const fp = await remoteFingerprint(
+      syncConfigPayload(settings.sync),
+      fullPrefixOf(settings.sync.prefix, root)
+    );
+    const m = emptyManifest(root);
+    m.lastSyncAt = 1_000;
+    m.remoteFingerprint = fp;
+    const keys = Array.from({ length: 10 }, (_, i) => `f${i}.md`);
+    for (const k of keys) {
+      m.files[k] = {
+        local: { mtimeMs: 1, size: 1, md5: null },
+        remote: { etag: "e", size: 1, lastModified: "2026-01-01T00:00:00Z" },
+      };
+    }
+    await writeManifest(root, m);
+    invokeMock.mockImplementation(async (cmd: string): Promise<unknown> => {
+      if (cmd === "s3_list") {
+        // etag 与清单一致 → 远端 same；本地缺失 → deleteRemote。
+        return keys.map((k) => ({ key: `mditor/notes/${k}`, etag: "e", size: 1, lastModified: "2026-01-01T00:00:00Z" }));
+      }
+      if (cmd === "s3_delete") return undefined;
+      throw new Error(`unexpected ${cmd}`);
+    });
+    return { settings, root };
+  }
+
+  it("手动同步命中保险 → 弹确认框；拒绝 → 中止且零删除", async () => {
+    const { settings, root } = await setupMassDeleteRoot(false);
+    const t = assembleSyncTrigger({ getSettings: () => settings, getRoots: () => [root] });
+    confirmMock.mockResolvedValue(false);
+    await t!.syncNow();
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+    expect(String(confirmMock.mock.calls[0][0])).toContain(root);
+    expect(invokeMock.mock.calls.map((c) => c[0])).not.toContain("s3_delete");
+    const events = emitMock.mock.calls
+      .filter((c) => c[0] === "sync-state")
+      .map((c) => c[1] as import("./types").SyncStateEvent);
+    const last = events[events.length - 1];
+    expect(last.status).toBe("idle"); // 中止不算根级失败，提示进 notes
+    expect((last.notes ?? []).join()).toContain("已中止");
+    t!.dispose();
+  });
+
+  it("手动同步命中保险 → 确认放行 → 删除全量执行", async () => {
+    const { settings, root } = await setupMassDeleteRoot(false);
+    const t = assembleSyncTrigger({ getSettings: () => settings, getRoots: () => [root] });
+    confirmMock.mockResolvedValue(true);
+    await t!.syncNow();
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock.mock.calls.filter((c) => c[0] === "s3_delete")).toHaveLength(10);
+    t!.dispose();
+  });
+
+  it("自动轮次命中保险 → 不弹窗直接中止（防定时器反复打扰）", async () => {
+    const { settings, root } = await setupMassDeleteRoot(true);
+    const t = assembleSyncTrigger({ getSettings: () => settings, getRoots: () => [root] });
+    const intervalCall = intervalSpy.mock.calls.find((c) => c[1] === 10 * 60_000);
+    expect(intervalCall).toBeDefined();
+    (intervalCall![0] as () => void)(); // 直接驱动定时回调 = 自动轮次（fire-and-forget）
+    await new Promise((r) => setTimeout(r, 30)); // 等同步链路完成
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(invokeMock.mock.calls.map((c) => c[0])).not.toContain("s3_delete");
+    const events = emitMock.mock.calls
+      .filter((c) => c[0] === "sync-state")
+      .map((c) => c[1] as import("./types").SyncStateEvent);
+    expect((events[events.length - 1].notes ?? []).join()).toContain("已中止");
     t!.dispose();
   });
 });
