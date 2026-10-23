@@ -28,7 +28,7 @@ import { s3Delete, s3GetFile, s3List, s3PutFile } from "./s3";
 import { readManifest, writeManifest, type SyncManifest } from "./manifest";
 import type { S3ConfigPayload, S3Object, SyncManifestFile, SyncSummary } from "./types";
 import { EMPTY_SYNC_SUMMARY } from "./types";
-import { isIgnoredName, isIgnoredRelPath, isTooDeep, isTooLarge, MAX_SYNC_DEPTH } from "./ignore";
+import { isIgnoredName, isIgnoredRelPath, isSyncableRelPath, isTooDeep, isTooLarge, MAX_SYNC_DEPTH } from "./ignore";
 
 /** 引擎内部状态：规格 4 态 + absent（见文件头注释）。 */
 export type EngineSideState = "same" | "changed" | "deleted" | "new" | "absent";
@@ -52,8 +52,6 @@ export interface SyncIO {
   s3Delete(key: string): Promise<void>;
   readManifest(root: string): Promise<SyncManifest | null>;
   writeManifest(root: string, m: SyncManifest): Promise<void>;
-  /** 把工作区内的文件移入回收站（D9：绝不物理删除）。 */
-  trashMove(root: string, relPath: string): Promise<void>;
   /** 下载前重 stat：返回 null = 文件已不存在；mtime 比扫描时新 → 脏文件跳过。 */
   statLocal(absPath: string): Promise<{ mtimeMs: number; size: number } | null>;
   /** 两个本地文件字节等值（冲突内容比对；流式实现，零大内存）。 */
@@ -83,7 +81,8 @@ export interface SyncHooks {
   confirmMassDelete?(info: { root: string; count: number; tracked: number }): Promise<boolean>;
 }
 
-/** moveFileWithFallback 的注入原语（trashMove 用；单测注入内存桩）。 */
+/** moveFileWithFallback 的注入原语（通用工具；v5.1.2 起同步不再有 trashMove
+ *  调用方，保留函数与单测作为跨盘移动的已验证实现）。 */
 export interface MoveFileIo {
   rename(a: string, b: string): Promise<void>;
   copy(a: string, b: string): Promise<void>;
@@ -153,35 +152,37 @@ export function computeRemoteState(
   return listed ? "new" : "absent";
 }
 
-/** 动作枚举（矩阵输出）。 */
+/** 动作枚举（矩阵输出）。v5.1.2 铁律：不存在 deleteLocal——同步永不删除/
+ *  移动本地文件；远端丢失一律重新上传自愈（本地为存在性的唯一事实源）。 */
 export type EngineAction =
   | "skip"
   | "download"
   | "upload"
-  | "deleteLocal"
   | "deleteRemote"
   | "restoreLocal"
   | "clearRecord"
   | "conflict";
 
 /**
- * 动作矩阵（§5.3）。L 行 × R 列：
+ * 动作矩阵（§5.3；v5.1.2 修订）。L 行 × R 列：
  *
  *              same      changed     deleted      new        absent
- *   same       skip      download    deleteLocal  download   conflict
+ *   same       skip      download    upload       download   conflict
  *   changed    upload    conflict    upload       conflict   conflict
  *   deleted    deleteRemote restore  clearRecord  conflict   conflict
  *   new        conflict  conflict    conflict     conflict   upload
  *   absent     conflict  conflict    conflict     download   conflict
  *
- * 前 4 行 × 前 4 列与规格矩阵逐格一致（含 4 个「不可能」格的冲突兜底）；
+ * 前 4 行 × 前 4 列与规格矩阵逐格一致，唯 same×deleted 由 deleteLocal 改为
+ * upload（远端丢失自愈——曾因键编码错配把远端看成空，deleteLocal 引发
+ * 2026-10-23 批量误移本地文件事故，自此引擎不再具备删除本地文件的路径）；
  * absent 行/列为保守补全（见文件头注释）。
  */
 export function decideAction(l: EngineSideState, r: EngineSideState): EngineAction {
   const MATRIX: Record<string, EngineAction> = {
     "same|same": "skip",
     "same|changed": "download",
-    "same|deleted": "deleteLocal",
+    "same|deleted": "upload", // 远端丢失 → 重新上传自愈（v5.1.2：不删本地）
     "same|new": "download",
     "same|absent": "conflict",
     "changed|same": "upload",
@@ -370,7 +371,7 @@ export async function syncWorkspace(
   const suspended = new Set<string>();
   const localMap = new Map<string, LocalScanFile>();
   for (const f of scanned) {
-    if (isIgnoredRelPath(f.relPath) || isTooDeep(f.relPath)) continue;
+    if (isIgnoredRelPath(f.relPath) || !isSyncableRelPath(f.relPath) || isTooDeep(f.relPath)) continue;
     if (isTooLarge(f.size)) {
       hooks.warn(`文件超过 50MB 上限，本轮跳过同步：${f.relPath}`);
       summary.skipped++;
@@ -387,7 +388,7 @@ export async function syncWorkspace(
   for (const obj of remoteList) {
     if (!obj.key.startsWith(fullPrefix)) continue;
     const relPath = obj.key.slice(fullPrefix.length);
-    if (relPath === "" || isIgnoredRelPath(relPath) || isTooDeep(relPath)) continue;
+    if (relPath === "" || isIgnoredRelPath(relPath) || !isSyncableRelPath(relPath) || isTooDeep(relPath)) continue;
     // D7 前端侧防线：远端还原的 relPath 携带 .. / 反斜杠 / 控制字符 → 弃。
     // eslint-disable-next-line no-control-regex -- 控制字符正是要拒绝的目标
     if (relPath.split("/").includes("..") || relPath.includes("\\") || /[\x00-\x1f]/.test(relPath)) {
@@ -540,15 +541,13 @@ export async function syncWorkspace(
   done += uploads.length;
   tick();
 
-  // ---- 6d. 删除（串行；本地删除一律回收站，D9）----
-  const deletes = ops.filter(
-    (o) => o.action === "deleteLocal" || o.action === "deleteRemote" || o.action === "clearRecord"
-  );
-  // D1 批量删除保险：一轮的破坏性删除（本地+远端，clearRecord 只清记录不算）
-  // 超过已跟踪文件的 10% 且 ≥5 个 ⇒ 最可能是 prefix/桶指错或远端被生命周期
-  // 规则清空，而不是用户真的删了整库。立即中止：不执行任何删除、不落盘
-  // 清单（崩溃安全点唯一，旧清单原样保留），notes 里给出数量与比例。
-  // ≥5 的下限避免小库「3 个文件删 1 个」的正常操作被误伤。
+  // ---- 6d. 删除（串行；v5.1.2 起仅云端删除——引擎已无本地删除路径）----
+  const deletes = ops.filter((o) => o.action === "deleteRemote" || o.action === "clearRecord");
+  // D1 批量删除保险（v5.1.2 起只约束 deleteRemote）：一轮的云端删除超过已
+  // 跟踪文件的 10% 且 ≥5 个 ⇒ 最可能是 prefix/桶指错或本地库被整体移走，
+  // 而不是用户真的删了整库。立即中止：不执行任何删除、不落盘清单（崩溃
+  // 安全点唯一，旧清单原样保留），notes 里给出数量与比例。≥5 的下限避免
+  // 小库「3 个文件删 1 个」的正常操作被误伤。
   {
     const destructive = deletes.filter((o) => o.action !== "clearRecord");
     const tracked = Object.keys(manifest.files).length;
@@ -561,12 +560,12 @@ export async function syncWorkspace(
         ? await hooks.confirmMassDelete({ root, count: destructive.length, tracked })
         : false;
       if (allowed) {
-        summary.notes.push(`已确认放行批量删除：${destructive.length}/${tracked}（${pct}%）。`);
+        summary.notes.push(`已确认放行云端批量删除：${destructive.length}/${tracked}（${pct}%）。`);
       } else {
         summary.notes.push(
-          `已中止同步：本轮将删除 ${destructive.length}/${tracked} 个已跟踪文件（${pct}%）。` +
+          `已中止同步：本轮将删除云端 ${destructive.length}/${tracked} 个副本（${pct}%；本地文件不受影响）。` +
             `若确认这些删除有效，请手动触发同步（点击状态栏云图标）并在确认框中选择「删除」；` +
-            `若非本意，多为同步前缀/桶配置变更或远端被清空所致，请核对云同步设置。云端文件未被改动。`
+            `若非本意，多为同步前缀/桶配置变更所致，请核对云同步设置。云端文件未被改动。`
         );
         hooks.onState({ phase: "finalize", done, total: ops.length });
         return { summary, firstSync, aborted: "mass-delete" };
@@ -576,11 +575,7 @@ export async function syncWorkspace(
   for (const op of deletes) {
     tick(op.relPath);
     try {
-      if (op.action === "deleteLocal") {
-        await io.trashMove(root, op.relPath);
-        dropRecord(op.relPath);
-        summary.deletedLocal++;
-      } else if (op.action === "deleteRemote") {
+      if (op.action === "deleteRemote") {
         await io.s3Delete(`${fullPrefix}${op.relPath}`);
         dropRecord(op.relPath);
         summary.deletedRemote++;
@@ -834,24 +829,6 @@ export function createDefaultSyncIO(cfg: S3ConfigPayload): SyncIO {
     s3Delete: (key) => s3Delete(cfg, key),
     readManifest: (root) => readManifest(root),
     writeManifest: (root, m) => writeManifest(root, m),
-    async trashMove(root, relPath) {
-      // D9：同步删除移入 <app-data>/sync/trash/<rootHash>/<时间戳>-<原名>。
-      // v1 不做回收站浏览 UI；移动路径经 hooks.warn 记入诊断（由调用方接线）。
-      const appData = await getAdapter().app.appDataDir();
-      const { rootHash } = await import("./manifest");
-      const hash = await rootHash(root);
-      const target = `${toPosix(appData)}/sync/trash/${hash}/${Date.now()}-${relPath
-        .split("/")
-        .pop()}`;
-      const src = absOf(root, relPath);
-      const dir = target.slice(0, target.lastIndexOf("/"));
-      if (!(await fs().exists(dir))) await fs().mkdir(dir, { recursive: true });
-      await moveFileWithFallback(src, target, {
-        rename: (a, b) => fs().rename(a, b),
-        copy: (a, b) => getAdapter().app.invoke<void>("local_copy_file", { from: a, to: b }),
-        remove: (a) => fs().remove(a),
-      });
-    },
     async statLocal(abs) {
       try {
         const st = await fs().stat(abs);

@@ -146,11 +146,11 @@ export function assembleSyncTrigger(opts: SyncTriggerOptions): SyncTrigger | nul
                   }) => {
                     try {
                       return await getAdapter().dialog.confirm(
-                        `「${info.root}」本轮同步将删除 ${info.count} 个文件` +
-                          `（占已跟踪 ${info.tracked} 个的 ${Math.round((info.count / info.tracked) * 100)}%，含本地回收站与云端两侧）。` +
+                        `「${info.root}」本轮同步将删除云端 ${info.count} 个对象副本` +
+                          `（占已跟踪 ${info.tracked} 个的 ${Math.round((info.count / info.tracked) * 100)}%；本地文件不会被改动）。` +
                           `若这是你近期的真实删除操作，选择「删除」放行；否则「跳过」。`,
                         {
-                          title: "云同步：确认批量删除",
+                          title: "云同步：确认批量删除（仅云端）",
                           kind: "warning",
                           okLabel: "删除",
                           cancelLabel: "跳过",
@@ -219,10 +219,9 @@ export function assembleSyncTrigger(opts: SyncTriggerOptions): SyncTrigger | nul
   }
 
   function accumulate(into: SyncSummary, s: SyncSummary): void {
-    into.uploaded += s.uploaded;
-    into.downloaded += s.downloaded;
-    into.deletedLocal += s.deletedLocal;
-    into.deletedRemote += s.deletedRemote;
+      into.uploaded += s.uploaded;
+      into.downloaded += s.downloaded;
+      into.deletedRemote += s.deletedRemote;
     into.conflicts += s.conflicts;
     into.skipped += s.skipped;
     into.failed += s.failed;

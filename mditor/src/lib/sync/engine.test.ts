@@ -107,7 +107,6 @@ class MemIO implements SyncIO {
   tmp = new Map<string, Uint8Array>();
   remote = new Map<string, S3Object & { content: Uint8Array }>();
   manifests = new Map<string, SyncManifest>();
-  trash: Array<{ root: string; relPath: string }> = [];
   renames: Array<[string, string]> = [];
   // 故障注入：key 命中时对应操作抛错（幂等重入测试用）。
   failPut: Set<string> = new Set();
@@ -181,10 +180,6 @@ class MemIO implements SyncIO {
   async writeManifest(_root: string, m: SyncManifest): Promise<void> {
     this.manifests.set(ROOT, m);
   }
-  async trashMove(_root: string, relPath: string): Promise<void> {
-    this.trash.push({ root: _root, relPath });
-    this.local.delete(relPath);
-  }
   async statLocal(abs: string): Promise<{ mtimeMs: number; size: number } | null> {
     if (abs.startsWith(MemIO.TMP)) {
       const v = this.tmp.get(abs);
@@ -242,7 +237,7 @@ describe("decideAction 矩阵全覆盖（§5.3 16 格 + absent 补全）", () =>
     // 规格矩阵 4×4。
     ["same", "same", "skip"],
     ["same", "changed", "download"],
-    ["same", "deleted", "deleteLocal"],
+    ["same", "deleted", "upload"], // v5.1.2：远端丢失 → 重新上传自愈（不删本地）
     ["same", "new", "download"],
     ["changed", "same", "upload"],
     ["changed", "changed", "conflict"],
@@ -435,7 +430,7 @@ describe("syncWorkspace：矩阵行为（有清单基线）", () => {
       ["b.md", "B"],
     ]);
     const { summary } = await run(io);
-    expect(summary.uploaded + summary.downloaded + summary.deletedLocal + summary.deletedRemote).toBe(0);
+    expect(summary.uploaded + summary.downloaded + summary.deletedRemote).toBe(0);
   });
 
   it("same×changed → 下载覆盖本地", async () => {
@@ -460,13 +455,13 @@ describe("syncWorkspace：矩阵行为（有清单基线）", () => {
     expect(dec.decode(ioB.local.get("a.md")!.content)).toBe("A-local-edit");
   });
 
-  it("same×deleted → 删本地（入回收站，验收 6 后半）", async () => {
+  it("same×deleted → 重新上传自愈（v5.1.2 铁律：不删本地，验收 6 后半）", async () => {
     await baseline([["a.md", "A"]]);
     io.remote.delete(`${FULL}a.md`);
     const { summary } = await run(io);
-    expect(summary.deletedLocal).toBe(1);
-    expect(io.local.has("a.md")).toBe(false);
-    expect(io.trash).toEqual([{ root: ROOT, relPath: "a.md" }]);
+    expect(summary.uploaded).toBe(1);
+    expect(io.local.has("a.md")).toBe(true); // 本地原样
+    expect(dec.decode(io.remote.get(`${FULL}a.md`)!.content)).toBe("A"); // 云端补回
   });
 
   it("deleted×same → 删远端（本地删除传播，验收 6 前半）", async () => {
@@ -602,23 +597,23 @@ describe("syncWorkspace：脏文件 / 超限 / 幂等重入", () => {
   });
 
   it(">50MB 本地大文件：冻结不误删远端（防误删红线）", async () => {
-    io.putLocal("big.bin", "small");
+    io.putLocal("big.md", "small");
     await run(io); // 基线（正常同步）
     // 文件长大后超限：键被冻结——远端对象不删、记录保留。
     const big = new Uint8Array(50 * 1024 * 1024 + 1);
-    io.local.set("big.bin", { content: big, mtimeMs: 5000_000 });
+    io.local.set("big.md", { content: big, mtimeMs: 5000_000 });
     const { summary, warnings } = await run(io);
     expect(summary.skipped).toBe(1);
     expect(warnings.some((w) => w.includes("50MB"))).toBe(true);
-    expect(io.remote.has(`${FULL}big.bin`)).toBe(true);
+    expect(io.remote.has(`${FULL}big.md`)).toBe(true);
     // 记录保留（下次缩回限内可继续同步）。
-    expect(io.manifests.get(ROOT)!.files["big.bin"]).toBeDefined();
+    expect(io.manifests.get(ROOT)!.files["big.md"]).toBeDefined();
   });
 
   it("远端对象超限同样冻结（不下载覆盖本地）", async () => {
     const big = new Uint8Array(50 * 1024 * 1024 + 2);
-    io.remote.set(`${FULL}big-remote.bin`, {
-      key: `${FULL}big-remote.bin`,
+    io.remote.set(`${FULL}big-remote.md`, {
+      key: `${FULL}big-remote.md`,
       size: big.length,
       etag: "e",
       lastModified: "2026-09-13T12:00:00Z",
@@ -627,7 +622,7 @@ describe("syncWorkspace：脏文件 / 超限 / 幂等重入", () => {
     const { summary } = await run(io);
     expect(summary.skipped).toBe(1);
     expect(summary.downloaded).toBe(0);
-    expect(io.local.has("big-remote.bin")).toBe(false);
+    expect(io.local.has("big-remote.md")).toBe(false);
   });
 
   it("幂等重入：上传中途失败后重跑，结果与一次成功等价（§9）", async () => {
@@ -713,7 +708,7 @@ describe("D1/D2/D4 数据安全回归", () => {
     return m;
   }
 
-  it("D1：远端被清空 → 批量删除保险中止，本地/远端/清单零改动", async () => {
+  it("D1：远端被清空 → 全量重新上传自愈（v5.1.2：不删本地、不触发保险）", async () => {
     const keys = Array.from({ length: 10 }, (_, i) => `f${i}.md`);
     for (const k of keys) {
       io.putLocal(k, "v");
@@ -721,34 +716,31 @@ describe("D1/D2/D4 数据安全回归", () => {
     }
     io.manifests.set(ROOT, syncedManifest(io, keys));
     io.remote.clear(); // 生命周期规则清空 / 指错了空桶
-
     const r = await syncWorkspace(ROOT, PREFIX, io, HOOKS, "fp-1");
-    expect(r.aborted).toBe("mass-delete");
-    expect(io.trash).toHaveLength(0); // 一个文件都没进回收站
+    expect(r.aborted).toBeUndefined();
     expect(io.local.size).toBe(10); // 本地文件原样
-    expect(io.manifests.get(ROOT)!.lastSyncAt).toBe(1_000); // 清单未被改写
-    expect(r.summary.notes.join()).toContain("已中止");
+    expect(io.remote.size).toBe(10); // 云端全部补回（自愈）
+    expect(r.summary.uploaded).toBe(10);
+    expect(io.manifests.get(ROOT)!.lastSyncAt).not.toBe(1_000); // 清单落盘
   });
 
-  it("D1 逃生门：confirmMassDelete=true → 删除放行执行、清单落盘（死锁自解）", async () => {
+  it("D1 逃生门：confirmMassDelete=true → 云端删除放行、清单落盘（死锁自解）", async () => {
     const keys = Array.from({ length: 10 }, (_, i) => `f${i}.md`);
     for (const k of keys) {
       io.putLocal(k, "v");
       io.putRemote(k, "v");
     }
     io.manifests.set(ROOT, syncedManifest(io, keys));
-    io.remote.clear();
+    for (const k of keys) io.local.delete(k); // 用户真的删了整库
 
     const confirmFn = vi.fn(async () => true);
     const r = await syncWorkspace(ROOT, PREFIX, io, { ...HOOKS, confirmMassDelete: confirmFn }, "fp-1");
-    // 确认框收到根路径与准确数量。
     expect(confirmFn).toHaveBeenCalledWith({ root: ROOT, count: 10, tracked: 10 });
     expect(r.aborted).toBeUndefined();
-    expect(io.trash).toHaveLength(10); // 删除放行：本地文件进回收站
-    expect(io.local.size).toBe(0);
+    expect(io.remote.size).toBe(0); // 云端删除放行执行
     expect(io.manifests.get(ROOT)!.lastSyncAt).not.toBe(1_000); // 清单落盘
     expect(r.summary.notes.join()).toContain("已确认放行");
-    expect(r.summary.deletedLocal).toBe(10);
+    expect(r.summary.deletedRemote).toBe(10);
   });
 
   it("D1 逃生门：confirmMassDelete=false → 仍中止（安全缺省）", async () => {
@@ -758,11 +750,11 @@ describe("D1/D2/D4 数据安全回归", () => {
       io.putRemote(k, "v");
     }
     io.manifests.set(ROOT, syncedManifest(io, keys));
-    io.remote.clear();
+    for (const k of keys) io.local.delete(k);
 
     const r = await syncWorkspace(ROOT, PREFIX, io, { ...HOOKS, confirmMassDelete: async () => false }, "fp-1");
     expect(r.aborted).toBe("mass-delete");
-    expect(io.trash).toHaveLength(0);
+    expect(io.remote.size).toBe(10); // 云端一个没删
     expect(io.manifests.get(ROOT)!.lastSyncAt).toBe(1_000);
   });
 
@@ -780,6 +772,33 @@ describe("D1/D2/D4 数据安全回归", () => {
     expect(r.summary.deletedRemote).toBe(1);
   });
 
+  it("扩展名白名单（v5.1.2）：仅 .md/.html 参与同步，PDF 等附件双侧忽略", async () => {
+    io.putLocal("note.md", "A");
+    io.putRemote("note.md", "A"); // syncedManifest 需要双侧就位
+    io.putLocal("page.html", "<b>B</b>");
+    io.putLocal("教材.pdf", "P");
+    io.putLocal("图.png", "I");
+    io.putLocal("无扩展名", "X");
+    io.putRemote("legacy.pdf", "OLD"); // 远端旧副本（清单也跟踪着）
+
+    const m = syncedManifest(io, ["note.md"]);
+    m.files["legacy.pdf"] = {
+      local: { mtimeMs: 1, size: 3, md5: null },
+      remote: { etag: "e", size: 3, lastModified: "2026-09-13T10:00:00Z" },
+    };
+    io.manifests.set(ROOT, m);
+
+    const r = await syncWorkspace(ROOT, PREFIX, io, HOOKS, "fp-1");
+    expect(r.summary.uploaded).toBe(1); // 只有 page.html 上传（note.md 已是基线 skip）
+    expect(io.remote.has(`${FULL}教材.pdf`)).toBe(false); // PDF 不上传
+    expect(io.remote.has(`${FULL}legacy.pdf`)).toBe(true); // 旧云端副本保留（孤儿）
+    // 清单只跟踪 md/html；pdf 记录被 clearRecord 自然剔除。
+    const files = io.manifests.get(ROOT)!.files;
+    expect(files["note.md"]).toBeDefined();
+    expect(files["page.html"]).toBeDefined();
+    expect(files["legacy.pdf"]).toBeUndefined();
+  });
+
   it("D1：换桶/换前缀（指纹失配）→ 按首同步重算，绝不产生删除", async () => {
     const keys = ["a.md", "b.md", "c.md", "d.md", "e.md", "f.md"];
     for (const k of keys) {
@@ -790,9 +809,7 @@ describe("D1/D2/D4 数据安全回归", () => {
 
     const r = await syncWorkspace(ROOT, PREFIX, io, HOOKS, "fp-NEW");
     expect(r.firstSync).toBe(true);
-    expect(r.summary.deletedLocal).toBe(0);
     expect(r.summary.deletedRemote).toBe(0);
-    expect(io.trash).toHaveLength(0);
     // 首同步后新指纹落盘。
     expect(io.manifests.get(ROOT)!.remoteFingerprint).toBe("fp-NEW");
   });
@@ -830,7 +847,6 @@ describe("D1/D2/D4 数据安全回归", () => {
     );
     expect(sio.remote.size).toBe(6); // 远端一个都没删
     expect(sio.local.size).toBe(6); // 本地原样
-    expect(sio.trash).toHaveLength(0);
     expect(sio.manifests.get(ROOT)!.lastSyncAt).toBe(1_000); // 清单未被改写
   });
 

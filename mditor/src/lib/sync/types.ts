@@ -45,11 +45,11 @@ export interface SyncStateEvent {
   notes?: string[];
 }
 
-/** 一次同步的结果摘要（sync-state done 广播与 UI 悬浮提示共用）。 */
+/** 一次同步的结果摘要（sync-state done 广播与 UI 悬浮提示共用）。
+ *  v5.1.2 起无 deletedLocal——引擎不再删除本地文件。 */
 export interface SyncSummary {
   uploaded: number;
   downloaded: number;
-  deletedLocal: number;
   deletedRemote: number;
   conflicts: number;
   skipped: number;
@@ -62,7 +62,6 @@ export interface SyncSummary {
 export const EMPTY_SYNC_SUMMARY: SyncSummary = {
   uploaded: 0,
   downloaded: 0,
-  deletedLocal: 0,
   deletedRemote: 0,
   conflicts: 0,
   skipped: 0,

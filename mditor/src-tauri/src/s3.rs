@@ -222,10 +222,42 @@ fn map_store_error(ctx: &str, e: &object_store::Error) -> String {
     }
 }
 
-/// ObjectMeta → S3Object（serde camelCase）。
+/// object_store 0.13 的 Path 以百分号编码形态存储与返回对象键（中文键在桶内
+/// 即编码态，如 %E4%B8%93）；前端以解码路径做矩阵比对——此处统一解码。
+/// 仅折叠合法 %XX 序列（Path::parse 会把字面 % 编码为 %25，往返自洽）；
+/// 无效序列原样保留，旧版（0.11 时代）写入的未编码键不受影响。
+/// 2026-10-23 事故根因：键编码错配使中文名文件在矩阵里恒判「远端已删除」，
+/// 引发批量 deleteLocal；本解码 + 引擎移除本地删除路径双保险。
+fn percent_decode_path(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let hex = |c: u8| -> Option<u8> {
+        match c {
+            b'0'..=b'9' => Some(c - b'0'),
+            b'a'..=b'f' => Some(c - b'a' + 10),
+            b'A'..=b'F' => Some(c - b'A' + 10),
+            _ => None,
+        }
+    };
+    let mut i = 0usize;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(hi), Some(lo)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push(hi * 16 + lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// ObjectMeta → S3Object（serde camelCase）。键统一解码（见 percent_decode_path）。
 fn to_s3_object(m: &object_store::ObjectMeta) -> S3Object {
     S3Object {
-        key: m.location.to_string(),
+        key: percent_decode_path(&m.location.to_string()),
         size: m.size,
         etag: m.e_tag.clone(),
         last_modified: m.last_modified.to_rfc3339(),
@@ -487,6 +519,24 @@ pub async fn s3_head(cfg: S3Config, key: String) -> Result<Option<S3Object>, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- percent_decode_path（object_store 0.13 键编码往返，2026-10-23 修复）----
+
+    #[test]
+    fn percent_decode_decodes_encoded_chinese_keys() {
+        assert_eq!(
+            percent_decode_path("mditor/cmc/01_%E4%B8%93%E9%A2%98%E7%AC%94%E8%AE%B0/a.md"),
+            "mditor/cmc/01_专题笔记/a.md"
+        );
+    }
+
+    #[test]
+    fn percent_decode_keeps_plain_and_invalid_sequences() {
+        assert_eq!(percent_decode_path("plain/ascii/a.md"), "plain/ascii/a.md");
+        assert_eq!(percent_decode_path("100%25.md"), "100%.md"); // 字面 % 的编码往返
+        assert_eq!(percent_decode_path("bad%ZZ.md"), "bad%ZZ.md"); // 无效序列原样
+        assert_eq!(percent_decode_path("trunc%2.md"), "trunc%2.md"); // 截断序列原样
+    }
 
     // ---- vhost_endpoint（object_store 0.13 桶名拼入 endpoint）--------------
 
