@@ -15,6 +15,12 @@
 // fontEmbedded = false），不静默假装有文本层。
 
 import { decorationLineGeometry } from "./exportVectorDecor";
+import {
+  CJK_VARIANT,
+  isLatinScript,
+  type LatinFontVariant,
+  type RunFontVariant,
+} from "./exportVectorText";
 
 /** CSS px → pt 的名义比（96dpi 语义下 1px = 0.75pt；实际换算用内容盒比）。 */
 export const PT_PER_PX = 72 / 96;
@@ -37,14 +43,27 @@ export interface PdfTextRun {
   color?: { r: number; g: number; b: number };
   /** true = 位图承载视觉、此处只铺 Tr 3 影子（旧满铺行为/降级域文本）。 */
   shadow?: boolean;
-  /** 合成加粗（RV 阶四）：Tr 2 FillAndStroke + ~0.026em 细描边。 */
+  /** 合成加粗（RV 阶四）：Tr 2 FillAndStroke + ~0.026em 细描边。RVF 阶段一
+   *  起仅对 CJK 段生效（拉丁段走 Inter-Bold 真字体）。 */
   syntheticBold?: boolean;
-  /** 合成斜体（RV 阶四）：xSkew 12° 剪切。 */
+  /** 合成斜体（RV 阶四）：xSkew 12° 剪切。RVF 阶段一起仅对 CJK 段生效。 */
   syntheticItalic?: boolean;
+  /** 逐字符字体变体（与 Array.from(text) 等长；RVF 阶段一）：Latin 字符
+   *  指向 Inter 四变体、其余 CJK_VARIANT 走主字体。缺省 = 全程主字体
+   *  （shadow run/旧调用：拉丁 NotoSansSC 也有字形，不会 notdef）。 */
+  variants?: RunFontVariant[];
   /** 装饰线（下划线/删除线；shadow run 也画——位图已统一摘线）。 */
   decor?: { kinds: Array<"underline" | "line-through">; color: { r: number; g: number; b: number } };
   /** inline 背景（mark 高亮等；rect = 片段行盒）。 */
   bg?: { color: { r: number; g: number; b: number } };
+}
+
+/** Inter 变体字节表（RVF 阶段一；缺项 = 该变体退主字体 + 合成）。 */
+export interface LatinFontBytes {
+  regular: Uint8Array;
+  bold?: Uint8Array;
+  italic?: Uint8Array;
+  boldItalic?: Uint8Array;
 }
 
 export interface PdfAssemblerOptions {
@@ -56,6 +75,8 @@ export interface PdfAssemblerOptions {
   contentHeightPx: number;
   /** 文本层字体字节（null/undefined/嵌入失败 = 纯光栅）。 */
   fontBytes?: Uint8Array | null;
+  /** Inter 四变体字节（RVF 阶段一：拉丁 run 真粗/斜体；嵌入失败逐变体退主字体）。 */
+  latinFontBytes?: LatinFontBytes | null;
   title?: string;
   /** 矢量文本模式（RV 轮）：非 shadow 且带色的 run 以正常 Tr 可见绘制；
    *  false（缺省）= 旧行为，全部 Tr 3 影子。 */
@@ -65,6 +86,8 @@ export interface PdfAssemblerOptions {
 export interface PdfAssembleInfo {
   pages: number;
   fontEmbedded: boolean;
+  /** Inter 变体实际嵌入数（0-4；RVF 阶段一）。 */
+  latinFontsEmbedded: number;
   embedFontMs: number;
   textRunsPlaced: number;
   glyphsPlaced: number;
@@ -144,18 +167,64 @@ export async function createPdfAssembler(
   doc.setProducer("mditor 自研导出管线");
   doc.setCreator("mditor");
   if (o.title) doc.setTitle(o.title);
-
-  const t0 = Date.now();
-  let font: import("pdf-lib").PDFFont | null = null;
   if (o.fontBytes && o.fontBytes.byteLength > 0) {
     try {
       doc.registerFontkit(fontkit as never);
-      font = await doc.embedFont(o.fontBytes, { subset: true });
     } catch {
-      font = null; // 字体损坏/不支持 → 纯光栅（info 如实报告）
+      /* fontkit 注册失败：后续嵌入逐项报失败 */
     }
   }
-  const embedFontMs = Date.now() - t0;
+
+  // ---- 按需字体嵌入（RVF 阶段一）：零使用的字体不入册。立嵌的空 CFF
+  // subset 在 save 编码时挂死（fontkit 空 charstrings 越界，实测纯拉丁
+  // 文档 main=Noto 零使用必触发）——且省 8.3MB 主字体解码与产物体积。
+  // 每页 addPage 预扫描 runs 需要的字体面（main + 用到的 Inter 变体），
+  // 首次使用时嵌入（doc 级缓存，跨页复用）。
+  let mainFont: import("pdf-lib").PDFFont | null = null;
+  let mainFontFailed = false;
+  const latinFonts = new Map<LatinFontVariant, import("pdf-lib").PDFFont>();
+  let embedFontMs = 0;
+  const latinBytesOf = (
+    v: LatinFontVariant
+  ): Uint8Array | undefined =>
+    (
+      {
+        "latin-regular": o.latinFontBytes?.regular,
+        "latin-bold": o.latinFontBytes?.bold,
+        "latin-italic": o.latinFontBytes?.italic,
+        "latin-bolditalic": o.latinFontBytes?.boldItalic,
+      } as Record<LatinFontVariant, Uint8Array | undefined>
+    )[v];
+  const ensureMain = async (): Promise<boolean> => {
+    if (mainFont) return true;
+    if (mainFontFailed) return false;
+    if (!o.fontBytes || o.fontBytes.byteLength === 0) {
+      mainFontFailed = true;
+      return false;
+    }
+    const t = Date.now();
+    try {
+      mainFont = await doc.embedFont(o.fontBytes, { subset: true });
+      info.fontEmbedded = true;
+    } catch {
+      mainFontFailed = true; // 字体损坏/不支持 → 该字体永久缺位
+    }
+    embedFontMs += Date.now() - t;
+    return !!mainFont;
+  };
+  const ensureLatin = async (v: LatinFontVariant): Promise<boolean> => {
+    if (latinFonts.has(v)) return true;
+    const bytes = latinBytesOf(v);
+    if (!bytes || bytes.byteLength === 0) return false;
+    const t = Date.now();
+    try {
+      latinFonts.set(v, await doc.embedFont(bytes, { subset: true }));
+    } catch {
+      return false; // 该变体嵌入失败：拉丁 run 该字重/字型退主字体
+    }
+    embedFontMs += Date.now() - t;
+    return true;
+  };
 
   // px→pt 统一比例：内容盒水平方向的真实比（版心宽按此构造，垂直同比例）。
   const k =
@@ -167,8 +236,9 @@ export async function createPdfAssembler(
 
   const info: PdfAssembleInfo = {
     pages: 0,
-    fontEmbedded: !!font,
-    embedFontMs,
+    fontEmbedded: false, // 按需嵌入：首次成功嵌入 main 后置 true
+    latinFontsEmbedded: 0, // info() 动态取 latinFonts.size
+    embedFontMs: 0, // ensure* 累计
     textRunsPlaced: 0,
     glyphsPlaced: 0,
     textOpsPlaced: 0,
@@ -258,7 +328,33 @@ export async function createPdfAssembler(
           });
         }
       }
-      if (!font) return;
+      // ---- 按需嵌入（RVF 阶段一）：预扫描本页 runs 的字体面 ----
+      // needMain = 影子 run / 无 variants run / variants 含 CJK 段或该变体
+      // 无字节（回主字体）；否则只嵌用到的 Inter 变体（纯拉丁页不触 8.3MB
+      // 主字体解码，也规避空 CFF subset 的 save 挂死）。
+      let needMain = false;
+      const needLatin = new Set<LatinFontVariant>();
+      for (const run of textRuns) {
+        if (!run.text) continue;
+        const vars =
+          run.variants && run.variants.length === Array.from(run.text).length
+            ? run.variants
+            : undefined;
+        if (!vars) {
+          needMain = true;
+          continue;
+        }
+        for (const v of vars) {
+          if (v === CJK_VARIANT || !latinBytesOf(v as LatinFontVariant)) {
+            needMain = true;
+          } else {
+            needLatin.add(v as LatinFontVariant);
+          }
+        }
+      }
+      const latinOk = await Promise.all([...needLatin].map((v) => ensureLatin(v)));
+      if (latinOk.some((ok) => !ok)) needMain = true; // 变体失败回主字体
+      if (needMain && !(await ensureMain())) return; // 主字体缺位：整页文本层跳过（旧语义）
 
       // ---- run 级背景（mark 高亮等）：铺字前画（垫在文字下）----
       for (const run of textRuns) {
@@ -294,16 +390,48 @@ export async function createPdfAssembler(
         );
       /** ε-合并组铺字：期望 advance 与嵌入字体自然 advance 一致（<0.5px）
        *  的连续字符合并为一次 drawText（CJK 全宽字符几乎总命中——算子数
-       *  骤减）；不一致处断组、按实测位重锚（拉丁逐字精度，D-2 分治）。 */
+       *  骤减）；不一致处断组、按实测位重锚（拉丁逐字精度，D-2 分治）。
+       *  RVF 阶段一：字体变体变化处同断组——拉丁段切 Inter 变体（真粗/斜），
+       *  CJK 段回主字体（合成兜底），混合 run 并存。 */
       const EPS_PX = 0.5;
-      // 字形自然宽度缓存（EX-P 实测热点：fontkit 逐字 layout 是铺字主要
-      // 成本；CJK 字符高频重复，(char,size) 级缓存把重复字形查询压到 O(1)）。
+      // 拉丁字符逐字锚定（RVF 阶段一，字符级规则——影子/可见同规则）：
+      // 嵌入字体（Inter 可见层 / Noto 影子层）的自然 advance 都与编辑器
+      // 实测（Segoe UI 复合字体）有系统性小差，任何合并容差内的漂移都会
+      // 让抽取器的空格推断在两模式间不一致（实测 ε=0.5 差 21 处）——
+      // 拉丁字符 ε=0 逐字重锚（位置只取实测位），CJK 全宽字符维持 0.5px
+      // 合并（Noto 自然 advance 与实测一致，零漂移且算子数骤减）。
+      const epsFor = (ch: string): number => (isLatinScript(ch) ? 0 : EPS_PX);
+      /** 字形自然宽度缓存（EX-P 实测热点：fontkit 逐字 layout 是铺字主要
+       *  成本；CJK 字符高频重复，(font, char, size) 级缓存把重复字形查询压
+       *  到 O(1)）。 */
+      interface SlotFont {
+        font: import("pdf-lib").PDFFont;
+        /** 缓存键（区分字体实例）。 */
+        key: string;
+        /** Inter 变体段（真粗/斜，禁合成）。 */
+        latin: boolean;
+      }
+      // needMain=false 时主字体未嵌入：预扫描保证该页无 run 引用 mainSlot。
+      const mainSlot: SlotFont = { font: mainFont!, key: "cjk", latin: false };
+      const slotOfVariant = (v: RunFontVariant | undefined): SlotFont => {
+        if (v && v !== CJK_VARIANT) {
+          const f =
+            latinFonts.get(v as LatinFontVariant) ??
+            latinFonts.get("latin-regular");
+          if (f) return { font: f, key: v, latin: true };
+        }
+        return mainSlot;
+      };
       const naturalCache = new Map<string, number>();
-      const naturalWidth = (ch: string, size: number): number => {
-        const key = ch + "\u0000" + size;
+      const naturalWidth = (
+        slot: SlotFont,
+        ch: string,
+        size: number
+      ): number => {
+        const key = slot.key + "\u0000" + ch + "\u0000" + size;
         let w = naturalCache.get(key);
         if (w === undefined) {
-          w = font.widthOfTextAtSize(ch, size) / k;
+          w = slot.font.widthOfTextAtSize(ch, size) / k;
           naturalCache.set(key, w);
         }
         return w;
@@ -320,6 +448,13 @@ export async function createPdfAssembler(
           : undefined;
         if (visible) info.visibleRunsPlaced++;
         info.textRunsPlaced++;
+        // 影子 run 同样按逐字符变体取段字体（Tr 3 隐形但字形 bbox 参与
+        // 抽取器的分词推断——两模式字形面必须一致）；无 variants 的旧式
+        // run 一律主字体。
+        const variants =
+          run.variants && run.variants.length === chars.length
+            ? run.variants
+            : undefined;
         if (run.advances && run.advances.length === chars.length) {
           const positions: number[] = new Array(chars.length);
           {
@@ -330,12 +465,17 @@ export async function createPdfAssembler(
             }
           }
           let start = 0;
-          const emit = (end: number): void => {
+          let slot = variants ? slotOfVariant(variants[0]) : mainSlot;
+          const emit = (end: number, segSlot: SlotFont): void => {
             if (end <= start) return;
             const s = chars.slice(start, end).join("");
             if (visible) {
-              if (run.syntheticBold && run.color) trBold(sizePt, run.color);
-              else trFill();
+              // 合成粗/斜体仅对 CJK 段生效（拉丁段已是 Inter 真变体）。
+              if (!segSlot.latin && run.syntheticBold && run.color) {
+                trBold(sizePt, run.color);
+              } else {
+                trFill();
+              }
               info.visibleGlyphsPlaced += end - start;
             } else {
               tr3();
@@ -344,9 +484,11 @@ export async function createPdfAssembler(
               x: o.marginPt.left + positions[start] * k,
               y: yPt,
               size: sizePt,
-              font,
+              font: segSlot.font,
               ...(fillColor ? { color: fillColor } : {}),
-              ...(run.syntheticItalic ? { xSkew: pdfLib.degrees(12) } : {}),
+              ...(!segSlot.latin && run.syntheticItalic
+                ? { xSkew: pdfLib.degrees(12) }
+                : {}),
             });
             info.textOpsPlaced++;
             info.glyphsPlaced += end - start;
@@ -357,19 +499,29 @@ export async function createPdfAssembler(
               // 斜体例外：xSkew 使字形盒错位，抽取器的间隙推断失效会把
               // 「italic text」粘成「italictext」——空格照铺（字形空白，
               // 视觉不变）保词界。
-              emit(i);
+              emit(i, slot);
               start = i + 1;
+              slot = variants ? slotOfVariant(variants[start]) : mainSlot;
               continue;
             }
-            const natural = naturalWidth(chars[i], sizePt) + positions[i];
+            if (variants && variants[i + 1] !== variants[start]) {
+              // 字体变体边界（拉丁↔CJK / Regular↔Bold）：断组切字体。
+              emit(i + 1, slot);
+              start = i + 1;
+              slot = slotOfVariant(variants[start]);
+              continue;
+            }
+            const natural = naturalWidth(slot, chars[i], sizePt) + positions[i];
             const desired = positions[i + 1];
-            if (Math.abs(desired - natural) > EPS_PX) {
-              emit(i + 1);
+            if (Math.abs(desired - natural) > epsFor(chars[i])) {
+              emit(i + 1, slot);
               start = i + 1;
             }
           }
-          emit(chars.length);
+          emit(chars.length, slot);
         } else {
+          // 单锚路径（管线实测恒带 advances；防御路径）：主字体整体绘制
+          // （NotoSansSC 拉丁亦有字形，不会 notdef）。
           if (visible) {
             if (run.syntheticBold && run.color) trBold(sizePt, run.color);
             else trFill();
@@ -381,7 +533,7 @@ export async function createPdfAssembler(
             x: o.marginPt.left + run.x * k,
             y: yPt,
             size: sizePt,
-            font,
+            font: mainSlot.font,
             ...(fillColor ? { color: fillColor } : {}),
             ...(run.syntheticItalic ? { xSkew: pdfLib.degrees(12) } : {}),
           });
@@ -409,6 +561,6 @@ export async function createPdfAssembler(
     async save() {
       return doc.save();
     },
-    info: () => ({ ...info }),
+    info: () => ({ ...info, latinFontsEmbedded: latinFonts.size }),
   };
 }

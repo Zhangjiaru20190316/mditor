@@ -126,3 +126,70 @@ describe("decideTextVectorization（阶段一口径）", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// RVF 阶段一：拉丁 run 真字体变体（Inter 四变体映射 + script 拆分）。
+// ---------------------------------------------------------------------------
+import {
+  CJK_VARIANT,
+  isLatinScript,
+  latinVariantFor,
+  runVariants,
+  splitRunByScript,
+} from "./exportVectorText";
+
+describe("isLatinScript（Inter 承担的字符域）", () => {
+  it("ASCII/拉丁扩展/希腊/西里尔/通用标点/货币 → 拉丁域", () => {
+    for (const s of ["A z9", "é ñ ü", "α β ψ", "Ж Д", "… — “” ‘’", "€ £ ¥", "™"]) {
+      for (const ch of Array.from(s)) {
+        if (ch.trim()) expect(isLatinScript(ch), JSON.stringify(ch)).toBe(true);
+      }
+    }
+  });
+  it("CJK/日文/全角/中文标点/emoji/数学符号 → CJK 域（NotoSansSC）", () => {
+    for (const ch of ["中", "文", "あ", "，", "。", "『』", "😀", "∑", "≤"]) {
+      expect(isLatinScript(ch), JSON.stringify(ch)).toBe(false);
+    }
+  });
+});
+
+describe("latinVariantFor（字重/字型 → Inter 变体；与合成判定同阈值）", () => {
+  it("四象限映射", () => {
+    expect(latinVariantFor(400, "normal")).toBe("latin-regular");
+    expect(latinVariantFor(700, "normal")).toBe("latin-bold");
+    expect(latinVariantFor(400, "italic")).toBe("latin-italic");
+    expect(latinVariantFor(700, "italic")).toBe("latin-bolditalic");
+  });
+  it("就近映射：500 → regular、600 → bold（BOLD_WEIGHT_MIN 同阈）", () => {
+    expect(latinVariantFor(500, "normal")).toBe("latin-regular");
+    expect(latinVariantFor(600, "normal")).toBe("latin-bold");
+    expect(latinVariantFor(600, "oblique")).toBe("latin-bolditalic");
+  });
+});
+
+describe("runVariants（文本 → 逐字符变体）", () => {
+  it("中英混排：拉丁按字重选变体、其余 CJK；与 Array.from 等长", () => {
+    const text = "Hello 世界 mixed 中文";
+    const v = runVariants(text, 700, "normal");
+    expect(v).toHaveLength(Array.from(text).length);
+    expect(v[0]).toBe("latin-bold"); // H
+    expect(v[Array.from("Hello ").length]).toBe(CJK_VARIANT); // 世
+    expect(v.join(",")).toContain("latin-bold");
+  });
+  it("全中文 → 全 CJK", () => {
+    expect(runVariants("全部中文", 400, "normal").every((v) => v === CJK_VARIANT)).toBe(true);
+  });
+});
+
+describe("splitRunByScript（连续同域分段）", () => {
+  it("混合文本分段边界正确", () => {
+    const segs = splitRunByScript("ab中cd。e");
+    expect(segs.map((s) => (s.latin ? "L" : "C") + ":" + s.text)).toEqual([
+      "L:ab",
+      "C:中",
+      "L:cd",
+      "C:。",
+      "L:e",
+    ]);
+  });
+});

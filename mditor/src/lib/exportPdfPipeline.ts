@@ -23,10 +23,18 @@ import {
 import {
   createPdfAssembler,
   PT_PER_PX,
+  type LatinFontBytes,
   type PdfAssembleInfo,
   type PdfTextRun,
 } from "./exportPdfAssembly";
-import { decideTextVectorization, parseCssColor } from "./exportVectorText";
+import {
+  CJK_VARIANT,
+  decideTextVectorization,
+  isLatinScript,
+  parseCssColor,
+  runVariants,
+  type RunFontVariant,
+} from "./exportVectorText";
 import { decorationsToPageDecos, type PageDeco } from "./exportVectorDecor";
 import {
   mergeRectsVertically,
@@ -57,6 +65,18 @@ const JPEG_GUARD_BYTES = 256 * 1024 * 1024;
 /** 文本层字体（应用源；OFL 授权见 public/assets/fonts/OFL.txt）。 */
 const CJK_FONT_URL =
   (import.meta.env.BASE_URL ?? "/") + "assets/fonts/NotoSansSC-Regular.otf";
+/** Inter 拉丁变体（RVF 阶段一；OFL 见 public/assets/fonts/INTER-OFL.txt）。
+ *  正文档取 Medium 而非 Regular：Inter Regular 为高分辨率屏设计，12pt 下
+ *  stem/em=0.088（实测渲染墨量仅 NotoSansSC 拉丁的 43%）——比被替换的
+ *  Noto 更细，F1 不收敛反恶化；Medium（stem/em=0.107，墨量 ≈Noto×1.38）
+ *  才对齐编辑器 Segoe UI 的低 DPI 屏显墨量。Bold 档同族 Bold（≈Noto 干宽）。 */
+const LATIN_FONT_URLS = {
+  regular: (import.meta.env.BASE_URL ?? "/") + "assets/fonts/Inter-Medium.ttf",
+  bold: (import.meta.env.BASE_URL ?? "/") + "assets/fonts/Inter-Bold.ttf",
+  italic: (import.meta.env.BASE_URL ?? "/") + "assets/fonts/Inter-MediumItalic.ttf",
+  boldItalic:
+    (import.meta.env.BASE_URL ?? "/") + "assets/fonts/Inter-BoldItalic.ttf",
+} as const;
 
 export interface PdfExportProgress {
   stage: "factory" | "measure" | "paginate" | "text" | "raster" | "assemble";
@@ -206,6 +226,10 @@ async function runPdfPipelineOnce(
     const wantText = o.textLayer !== false;
     if (wantText) fontBytes = await loadFontBytes();
     const vectorActive = vector && wantText && !!fontBytes;
+    // Inter 变体（缺位 = 拉丁 run 退主字体合成，CJK 主路径不受影响）。
+    // raster 模式同样加载：影子层拉丁用 Inter 画（与 vector 可见层字形
+    // bbox 一致，双模式抽取分词才一致）。
+    const latinFontBytes = wantText ? await loadLatinFontBytes() : null;
 
     // ---- 5. 文本素材 + 补丁计划 + 块装饰（一次全量收集；textLayer=false 跳过）----
     t0 = performance.now();
@@ -213,7 +237,11 @@ async function runPdfPipelineOnce(
     const patchPlan = vectorActive ? collectPatchPlan(handle) : null;
     // 字形覆盖检测（阶段四）：fontkit 直读全量字体，(codePoint) 级缓存。
     // 缺字形（emoji/特殊符号）→ 判定 no-glyph → 残留补丁兜底，绝不画 notdef。
+    // RVF 阶段一双字体：拉丁域字符查 Inter（Regular 代表四变体覆盖面），
+    // Inter 缺字形再查 Noto（拉丁回 CJK 域画 Noto 拉丁形）；两族皆缺才
+    // 节点级 no-glyph。
     let glyphChecker: ((text: string) => boolean) | undefined;
+    let latinGlyphCovered: ((cp: number) => boolean) | undefined;
     if (vectorActive && fontBytes) {
       try {
         const fontkitMod = (await import("@pdf-lib/fontkit")) as unknown as {
@@ -225,14 +253,36 @@ async function runPdfPipelineOnce(
           };
         };
         const gf = fontkit.create(fontBytes);
-        const covered = new Map<number, boolean>();
+        const interGf =
+          latinFontBytes?.regular ? fontkit.create(latinFontBytes.regular) : null;
+        // 两族覆盖各自独立缓存（查询语义不同：拉丁覆盖只认 Inter；节点级
+        // 判定认 Inter 或 Noto 任一——共享缓存会互相污染）。
+        const coveredAny = new Map<number, boolean>();
+        const coveredLatin = new Map<number, boolean>();
+        const coveredIn = (
+          f: { hasGlyphForCodePoint: (cp: number) => boolean } | null,
+          cp: number
+        ): boolean => !!f && !!f.hasGlyphForCodePoint(cp);
+        latinGlyphCovered = interGf
+          ? (cp: number): boolean => {
+              let ok = coveredLatin.get(cp);
+              if (ok === undefined) {
+                ok = cp < 0x80 || coveredIn(interGf, cp);
+                coveredLatin.set(cp, ok);
+              }
+              return ok;
+            }
+          : undefined;
         glyphChecker = (text: string): boolean => {
           for (const ch of Array.from(text)) {
             const cp = ch.codePointAt(0)!;
-            let ok = covered.get(cp);
+            let ok = coveredAny.get(cp);
             if (ok === undefined) {
-              ok = cp < 0x80 || !!gf.hasGlyphForCodePoint(cp); // ASCII 直放
-              covered.set(cp, ok);
+              if (cp < 0x80) ok = true; // ASCII 直放
+              else if (isLatinScript(ch) && interGf)
+                ok = coveredIn(interGf, cp) || coveredIn(gf, cp);
+              else ok = coveredIn(gf, cp);
+              coveredAny.set(cp, ok);
             }
             if (!ok) return false;
           }
@@ -247,6 +297,7 @@ async function runPdfPipelineOnce(
           vector: vectorActive,
           patchPlan: patchPlan ?? undefined,
           glyphChecker,
+          latinGlyphCovered,
         })
       : {
           fragments: [] as TextFragment[],
@@ -254,7 +305,7 @@ async function runPdfPipelineOnce(
           hiding: emptyHiding,
           residualPatches: [] as PatchSource[],
           stats: {
-            totalChars: 0, vectorChars: 0, shadowChars: 0, syntheticBoldChars: 0, syntheticItalicChars: 0, reasons: {} as Record<string, number>,
+            totalChars: 0, vectorChars: 0, shadowChars: 0, syntheticBoldChars: 0, syntheticItalicChars: 0, latinTrueVariantChars: 0, reasons: {} as Record<string, number>,
           },
         };
     const fragments = material.fragments;
@@ -287,6 +338,7 @@ async function runPdfPipelineOnce(
       contentWidthPx,
       contentHeightPx,
       fontBytes,
+      latinFontBytes,
       title: o.title,
       vectorText: vectorActive,
     });
@@ -594,10 +646,13 @@ interface TextFragment {
   /** true = 矢量可见绘制；false/缺省 = 位图承载视觉 + Tr 3 影子（旧形态）。 */
   vector?: boolean;
   skipReason?: string;
-  /** 合成加粗（阶段四：Tr 2 FillAndStroke + 细描边）。 */
+  /** 合成加粗（阶段四：Tr 2 FillAndStroke + 细描边）。RVF 阶段一起仅对
+   *  CJK 段生效。 */
   syntheticBold?: boolean;
-  /** 合成斜体（阶段四：xSkew 剪切）。 */
+  /** 合成斜体（阶段四：xSkew 剪切）。RVF 阶段一起仅对 CJK 段生效。 */
   syntheticItalic?: boolean;
+  /** 逐字符字体变体（与 Array.from(text) 等长；vector 片段携带）。 */
+  variants?: RunFontVariant[];
   /** 有效文本装饰线（最近带线祖先——传播语义近似；shadow 片段也记录：
    *  位图统一摘线后由矢量补画，加粗链接的线不丢）。 */
   decor?: { kinds: Array<"underline" | "line-through">; color: { r: number; g: number; b: number } };
@@ -609,9 +664,11 @@ export interface TextPlanStats {
   totalChars: number;
   vectorChars: number;
   shadowChars: number;
-  /** 合成加粗/斜体字符数（阶段四覆盖口径）。 */
+  /** 合成加粗/斜体字符数（阶段四覆盖口径；RVF 阶段一起为 CJK 域字符数）。 */
   syntheticBoldChars: number;
   syntheticItalicChars: number;
+  /** 走 Inter 真变体的拉丁字符数（RVF 阶段一报告口径）。 */
+  latinTrueVariantChars: number;
   reasons: Record<string, number>;
 }
 
@@ -806,12 +863,19 @@ export function collectPatchPlan(handle: RenderFactoryHandle): PatchPlan {
  */
 export function collectTextMaterial(
   handle: RenderFactoryHandle,
-  o: { vector: boolean; patchPlan?: PatchPlan; glyphChecker?: (text: string) => boolean }
+  o: {
+    vector: boolean;
+    patchPlan?: PatchPlan;
+    glyphChecker?: (text: string) => boolean;
+    /** Inter 变体对码点的覆盖（RVF 阶段一；缺省 = 拉丁字符仍标变体，
+     *  组装器无 Inter 字体时退主字体，安全）。 */
+    latinGlyphCovered?: (cp: number) => boolean;
+  }
 ): TextMaterial {
   const content = handle.content;
   const doc = handle.doc;
   const win = handle.iframe.contentWindow;
-  const stats: TextPlanStats = { totalChars: 0, vectorChars: 0, shadowChars: 0, syntheticBoldChars: 0, syntheticItalicChars: 0, reasons: {} };
+  const stats: TextPlanStats = { totalChars: 0, vectorChars: 0, shadowChars: 0, syntheticBoldChars: 0, syntheticItalicChars: 0, latinTrueVariantChars: 0, reasons: {} };
   const bump = (reason: string, chars: number): void => {
     stats.reasons[reason] = (stats.reasons[reason] ?? 0) + chars;
   };
@@ -1030,6 +1094,24 @@ export function collectTextMaterial(
       stats.shadowChars += charCount;
       if (skipReason) bump(skipReason, charCount);
     }
+    // 逐字符字体变体（RVF 阶段一）：拉丁域字符按字重/字型标 Inter 变体
+    //（Inter 缺字形回 CJK 域——节点级判定已保证至少一族覆盖）；其余 CJK。
+    // vector 与 shadow 片段都携带：影子层拉丁也用 Inter（Tr 3 隐形），让
+    // 两模式的字形 bbox 宽度一致——否则抽取器按 Noto/Inter 字形宽度推断
+    // 空格，双模式分词不一致（逐字锚定也救不了，实测 21+ 处差异）。
+    const chars = Array.from(data);
+    const nodeVariants: RunFontVariant[] = runVariants(
+      data,
+      style.weight,
+      style.style
+    ).map((v, idx) => {
+      if (v === CJK_VARIANT) return v;
+      const cp = chars[idx].codePointAt(0) ?? 0;
+      return !o.latinGlyphCovered || o.latinGlyphCovered(cp) ? v : CJK_VARIANT;
+    });
+    if (vector) {
+      stats.latinTrueVariantChars += nodeVariants.filter((v) => v !== CJK_VARIANT).length;
+    }
     /** 字符区间 [i, j) + 行几何 → 片段（文本/advances 同步切片）。 */
     const pushFragment = (
       i: number,
@@ -1052,6 +1134,7 @@ export function collectTextMaterial(
         skipReason,
         ...(syntheticBold ? { syntheticBold: true } : {}),
         ...(syntheticItalic ? { syntheticItalic: true } : {}),
+        ...(nodeVariants ? { variants: nodeVariants.slice(i, j) } : {}),
         ...(fragDecor ? { decor: fragDecor } : {}),
         ...(fragBg ? { bg: fragBg } : {}),
       });
@@ -1071,7 +1154,6 @@ export function collectTextMaterial(
       }
     };
     // 逐字符 advance（(font,char) 缓存——CJK 重复率高）。
-    const chars = Array.from(data);
     const advances = chars.map((ch) => {
       const key = style.font + "\u0000" + ch;
       let w = advanceCache.get(key);
@@ -1410,6 +1492,7 @@ export function fragmentsToPageRuns(
           shadow: f.vector !== true,
           ...(f.syntheticBold ? { syntheticBold: true } : {}),
           ...(f.syntheticItalic ? { syntheticItalic: true } : {}),
+          ...(f.variants ? { variants: f.variants } : {}),
           ...(f.decor ? { decor: f.decor } : {}),
           ...(f.bg ? { bg: f.bg } : {}),
         });
@@ -1840,6 +1923,39 @@ export async function loadFontBytes(url: string = CJK_FONT_URL): Promise<Uint8Ar
     fontBytesCache = null; // 字体缺位：纯光栅降级（EX-P 允许，完整性不受损）
   }
   return fontBytesCache;
+}
+
+let latinBytesCache: LatinFontBytes | null | undefined;
+
+/** Inter 变体字节（RVF 阶段一；会话内缓存）。Regular 必得（其余变体缺位
+ *  时组装器退 regular/主字体）；全缺 → null（拉丁 run 回合成路径，与
+ *  阶段一之前行为等价）。 */
+export async function loadLatinFontBytes(
+  urls: {
+    regular: string;
+    bold: string;
+    italic: string;
+    boldItalic: string;
+  } = LATIN_FONT_URLS
+): Promise<LatinFontBytes | null> {
+  if (latinBytesCache !== undefined) return latinBytesCache;
+  const load = async (u: string): Promise<Uint8Array | null> => {
+    try {
+      const r = await fetch(u);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return new Uint8Array(await r.arrayBuffer());
+    } catch {
+      return null; // 单变体缺位：不阻断，该字重/字型退主字体
+    }
+  };
+  const [regular, bold, italic, boldItalic] = await Promise.all([
+    load(urls.regular),
+    load(urls.bold),
+    load(urls.italic),
+    load(urls.boldItalic),
+  ]);
+  latinBytesCache = regular ? { regular, ...(bold ? { bold } : {}), ...(italic ? { italic } : {}), ...(boldItalic ? { boldItalic } : {}) } : null;
+  return latinBytesCache;
 }
 
 // ---------------------------------------------------------------------------

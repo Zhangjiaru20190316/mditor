@@ -103,3 +103,91 @@ export function decideTextVectorization(x: VectorizeInput): VectorizeDecision {
     ...(syntheticItalic ? { syntheticItalic: true } : {}),
   };
 }
+
+// ---------------------------------------------------------------------------
+// RVF 阶段一：拉丁 run 真字体变体（Inter 四变体内嵌，合成粗/斜体退位为
+// CJK 兜底）。编辑器 --font-prose: system-ui 在 Windows 下 Latin=Segoe UI、
+// CJK=微软雅黑；矢量导出此前全画 NotoSansSC——拉丁字形显著偏细（F1）、无
+// Bold/Italic 文件只能描边/剪切近似（F2/F3）。Latin 子 run 改画 Inter（UI
+// 文本族，与 Segoe UI 观感/墨量最接近），CJK 子 run 维持 NotoSansSC；混合
+// run 按 script 拆分（Latin 真粗 + CJK 合成粗并存）。缺字形沿用 no-glyph →
+// 残留补丁兜底（绝不画 notdef）。
+// ---------------------------------------------------------------------------
+
+/** Inter 四变体（索引与字节表顺序一致）。 */
+export const LATIN_FONT_VARIANTS = [
+  "latin-regular",
+  "latin-bold",
+  "latin-italic",
+  "latin-bolditalic",
+] as const;
+export type LatinFontVariant = (typeof LATIN_FONT_VARIANTS)[number];
+/** CJK/其余文字（NotoSansSC；粗/斜仍走合成兜底）。 */
+export const CJK_VARIANT = "cjk";
+export type RunFontVariant = LatinFontVariant | typeof CJK_VARIANT;
+
+/** Inter 确定覆盖的 Unicode 码段（保守取值——Segoe UI 主字体呈现的字符面；
+ *  拉丁/希腊/西里尔/通用标点/货币/上下标；其余一律 CJK 域，缺字形由
+ *  glyphChecker 兜底）。 */
+const LATIN_CP_RANGES: Array<[number, number]> = [
+  [0x0020, 0x024f], // 基本拉丁 + Latin-1 + Latin Extended-A/B
+  [0x0250, 0x036f], // IPA + 组合变音符（拼音声调）
+  [0x0370, 0x04ff], // 希腊 + 西里尔
+  [0x1e00, 0x1eff], // Latin Extended Additional
+  [0x2000, 0x206f], // General Punctuation（省略号/引号/破折号）
+  [0x2070, 0x209f], // 上下标
+  [0x20a0, 0x20bf], // 货币符号
+  [0x2122, 0x2122], // ™
+];
+
+/** 字符是否属于拉丁域（Inter 承担；否则 CJK 域走 NotoSansSC）。纯函数。 */
+export function isLatinScript(ch: string): boolean {
+  const cp = ch.codePointAt(0) ?? 0;
+  for (const [lo, hi] of LATIN_CP_RANGES) {
+    if (cp >= lo && cp <= hi) return true;
+  }
+  return false;
+}
+
+/** 字重/字型 → Inter 变体（就近映射：≥600 为粗，非 normal 为斜；与
+ *  decideTextVectorization 的合成判定同阈值）。纯函数。 */
+export function latinVariantFor(
+  weight: number,
+  fontStyle: string
+): LatinFontVariant {
+  const bold = weight >= BOLD_WEIGHT_MIN;
+  const italic = fontStyle !== "normal";
+  return bold
+    ? italic
+      ? "latin-bolditalic"
+      : "latin-bold"
+    : italic
+      ? "latin-italic"
+      : "latin-regular";
+}
+
+/** 文本 → 逐字符字体变体（与 Array.from(text) 等长；拉丁字符按字重/字型
+ *  选 Inter 变体，其余 CJK）。字形覆盖（glyphChecker）不在此层——缺字形
+ *  的字符由调用方落 CJK 域或整节点 no-glyph 兜底。纯函数。 */
+export function runVariants(
+  text: string,
+  weight: number,
+  fontStyle: string
+): RunFontVariant[] {
+  const latin = latinVariantFor(weight, fontStyle);
+  return Array.from(text, (ch) => (isLatinScript(ch) ? latin : CJK_VARIANT));
+}
+
+/** 文本按 script 分段（连续同域字符合并；测试与统计口径）。纯函数。 */
+export function splitRunByScript(
+  text: string
+): Array<{ latin: boolean; text: string }> {
+  const out: Array<{ latin: boolean; text: string }> = [];
+  for (const ch of Array.from(text)) {
+    const latin = isLatinScript(ch);
+    const last = out[out.length - 1];
+    if (last && last.latin === latin) last.text += ch;
+    else out.push({ latin, text: ch });
+  }
+  return out;
+}

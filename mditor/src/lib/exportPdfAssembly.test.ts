@@ -307,3 +307,181 @@ describe("createPdfAssembler", () => {
     expect(imgs.length).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// RVF 阶段一：Inter 变体内嵌——拉丁 run 真粗/斜体（合成 2 Tr 退位为 CJK 兜底）。
+// ---------------------------------------------------------------------------
+import { runVariants } from "./exportVectorText";
+import type { LatinFontBytes } from "./exportPdfAssembly";
+
+describe("createPdfAssembler：Inter 变体（RVF 阶段一）", () => {
+  let notoBytes: Uint8Array | null = null;
+  let interBytes: LatinFontBytes | null = null;
+  beforeAll(async () => {
+    const read = (p: string) =>
+      readFile(join(__dirname, `../../public/assets/fonts/${p}`)).then(
+        (b) => new Uint8Array(b)
+      );
+    try {
+      notoBytes = await read("NotoSansSC-Regular.otf");
+    } catch {
+      notoBytes = null;
+    }
+    try {
+      const [regular, bold, italic, boldItalic] = await Promise.all([
+        read("Inter-Medium.ttf"),
+        read("Inter-Bold.ttf"),
+        read("Inter-MediumItalic.ttf"),
+        read("Inter-BoldItalic.ttf"),
+      ]);
+      interBytes = { regular, bold, italic, boldItalic };
+    } catch {
+      interBytes = null;
+    }
+  });
+
+  const opts = () => ({
+    pageWidthPt: A4.width,
+    pageHeightPt: A4.height,
+    marginPt: MARGIN,
+    contentWidthPx: CONTENT_PX.w,
+    contentHeightPx: CONTENT_PX.h,
+  });
+
+  it("拉丁真粗体：syntheticBold 标记不再触发 2 Tr（Inter-Bold 承担）", async () => {
+    if (!notoBytes || !interBytes) return;
+    const asm = await createPdfAssembler({
+      ...opts(),
+      fontBytes: notoBytes,
+      latinFontBytes: interBytes,
+      vectorText: true,
+    });
+    const text = "Bold latin text";
+    await asm.addPage(
+      null,
+      [
+        {
+          text,
+          x: 10,
+          baselineY: 100,
+          size: 16,
+          advances: Array.from(text, () => 8),
+          color: { r: 20, g: 20, b: 20 },
+          syntheticBold: true,
+          variants: runVariants(text, 700, "normal"),
+        },
+      ],
+      undefined,
+      undefined,
+      undefined
+    );
+    const bytes = await asm.save();
+    // 按需嵌入：只嵌用到的 latin-bold（零使用字体不入册——空 CFF subset
+    // 在 save 编码挂死，纯拉丁页也不触 8.3MB 主字体解码）
+    expect(asm.info().latinFontsEmbedded).toBe(1);
+    expect(asm.info().fontEmbedded).toBe(false);
+    const cs = await contentStreamText(bytes);
+    expect(cs).not.toContain("2 Tr");
+  }, 60_000);
+
+  it("CJK 粗体兜底保留合成（2 Tr 在）且混合 run 真假粗并存", async () => {
+    if (!notoBytes || !interBytes) return;
+    const asm = await createPdfAssembler({
+      ...opts(),
+      fontBytes: notoBytes,
+      latinFontBytes: interBytes,
+      vectorText: true,
+    });
+    const text = "Bold 加粗标题";
+    await asm.addPage(
+      null,
+      [
+        {
+          text,
+          x: 10,
+          baselineY: 100,
+          size: 16,
+          advances: Array.from(text, () => 8),
+          color: { r: 20, g: 20, b: 20 },
+          syntheticBold: true,
+          variants: runVariants(text, 700, "normal"),
+        },
+      ],
+      undefined,
+      undefined,
+      undefined
+    );
+    const bytes = await asm.save();
+    const cs = await contentStreamText(bytes);
+    // CJK 段仍走 FillAndOutline 合成（2 Tr ≥1）；拉丁段（Bold+空格）真字体
+    // 不描边——2 Tr 次数应小于段数（只有 CJK 段贡献）。
+    const twoTr = cs.split("2 Tr").length - 1;
+    expect(twoTr).toBeGreaterThanOrEqual(1);
+    // 按需嵌入：main + latin-bold（Type0+Descendant 各 2 个 /Font 对象）
+    expect(await fontCount(bytes)).toBeGreaterThanOrEqual(4);
+    expect(asm.info().latinFontsEmbedded).toBe(1);
+  }, 60_000);
+
+  it("影子 run 忽略 variants（Tr 3 主字体，不拆段）", async () => {
+    if (!notoBytes || !interBytes) return;
+    const asm = await createPdfAssembler({
+      ...opts(),
+      fontBytes: notoBytes,
+      latinFontBytes: interBytes,
+      vectorText: true,
+    });
+    const text = "shadow 混排 中文";
+    await asm.addPage(
+      null,
+      [
+        {
+          text,
+          x: 10,
+          baselineY: 100,
+          size: 16,
+          advances: Array.from(text, () => 8),
+          shadow: true,
+          variants: runVariants(text, 400, "normal"),
+        },
+      ],
+      undefined,
+      undefined,
+      undefined
+    );
+    await asm.save();
+    const info = asm.info();
+    expect(info.visibleRunsPlaced).toBe(0);
+    // 影子层拉丁也用 Inter（bbox 一致性）：按需嵌入 latin-regular
+    expect(info.latinFontsEmbedded).toBe(1);
+  }, 60_000);
+
+  it("Inter 字节全缺 → latinFontsEmbedded=0，拉丁 run 回主字体（无 notdef 风险面不变）", async () => {
+    if (!notoBytes) return;
+    const asm = await createPdfAssembler({
+      ...opts(),
+      fontBytes: notoBytes,
+      latinFontBytes: null,
+      vectorText: true,
+    });
+    const text = "fallback latin";
+    await asm.addPage(
+      null,
+      [
+        {
+          text,
+          x: 10,
+          baselineY: 100,
+          size: 16,
+          advances: Array.from(text, () => 8),
+          color: { r: 20, g: 20, b: 20 },
+          variants: runVariants(text, 400, "normal"),
+        },
+      ],
+      undefined,
+      undefined,
+      undefined
+    );
+    await asm.save();
+    expect(asm.info().latinFontsEmbedded).toBe(0);
+  }, 60_000);
+});

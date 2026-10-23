@@ -14,6 +14,27 @@
 - 验收（perf/rvf-stage0.mjs + perf/rvf-measure.py）：代码区彩色像素
   vec 8409 / ras 8171（修复前双模式均为 0），双模式页数一致 4/4。
 
+### 阶段 1：Inter 真字体变体内嵌（F1/F2/F3 主线）
+
+- 选型修正：Inter Regular 为高分屏设计，12pt 渲染墨量仅 NotoSansSC 拉丁的
+  43%（stem/em 0.088 vs 0.149），直接替换反使 F1 恶化——正文档取 **Inter
+  Medium**（stem/em 0.107，渲染墨量 ≈Noto×1.38，对齐 Segoe UI 低 DPI 屏显）；
+  粗体档 Inter-Bold（≈Noto 干宽）。四变体（Medium/Bold/MediumItalic/
+  BoldItalic，Google Fonts 静态 TTF 切片，glyf 轮廓绕开 CFF 子集补丁区）+
+  OFL 许可随资产。
+- **@pdf-lib/fontkit 补丁（glyf 4 字节对齐）**：fontkit TTF 子集不按 TrueType
+  规范对齐 glyf 条目，奇长度字形（Inter .notdef=211B）使后续字形落在奇
+  offset，短 loca（÷2 截断）丢字节→字形损坏（FreeType 拒载/渲染空）。追加
+  到 patches/@pdf-lib+fontkit+1.1.1.patch（与既有 offSize 补丁同机制）。
+- 组装器按需嵌入：零使用字体不入册（空 CFF subset 在 save 编码挂死——
+  纯拉丁页曾必触发回退；也省 8.3MB 主字体解码）。run 按逐字符变体分组：
+  拉丁段切 Inter 真粗/斜体（2 Tr 合成退位，仅剩 CJK 粗体兜底 14 处）；
+  影子层拉丁同用 Inter（双模式字形 bbox 一致，抽取分词差 103→3 处）；
+  拉丁字符逐字锚定（位置取实测位）。
+- 验收（perf/rvf-stage1.mjs + rvf-measure.py）：2 Tr 53→14；墨量比
+  0.665-0.755 → 0.81-0.99；非空白抽取逐字一致；页数 4/4 一致；体积 +3.4%；
+  Inter 子集 pymupdf/FreeType 渲染可载；全量 vitest 1192 绿。
+
 ## 5.1.2（2026-10-23）：同步安全铁律——永不删除本地文件 + 键编码修复
 
 **事故复盘（2026-10-23 上午）**：5.1.1 首装后首次同步，`E:\笔记\cmc` 328 个、
