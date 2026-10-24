@@ -1,0 +1,66 @@
+{
+  "runs": [
+    {
+      "mode": "raster",
+      "pages": 4,
+      "pdfBytes": 924141,
+      "vectorFallback": null,
+      "textPlan": {
+        "totalChars": 1514,
+        "vectorChars": 0,
+        "shadowChars": 1514,
+        "syntheticBoldChars": 0,
+        "syntheticItalicChars": 0,
+        "latinTrueVariantChars": 0,
+        "reasons": {}
+      },
+      "assemble": {
+        "fontEmbedded": true,
+        "latinFontsEmbedded": 3,
+        "visibleGlyphs": 0,
+        "textOps": 1057
+      },
+      "timings": {
+        "factory": 37.29999999701977,
+        "measure": 1.2000000029802322,
+        "paginate": 0.20000000298023224,
+        "text": 36.599999994039536,
+        "raster": 1335.0999999940395,
+        "assemble": 372.90000000596046
+      }
+    },
+    {
+      "mode": "vector",
+      "pages": 4,
+      "pdfBytes": 465331,
+      "vectorFallback": null,
+      "textPlan": {
+        "totalChars": 1514,
+        "vectorChars": 1208,
+        "shadowChars": 306,
+        "syntheticBoldChars": 105,
+        "syntheticItalicChars": 16,
+        "latinTrueVariantChars": 793,
+        "reasons": {
+          "mono-font": 11,
+          "raster-scope": 267,
+          "katex": 28
+        }
+      },
+      "assemble": {
+        "fontEmbedded": true,
+        "latinFontsEmbedded": 3,
+        "visibleGlyphs": 1149,
+        "textOps": 1059
+      },
+      "timings": {
+        "factory": 24.099999994039536,
+        "measure": 0.7999999970197678,
+        "paginate": 0.10000000894069672,
+        "text": 17.099999994039536,
+        "raster": 1011.5,
+        "assemble": 148.70000000298023
+      }
+    }
+  ]
+}

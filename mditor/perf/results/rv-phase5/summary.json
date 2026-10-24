@@ -1,0 +1,12 @@
+{
+  "fallback": {
+    "pages": 4,
+    "vectorMode": false,
+    "vectorFallback": "Error: 注入的矢量失败",
+    "bytes": 902907
+  },
+  "raster": {
+    "pages": 4,
+    "bytes": 902907
+  }
+}

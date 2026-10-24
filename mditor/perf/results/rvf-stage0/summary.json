@@ -1,0 +1,17 @@
+{
+  "hljsSpans": 21,
+  "runs": [
+    {
+      "mode": "raster",
+      "pages": 4,
+      "pdfBytes": 909018,
+      "vectorFallback": null
+    },
+    {
+      "mode": "vector",
+      "pages": 4,
+      "pdfBytes": 449926,
+      "vectorFallback": null
+    }
+  ]
+}

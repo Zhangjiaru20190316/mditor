@@ -1,0 +1,30 @@
+{
+  "table": {
+    "borderTopWidth": "0.571429px",
+    "borderRightWidth": "0.571429px",
+    "borderBottomWidth": "0.571429px",
+    "borderLeftWidth": "0.571429px",
+    "borderTopColor": "rgb(232, 229, 221)",
+    "collapse": "separate",
+    "display": "table"
+  },
+  "th": {
+    "borderTopWidth": "0px",
+    "borderRightWidth": "0.571429px",
+    "borderBottomWidth": "0.571429px",
+    "borderLeftWidth": "0px",
+    "borderTopColor": "rgb(44, 42, 38)",
+    "collapse": "separate",
+    "display": "table-cell"
+  },
+  "td": {
+    "borderTopWidth": "0px",
+    "borderRightWidth": "0.571429px",
+    "borderBottomWidth": "0.571429px",
+    "borderLeftWidth": "0px",
+    "borderTopColor": "rgb(44, 42, 38)",
+    "collapse": "separate",
+    "display": "table-cell"
+  },
+  "rows": 25
+}

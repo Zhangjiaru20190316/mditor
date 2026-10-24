@@ -1,0 +1,42 @@
+[
+  {
+    "mode": "raster",
+    "pages": 4,
+    "pdfBytes": 902907,
+    "textPlan": {
+      "totalChars": 1522,
+      "vectorChars": 0,
+      "shadowChars": 1522,
+      "syntheticBoldChars": 0,
+      "syntheticItalicChars": 0,
+      "reasons": {}
+    },
+    "visibleGlyphs": 0,
+    "vectorFallback": null
+  },
+  {
+    "mode": "vector",
+    "pages": 4,
+    "pdfBytes": 443221,
+    "textPlan": {
+      "totalChars": 1522,
+      "vectorChars": 1208,
+      "shadowChars": 314,
+      "syntheticBoldChars": 105,
+      "syntheticItalicChars": 16,
+      "reasons": {
+        "mono-font": 11,
+        "raster-scope": 275,
+        "katex": 28
+      }
+    },
+    "patchPlan": {
+      "blockPatches": 4,
+      "inlinePatches": 3,
+      "residualPatches": 1,
+      "nativeImages": 1
+    },
+    "visibleGlyphs": 1147,
+    "vectorFallback": null
+  }
+]

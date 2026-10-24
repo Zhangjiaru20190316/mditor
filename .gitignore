@@ -62,3 +62,14 @@ mditor/d2.jpeg
 
 # 覆盖率产物（N32 基线数据在报告中，目录不入库）
 mditor/coverage/
+
+# 会话调试产物（含云存储 AccessKey / 私有笔记文件名，绝不入库）
+__pycache__/
+mditor-cloud-*.py
+mditor-cloud-objects.json
+mditor-restore-*
+mditor-analyze-missing.py
+mditor-sync-pending-deletes.*
+
+# 临时测量产物（体积大、中间态）
+mditor/perf/tmp/

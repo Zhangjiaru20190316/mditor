@@ -1,0 +1,5 @@
+file 'perf/resultsr11-e5-clip-baseline-card.mp4'
+file 'perf/results/r11-e5-clip-baseline.mp4'
+file 'perf/resultsr11-e5-blind-AB-gap.mp4'
+file 'perf/resultsr11-e5-clip-premount-card.mp4'
+file 'perf/results/r11-e5-clip-premount.mp4'

@@ -1,0 +1,45 @@
+{
+  "when": "2026-10-21T10:45:17.325Z",
+  "pdf": "C:/Users/hh/Documents/rv-phase0-table.pdf",
+  "pdfBytes": 717180,
+  "pages": 4,
+  "paginate": {
+    "pages": 4,
+    "splits": 2,
+    "pushedKeepTogether": 0,
+    "orphanWidowPushes": 0,
+    "headingPushes": 1,
+    "clippedSegments": 0
+  },
+  "textFragments": 246,
+  "factoryTableStyles": {
+    "table": {
+      "borderTopWidth": "0.571429px",
+      "borderRightWidth": "0.571429px",
+      "borderBottomWidth": "0.571429px",
+      "borderLeftWidth": "0.571429px",
+      "borderTopColor": "rgb(232, 229, 221)",
+      "collapse": "separate",
+      "display": "table"
+    },
+    "th": {
+      "borderTopWidth": "0px",
+      "borderRightWidth": "0.571429px",
+      "borderBottomWidth": "0.571429px",
+      "borderLeftWidth": "0px",
+      "borderTopColor": "rgb(44, 42, 38)",
+      "collapse": "separate",
+      "display": "table-cell"
+    },
+    "td": {
+      "borderTopWidth": "0px",
+      "borderRightWidth": "0.571429px",
+      "borderBottomWidth": "0.571429px",
+      "borderLeftWidth": "0px",
+      "borderTopColor": "rgb(44, 42, 38)",
+      "collapse": "separate",
+      "display": "table-cell"
+    },
+    "rows": 25
+  }
+}

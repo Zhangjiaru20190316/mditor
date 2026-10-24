@@ -1,0 +1,59 @@
+[
+  {
+    "mode": "raster",
+    "pages": 4,
+    "vectorMode": false,
+    "pdfBytes": 697587,
+    "textPlan": {
+      "totalChars": 1831,
+      "vectorChars": 0,
+      "shadowChars": 1831,
+      "reasons": {}
+    },
+    "assemble": {
+      "visibleRuns": 0,
+      "visibleGlyphs": 0,
+      "textRuns": 246
+    },
+    "paginate": {
+      "pages": 4,
+      "splits": 2,
+      "pushedKeepTogether": 1,
+      "orphanWidowPushes": 0,
+      "headingPushes": 0,
+      "clippedSegments": 0
+    },
+    "vectorFallback": null
+  },
+  {
+    "mode": "vector",
+    "pages": 4,
+    "vectorMode": true,
+    "pdfBytes": 296781,
+    "textPlan": {
+      "totalChars": 1831,
+      "vectorChars": 1379,
+      "shadowChars": 452,
+      "reasons": {
+        "bold": 105,
+        "italic": 16,
+        "mono-font": 11,
+        "raster-scope": 320
+      }
+    },
+    "assemble": {
+      "visibleRuns": 152,
+      "visibleGlyphs": 1308,
+      "textRuns": 246
+    },
+    "paginate": {
+      "pages": 4,
+      "splits": 2,
+      "pushedKeepTogether": 1,
+      "orphanWidowPushes": 0,
+      "headingPushes": 0,
+      "clippedSegments": 0
+    },
+    "vectorFallback": null
+  }
+]

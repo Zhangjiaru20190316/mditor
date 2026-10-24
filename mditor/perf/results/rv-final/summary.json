@@ -1,0 +1,80 @@
+[
+  {
+    "mode": "raster",
+    "pages": 4,
+    "pdfBytes": 902908,
+    "textPlan": {
+      "totalChars": 1522,
+      "vectorChars": 0,
+      "shadowChars": 1522,
+      "syntheticBoldChars": 0,
+      "syntheticItalicChars": 0,
+      "reasons": {}
+    },
+    "assemble": {
+      "visibleGlyphs": 0,
+      "fontEmbedded": true
+    },
+    "timings": {
+      "factory": 35.70000000298023,
+      "measure": 1,
+      "paginate": 0.19999999552965164,
+      "text": 33.399999998509884,
+      "raster": 1405.2999999970198,
+      "assemble": 331.1000000014901
+    },
+    "paginate": {
+      "pages": 4,
+      "splits": 1,
+      "pushedKeepTogether": 0,
+      "orphanWidowPushes": 0,
+      "headingPushes": 1,
+      "clippedSegments": 0
+    },
+    "vectorFallback": null
+  },
+  {
+    "mode": "vector",
+    "pages": 4,
+    "pdfBytes": 443221,
+    "textPlan": {
+      "totalChars": 1522,
+      "vectorChars": 1208,
+      "shadowChars": 314,
+      "syntheticBoldChars": 105,
+      "syntheticItalicChars": 16,
+      "reasons": {
+        "mono-font": 11,
+        "raster-scope": 275,
+        "katex": 28
+      }
+    },
+    "patchPlan": {
+      "blockPatches": 4,
+      "inlinePatches": 3,
+      "residualPatches": 1,
+      "nativeImages": 1
+    },
+    "assemble": {
+      "visibleGlyphs": 1149,
+      "fontEmbedded": true
+    },
+    "timings": {
+      "factory": 22.19999999552965,
+      "measure": 0.7000000029802322,
+      "paginate": 0,
+      "text": 17.799999997019768,
+      "raster": 1006.2000000029802,
+      "assemble": 132.69999999552965
+    },
+    "paginate": {
+      "pages": 4,
+      "splits": 1,
+      "pushedKeepTogether": 0,
+      "orphanWidowPushes": 0,
+      "headingPushes": 1,
+      "clippedSegments": 0
+    },
+    "vectorFallback": null
+  }
+]
