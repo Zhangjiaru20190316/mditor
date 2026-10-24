@@ -1,5 +1,34 @@
 # Changelog
 
+## 5.1.4（2026-10-24）：矢量 PDF 渲染修复（RVF 追加轮）——中英混排导出乱码/缺字根治
+
+- **症状**：5.1.3 导出的矢量文字 PDF，中英混排段落大面积缺字与叠字乱码（引用块、
+  表格、粗体标题尤重），而复制粘贴的文字完整——文字层/ToUnicode 完好，纯属字形
+  绘制损坏。实测用户文档 13 页中约 44% CJK 字形损坏。
+- **根因 A（主犯）**：@pdf-lib/fontkit 1.1.1 `CFFSubset.subsetFontdict` 把每个字形
+  映射到 `FDArray.length - 1`（最近一次新增 FD 的下标），而非该字形所属 FD 的下标。
+  NotoSansSC 按字重分 18 个 FD（Dingbats/拉丁/汉字等），中英混排时 FD 频繁交替，
+  交替后所有"回访"FD 的字形全部拿到错误 Private DICT（错误的局部子程序集与 bias），
+  callsubr 越界/错位 → FreeType 画出乱字形或空白。纯 CJK 文档 FD 连续故不触发
+  （此前轮次 fixture 未暴露）。
+- **根因 B（从犯）**：同库 `CFFFont.fdForGlyph` FDSelect 二分查找用严格大于
+  （`gid > ranges[mid+1].first`），恰好落在 range 起点的 gid 返回前一个 range 的
+  FD（实测 1000 gid 中 26 个错分）。两缺陷叠加。
+- **修复**：`patches/@pdf-lib+fontkit+1.1.1.patch` 增补两处（es/umd 双 bundle 同步）：
+  ① FDSelect.fds 与 used-subrs 按源 FD 记桶；② fdForGlyph 改为"最后一个
+  first ≤ gid 的 range"的正确二分。
+- **验收**：fontTools 字节级校验——子集 589 字形 charstring 与原版逐字节一致，
+  全部可执行且轮廓 op 数与原版一致（修复前 278/589 执行失败）；用户文档
+  「AI替代教师-范文与讲解」重导出矢量 PDF 视觉与文字层完全正常，内嵌字体
+  520 字形 0 执行失败（修复前约 44% 损坏）。子集体积 176KB→184KB（+4.4%，
+  FDSelect 修复使更多子程序被正确保留）。
+- 门禁：tsc 0 错 / eslint 绿（顺手清两笔历史欠账：spike-cdp.mjs WebSocket 全局
+  声明、exportPdfAssembly embedFontMs 实际值回填）/ vitest 1192/1192。
+- 复现与验收工具沉淀：`perf/rvf-subset-repro.mjs`（Node 子集复现）、
+  `perf/rvf-subset-verify.py`（fontTools 字节级+执行体检）、
+  `perf/rvf-round2-e2e.mjs`（CDP 双模式导出）；产物 `perf/results/rvf-subset/`、
+  `perf/results/rvf-round2/`。
+
 ## 5.1.3（2026-10-24）：矢量 PDF 渲染修复（RVF 轮）——代码高亮 / Inter 真字体 / 线宽墨量校准
 
 ### 阶段 0：导出代码块语法高亮（F5，三出口同修）

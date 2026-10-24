@@ -1,8 +1,35 @@
 diff --git a/node_modules/@pdf-lib/fontkit/dist/fontkit.es.js b/node_modules/@pdf-lib/fontkit/dist/fontkit.es.js
-index 2711b07..054017d 100644
+index 2711b07..9132b90 100644
 --- a/node_modules/@pdf-lib/fontkit/dist/fontkit.es.js
 +++ b/node_modules/@pdf-lib/fontkit/dist/fontkit.es.js
-@@ -32768,6 +32768,17 @@ var TTFSubset = /*#__PURE__*/function (_Subset) {
+@@ -20997,18 +20997,25 @@ var CFFFont = /*#__PURE__*/function () {
+         var low = 0;
+         var high = ranges.length - 1;
+ 
++        // mditor patch (RVF round 2): upstream used `gid > ranges[mid + 1].first`,
++        // so a gid landing EXACTLY on the next range's first resolved to the
++        // PREVIOUS range's fd. Wrong fd -> wrong Private dict (local Subrs and
++        // bias) -> callsubr chaos on ~40% of CJK glyphs in vector PDF export.
++        // Binary-search the LAST range with first <= gid instead.
+         while (low <= high) {
+           var mid = low + high >> 1;
+ 
+           if (gid < ranges[mid].first) {
+             high = mid - 1;
+-          } else if (mid < high && gid > ranges[mid + 1].first) {
++          } else if (mid + 1 < ranges.length && gid >= ranges[mid + 1].first) {
+             low = mid + 1;
+           } else {
+             return ranges[mid].fd;
+           }
+         }
+ 
++        return ranges.length > 0 ? ranges[ranges.length - 1].fd : null;
++
+       default:
+         throw new Error("Unknown FDSelect version: " + this.topDict.FDSelect.version);
+     }
+@@ -32768,6 +32775,17 @@ var TTFSubset = /*#__PURE__*/function (_Subset) {
        buffer = this.glyphEncoder.encodeSimple(glyph.path, glyf.instructions);
      }
  
@@ -20,7 +47,44 @@ index 2711b07..054017d 100644
      this.glyf.push(buffer);
      this.loca.offsets.push(this.offset);
      this.hmtx.metrics.push({
-@@ -33038,7 +33049,7 @@ var CFFSubset = /*#__PURE__*/function (_Subset) {
+@@ -32924,6 +32942,13 @@ var CFFSubset = /*#__PURE__*/function (_Subset) {
+     var used_fds = {};
+     var used_subrs = [];
+ 
++    // mditor patch (RVF round 2): upstream pushed `FDArray.length - 1` for every
++    // glyph, which is the index of the MOST RECENTLY added FD -- not the index
++    // of THIS glyph's FD. Whenever FD usage interleaves (CJK text mixing latin,
++    // digits and punctuation), glyphs get mapped to the wrong FD's Private dict
++    // (wrong local Subrs and bias) and render as garbage/blank. Same for
++    // used-subr bookkeeping, which always accumulated into the LAST bucket.
++    // Track each source FD's subset index instead.
+     for (var _iterator2 = _createForOfIteratorHelperLoose$p(this.glyphs), _step2; !(_step2 = _iterator2()).done;) {
+       var gid = _step2.value;
+       var fd = this.cff.fdForGlyph(gid);
+@@ -32932,18 +32957,18 @@ var CFFSubset = /*#__PURE__*/function (_Subset) {
+         continue;
+       }
+ 
+-      if (!used_fds[fd]) {
++      if (used_fds[fd] === undefined) {
+         topDict.FDArray.push(Object.assign({}, this.cff.topDict.FDArray[fd]));
+         used_subrs.push({});
++        used_fds[fd] = topDict.FDArray.length - 1;
+       }
+ 
+-      used_fds[fd] = true;
+-      topDict.FDSelect.fds.push(topDict.FDArray.length - 1);
++      topDict.FDSelect.fds.push(used_fds[fd]);
+       var glyph = this.font.getGlyph(gid);
+       var path = glyph.path; // this causes the glyph to be parsed
+ 
+       for (var subr in glyph._usedSubrs) {
+-        used_subrs[used_subrs.length - 1][subr] = true;
++        used_subrs[used_fds[fd]][subr] = true;
+       }
+     }
+ 
+@@ -33038,7 +33063,7 @@ var CFFSubset = /*#__PURE__*/function (_Subset) {
      var top = {
        version: 1,
        hdrSize: this.cff.hdrSize,
@@ -30,10 +94,37 @@ index 2711b07..054017d 100644
        nameIndex: [this.cff.postscriptName],
        topDictIndex: [topDict],
 diff --git a/node_modules/@pdf-lib/fontkit/dist/fontkit.umd.js b/node_modules/@pdf-lib/fontkit/dist/fontkit.umd.js
-index c18af0e..c149c13 100644
+index c18af0e..e6c3686 100644
 --- a/node_modules/@pdf-lib/fontkit/dist/fontkit.umd.js
 +++ b/node_modules/@pdf-lib/fontkit/dist/fontkit.umd.js
-@@ -40918,6 +40918,17 @@
+@@ -21000,18 +21000,25 @@
+ 	        var low = 0;
+ 	        var high = ranges.length - 1;
+ 
++	        // mditor patch (RVF round 2): upstream used `gid > ranges[mid + 1].first`,
++	        // so a gid landing EXACTLY on the next range's first resolved to the
++	        // PREVIOUS range's fd. Wrong fd -> wrong Private dict (local Subrs and
++	        // bias) -> callsubr chaos on ~40% of CJK glyphs in vector PDF export.
++	        // Binary-search the LAST range with first <= gid instead.
+ 	        while (low <= high) {
+ 	          var mid = low + high >> 1;
+ 
+ 	          if (gid < ranges[mid].first) {
+ 	            high = mid - 1;
+-	          } else if (mid < high && gid > ranges[mid + 1].first) {
++	          } else if (mid + 1 < ranges.length && gid >= ranges[mid + 1].first) {
+ 	            low = mid + 1;
+ 	          } else {
+ 	            return ranges[mid].fd;
+ 	          }
+ 	        }
+ 
++	        return ranges.length > 0 ? ranges[ranges.length - 1].fd : null;
++
+ 	      default:
+ 	        throw new Error("Unknown FDSelect version: " + this.topDict.FDSelect.version);
+ 	    }
+@@ -40918,6 +40925,17 @@
  	      buffer = this.glyphEncoder.encodeSimple(glyph.path, glyf.instructions);
  	    }
  
@@ -51,7 +142,44 @@ index c18af0e..c149c13 100644
  	    this.glyf.push(buffer);
  	    this.loca.offsets.push(this.offset);
  	    this.hmtx.metrics.push({
-@@ -41188,7 +41199,7 @@
+@@ -41074,6 +41092,13 @@
+ 	    var used_fds = {};
+ 	    var used_subrs = [];
+ 
++	    // mditor patch (RVF round 2): upstream pushed `FDArray.length - 1` for every
++	    // glyph, which is the index of the MOST RECENTLY added FD -- not the index
++	    // of THIS glyph's FD. Whenever FD usage interleaves (CJK text mixing latin,
++	    // digits and punctuation), glyphs get mapped to the wrong FD's Private dict
++	    // (wrong local Subrs and bias) and render as garbage/blank. Same for
++	    // used-subr bookkeeping, which always accumulated into the LAST bucket.
++	    // Track each source FD's subset index instead.
+ 	    for (var _iterator2 = _createForOfIteratorHelperLoose$p(this.glyphs), _step2; !(_step2 = _iterator2()).done;) {
+ 	      var gid = _step2.value;
+ 	      var fd = this.cff.fdForGlyph(gid);
+@@ -41082,18 +41107,18 @@
+ 	        continue;
+ 	      }
+ 
+-	      if (!used_fds[fd]) {
++	      if (used_fds[fd] === undefined) {
+ 	        topDict.FDArray.push(Object.assign({}, this.cff.topDict.FDArray[fd]));
+ 	        used_subrs.push({});
++	        used_fds[fd] = topDict.FDArray.length - 1;
+ 	      }
+ 
+-	      used_fds[fd] = true;
+-	      topDict.FDSelect.fds.push(topDict.FDArray.length - 1);
++	      topDict.FDSelect.fds.push(used_fds[fd]);
+ 	      var glyph = this.font.getGlyph(gid);
+ 	      var path = glyph.path; // this causes the glyph to be parsed
+ 
+ 	      for (var subr in glyph._usedSubrs) {
+-	        used_subrs[used_subrs.length - 1][subr] = true;
++	        used_subrs[used_fds[fd]][subr] = true;
+ 	      }
+ 	    }
+ 
+@@ -41188,7 +41213,7 @@
  	    var top = {
  	      version: 1,
  	      hdrSize: this.cff.hdrSize,

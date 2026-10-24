@@ -1,3 +1,4 @@
+/* global WebSocket */
 // 阶段 0 Spike CDP 探针（dev 工具）。用法：
 //   node scripts/spike-cdp.mjs [输出png]
 // 前置：应用以 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222 启动。

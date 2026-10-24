@@ -581,6 +581,6 @@ export async function createPdfAssembler(
     async save() {
       return doc.save();
     },
-    info: () => ({ ...info, latinFontsEmbedded: latinFonts.size }),
+    info: () => ({ ...info, latinFontsEmbedded: latinFonts.size, embedFontMs }),
   };
 }
