@@ -257,7 +257,7 @@ fn percent_decode_path(s: &str) -> String {
 /// ObjectMeta → S3Object（serde camelCase）。键统一解码（见 percent_decode_path）。
 fn to_s3_object(m: &object_store::ObjectMeta) -> S3Object {
     S3Object {
-        key: percent_decode_path(&m.location.to_string()),
+        key: percent_decode_path(m.location.as_ref()),
         size: m.size,
         etag: m.e_tag.clone(),
         last_modified: m.last_modified.to_rfc3339(),
