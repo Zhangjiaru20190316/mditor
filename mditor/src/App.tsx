@@ -1052,7 +1052,14 @@ function App() {
       // （对话框选择已在 dialog adapter 授权；这里兜底覆盖 pending file、
       // 拖放、最近文件等非对话框入口）。失败不阻塞打开——fs 读取会给出
       // 明确错误，避免把授权问题误报成文档损坏。
-      getAdapter().app.grantFsScope?.([path], false)?.catch(() => undefined);
+      // v5.1.4：必须 await——授权是 fire-and-forget 时，文档渲染发出的
+      // 图片 asset 请求可能抢在授权 IPC 落地之前，被 scope 拒绝后裂图且
+      // 不自愈。一次 IPC 往返（毫秒级）换顺序确定性。
+      try {
+        await getAdapter().app.grantFsScope?.([path], false);
+      } catch {
+        /* 授权失败：继续打开，读取/图片各报各的错 */
+      }
       // Phase 1 — INSTANT RESPONSE (<1 frame, the iOS pattern):
       //   * raise the loading bar RIGHT AWAY (beginSwitch also supersedes any
       //     in-flight switch and cancels its pending clear timer)

@@ -229,7 +229,16 @@ pub fn take_tab_payload(state: State<'_, TabPayloadStash>, id: String) -> Option
 /// S1：把用户显式选择的路径动态加入 fs 与 asset 协议作用域。
 /// 静态 capability 只保留 $APPDATA/$DOCUMENT；一切「用户意图」路径——对话框
 /// 选择的工作区/文件/另存目标、启动恢复的工作区、双击打开、拖放——经此
-/// 运行时授权。目录按需递归（工作区根），文件单点。
+/// 运行时授权。
+///
+/// v5.1.4 图片显示修复：**单文件授权的授权面是其父目录（递归），不再是
+/// 文件本身**。打开文档（对话框 / 最近文件 / 双击 / 拖放）此前只授 .md
+/// 文件单点，而文档引用的图片（assets/、素材/、同目录 xxx.jpg）全在父
+/// 目录下——asset 协议拒绝它们，文档一打开整篇裂图；fs 侧同理（导出
+/// 内联图片读不到字节）。语义对齐 Obsidian/Typora 与本应用 HTML 笔记
+/// 标签的既有做法（openHtmlNote 的目录级授权）：打开一个文档 = 信任
+/// 它所在的文件夹。盘符/UNC 根下的文件（C:/a.md）没有可授的父目录，
+/// 保留单点授权，与旧行为一致。
 #[command]
 pub fn grant_fs_scope(
     app: tauri::AppHandle,
@@ -238,28 +247,46 @@ pub fn grant_fs_scope(
 ) -> Result<(), String> {
     use tauri::Manager;
     use tauri_plugin_fs::FsExt;
+    let _ = recursive; // 目录一律递归授权（唯一调用语义：工作区根/HTML 目录）
     for p in &paths {
         if p.is_empty() {
             continue;
         }
         let path = std::path::PathBuf::from(p);
-        if path.is_dir() && recursive {
+        let (scope, is_dir) = scope_targets(&path);
+        if is_dir {
             app.fs_scope()
-                .allow_directory(&path, true)
+                .allow_directory(&scope, true)
                 .map_err(|e| format!("授权目录失败：{e}"))?;
         } else {
             app.fs_scope()
-                .allow_file(&path)
+                .allow_file(&scope)
                 .map_err(|e| format!("授权文件失败：{e}"))?;
         }
         // asset 协议同步放行（笔记图片走 asset:// 显示）。失败不致命——
         // 退化为该路径下图片不可见，不影响文本功能。
-        let _ = app.asset_protocol_scope().allow_file(&path);
-        if path.is_dir() {
-            let _ = app.asset_protocol_scope().allow_directory(&path, true);
+        let _ = app.asset_protocol_scope().allow_file(&scope);
+        if is_dir {
+            let _ = app.asset_protocol_scope().allow_directory(&scope, true);
         }
     }
     Ok(())
+}
+
+/// grant_fs_scope 的授权目标推导（纯函数，供测试）：
+/// * 目录 → (该目录, true)；
+/// * 文件 → (父目录, true)——见 grant_fs_scope 的 v5.1.4 注释；
+/// * 根下文件（父目录已是文件系统根）→ (文件本身, false) 单点兜底。
+fn scope_targets(path: &Path) -> (std::path::PathBuf, bool) {
+    if path.is_dir() {
+        return (path.to_path_buf(), true);
+    }
+    match path.parent() {
+        // parent.parent() 存在 ⇒ parent 不是盘符根（C:/）/ POSIX 根（/）
+        // / UNC 根（//server/share 的 parent //server 仍算，多授一层无害）。
+        Some(parent) if parent.parent().is_some() => (parent.to_path_buf(), true),
+        _ => (path.to_path_buf(), false),
+    }
 }
 
 // ---- 回收站删除（v4.9 Agent 删除红线：trash > rm——删除必须可恢复）----------
@@ -722,5 +749,37 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&ws);
         let _ = fs::remove_dir_all(&app_data);
+    }
+
+    /// v5.1.4 图片显示修复回归：grant_fs_scope 的授权目标推导。
+    /// 单文件 → 父目录（递归）；目录 → 目录；根下文件 → 单点兜底。
+    /// （scope_targets 对文件不查盘——不存在的文档路径也要能推导出父目录，
+    /// 授权先于读取发生。）
+    #[test]
+    fn scope_targets_file_grants_its_parent_dir() {
+        let (scope, is_dir) = scope_targets(Path::new("E:/笔记/电工电子/report.md"));
+        assert_eq!(scope, Path::new("E:/笔记/电工电子"));
+        assert!(is_dir);
+    }
+
+    #[test]
+    fn scope_targets_existing_dir_grants_itself() {
+        let d = q9_temp_dir("scope-dir");
+        let (scope, is_dir) = scope_targets(&d);
+        assert_eq!(scope, d);
+        assert!(is_dir);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// 盘符根下的文件（C:/a.md）没有可授父目录——单点授权兜底，
+    /// 与 v5.1.4 之前行为一致（不放大到整个盘）。
+    #[test]
+    fn scope_targets_root_level_file_falls_back_to_single_file() {
+        let (scope, is_dir) = scope_targets(Path::new("C:/a.md"));
+        assert_eq!(scope, Path::new("C:/a.md"));
+        assert!(!is_dir);
+        let (scope, is_dir) = scope_targets(Path::new("/a.md"));
+        assert_eq!(scope, Path::new("/a.md"));
+        assert!(!is_dir);
     }
 }
