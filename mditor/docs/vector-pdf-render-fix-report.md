@@ -153,3 +153,37 @@ patch-package postinstall 应用），对每个 glyf 条目补零对齐。
 建议终检顺序：双版并排打开五类裁片 → 100% 缩放整页 PDF
 （`rvf2-vector.pdf` vs `rvf2-raster.pdf`）→ 若对粗/斜体观感仍有异议，
 反馈进入阶段 3（native 档）评估。
+
+---
+
+## 追加轮（5.1.4）：中英混排导出乱码/缺字根治
+
+用户反馈 5.1.3 导出的矢量 PDF 中英混排段落大面积缺字/叠字（引用块、表格、粗体
+标题尤重），复制粘贴文字完整。取证（桌面现场 PDF `AI替代教师-范文与讲解.pdf`，
+13 页）：文字层/ToUnicode 完好、字符位置正常，损坏纯在字形绘制——
+**约 44% CJK 字形渲染乱码或空白**。
+
+### 根因（@pdf-lib/fontkit 1.1.1 两处 CFF 子集缺陷叠加）
+
+1. **`subsetFontdict` FD 映射错误（主犯）**：`FDSelect.fds.push(FDArray.length - 1)`
+   恒推「最近一次新增 FD」的下标。NotoSansSC 18 个 FD（Dingbats/拉丁/汉字…），
+   中英混排 FD 交替后，所有「回访」FD 的字形拿到错误 Private DICT——错误的局部
+   子程序集与 bias，callsubr 越界/错位。同时 used-subrs 也恒记入最后一个桶。
+2. **`fdForGlyph` 二分边界（从犯）**：`gid > ranges[mid+1].first` 用严格大于，
+   恰为 range 起点的 gid 返回前一 range 的 FD（实测 26/1000）。
+
+纯 CJK 文档 FD 连续，两缺陷均不触发——RVF 前轮 fixture 全 CJK/代码，故漏网。
+
+### 修复
+
+`patches/@pdf-lib+fontkit+1.1.1.patch` 增补（es/umd 双 bundle）：① FDSelect 与
+used-subrs 按源 FD 记桶；② fdForGlyph 改为「最后一个 first ≤ gid」的正确二分。
+
+### 验收（证据 `perf/results/rvf-subset/`、`perf/results/rvf-round2/`）
+
+- Node 子集复现（用户文档全部 588 码点）：修复前 278/589 字形执行失败
+  （IndexError/ValueError/空轮廓），修复后 0；charstring 与原版逐字节一致，
+  执行 op 数与原版一致（`perf/rvf-subset-verify.py` 金标准）。
+- 端到端（dev 实例 CDP，`perf/rvf-round2-e2e.mjs`）：用户文档双模式重导出，
+  视觉逐页正常，内嵌字体 520 字形 0 执行失败；子集体积 +4.4%。
+- 门禁：tsc 0 / eslint 绿（顺手清两笔历史欠账）/ vitest 1192/1192。
