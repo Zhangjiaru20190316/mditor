@@ -1,6 +1,8 @@
-// blockPreMount（R11 E-a：块级主动预挂载，限速）单测。
+// blockPreMount（R11 E-a：块级主动预挂载，限速；R12 上滚冷块首挂+同步补偿）单测。
 // 2026-10-20 拍板默认开启：未设 cfg 即生效；显式 {on:false} 为测量基线臂
-// 语义（零行为）。开启后验证发现带、限速、上滚安全门、视口内跳过与统计出口。
+// 语义（零行为）。开启后验证发现带、限速、视口内跳过与统计出口。
+// R12：上滚冷块（mnt 未标）不再跳过——预挂 + 同步高度差补偿
+// （premount-comp：scrollTop += 挂载前后高度差，同帧提交零可见窗口）。
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -13,6 +15,12 @@ interface FakeBlock {
   pre: HTMLElement;
 }
 
+/** rect 桩：可热替换（trigger 模拟挂载后几何变化）。 */
+function stubRect(el: HTMLElement, top: number, height: number): void {
+  el.getBoundingClientRect = () =>
+    ({ top, bottom: top + height, left: 0, right: 800, height, width: 800 }) as DOMRect;
+}
+
 function makeHost(docH = 20000): { host: HTMLElement; pm: HTMLElement } {
   const host = document.createElement("div");
   host.className = "mditor-editor-host";
@@ -22,18 +30,16 @@ function makeHost(docH = 20000): { host: HTMLElement; pm: HTMLElement } {
   host.appendChild(pm);
   document.body.appendChild(host);
   // jsdom 无真实布局：host/clientHeight 与 gBCR 全 0/固定——以显式桩驱动。
-  host.getBoundingClientRect = () =>
-    ({ top: 0, bottom: 800, left: 0, right: 800, height: 800, width: 800 }) as DOMRect;
+  stubRect(host, 0, 800);
   Object.defineProperty(host, "clientHeight", { value: 800, configurable: true });
-  void docH;
+  Object.defineProperty(host, "scrollHeight", { value: docH, configurable: true });
   return { host, pm };
 }
 
 function makeBlock(pm: HTMLElement, top: number, height: number, mounted = false): FakeBlock {
   const el = document.createElement("div");
   el.className = "milkdown-code-block";
-  el.getBoundingClientRect = () =>
-    ({ top, bottom: top + height, left: 0, right: 800, height, width: 800 }) as DOMRect;
+  stubRect(el, top, height);
   const pre = document.createElement("pre");
   pre.className = "milkdown-code-block-placeholder";
   if (!mounted) el.appendChild(pre);
@@ -133,15 +139,44 @@ describe("blockPreMount（默认开）", () => {
     expect(order.length).toBeLessThanOrEqual(2);
   });
 
-  it("上滚安全门：未挂载过的块跳过，曾挂载块放行", async () => {
-    const { pm } = makeHost();
-    const firstTime = makeBlock(pm, -1050, 200); // 上滚带内（lo=-1100），从未挂载
-    const visited = makeBlock(pm, -800, 200);
-    (visited.el as HTMLElement).dataset.mnt = "1"; // 曾挂载（teardown 冻结高在）
+  it("R12 上滚冷块首挂：预挂 + 高度差同步补偿（premount-comp）", async () => {
+    const { host, pm } = makeHost();
+    // 上滚带内（视口顶 0 以上 40px 外）：冷块（mnt 未标），占位高 70。
+    const cold = makeBlock(pm, -500, 70);
+    host.scrollTop = 5000;
     const mounted = new Set<Element>();
     (window as unknown as Record<string, unknown>).__codeBlockPreMount = (el: Element) => {
       mounted.add(el);
       el.removeChild((el as HTMLElement).firstChild!);
+      // 模拟挂载后几何：高度 70 → 138（差 +68），top 不变（上方内容不动）。
+      stubRect(el as HTMLElement, -500, 138);
+      return true;
+    };
+    (window as unknown as Record<string, unknown>).__blockPreMountCfg = { on: true, bandPx: 800, perFrame: 4 };
+    setBlockPreMountEnabled(true);
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: -300 }));
+    await raf();
+    expect(mounted.has(cold.el)).toBe(true);
+    // 同步补偿：scrollTop += 68（5000 → 5068），视口内容视觉零位移。
+    expect(host.scrollTop).toBe(5068);
+    const stats = (
+      window as unknown as { __blockPreMountStats: () => { compCount: number; compSkippedDrift: number; compSkippedClamp: number } }
+    ).__blockPreMountStats();
+    expect(stats.compCount).toBe(1);
+    expect(stats.compSkippedDrift).toBe(0);
+    expect(stats.compSkippedClamp).toBe(0);
+  });
+
+  it("R12 上滚冷块首挂：曾挂载块（mnt=1）重挂零高度差不补偿", async () => {
+    const { host, pm } = makeHost();
+    const visited = makeBlock(pm, -500, 138);
+    (visited.el as HTMLElement).dataset.mnt = "1"; // 曾挂载（teardown 冻结高在）
+    host.scrollTop = 5000;
+    const mounted = new Set<Element>();
+    (window as unknown as Record<string, unknown>).__codeBlockPreMount = (el: Element) => {
+      mounted.add(el);
+      el.removeChild((el as HTMLElement).firstChild!);
+      stubRect(el as HTMLElement, -500, 138); // 冻结高 = 真实高，无差
       return true;
     };
     (window as unknown as Record<string, unknown>).__blockPreMountCfg = { on: true, bandPx: 800, perFrame: 4 };
@@ -149,9 +184,99 @@ describe("blockPreMount（默认开）", () => {
     window.dispatchEvent(new WheelEvent("wheel", { deltaY: -300 }));
     await raf();
     expect(mounted.has(visited.el)).toBe(true);
-    expect(mounted.has(firstTime.el)).toBe(false);
-    const stats = (window as unknown as { __blockPreMountStats: () => { skippedUp: number } }).__blockPreMountStats();
-    expect(stats.skippedUp).toBe(1);
+    expect(host.scrollTop).toBe(5000);
+    const stats = (
+      window as unknown as { __blockPreMountStats: () => { compCount: number } }
+    ).__blockPreMountStats();
+    expect(stats.compCount).toBe(0);
+  });
+
+  it("R12 上滚冷块首挂防护：块顶漂移（几何异常）放弃补偿", async () => {
+    const { host, pm } = makeHost();
+    makeBlock(pm, -500, 70);
+    host.scrollTop = 5000;
+    (window as unknown as Record<string, unknown>).__codeBlockPreMount = (el: Element) => {
+      el.removeChild((el as HTMLElement).firstChild!);
+      // top 漂移 5px：挂载动了上方内容，补偿会放大错误——放弃。
+      stubRect(el as HTMLElement, -495, 138);
+      return true;
+    };
+    (window as unknown as Record<string, unknown>).__blockPreMountCfg = { on: true, bandPx: 800, perFrame: 4 };
+    setBlockPreMountEnabled(true);
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: -300 }));
+    await raf();
+    expect(host.scrollTop).toBe(5000);
+    const stats = (
+      window as unknown as { __blockPreMountStats: () => { compCount: number; compSkippedDrift: number } }
+    ).__blockPreMountStats();
+    expect(stats.compCount).toBe(0);
+    expect(stats.compSkippedDrift).toBe(1);
+  });
+
+  it("R12 上滚冷块首挂防护：高度差超限（>PREMOUNT_COMP_MAX）放弃补偿", async () => {
+    const { host, pm } = makeHost();
+    makeBlock(pm, -500, 70);
+    host.scrollTop = 5000;
+    (window as unknown as Record<string, unknown>).__codeBlockPreMount = (el: Element) => {
+      el.removeChild((el as HTMLElement).firstChild!);
+      stubRect(el as HTMLElement, -500, 70 + 800); // 差 +800 > 400 上限
+      return true;
+    };
+    (window as unknown as Record<string, unknown>).__blockPreMountCfg = { on: true, bandPx: 800, perFrame: 4 };
+    setBlockPreMountEnabled(true);
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: -300 }));
+    await raf();
+    expect(host.scrollTop).toBe(5000);
+    const stats = (
+      window as unknown as { __blockPreMountStats: () => { compCount: number; compSkippedClamp: number } }
+    ).__blockPreMountStats();
+    expect(stats.compCount).toBe(0);
+    expect(stats.compSkippedClamp).toBe(1);
+  });
+
+  it("R12 上滚冷块首挂防护：补偿越滚动边界（贴顶）放弃", async () => {
+    const { host, pm } = makeHost();
+    makeBlock(pm, -500, 70);
+    host.scrollTop = 10; // 贴顶：补偿 -68 后 <0
+    (window as unknown as Record<string, unknown>).__codeBlockPreMount = (el: Element) => {
+      el.removeChild((el as HTMLElement).firstChild!);
+      stubRect(el as HTMLElement, -500, 70 - 68); // 差 -68（真实高 < 占位）
+      return true;
+    };
+    (window as unknown as Record<string, unknown>).__blockPreMountCfg = { on: true, bandPx: 800, perFrame: 4 };
+    setBlockPreMountEnabled(true);
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: -300 }));
+    await raf();
+    expect(host.scrollTop).toBe(10);
+    const stats = (
+      window as unknown as { __blockPreMountStats: () => { compCount: number; compSkippedClamp: number } }
+    ).__blockPreMountStats();
+    expect(stats.compCount).toBe(0);
+    expect(stats.compSkippedClamp).toBe(1);
+  });
+
+  it("R12 上滚冷块首挂：语言包迟到的高度定型由 recheck 帧补差", async () => {
+    const { host, pm } = makeHost();
+    makeBlock(pm, -500, 70);
+    host.scrollTop = 5000;
+    (window as unknown as Record<string, unknown>).__codeBlockPreMount = (el: Element) => {
+      el.removeChild((el as HTMLElement).firstChild!);
+      // 挂载同步完成时高度仍 70（纯文本中间态），30ms 后语言 reconfigure
+      // 才把高度定型为 138（模拟动态 import 网络延迟）。
+      stubRect(el as HTMLElement, -500, 70);
+      setTimeout(() => stubRect(el as HTMLElement, -500, 138), 30);
+      return true;
+    };
+    (window as unknown as Record<string, unknown>).__blockPreMountCfg = { on: true, bandPx: 800, perFrame: 4 };
+    setBlockPreMountEnabled(true);
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: -300 }));
+    await raf();
+    // 微任务段 dh=0 未补；recheck 帧发现 70→138 差并补上。
+    expect(host.scrollTop).toBe(5068);
+    const stats = (
+      window as unknown as { __blockPreMountStats: () => { compCount: number } }
+    ).__blockPreMountStats();
+    expect(stats.compCount).toBe(1);
   });
 
   it("非 cv 档（无 data-big）不动作", async () => {

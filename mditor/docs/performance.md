@@ -8,7 +8,7 @@
 
 历史各轮的旧正文与已完成任务书统一归档在 [`archive/`](./archive/)；测量原始数据（trace json、cpuprofile 等）不入库，如需找回见文末说明。
 
-**当前状态**：滚动流畅度治理 R1~R10 已收官；**EX 轮（导出体系全面翻新）进行中**，见 [`export-overhaul-report.md`](./export-overhaul-report.md)。
+**当前状态**：滚动流畅度治理 R1~R12 已收官（R12 = 上滚冷块首挂闪刷收口，2026-10-24）；**EX 轮（导出体系全面翻新）进行中**，见 [`export-overhaul-report.md`](./export-overhaul-report.md)。
 
 ## 大文档滚动/性能治理主线
 
@@ -25,6 +25,7 @@
 | R9 | 专注模式滚动丝滑度 | 2026-10-04~06 | [`large-doc-focus-mode-scroll-smoothness-optimization-prompt.md`](../../docs/prompts/large-doc-focus-mode-scroll-smoothness-optimization-prompt.md) | [归因书](../perf/results/r9-phase4-attribution.md) | [`large-doc-focus-mode-scroll-smoothness-report.md`](./large-doc-focus-mode-scroll-smoothness-report.md) |
 | R10 | cv 档滚动视口底部闪刷/换装可见 | 2026-10 | [`large-doc-bottom-flicker-optimization-prompt.md`](../../docs/prompts/large-doc-bottom-flicker-optimization-prompt.md) | [归因书](../perf/results/r10-phase4-attribution.md) | [`large-doc-bottom-flicker-report.md`](./large-doc-bottom-flicker-report.md) |
 | R11 | 首现闪刷收尾（块级换装）+ 1MB 滚动性能归因；2026-10-20 拍板 E-a 默认开启（见报告 §⑦ 补录） | 2026-10-19 | [`large-doc-reveal-flicker-scroll-perf-optimization-prompt.md`](../../docs/prompts/large-doc-reveal-flicker-scroll-perf-optimization-prompt.md) | [归因书](../perf/results/r11-phase4-attribution.md) | [`large-doc-reveal-flicker-scroll-perf-report.md`](./large-doc-reveal-flicker-scroll-perf-report.md) |
+| R12 | 上滚冷块首挂闪刷/抽搐（R11「上滚首挂不放开」遗留收口：premount-comp 同步高度差补偿） | 2026-10-24 | —（用户目标直起轮） | 探针 `perf/tmp-r12/` + `perf/results/r12-upscroll-*.json` | [`large-doc-upscroll-coldblock-flicker-report.md`](./large-doc-upscroll-coldblock-flicker-report.md) |
 | **EX** | **导出体系全面翻新（PDF 自研管线重建与全格式完整性）** | 进行中 | [`export-overhaul-optimization-prompt.md`](../../docs/prompts/export-overhaul-optimization-prompt.md) | 落盘于 `perf/results/`（随阶段追加） | [`export-overhaul-report.md`](./export-overhaul-report.md) |
 
 各轮测量的 smoke 截图（`r*-prod-smoke.png`、`prod-*.png` 等）同在 `mditor/perf/results/`。

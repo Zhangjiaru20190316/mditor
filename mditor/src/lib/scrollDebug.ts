@@ -472,7 +472,7 @@ const RESTORE_FAMILY = new Set([
   "heal-restore",
 ]);
 /** 会与恢复梯子竞争的补偿/跟随类写入方（J2 重叠窗口计数对象）。 */
-const OVERLAP_INTRUDERS = new Set(["anchor-comp", "typewriter", "prewarm-comp"]);
+const OVERLAP_INTRUDERS = new Set(["anchor-comp", "typewriter", "prewarm-comp", "premount-comp"]);
 /** 恢复梯子生命周期窗（80ms 首试 + 300ms×8 重试 ≈ 2.5s）。 */
 const OVERLAP_WINDOW_MS = 2500;
 
