@@ -22,6 +22,17 @@ export function normalizeSyncSettings(raw: unknown): SyncSettings {
   let prefix = str(s.prefix, d.prefix).trim().replace(/^\/+/, "");
   if (prefix !== "" && !prefix.endsWith("/")) prefix += "/";
 
+  // remoteDirs：仅收字符串值，trim 后空值剔除（键 = 工作区根路径原样）。
+  const remoteDirs: Record<string, string> = {};
+  const rawDirs: unknown = s.remoteDirs;
+  if (rawDirs && typeof rawDirs === "object") {
+    for (const [k, v] of Object.entries(rawDirs as Record<string, unknown>)) {
+      if (typeof v !== "string") continue;
+      const t = v.trim();
+      if (t !== "") remoteDirs[k] = t;
+    }
+  }
+
   const interval = Number(s.autoSyncIntervalMin);
   return {
     enabled: bool(s.enabled, d.enabled),
@@ -41,6 +52,7 @@ export function normalizeSyncSettings(raw: unknown): SyncSettings {
     autoSyncIntervalMin:
       Number.isFinite(interval) && interval >= 0 ? Math.floor(interval) : d.autoSyncIntervalMin,
     syncOnStart: bool(s.syncOnStart, d.syncOnStart),
+    remoteDirs,
   };
 }
 

@@ -138,6 +138,15 @@ export interface SyncSettings {
   autoSyncIntervalMin: number;
   /** 启动后自动同步一次，默认 true。 */
   syncOnStart: boolean;
+  /**
+   * 每工作区的云端目录名覆盖（键 = 工作区根路径，值 = 单段目录名）。
+   * 缺省回退根 basename（桌面）或挂载 displayName（鸿蒙）。两端只有在
+   * 「前缀 + 云端目录名」一致时键空间才相交、才能互相同步——桌面挂
+   * E:\笔记\cmc 而鸿蒙挂设备本地「C语言」时默认永不相交，需把一侧的
+   * 云端目录名改成与另一端一致。改名经远端指纹失配走首同步重算，零
+   * 删除动作。归一：值 trim、空值剔除（见 normalizeSyncSettings）。
+   */
+  remoteDirs: Record<string, string>;
 }
 
 export interface Settings {

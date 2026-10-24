@@ -4553,6 +4553,25 @@ html[data-motion="none"] *::after {
 .sync-sk-row input {
   flex: 1;
 }
+/* 云同步「云端目录名」逐工作区行（跨端配对，v5.1.5）。 */
+.sync-dir-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.sync-dir-row input {
+  flex: 1;
+}
+.sync-dir-path {
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-s);
+  color: var(--fg-muted);
+}
 .sync-secret-hint {
   color: var(--fg-muted);
 }

@@ -59,6 +59,10 @@ export function registerAll(bridge: Bridge): void {
   bridge.register('fs.rename', (p) => fm.rename(p));
   bridge.register('fs.remove', (p) => fm.remove(p));
   bridge.register('fs.syncName', (p) => fm.syncName(p));
+  // 同步引擎冲突分支原语（桌面 Rust 同名命令；参数键 a/b、from/to 一致）。
+  // 此前未注册 → UNSUPPORTED，鸿蒙上一旦发生内容冲突处理必失败。
+  bridge.register('local_files_equal', (p) => fm.filesEqual(p));
+  bridge.register('local_copy_file', (p) => fm.copyFile(p));
 
   // ---- dialog 域 ----------------------------------------------------------
   if (dialogBridge !== null) {

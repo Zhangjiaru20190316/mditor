@@ -73,3 +73,4 @@ mditor-sync-pending-deletes.*
 
 # 临时测量产物（体积大、中间态）
 mditor/perf/tmp/
+mditor-device-mditor.json.*

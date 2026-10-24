@@ -1592,6 +1592,11 @@ function App() {
       getSettings: () => settingsRef.current.settings,
       getRoots: () =>
         workspacesRef.current.map((p) => {
+          // 用户显式覆盖（同步设置「云端目录名」）优先于 displayName 回退——
+          // 两端键空间只有目录名一致才相交；鸿蒙挂载名与桌面工作区名不同
+          // 时这是唯一的配对手段。
+          const override = settingsRef.current.settings.sync.remoteDirs[p]?.trim();
+          if (override) return { path: p, remoteDir: override };
           const name = syncDirNamesRef.current.get(p);
           return name ? { path: p, remoteDir: name } : p;
         }),
@@ -3363,6 +3368,7 @@ function App() {
           open={settingsOpen}
           settings={settingsApi.settings}
           workspace={workspaces[0] ?? null}
+          workspaces={workspaces}
           onClose={() => setSettingsOpen(false)}
           onChange={settingsApi.update}
         />

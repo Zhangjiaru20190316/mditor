@@ -145,6 +145,7 @@ export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
   autoSync: true,
   autoSyncIntervalMin: 10,
   syncOnStart: true,
+  remoteDirs: {},
 };
 
 /**

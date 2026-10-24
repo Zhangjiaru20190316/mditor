@@ -53,6 +53,24 @@ describe("normalizeSyncSettings（v4.12 云同步设置幂等归一）", () => {
     expect(normalizeSyncSettings(once)).toEqual(once);
   });
 
+  it("remoteDirs（跨端配对）：默认空对象；值 trim、空值/非串剔除、键原样；幂等", () => {
+    expect(normalizeSyncSettings(undefined).remoteDirs).toEqual({});
+    const once = normalizeSyncSettings({
+      remoteDirs: {
+        "E:\\笔记\\cmc": "  cmc  ",
+        "/Docs/ws-1": "C语言",
+        "E:\\gone": "   ",
+        "E:\\bad": 42,
+      },
+    });
+    expect(once.remoteDirs).toEqual({
+      "E:\\笔记\\cmc": "cmc",
+      "/Docs/ws-1": "C语言",
+    });
+    // 幂等：归一结果再归一不变。
+    expect(normalizeSyncSettings(once)).toEqual(once);
+  });
+
   // ↓ Q4 新增锁定（迁移前先对旧实现跑绿，再随模块搬家）。
 
   it("字符串 / 数字 / null 等非对象输入同样回退全默认", () => {

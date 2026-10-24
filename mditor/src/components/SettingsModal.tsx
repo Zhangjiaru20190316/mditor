@@ -30,6 +30,7 @@ import {
 } from "../defaults";
 import { testConnection } from "../lib/ai";
 import { fetchAppVersion } from "../lib/appVersion";
+import { basename, toPosix } from "../lib/path-shim";
 import {
   SYNC_ERROR_CODES,
   SYNC_ERROR_HINTS,
@@ -71,8 +72,20 @@ const MOTION_LEVELS: Array<{ value: MotionLevel; label: string }> = [
 const EXIT_MS = 240;
 
 /** endpoint 是否 localhost HTTP（MinIO 本地调试豁免；与 Rust 侧判定同源）。 */
-function isLocalhostEndpoint(endpoint: string): boolean {
-  const rest = endpoint.trim().toLowerCase().replace(/^http:\/\//, "");
+/** 设置某工作区的云端目录名覆盖：值 trim 后为空 = 清除（回退默认名）。 */
+function setRemoteDir(
+  dirs: Record<string, string>,
+  root: string,
+  value: string
+): Record<string, string> {
+  const t = value.trim();
+  const rest = { ...dirs };
+  delete rest[root];
+  if (t === "") return rest;
+  return { ...rest, [root]: t };
+}
+
+function isLocalhostEndpoint(endpoint: string): boolean {  const rest = endpoint.trim().toLowerCase().replace(/^http:\/\//, "");
   if (rest === endpoint.trim().toLowerCase()) return false; // 无 http:// 前缀
   const host = rest.split(/[:/]/)[0] ?? "";
   return host === "localhost" || host === "127.0.0.1";
@@ -100,11 +113,13 @@ interface Props {
   settings: Settings;
   /** Current workspace root, used to show excluded paths as relative. */
   workspace?: string | null;
+  /** 全部工作区根（云同步「云端目录名」逐根可配）。 */
+  workspaces?: string[];
   onClose: () => void;
   onChange: (patch: Partial<Settings>) => Promise<void>;
 }
 
-export function SettingsModal({ open, settings, workspace, onClose, onChange }: Props) {
+export function SettingsModal({ open, settings, workspace, workspaces = [], onClose, onChange }: Props) {
   // local draft so typing is responsive; commit on blur / apply
   const [draft, setDraft] = useState<Settings>(settings);
   // Sync the draft ONCE when the dialog opens. Re-syncing on every `settings`
@@ -1303,6 +1318,36 @@ export function SettingsModal({ open, settings, workspace, onClose, onChange }: 
                     下。保存时自动规范化（不以 / 开头、以 / 结尾）。
                   </span>
                 </Field>
+
+                {workspaces.length > 0 && (
+                  <Field label="云端目录名（跨端配对）">
+                    {workspaces.map((ws) => (
+                      <span key={ws} className="sync-dir-row">
+                        <span className="sync-dir-path mono" title={ws}>
+                          {basename(toPosix(ws)) || ws}
+                        </span>
+                        <input
+                          type="text"
+                          className="mono"
+                          disabled={!syncSupported}
+                          placeholder={basename(toPosix(ws)) || "目录名"}
+                          value={draft.sync.remoteDirs[ws] ?? ""}
+                          onChange={(e) =>
+                            setSync({
+                              remoteDirs: setRemoteDir(draft.sync.remoteDirs, ws, e.target.value),
+                            })
+                          }
+                        />
+                      </span>
+                    ))}
+                    <span className="hint">
+                      每个工作区同步到「前缀/云端目录名/」下，默认取根目录名（占位符）。
+                      要与另一台设备（桌面 ↔ 鸿蒙）互相同步，两端的目录名必须一致：
+                      两端挂载的文件夹名不同时，把其中一端改成与另一端相同即可配对。
+                      仅一段、不含 /；改名后首轮按首同步全量重算，不会删除任何文件。
+                    </span>
+                  </Field>
+                )}
 
                 <button
                   type="button"

@@ -1,5 +1,31 @@
 # Changelog
 
+## 未发布：鸿蒙云同步修复（下载链路断 + 跨端配对不可配）
+
+### 鸿蒙端云同步「始终没作用」双根因修复
+
+- **症状**：桌面端与鸿蒙端都配置了同一只桶（同步各自正常落清单），但内容从不互通；
+  鸿蒙端从云端**下载任何文件都失败**（上传/列举正常）。
+- **根因①（下载断链，鸿蒙）**：`FileManager` 的写类操作（`withWriteHandle`/`mkdir`/
+  `rename`/`remove`）对 `file://docs/…` URI 直接 `openSync(uri, CREATE|TRUNC)`——真机
+  实锤该组合对 docs 区**新建文件必败**（与 listFile 走 URI 报 ENOENT 同源的 URI 支持
+  面问题）。上传读已存在文件不受影响，下载要创建新文件全挂：dev-events.log 抓到
+  `sync:file-warn 下载失败：同步验证.md（Error: 写入失败 file://docs/…）`。
+  修复（`harmony/…/io/FileManager.ets`）：写类操作统一转 `FileUri.path` 真实路径
+  （与 `listTargetOf` 同构），URI 侧写前递归建父目录。
+- **根因②（跨端配对不可配）**：两端键空间 = `前缀/工作区目录名/`，只有目录名一致才
+  相交——桌面挂 `E:\笔记\cmc`（→ `mditor/cmc/`）、鸿蒙挂设备本地「C语言」
+  （→ `mditor/C语言/`）时永不相交，且此前无任何 UI 可配。新增每工作区**云端目录名
+  覆盖**（`sync.remoteDirs`，设置 → 云同步 → 云端目录名（跨端配对）），把一端改成
+  与另一端一致即可配对；改名经远端指纹失配走首同步重算，零删除动作。
+  （`types.ts` / `settingsNormalize.ts` / `App.tsx` / `SettingsModal.tsx`）
+- **附带修复（鸿蒙）**：补注册 `local_copy_file` / `local_files_equal` 桥（此前未注册
+  → UNSUPPORTED，冲突分支在鸿蒙必失败）；`FileManager` 新增 `copyFile`（字节直写）
+  与 `filesEqual`（size 短路 + 256KB 分块比对）。
+- **验收**：tsc 0 错、lint 绿、vitest 1193/1193（含 remoteDirs 归一新测）；鸿蒙
+  ArkTS 编译通过 + 签名装机（修复包已部署真机，待解锁后 syncOnStart 首轮验证下载
+  落地——云端 `mditor/C语言/同步验证.md` 为验证标记）。
+
 ## 5.1.4（2026-10-24）：矢量 PDF 渲染修复（RVF 追加轮）+ 编辑器图片裂图修复
 
 ### 编辑器图片显示修复：非工作区文档打开即整篇裂图

@@ -66,6 +66,69 @@ export class FileManager {
     return out;
   }
 
+  /** local_files_equal 桥实现（同步冲突分支的内容比对）：size 短路 +
+   *  256KB 分块读盘比对（对齐桌面 Rust 侧语义，字节不经前端 IPC）。
+   *  W9：比对目标转真实路径（open 系对 URI 的读支持面已验证）。 */
+  async filesEqual(params: Record<string, Object>): Promise<Object | null> {
+    const a = this.stringOf(params, 'a');
+    const b = this.stringOf(params, 'b');
+    const ra = this.mapper.resolve(a);
+    const rb = this.mapper.resolve(b);
+    const ta = ra.kind === 'sandbox' ? ra.sandboxPath : this.listTargetOf(ra);
+    const tb = rb.kind === 'sandbox' ? rb.sandboxPath : this.listTargetOf(rb);
+    const fa = fs.openSync(ta, fs.OpenMode.READ_ONLY);
+    try {
+      const fb = fs.openSync(tb, fs.OpenMode.READ_ONLY);
+      try {
+        const sa = fs.statSync(fa.fd);
+        const sb = fs.statSync(fb.fd);
+        if (!sa.isFile() || sa.size !== sb.size) {
+          return false;
+        }
+        const CHUNK = 256 * 1024;
+        const bufA = new ArrayBuffer(CHUNK);
+        const bufB = new ArrayBuffer(CHUNK);
+        const ua = new Uint8Array(bufA);
+        const ub = new Uint8Array(bufB);
+        let pos = 0;
+        while (pos < sa.size) {
+          const len = Math.min(CHUNK, sa.size - pos);
+          const na = fs.readSync(fa.fd, bufA, { offset: pos, length: len });
+          const nb = fs.readSync(fb.fd, bufB, { offset: pos, length: len });
+          if (na !== nb || na <= 0) {
+            return false;
+          }
+          for (let i = 0; i < na; i++) {
+            if (ua[i] !== ub[i]) {
+              return false;
+            }
+          }
+          pos += na;
+        }
+        return true;
+      } finally {
+        fs.closeSync(fb);
+      }
+    } catch (err) {
+      throw this.wrapFsError(err, `比较失败 ${a} / ${b}`);
+    } finally {
+      fs.closeSync(fa);
+    }
+  }
+
+  /** local_copy_file 桥实现（同步冲突副本落位）：读源字节 → withWriteHandle
+   *  直写目标（URI/沙箱两侧通吃；父目录自动创建——W9 同源）。 */
+  async copyFile(params: Record<string, Object>): Promise<Object | null> {
+    const from = this.stringOf(params, 'from');
+    const to = this.stringOf(params, 'to');
+    const bytes = await this.readBytes(from);
+    await this.withWriteHandle(this.mapper.resolve(to), (fd: number) => {
+      const exact = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      return fs.writeSync(fd, exact);
+    });
+    return null;
+  }
+
   mapperRef(): UriMapper {
     return this.mapper;
   }
@@ -175,7 +238,7 @@ export class FileManager {
   async mkdir(params: Record<string, Object>): Promise<Object | null> {
     const path = this.pathOf(params);
     const r = this.mapper.resolve(path);
-    const target = r.kind === 'sandbox' ? r.sandboxPath : r.uri;
+    const target = r.kind === 'sandbox' ? r.sandboxPath : this.listTargetOf(r);
     try {
       if (r.kind === 'sandbox') {
         this.ensureSandboxDir(target);
@@ -211,8 +274,8 @@ export class FileManager {
     const newPath = this.stringOf(params, 'newPath');
     const a = this.mapper.resolve(oldPath);
     const b = this.mapper.resolve(newPath);
-    const from = a.kind === 'sandbox' ? a.sandboxPath : a.uri;
-    const to = b.kind === 'sandbox' ? b.sandboxPath : b.uri;
+    const from = a.kind === 'sandbox' ? a.sandboxPath : this.listTargetOf(a);
+    const to = b.kind === 'sandbox' ? b.sandboxPath : this.listTargetOf(b);
     try {
       fs.renameSync(from, to);
       return null;
@@ -275,7 +338,7 @@ export class FileManager {
       targetVirtual = `${trashDirVirtual}/${now}-${n}-${base}`;
     }
     const r = this.mapper.resolve(path);
-    const from = r.kind === 'sandbox' ? r.sandboxPath : r.uri;
+    const from = r.kind === 'sandbox' ? r.sandboxPath : this.listTargetOf(r);
     const to = this.mapper.resolve(targetVirtual).sandboxPath;
     try {
       fs.renameSync(from, to);
@@ -311,7 +374,7 @@ export class FileManager {
 
   private async permanentlyRemove(path: string): Promise<Object | null> {
     const r = this.mapper.resolve(path);
-    const target = r.kind === 'sandbox' ? r.sandboxPath : r.uri;
+    const target = r.kind === 'sandbox' ? r.sandboxPath : this.listTargetOf(r);
     let st: StatOut;
     try {
       st = await this.statOf(path);
@@ -340,7 +403,7 @@ export class FileManager {
     if (r.kind === 'sandbox') {
       this.ensureSandboxDir(this.parentOf(r.sandboxPath));
     }
-    const target = r.kind === 'sandbox' ? r.sandboxPath : r.uri;
+    const target = r.kind === 'sandbox' ? r.sandboxPath : this.listTargetOf(r);
     try {
       const st = fs.statSync(target);
       // N27：按 UTF-8 字节数对比——st.size 是字节而 line.length 是 UTF-16
@@ -416,7 +479,18 @@ export class FileManager {
   }
 
   private async withWriteHandle(r: ResolvedPath, write: (fd: number) => number): Promise<void> {
-    const target = r.kind === 'sandbox' ? r.sandboxPath : r.uri;
+    // W9：写类操作不吃 file:// URI 的支持面——真机 2026-10-24 实锤
+    // openSync(uri, CREATE|TRUNC) 对 docs 区新建文件必败（云同步下载
+    // 全部文件卡在这一步）。统一转 FileUri 真实路径写（与 listFile 的
+    // listTargetOf 同构、同一验证面）；沙箱路径不变。URI 侧先递归建父
+    // 目录（同步下载嵌套路径时父目录可能不存在，CREATE 不会递归建）。
+    const target = r.kind === 'sandbox' ? r.sandboxPath : this.listTargetOf(r);
+    if (r.kind !== 'sandbox') {
+      const parent = this.parentOf(target);
+      if (parent !== '') {
+        this.ensureSandboxDir(parent); // mkdirSync(dir, true) 递归；已存在吞错
+      }
+    }
     let file: fs.File | null = null;
     try {
       file = fs.openSync(target,
