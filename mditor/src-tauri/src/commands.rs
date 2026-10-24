@@ -773,11 +773,15 @@ mod tests {
 
     /// 盘符根下的文件（C:/a.md）没有可授父目录——单点授权兜底，
     /// 与 v5.1.4 之前行为一致（不放大到整个盘）。
+    /// 盘符形态仅 Windows 有（Linux 上 "C:/a.md" 是相对路径，parent 有上层）。
     #[test]
     fn scope_targets_root_level_file_falls_back_to_single_file() {
-        let (scope, is_dir) = scope_targets(Path::new("C:/a.md"));
-        assert_eq!(scope, Path::new("C:/a.md"));
-        assert!(!is_dir);
+        #[cfg(windows)]
+        {
+            let (scope, is_dir) = scope_targets(Path::new("C:/a.md"));
+            assert_eq!(scope, Path::new("C:/a.md"));
+            assert!(!is_dir);
+        }
         let (scope, is_dir) = scope_targets(Path::new("/a.md"));
         assert_eq!(scope, Path::new("/a.md"));
         assert!(!is_dir);
