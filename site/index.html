@@ -84,12 +84,12 @@
         <p class="tagline">本地优先的 Markdown 编辑器，体验对标 Typora</p>
         <p class="sub">免费 · 开源 · 无云端 · 无遥测 · 无广告 —— 你的文件始终保存在自己的电脑上</p>
         <div class="cta">
-          <a class="btn btn-primary" href="https://github.com/Zhangjiaru20190316/mditor/releases/latest/download/Mditor_5.0.0-beta_x64-setup.exe">下载 Windows 版</a>
+          <a class="btn btn-primary" href="https://github.com/Zhangjiaru20190316/mditor/releases/latest/download/Mditor_5.1.4_x64-setup.exe">下载 Windows 版</a>
           <a class="btn btn-ghost" href="#try">在线试用</a>
           <a class="btn btn-ghost" href="https://github.com/Zhangjiaru20190316/mditor">查看源码</a>
         </div>
         <div class="hero-badges">
-          <span class="hb-new"><i></i>v5.0.0-beta</span><span>Windows 10/11</span><span>5 MB 安装包</span><span>MIT 开源</span>
+          <span class="hb-new"><i></i>v5.1.4</span><span>Windows 10/11</span><span>13 MB 安装包</span><span>MIT 开源</span>
         </div>
       </div>
       <div class="hero-visual" aria-hidden="true">
@@ -123,10 +123,24 @@
       <div class="wn-list">
         <article class="wn-item wn-star reveal">
           <div class="wn-head">
+            <span class="wn-ver">v5.1.4</span>
+            <span class="wn-date">2026-10-24</span>
+            <span class="wn-tag">修复</span>
+            <span class="wn-latest"><i></i>本次亮点</span>
+          </div>
+          <h3>导出与图片双根修：中英混排乱码根治 · 裂图清零</h3>
+          <p>矢量 PDF 导出两轮根修（v5.1.3/v5.1.4）：代码块静态语法高亮、<b>Inter 真字体内嵌</b>、线宽墨量校准；根治中英混排大面积缺字叠字——<b>@pdf-lib/fontkit CFF 子集双缺陷</b>（FD 映射错桶 + FDSelect 二分边界），fontTools 字节级验证 589 字形全过、用户文档重导出 520 字形 0 损坏（修复前约 44%）。一并修复<b>非工作区文档打开即整篇裂图</b>：单文件授权面扩到父目录 + 授权竞态 await 化，最近文件重开 10/10 图片加载。</p>
+          <div class="wn-star-foot">
+            <span class="wn-pill">✦ 中英混排乱码根治</span>
+            <span class="wn-pill">矢量 PDF 高亮 / 真字体</span>
+            <span class="wn-pill">图片裂图清零</span>
+          </div>
+        </article>
+        <article class="wn-item reveal">
+          <div class="wn-head">
             <span class="wn-ver">v5.0.0-beta</span>
             <span class="wn-date">2026-10-03</span>
             <span class="wn-tag">性能</span>
-            <span class="wn-latest"><i></i>本次亮点</span>
           </div>
           <h3>性能极值版：停滚零漂移 · 公式零漏渲染</h3>
           <p>连续三轮大文档专项（滚动稳定性 / 公式渲染 / 停滚自漂移），全部以 <b>1.5MB · 2.5 万行 · 1.5 万行内公式</b>的真实压测文档同窗口 ABAB 实测：停滚位移帧密度档 <b>0/1704 帧全零</b>（1MB 档 -87~96%）、公式漏渲染<b>三档归零</b>、拖选 p95 <b>-79%</b>、点公式 <b>-88%</b>、Ctrl+S 保存 <b>694ms 阻塞清零</b>、公式补绘 p50 <b>-26%</b>、1.5MB 打开 <b>-13%</b>。</p>
