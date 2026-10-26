@@ -1,6 +1,50 @@
 # Changelog
 
-## 未发布：大文档上滚冷块首挂闪刷/抽搐修复（R12）+ 鸿蒙云同步修复
+## 未发布：鸿蒙真机跳转失灵（WebView 吞平滑滚动）+ S3 空格键解码错位 + 浏览器预览兜底
+
+### 鸿蒙真机大纲/批注/源码跳转失灵：WebView 吞掉平滑滚动三处收口
+
+- **症状**：鸿蒙真机（IAB WebView）上点大纲条目页面不滚动，批注跳转同样
+  失灵；桌面 WebView2 个别内核配置同病。
+- **根因**：部分 WebView 内核配置会**整体吞掉** `scrollIntoView({behavior:
+  "smooth"})`——调用发出但 `scrollTop` 纹丝不动，富文本路径的大纲/批注跳转
+  等于失灵；sv 路径的 `scroller.scrollTo` CSSOM 平滑通道实测可用。
+- **修复**（`src/App.tsx`）：
+  - 大纲/批注跳转改「几何测量 + `host.scrollTo`」——落点 = 元素内容顶 −
+    `scroll-margin-top`（从 CSS 动态读取，与 sticky 工具条预留保持单一真源），
+    动画走 scrollTo 的 CSSOM 平滑通道（与 sv 路径同通道）；批注跳转保持
+    center 对齐语义并加贴底钳制。
+  - **引擎级兜底**：80ms 后仍无位移即补一次瞬时滚动（动画是锦上添花，落点
+    是底线）；用 `setTimeout` 而非 rAF——rAF 在页面被视作不可见时整段停摆
+    （IAB 面板后台实测），setTimeout 恒执行。
+  - 大纲元素解析改**文本 + 出现次数优先、id 兜底**：attrs.id 链由多个盖章方
+    次第生成（解析预盖 → sync 重盖 → toDOM 渲染），任一环与（防抖+deferred
+    的）大纲快照分裂时 querySelector 落空或命中错误元素；文本是用户所见锚，
+    永远与大纲一致（含内联标记的标题 textContent ≠ 大纲文本时再退 id）。
+  - 跳转落点统一视口顶部（「点哪里、哪里到顶」的导航心智优先于打字机光标
+    居中——打字机跟随只在真实输入时接管）。
+- **sv 路径配套**（`src/lib/svCodeMirror.ts`）：`jumpToLine` 落点统一
+  `"start"`（原打字机档走 center），平滑分支同样加 80ms 无位移瞬时兜底。
+- 门禁：tsc 0 错 / lint 绿 / vitest 全量 1198（exportPdfAssembly 1 例负载
+  抖动单跑恒绿，10-19 判据）；真机装机复验待设备连接。
+
+### S3 键含空格解码错位：OSS `+` 形态空格不还原（List 可见、GET 404）
+
+- **症状**：云端键含空格的对象在鸿蒙端列表可见、打开必 404（2026-10-24
+  真机 7 例实锤）。
+- **根因**：OSS `encoding-type=url` 把空格编码为 `+`（form 风格），
+  `decodeURIComponent` 不还原 `+`——键错位成 `+` 字面。
+- **修复**（`harmony/…/net/S3Bridge.ets`）：解码前统一 `+`→`%20`；桶内键
+  空间为明文形态（对象键 = OSS 对单层编码路径解一层所得），一层解码即归位。
+
+### 纯浏览器预览（npm run dev）白屏兜底
+
+- 无 `__TAURI_INTERNALS__` 时 `getCurrentWindow()` 读取 internals **同步抛
+  TypeError**（不是 reject）——静默失败兜底对它不成立，会打穿
+  ErrorBoundary 白屏。`platform/tauri/app.ts` 加 no-op 窗口 stub（label 恒
+  main、监听恒不触发、Unlisten 恒空函数）。
+
+## 未发布（前批次）：大文档上滚冷块首挂闪刷/抽搐修复（R12）+ 鸿蒙云同步修复
 
 ### 大文档「上滚卡顿抽搐、下滚正常」修复：块级预挂载上滚侧收口（R12）
 

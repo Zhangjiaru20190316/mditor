@@ -128,6 +128,26 @@ import type { EditorSettings } from "./types";
 
 type SidebarTab = "tree" | "outline" | "recent" | "annotations" | "search" | "links";
 
+/** 大纲跳转的 DOM 兜底：在渲染层按（文本, 出现次数）找 <hN> 元素。
+ *  outline 快照的 id 走 attrs.id 链（解析预盖 → sync 重盖 → toDOM 渲染），
+ *  任一环与快照分裂时 querySelector 落空——文本是用户所见锚，永远一致。
+ *  occurrence 与 stampHeadingOccurrences 同为 0 基、全文文档序。 */
+function findHeadingElByText(
+  host: Element | null | undefined,
+  text: string,
+  occurrence: number
+): HTMLElement | null {
+  if (!host || !text) return null;
+  const want = text.trim();
+  let seen = 0;
+  for (const h of host.querySelectorAll<HTMLElement>("h1,h2,h3,h4,h5,h6")) {
+    if ((h.textContent ?? "").trim() !== want) continue;
+    if (seen === occurrence) return h;
+    seen += 1;
+  }
+  return null;
+}
+
 // Q1b：诊断面板组件懒加载——仅 devMode/诊断面板打开时才需要，平时不进
 // 主包也不付初始化成本。两组件均为具名导出（memo 包装），用 then 适配
 // lazy 需要的 default 形态；挂载点 Suspense fallback 为 null（本来就是
@@ -2323,9 +2343,16 @@ function App() {
       // focus-first reason as jumpToAnnotation, which stays instant because
       // its popover measures the marker rect right after landing.)
       editorRef.current?.previewEl()?.focus();
-      const el = document
-        .querySelector<HTMLElement>(".mditor-milkdown")
-        ?.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
+      const milkHost = document.querySelector<HTMLElement>(".mditor-milkdown");
+      // 元素解析：文本优先、id 兜底。
+      //  * attrs.id 链由多个盖章方次第生成（解析预盖 → sync 重盖 → toDOM
+      //    渲染），任何一环与（防抖+deferred 的）大纲快照分裂时 querySelector
+      //    落空或命中错误元素（重复标题的同基名 id 恒指第一处）；
+      //  * 文本 + 出现次数是用户所见锚，永远与大纲一致——含内联标记的
+      //    标题（批注/公式，DOM textContent ≠ 大纲文本）兜不中时再退 id。
+      const el =
+        findHeadingElByText(milkHost, node.text, node.occurrence ?? 0) ??
+        milkHost?.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
       if (!el) return;
       // Park the caret at the heading text: any later caret-following scroll
       // (ProseMirror re-syncing its selection after focus, typewriter mode)
@@ -2340,24 +2367,41 @@ function App() {
         sel?.removeAllRanges();
         sel?.addRange(range);
       }
-      // 大纲跳转用平滑滚动；打字机模式下对齐到中部（与 sv 路径一致）。
+      // 大纲跳转的落点统一视口顶部：大纲是导航动作，「点击哪里、哪里到顶」
+      // 的心智优先于打字机的光标居中语义（打字机跟随只在真实输入时接管）；
+      // sticky 工具条的遮挡由 CSS scroll-margin-top 预留，标题落定后完整可见。
       // 平滑动画期间 host 置 smoothJump 标记，Editor 的打字机选区居中
       // （selectionchange → 瞬时 scrollTop）看到标记即跳过，否则会在动画
       // 起步时一帧掐断它。scrollend（动画完成/被打断）或超时兜底清除。
       // v4.1 动效三档：当前生效档位为「无」（用户选择或系统
       // prefers-reduced-motion）时保持瞬时跳转。
       const reduced = !motionEnabled(settingsRef.current.settings);
-      const block: ScrollLogicalPosition = settingsRef.current.settings
-        .typewriterMode
-        ? "center"
-        : "start";
-      if (reduced) {
+      // 滚动实现：实测部分 WebView 引擎（IAB/WebView2 的内核配置）会整体
+      // 吞掉 scrollIntoView({behavior:"smooth"})——调用发出但 scrollTop 纹丝
+      // 不动，大纲跳转在 rich 模式下等于失灵。改为「几何测量 + host.scrollTo」：
+      // 落点 = 元素内容顶 − scroll-margin-top（从 CSS 动态读取，与 sticky 工具
+      // 条预留保持单一真源），动画交给 scrollTo 的 CSSOM 平滑通道（与 sv 路径
+      // svCodeMirror 的 scroller.scrollTo 同通道，实测可用）。
+      const host = document.querySelector<HTMLElement>(".mditor-editor-host");
+      if (!host) {
         noteScrollWrite("outline-jump");
-        el.scrollIntoView({ behavior: "auto", block });
+        el.scrollIntoView({ behavior: "auto", block: "start" });
         return;
       }
-      const host = document.querySelector<HTMLElement>(".mditor-editor-host");
-      if (host) {
+      const hostRect = host.getBoundingClientRect();
+      const elRect = el.getBoundingClientRect();
+      const scrollMargin =
+        parseFloat(getComputedStyle(el).scrollMarginTop) || 0;
+      const dest = Math.max(
+        0,
+        host.scrollTop + elRect.top - hostRect.top - scrollMargin
+      );
+      if (reduced) {
+        noteScrollWrite("outline-jump");
+        host.scrollTo({ top: dest, behavior: "auto" });
+        return;
+      }
+      {
         host.dataset.smoothJump = "1";
         const clear = () => {
           delete host.dataset.smoothJump;
@@ -2373,7 +2417,20 @@ function App() {
         window.setTimeout(clear, 1200);
       }
       noteScrollWrite("outline-jump");
-      el.scrollIntoView({ behavior: "smooth", block });
+      host.scrollTo({ top: dest, behavior: "smooth" });
+      // 引擎级兜底：个别 WebView 配置会整体吞掉平滑滚动（scrollTo/
+      // scrollIntoView 的 behavior:"smooth" 发出但 scrollTop 纹丝不动，
+      // IAB 与部分 WebView2 内核配置实测）。80ms 后仍无位移即补一次瞬时
+      // 滚动——动画是锦上添花，落点是底线；正常引擎此时动画已在途
+      // （长距离位移必然 >1px）不会误补，dest==当前值时补滚为 no-op。
+      // 用 setTimeout 而非 rAF：rAF 在页面被视作不可见时整段停摆
+      //（IAB 面板后台实测），setTimeout 恒执行。
+      const jumpStartTop = host.scrollTop;
+      window.setTimeout(() => {
+        if (Math.abs(host.scrollTop - jumpStartTop) < 1) {
+          host.scrollTo({ top: dest, behavior: "auto" });
+        }
+      }, 80);
     },
     [editMode]
   );
@@ -2531,7 +2588,32 @@ function App() {
         })
       );
       noteScrollWrite("anno-jump");
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      // 与大纲跳转同因：部分 WebView 内核吞掉 scrollIntoView({behavior:
+      // "smooth"})——改为几何测量 + host.scrollTo（center 对齐语义不变，
+      // 弹层按落定后的 marker rect 定位）。贴底钳制防 center 对齐越界。
+      const hostRect = host.getBoundingClientRect();
+      const tRect = target.getBoundingClientRect();
+      const dest = Math.max(
+        0,
+        Math.min(
+          host.scrollHeight - host.clientHeight,
+          host.scrollTop +
+            tRect.top +
+            tRect.height / 2 -
+            hostRect.top -
+            host.clientHeight / 2
+        )
+      );
+      host.scrollTo({ top: dest, behavior: "smooth" });
+      // 引擎级兜底（同 jumpToHeading，setTimeout 版）：平滑滚动被引擎整体
+      // 吞掉时 80ms 后补一次瞬时滚动；弹层落定检测（openAtRest）以
+      // scrollend/两帧无位移兜底接力打开。
+      const annoStartTop = host.scrollTop;
+      window.setTimeout(() => {
+        if (Math.abs(host.scrollTop - annoStartTop) < 1) {
+          host.scrollTo({ top: dest, behavior: "auto" });
+        }
+      }, 80);
     },
     [editMode]
   );

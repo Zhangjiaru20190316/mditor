@@ -255,14 +255,16 @@ export function createSvEditor(
     jumpToLine(line: number, smooth = false) {
       // 两个分支都写滚动位置（瞬时：CM scrollIntoView + focus；平滑：
       // scroller.scrollTo），入口统一打点，瞬时分支此前漏登记。
+      // 落点统一对齐视口顶部（与富文本大纲跳转 block:"start" 一致：大纲是
+      // 导航动作，「点哪里、哪里到顶」；打字机的光标居中只在真实输入时由
+      // viewScrolledCenter 接管）。
       noteScrollWrite("sv-jump");
       const l = Math.max(0, Math.min(line, view.state.doc.lines - 1));
       const pos = view.state.doc.line(l + 1).from;
-      const y: "start" | "center" = opts.isTypewriter?.() ? "center" : "start";
       if (!smooth) {
         view.dispatch({
           selection: { anchor: pos },
-          effects: EditorView.scrollIntoView(pos, { y }),
+          effects: EditorView.scrollIntoView(pos, { y: "start" }),
         });
         view.focus();
         return;
@@ -283,10 +285,7 @@ export function createSvEditor(
       const block = view.lineBlockAt(pos);
       const viewportTop = view.documentTop + block.top;
       const rect = scroller.getBoundingClientRect();
-      const offset =
-        y === "center"
-          ? viewportTop - rect.top - scroller.clientHeight / 2
-          : viewportTop - rect.top;
+      const offset = viewportTop - rect.top;
       const clear = () => {
         smoothJump.active = false;
       };
@@ -298,6 +297,15 @@ export function createSvEditor(
         clear();
         return;
       }
+      // 引擎级兜底（同富文本大纲跳转，setTimeout 版）：个别 WebView 配置
+      // 整体吞掉平滑滚动——80ms 无位移即补一次瞬时滚动，跳转必落地。
+      const startTop = scroller.scrollTop;
+      const destTop = Math.max(0, startTop + offset);
+      window.setTimeout(() => {
+        if (Math.abs(scroller.scrollTop - startTop) < 1) {
+          scroller.scrollTo({ top: destTop, behavior: "auto" });
+        }
+      }, 80);
       scroller.addEventListener("scrollend", clear, { once: true });
       window.setTimeout(clear, 1200);
     },

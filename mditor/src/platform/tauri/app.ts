@@ -16,8 +16,38 @@ import type { PlatformApp, PlatformWindow } from "../types";
 
 let windowCache: PlatformWindow | null = null;
 
+/** 纯浏览器预览（npm run dev）的窗口兜底：没有 __TAURI_INTERNALS__，
+ * getCurrentWindow() 在读取 internals 时同步抛 TypeError——不是 reject，
+ * 静默失败兜底（platform/index 头注意图）对它不成立，会打穿
+ * ErrorBoundary 白屏。no-op 窗口 label 恒 main（单窗语义），事件监听
+ * 恒不触发、Unlisten 恒为空函数。 */
+function browserStubWindow(): PlatformWindow {
+  const noop = () => Promise.resolve();
+  return {
+    label: "main",
+    minimize: noop,
+    toggleMaximize: noop,
+    close: noop,
+    destroy: noop,
+    setTitle: () => Promise.resolve(),
+    isMaximized: () => Promise.resolve(false),
+    onResized: () => Promise.resolve(() => {}),
+    isFullscreen: () => Promise.resolve(false),
+    setFullscreen: () => Promise.resolve(),
+    onDragDropEvent: () => Promise.resolve(() => {}),
+    onCloseRequested: () => Promise.resolve(() => {}),
+    onFocusChanged: () => Promise.resolve(() => {}),
+  };
+}
+
 function tauriWindow(): PlatformWindow {
   windowCache ??= (() => {
+    if (
+      typeof window !== "undefined" &&
+      !("__TAURI_INTERNALS__" in window)
+    ) {
+      return browserStubWindow();
+    }
     const w = getCurrentWindow();
     return {
       label: w.label,

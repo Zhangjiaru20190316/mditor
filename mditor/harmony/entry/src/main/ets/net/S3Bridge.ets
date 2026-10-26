@@ -651,7 +651,12 @@ export function parseListXml(xmlText: string): ListParseResult {
           if (tag === 'Contents' && inContents) {
             let key = xmlDecode(curKey);
             try {
-              key = decodeURIComponent(key);
+              // OSS 的 encoding-type=url 把空格编码为 '+'（form 风格），
+              // decodeURIComponent 不还原 '+'——含空格的键会错位成 '+' 字面
+              // （List 可见、GET 404，2026-10-24 真机 7 例实锤）。先统一
+              // 替换为 %20 再解码。桶内键空间为明文形态（对象键 = OSS 对
+              // 单层编码路径解一层所得），一层解码即归位明文。
+              key = decodeURIComponent(key.replace(/\+/g, '%20'));
             } catch {
               // 已是明文 — 保持
             }
