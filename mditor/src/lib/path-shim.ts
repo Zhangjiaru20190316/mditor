@@ -32,11 +32,17 @@ export function extname(p: string): string {
 }
 
 export function join(...parts: string[]): string {
-  return parts
-    .map(normalize)
-    .map((p) => p.replace(/^\/+/, ""))
+  const normed = parts.map(normalize);
+  // 首段带根则保留根（Windows 盘符 `E:/` 或 POSIX `/`）：鸿蒙虚拟路径
+  // `/Docs/ws-1`、`/AppData` 的前导斜杠是 UriMapper 的解析锚点，剥掉后
+  // 全部子路径（树打开/重命名/新建/搜索）都变成「无法解析的虚拟路径」。
+  // Windows 桌面首段是盘符（非斜杠），行为与旧实现逐字节一致。
+  const root = normed.length > 0 ? (normed[0].match(/^([a-zA-Z]:\/|\/)/)?.[1] ?? "") : "";
+  const tail = normed
+    .map((p, i) => (i === 0 ? p.slice(root.length) : p).replace(/^\/+/, ""))
     .filter(Boolean)
     .join(SEP);
+  return root + tail;
 }
 
 /** Join but keep a leading drive/root (Windows `C:/...` or POSIX `/...`). */

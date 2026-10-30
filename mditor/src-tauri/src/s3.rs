@@ -315,7 +315,8 @@ pub async fn s3_list(cfg: S3Config, prefix: String) -> Result<Vec<S3Object>, Str
 pub async fn s3_get(cfg: S3Config, key: String) -> Result<tauri::ipc::Response, String> {
     validate_key(&key)?;
     let store = build_store(&cfg)?;
-    let path = StorePath::from(key.as_str());
+    let path = StorePath::parse(&key)
+        .map_err(|e| err("006", format!("对象 key 非法：{e}")))?;
     let meta = store
         .head(&path)
         .await
@@ -411,7 +412,8 @@ pub async fn s3_upload_file(
         .await
         .map_err(|e| err("006", format!("读取本地文件失败：{e}")))?;
     let store = build_store(&cfg)?;
-    let path = StorePath::from(key.as_str());
+    let path = StorePath::parse(&key)
+        .map_err(|e| err("006", format!("对象 key 非法：{e}")))?;
     put_bytes(&store, &path, bytes, mtime_ms).await
 }
 
@@ -430,7 +432,8 @@ pub async fn s3_download_file(
         return Err(err("006", "目标文件路径为空"));
     }
     let store = build_store(&cfg)?;
-    let path = StorePath::from(key.as_str());
+    let path = StorePath::parse(&key)
+        .map_err(|e| err("006", format!("对象 key 非法：{e}")))?;
     let meta = store
         .head(&path)
         .await
@@ -495,7 +498,8 @@ pub async fn s3_download_file(
 pub async fn s3_delete(cfg: S3Config, key: String) -> Result<(), String> {
     validate_key(&key)?;
     let store = build_store(&cfg)?;
-    let path = StorePath::from(key.as_str());
+    let path = StorePath::parse(&key)
+        .map_err(|e| err("006", format!("对象 key 非法：{e}")))?;
     store
         .delete(&path)
         .await
@@ -508,7 +512,8 @@ pub async fn s3_delete(cfg: S3Config, key: String) -> Result<(), String> {
 pub async fn s3_head(cfg: S3Config, key: String) -> Result<Option<S3Object>, String> {
     validate_key(&key)?;
     let store = build_store(&cfg)?;
-    let path = StorePath::from(key.as_str());
+    let path = StorePath::parse(&key)
+        .map_err(|e| err("006", format!("对象 key 非法：{e}")))?;
     match store.head(&path).await {
         Ok(m) => Ok(Some(to_s3_object(&m))),
         Err(object_store::Error::NotFound { .. }) => Ok(None),
@@ -536,6 +541,33 @@ mod tests {
         assert_eq!(percent_decode_path("100%25.md"), "100%.md"); // 字面 % 的编码往返
         assert_eq!(percent_decode_path("bad%ZZ.md"), "bad%ZZ.md"); // 无效序列原样
         assert_eq!(percent_decode_path("trunc%2.md"), "trunc%2.md"); // 截断序列原样
+    }
+
+    // ---- StorePath::parse 键语义（2026-10-31 明文键收敛）--------------------
+    // from() 内部 percent-encode → OSS 解一层后落「%E4... 字面键」；parse()
+    // 原样保留明文 → 单层编码 URL → OSS 解一层得明文键，与鸿蒙端一致。
+
+    #[test]
+    fn store_path_parse_keeps_plain_key_raw() {
+        let key = "mditor/cmc/01_专题笔记/笔记 (1).md";
+        let p = StorePath::parse(key).expect("明文键必须可解析");
+        assert_eq!(p.as_ref(), key);
+        assert_eq!(p.to_string(), key);
+    }
+
+    #[test]
+    fn store_path_parse_strips_root_slash_and_rejects_bad_segments() {
+        assert_eq!(
+            StorePath::parse("/mditor/cmc/a.md").unwrap().as_ref(),
+            "mditor/cmc/a.md"
+        );
+        // 字面 % 键（List 还原远端历史对象所需）原样可寻址、不再二次编码。
+        assert_eq!(
+            StorePath::parse("mditor/%E4%B8%AD.md").unwrap().as_ref(),
+            "mditor/%E4%B8%AD.md"
+        );
+        assert!(StorePath::parse("mditor//a.md").is_err()); // 空段
+        assert!(StorePath::parse("mditor/../a.md").is_err()); // 相对段
     }
 
     // ---- vhost_endpoint（object_store 0.13 桶名拼入 endpoint）--------------
