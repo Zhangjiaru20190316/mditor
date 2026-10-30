@@ -1,5 +1,43 @@
 # Changelog
 
+## 未发布：鸿蒙文件树全树失联（join 剥前导斜杠）+ 桌面字面键源头收敛（StorePath::parse）
+
+### 鸿蒙文件树「能看到文件名、打不开」：path-shim.join 剥掉前导斜杠
+
+- **症状**：鸿蒙真机上同步下来的文件在文件树可见，点击打开必弹
+  「打开失败： Error: 无法解析的虚拟路径: Docs/ws-1/00_冲刺总控.md」；
+  子文件夹展开静默空白（readDirLevel exists 失败回空）。
+- **根因**：`src/lib/path-shim.ts` 的 `join()` 对每个部分做
+  `.replace(/^\/+/, "")`——首段 `/Docs/ws-1` 的前导斜杠被剥掉，树全部
+  子路径变 `Docs/ws-1/...`；`UriMapper.resolve` 只认 `/Docs/`、`/AppData`
+  前缀 → 解析必败。**Windows 桌面从未暴露**：首段 `E:\...` 盘符非斜杠，
+  replace 不命中——跨平台路径原语的盲区。
+- **修复**：修 join 原语本身——首段带根（`^([a-zA-Z]:\/|\/)`，POSIX `/`
+  或盘符）保留根，后续部分前导斜杠仍剥（拼接语义不变）；Windows 桌面
+  行为逐字节一致。一处修复覆盖 21 个引用方（树打开/新建/重命名/搜索/
+  删除收集/reviewStore/ragIndex 等全部「基目录 + 子名」场景）。
+- **真机复验**：原报错文件打开成功（8322 字，KaTeX 公式正常）、子文件夹
+  展开列出子文件；vitest 新增 path-shim 9 例（根保留/相对/空段回归），
+  全量 1213 绿。
+
+### 桌面端字面键源头：s3.rs 五处 StorePath::from → parse
+
+- **背景**：OSS 语义 = 收到 URL 路径解一层后匹配对象键。object_store
+  0.13 `Path::from` 内部 percent-encode（`%E4...` 形态）→ PUT 落「字面
+  键」（2026-10-23 事故源头，云端 2585 键已于 10-30 全量迁移明文）；
+  `Path::parse` 原样保留明文 → 单层编码 URL → OSS 解一层得明文键，与
+  鸿蒙端键空间一致。
+- **修复**（`src-tauri/src/s3.rs`）：s3_get / s3_upload_file /
+  s3_download_file / s3_delete / s3_head 五处统一 `StorePath::parse`，
+  非法键报 SYNC-006；`PathPart::parse` 只拒 `.`/`..`/控制字符，% 字面段
+  合法可寻址（List 还远端历史对象所需）。cargo test s3 新增 2 例键语义
+  锁定（明文键原样往返 / 根斜杠剥离 / 空段与 `..` 拒绝），8/8 绿 +
+  clippy 干净。
+- **复发实锤与清理**：修复落地前旧二进制已再产 3 个字面键
+  （`mditor/作文/`，用户保存作文笔记时重传），已按 COPY→明文键→size
+  校验→DELETE 字面键 清理（migrated=3 failed=0），并以新二进制交付
+  生产安装（`%LOCALAPPDATA%\Mditor`）阻断复发。
+
 ## 未发布：鸿蒙真机跳转失灵（WebView 吞平滑滚动）+ S3 空格键解码错位 + 浏览器预览兜底
 
 ### 鸿蒙真机大纲/批注/源码跳转失灵：WebView 吞掉平滑滚动三处收口
