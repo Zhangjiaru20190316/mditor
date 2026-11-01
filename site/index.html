@@ -89,7 +89,7 @@
           <a class="btn btn-ghost" href="https://github.com/Zhangjiaru20190316/mditor">查看源码</a>
         </div>
         <div class="hero-badges">
-          <span class="hb-new"><i></i>v5.1.4</span><span>Windows 10/11</span><span>13 MB 安装包</span><span>MIT 开源</span>
+          <span class="hb-new"><i></i>v5.2.0</span><span>Windows 10/11</span><span>31 MB 安装包</span><span>MIT 开源</span>
         </div>
       </div>
       <div class="hero-visual" aria-hidden="true">
@@ -123,10 +123,24 @@
       <div class="wn-list">
         <article class="wn-item wn-star reveal">
           <div class="wn-head">
+            <span class="wn-ver">v5.2.0</span>
+            <span class="wn-date">2026-11-01</span>
+            <span class="wn-tag">特性</span>
+            <span class="wn-latest"><i></i>本次亮点</span>
+          </div>
+          <h3>PDF / Word 原位编辑 · 多格式笔记全面落地</h3>
+          <p><b>Word（.docx）结构化编辑</b>：只读标签一键进入独立编辑面，编辑后保存回 .docx（标题/列表/表格/图片结构一致）；<b>文字 PDF 行级微编辑</b>：点击文本行即可替换，保存按补丁从原始字节重放，未编辑内容逐字节保留。保存默认<b>另存「原名 (编辑版)」</b>，可选替换原件（二次确认 + 原件进系统回收站可恢复）；PDF → Markdown 转换升级标题层级与列表语法；另修复拖选跨过代码块/公式块时选区高亮被嵌套编辑面绕过的问题。多格式笔记（PDF/Word 预览 + 转 MD + 云同步）随本版全面转正。</p>
+          <div class="wn-star-foot">
+            <span class="wn-pill">✦ Word / PDF 原位编辑</span>
+            <span class="wn-pill">另存默认 · 回收站兜底</span>
+            <span class="wn-pill">PDF→MD 标题/列表</span>
+          </div>
+        </article>
+        <article class="wn-item reveal">
+          <div class="wn-head">
             <span class="wn-ver">v5.1.4</span>
             <span class="wn-date">2026-10-24</span>
             <span class="wn-tag">修复</span>
-            <span class="wn-latest"><i></i>本次亮点</span>
           </div>
           <h3>导出与图片双根修：中英混排乱码根治 · 裂图清零</h3>
           <p>矢量 PDF 导出两轮根修（v5.1.3/v5.1.4）：代码块静态语法高亮、<b>Inter 真字体内嵌</b>、线宽墨量校准；根治中英混排大面积缺字叠字——<b>@pdf-lib/fontkit CFF 子集双缺陷</b>（FD 映射错桶 + FDSelect 二分边界），fontTools 字节级验证 589 字形全过、用户文档重导出 520 字形 0 损坏（修复前约 44%）。一并修复<b>非工作区文档打开即整篇裂图</b>：单文件授权面扩到父目录 + 授权竞态 await 化，最近文件重开 10/10 图片加载。</p>
