@@ -6538,6 +6538,151 @@ span.mditor-math-inline-lazy.mditor-math-inline-ready {
   border-bottom: 1px solid var(--border-soft, rgba(128, 128, 128, 0.25));
 }
 
+/* ---------- PDF 微编辑（DE 轮 M3：命中层 + 行内编辑框 + 补丁侧栏） ---------- */
+
+.pdf-edit-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.pdf-edit-line {
+  position: absolute;
+  pointer-events: auto;
+  cursor: text;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.08s ease-out, box-shadow 0.08s ease-out;
+}
+
+.pdf-edit-line:hover {
+  background: color-mix(in srgb, var(--accent, #4a9) 22%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, #4a9) 60%, transparent);
+}
+
+.pdf-edit-line.is-patched {
+  background: color-mix(in srgb, #e8b417 18%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, #e8b417 45%, transparent);
+}
+
+.pdf-edit-line.is-patched:hover {
+  background: color-mix(in srgb, #e8b417 30%, transparent);
+}
+
+.pdf-edit-input {
+  position: absolute;
+  z-index: 3;
+  font: inherit;
+  font-size: 12px;
+  padding: 1px 6px;
+  border: 1px solid var(--accent, #4a9);
+  border-radius: 3px;
+  background: var(--bg, #fff);
+  color: var(--fg, #222);
+  outline: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+
+.pdf-patch-panel {
+  flex: none;
+  width: 240px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border-soft, rgba(128, 128, 128, 0.25));
+  background: var(--bg-panel, transparent);
+  padding: 8px 0;
+  font-size: 12px;
+}
+
+.pdf-patch-head {
+  padding: 4px 12px 6px;
+  font-weight: 600;
+  color: var(--fg-dim, var(--fg));
+}
+
+.pdf-patch-notice {
+  margin-top: 6px;
+  font-weight: 400;
+  color: var(--fg-dim, #996);
+  line-height: 1.5;
+}
+
+.pdf-patch-empty {
+  padding: 6px 12px;
+  color: var(--fg-dim, #999);
+  line-height: 1.6;
+}
+
+.pdf-patch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pdf-patch-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border-soft, rgba(128, 128, 128, 0.15));
+}
+
+.pdf-patch-jump {
+  flex: none;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border-soft, rgba(128, 128, 128, 0.4));
+  background: transparent;
+  color: var(--fg-dim, var(--fg));
+  cursor: pointer;
+}
+
+.pdf-patch-texts {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.pdf-patch-orig {
+  color: var(--fg-dim, #999);
+  text-decoration: line-through;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40%;
+}
+
+.pdf-patch-arrow {
+  color: var(--fg-dim, #aaa);
+  flex: none;
+}
+
+.pdf-patch-new {
+  color: var(--accent, #4a9);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pdf-patch-revert {
+  flex: none;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-dim, #999);
+  cursor: pointer;
+}
+
+.pdf-patch-revert:hover {
+  color: var(--danger, #c66);
+  border-color: var(--danger, #c66);
+}
+
 .doc-note-btn.is-active {
   border-color: var(--accent, var(--fg));
   color: var(--accent, var(--fg));

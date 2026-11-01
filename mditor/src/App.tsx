@@ -70,6 +70,7 @@ import {
 import {
   DOC_NOTE_RE,
   docTabKey,
+  readDocNoteBytes,
   isDocxNote,
   isDocxTab,
   isPdfNote,
@@ -2022,9 +2023,10 @@ function App() {
         flashStatus("编辑面尚未就绪", 4000);
         return false;
       }
-      if (isPdfNote(path)) {
-        // PDF 支路（M3 交付：applyPdfPatches 原始字节重放）。
-        flashStatus("PDF 微编辑保存随 M3 交付", 5000);
+      const isPdf = isPdfNote(path);
+      const patches = handle.serialize().patches ?? [];
+      if (isPdf && patches.length === 0) {
+        flashStatus("没有待保存的修改", 4000);
         return false;
       }
       markSaving(path);
@@ -2032,6 +2034,26 @@ function App() {
         const r = await saveDocNoteEdited(
           path,
           async () => {
+            if (isPdf) {
+              // PDF 支路（M3）：从原始字节重放 patch（幂等；字形守护/收缩/
+              // 旋转页拒绝在 applyPdfPatches 内逐条列报）。
+              const { applyPdfPatches } = await import("./lib/docNotePdfEdit");
+              const { loadFontBytes, loadLatinFontBytes } = await import(
+                "./lib/exportPdfPipeline"
+              );
+              const cjk = await loadFontBytes();
+              if (!cjk) throw new Error("内置字体（NotoSansSC）加载失败");
+              const latin = await loadLatinFontBytes();
+              const bytes = await readDocNoteBytes(path);
+              const res = await applyPdfPatches(bytes, patches, { cjk, latin: latin?.regular ?? null });
+              if (res.rejected.length > 0) {
+                flashStatus(
+                  `已应用 ${res.applied} 处；${res.rejected.length} 处未应用（${res.rejected[0].reason}）`,
+                  8000
+                );
+              }
+              return res.bytes;
+            }
             const html = handle.serialize().htmlBuffer ?? "";
             const { buildDocx } = await import("./lib/exporter");
             const { collectThemeCss } = await import("./lib/themeCss");

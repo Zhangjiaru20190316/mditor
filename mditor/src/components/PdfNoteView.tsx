@@ -23,7 +23,14 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { getAdapter } from "../platform";
 import { noteOpError } from "../lib/opDebug";
-import { readDocNoteBytes } from "../lib/docNote";
+import {
+  readDocNoteBytes,
+  piecesToEditLines,
+  type PdfEditLine,
+  type PdfPatch,
+} from "../lib/docNote";
+import { beginEditing, resumeDocEdit, updateDocEditBuffer } from "../lib/docNoteEdit";
+import { patchFromLine, revertPatch, upsertPatch } from "../lib/docNotePdfEdit";
 import { loadPdfjs } from "../lib/pdfjsLazy";
 import { ExpandIcon, PdfFileIcon, RefreshIcon } from "./icons";
 
@@ -42,6 +49,50 @@ const PRELOAD_VIEWPORTS = 1.5;
 interface PageSize {
   w: number;
   h: number;
+  /** viewBox 原点（scale=1 视口；DE 轮 M3 命中层映射：用户空间 → 屏幕需减去
+   *  cropbox 偏移——spike② 页3 实测 pdfjs 文本坐标不随 CropBox 平移）。 */
+  vx: number;
+  vy: number;
+}
+
+/** 覆盖底色采样（spike② 定案）：行框四角外 2-3px 的均值色；近白（全通道
+ *  ≥247）返回 undefined（默认纯白覆盖）。canvas 为 null（未渲染）同样回退。 */
+function sampleCoverColor(
+  canvas: HTMLCanvasElement | null,
+  rect: { left: number; top: number; width: number; height: number }
+): string | undefined {
+  if (!canvas) return undefined;
+  const ctx = canvas.getContext("2d");
+  if (!ctx || canvas.width === 0 || canvas.clientWidth === 0) return undefined;
+  const sx = canvas.width / canvas.clientWidth;
+  const sy = canvas.height / canvas.clientHeight;
+  const pts: Array<[number, number]> = [
+    [rect.left - 3, rect.top + 1],
+    [rect.left + rect.width + 2, rect.top + 1],
+    [rect.left - 3, rect.top + rect.height - 1],
+    [rect.left + rect.width + 2, rect.top + rect.height - 1],
+  ];
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let n = 0;
+  for (const [px, py] of pts) {
+    const x = Math.round(px * sx);
+    const y = Math.round(py * sy);
+    if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) continue;
+    const d = ctx.getImageData(x, y, 1, 1).data;
+    r += d[0];
+    g += d[1];
+    b += d[2];
+    n++;
+  }
+  if (n === 0) return undefined;
+  r = Math.round(r / n);
+  g = Math.round(g / n);
+  b = Math.round(b / n);
+  if (r >= 247 && g >= 247 && b >= 247) return undefined;
+  const h = (v: number) => v.toString(16).padStart(2, "0");
+  return `#${h(r)}${h(g)}${h(b)}`;
 }
 
 /** pdfjs getOutline 条目的结构子集（dest 为名称字符串或显式目标数组）。 */
@@ -78,6 +129,25 @@ interface Props {
 
 // ---- 单页（命令式 canvas：React 不管控其子树，避免 reconcile 冲突）-----------
 
+interface PdfPageEditProps {
+  /** 本页可编辑行。 */
+  lines: PdfEditLine[];
+  /** 已有 patch（键 = lineKey）。 */
+  patches: Map<string, PdfPatch>;
+  /** 正在行内编辑的行键。 */
+  editingLineKey: string | null;
+  editingValue: string;
+  onEditingValue: (v: string) => void;
+  onLineClick: (
+    pageIdx: number,
+    line: PdfEditLine,
+    canvas: HTMLCanvasElement | null,
+    rectCss: { left: number; top: number; width: number; height: number }
+  ) => void;
+  onCommit: (line: PdfEditLine) => void;
+  onCancel: () => void;
+}
+
 interface PdfPageProps {
   doc: PDFDocumentProxy;
   index: number; // 1-based
@@ -87,6 +157,8 @@ interface PdfPageProps {
   total: number;
   borrow: (index: number, scale: number) => HTMLCanvasElement | null;
   giveBack: (index: number, canvas: HTMLCanvasElement, scale: number) => void;
+  /** DE 轮 M3：微编辑命中层（不传 = 只读预览）。 */
+  edit?: PdfPageEditProps;
 }
 
 const PdfPage = memo(function PdfPage({
@@ -98,6 +170,7 @@ const PdfPage = memo(function PdfPage({
   total,
   borrow,
   giveBack,
+  edit,
 }: PdfPageProps) {
   const slotRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -169,20 +242,73 @@ const PdfPage = memo(function PdfPage({
     };
   }, [doc, index, scale, borrow, giveBack]);
 
+  const slotW = Math.floor(size.w * scale);
+  const slotH = Math.floor(size.h * scale);
   return (
     <div
       ref={slotRef}
       className="pdf-page-slot"
-      style={{
-        top,
-        width: Math.floor(size.w * scale),
-        height: Math.floor(size.h * scale),
-      }}
+      style={{ top, width: slotW, height: slotH }}
     >
       {busy && <span className="pdf-page-loading">…</span>}
       <span className="pdf-page-num">
         {index} / {total}
       </span>
+      {edit && (
+        <div className="pdf-edit-overlay">
+          {edit.lines.map((line) => {
+            // 用户空间 → 屏幕（spike② 恒等映射 + viewBox 原点 + y 翻转）。
+            const lineBoxH = 1.42 * line.height * scale;
+            const bottomCss = (line.y - 0.3 * line.height - size.vy) * scale;
+            const rect = {
+              left: (line.x0 - size.vx) * scale,
+              top: slotH - bottomCss - lineBoxH,
+              width: Math.max(4, line.width * scale),
+              height: lineBoxH,
+            };
+            if (edit.editingLineKey === line.key) {
+              return (
+                <input
+                  key={line.key}
+                  className="pdf-edit-input"
+                  style={{
+                    left: Math.max(0, rect.left - 4),
+                    top: rect.top - 2,
+                    width: Math.max(rect.width + 12, 260),
+                    height: rect.height + 4,
+                  }}
+                  value={edit.editingValue}
+                  autoFocus
+                  spellCheck={false}
+                  onChange={(e) => edit.onEditingValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") edit.onCommit(line);
+                    else if (e.key === "Escape") edit.onCancel();
+                  }}
+                  onBlur={() => edit.onCancel()}
+                />
+              );
+            }
+            const patched = edit.patches.has(line.key);
+            return (
+              <div
+                key={line.key}
+                className={`pdf-edit-line${patched ? " is-patched" : ""}`}
+                style={rect}
+                title={patched ? `已编辑：${edit.patches.get(line.key)?.newText}` : `${line.text}（点击替换）`}
+                onClick={(ev) =>
+                  edit.onLineClick(
+                    index - 1,
+                    line,
+                    ev.currentTarget.parentElement?.querySelector("canvas.pdf-canvas") ?? null,
+                    rect
+                  )
+                }
+              />
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 });
@@ -226,6 +352,11 @@ export const PdfNoteView = memo(function PdfNoteView({
   editActive,
   onEnterEdit,
   onExitEdit,
+  onRegisterEditHandle,
+  onDirtyChange,
+  onRequestSave,
+  onRequestReplace,
+  savedToken,
 }: Props) {
   const caps = getAdapter().capabilities;
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -240,6 +371,21 @@ export const PdfNoteView = memo(function PdfNoteView({
   const [currentPage, setCurrentPage] = useState(1);
   const [visibleRange, setVisibleRange] = useState<[number, number]>([0, 0]);
   const [containerW, setContainerW] = useState(0);
+
+  // ---- DE 轮 M3：微编辑状态 ----------------------------------------------------
+  /** 逐页可编辑行（editLines[pageIndex]；null = 提取中/未进入）。 */
+  const [editLines, setEditLines] = useState<PdfEditLine[][] | null>(null);
+  const [editNotice, setEditNotice] = useState<string | null>(null);
+  const [editReload, setEditReload] = useState(0);
+  const [patches, setPatches] = useState<PdfPatch[]>([]);
+  /** 行内编辑框（点击行打开；Enter 提交 / Esc・失焦取消）。 */
+  const [editing, setEditing] = useState<{
+    line: PdfEditLine;
+    value: string;
+    coverColor?: string;
+  } | null>(null);
+  const patchesRef = useRef<PdfPatch[]>([]);
+  patchesRef.current = patches;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const docRef = useRef<PDFDocumentProxy | null>(null);
@@ -297,7 +443,7 @@ export const PdfNoteView = memo(function PdfNoteView({
         for (let i = 1; i <= d.numPages; i++) {
           const p = await d.getPage(i);
           const vp = p.getViewport({ scale: 1 });
-          arr.push({ w: vp.width, h: vp.height });
+          arr.push({ w: vp.width, h: vp.height, vx: vp.viewBox[0], vy: vp.viewBox[1] });
           if (cancelled) return;
         }
         const ol = (await d.getOutline().catch(() => null)) as OutlineNode[] | null;
@@ -327,6 +473,143 @@ export const PdfNoteView = memo(function PdfNoteView({
       void task?.destroy().catch(() => undefined);
     };
   }, [path, reloadKey, caps.pdfNoteView]);
+
+  // ---- DE 轮 M3：微编辑行提取（进入编辑态/文档就绪/保存后重放时）----------------
+  useEffect(() => {
+    if (!editActive || !doc || !caps.docNoteEdit) return;
+    let cancelled = false;
+    setEditLines(null);
+    setEditNotice(null);
+    void (async () => {
+      try {
+        const pages: PdfEditLine[][] = [];
+        const rotatedPages: number[] = [];
+        let total = 0;
+        for (let i = 1; i <= doc.numPages; i++) {
+          const page = await doc.getPage(i);
+          if ((((page.rotate % 360) + 360) % 360) !== 0) {
+            rotatedPages.push(i);
+            pages.push([]);
+            continue;
+          }
+          const tc = await page.getTextContent();
+          const items = tc.items as Array<{
+            str?: string;
+            transform?: number[];
+            width?: number;
+            height?: number;
+          }>;
+          const lines = piecesToEditLines(
+            i,
+            items
+              .filter((it) => typeof it.str === "string" && Array.isArray(it.transform))
+              .map((it) => ({
+                str: it.str!,
+                x: it.transform![4],
+                y: it.transform![5],
+                width: it.width ?? 0,
+                height: it.height ?? 10,
+                rotated:
+                  Math.abs(it.transform![1]) > 0.01 || Math.abs(it.transform![2]) > 0.01,
+              }))
+          );
+          pages.push(lines);
+          total += lines.length;
+        }
+        if (cancelled) return;
+        if (total === 0) {
+          setEditNotice("本文档没有可编辑的文本行（扫描版无文本层，或文本为旋转排布）。建议用「转 Markdown」深度编辑。");
+        } else if (rotatedPages.length > 0) {
+          setEditNotice(`第 ${rotatedPages.join("、")} 页为旋转页，不支持编辑（其余页面可编辑）。`);
+        }
+        // 切回标签：恢复既有 patch 列表（唯一事实源在状态机）。
+        const st = resumeDocEdit(path);
+        const restored = st?.patches ?? [];
+        setPatches(restored);
+        onDirtyChange?.(path, restored.length > 0);
+        setEditLines(pages);
+        beginEditing(path);
+      } catch (e) {
+        if (cancelled) return;
+        noteOpError("pdf-edit-lines", e);
+        setEditNotice("文本层提取失败，无法进入微编辑。");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // onDirtyChange 为 App 稳定回调（空依赖），不入依赖面。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editActive, doc, path, editReload, caps.docNoteEdit]);
+
+  // 编辑面命令句柄（serialize 取最新 patches——ref 镜像防闭包过期）。
+  useEffect(() => {
+    if (!editActive) {
+      onRegisterEditHandle?.(path, null);
+      return;
+    }
+    onRegisterEditHandle?.(path, {
+      serialize: () => ({ patches: patchesRef.current }),
+    });
+    return () => {
+      onRegisterEditHandle?.(path, null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editActive, path]);
+
+  // 保存成功：清 patch（已应用进产物）+ 重提取行 + 重载预览（替换原件场景）。
+  useEffect(() => {
+    if (!savedToken) return;
+    setPatches([]);
+    updateDocEditBuffer(path, { patches: [] });
+    onDirtyChange?.(path, false);
+    setEditReload((k) => k + 1);
+    setReloadKey((k) => k + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedToken]);
+
+  // 行内提交/撤销（patch 唯一事实源 = docNoteEdit 状态机，同步 + dirty 回写）。
+  const commitLineEdit = useCallback(
+    (line: PdfEditLine, newText: string, coverColor?: string) => {
+      setEditing(null);
+      const next = upsertPatch(patchesRef.current, patchFromLine(line, newText, coverColor));
+      patchesRef.current = next;
+      setPatches(next);
+      updateDocEditBuffer(path, { patches: next });
+      onDirtyChange?.(path, next.length > 0);
+    },
+    [path, onDirtyChange]
+  );
+
+  const revertLinePatch = useCallback(
+    (lineKey: string) => {
+      const next = revertPatch(patchesRef.current, lineKey);
+      patchesRef.current = next;
+      setPatches(next);
+      updateDocEditBuffer(path, { patches: next });
+      onDirtyChange?.(path, next.length > 0);
+    },
+    [path, onDirtyChange]
+  );
+
+  /** 点击行：打开行内编辑框；顺带从渲染 canvas 采样行周边底色（spike② 定案：
+   *  非纯白背景的覆盖矩形取采样色；采样时点 = 页面必然已渲染）。 */
+  const openLineEditor = useCallback(
+    (
+      _pageIdx: number,
+      line: PdfEditLine,
+      canvas: HTMLCanvasElement | null,
+      rectCss: { left: number; top: number; width: number; height: number }
+    ) => {
+      const patch = patchesRef.current.find((p) => p.lineKey === line.key);
+      setEditing({
+        line,
+        value: patch?.newText ?? line.text,
+        coverColor: sampleCoverColor(canvas, rectCss),
+      });
+    },
+    []
+  );
 
   // 容器宽度（适宽缩放 + 槽位尺寸依赖）。ResizeObserver 而非 window resize
   // ——侧栏开合/分隔条拖动同样影响宽度。
@@ -571,18 +854,39 @@ export const PdfNoteView = memo(function PdfNoteView({
           <RefreshIcon size={13} />
         </button>
         {editActive ? (
-          <span className="pdf-note-zoomval doc-note-hint" title="微编辑模式">
-            微编辑（占位——行级编辑随 M3 交付）
-          </span>
-        ) : null}
-        {editActive ? (
-          <button
-            className="doc-note-btn"
-            title="退出微编辑（未保存的修改将丢弃，需确认）"
-            onClick={() => void onExitEdit?.(path)}
-          >
-            退出编辑
-          </button>
+          <>
+            <span
+              className="pdf-note-zoomval doc-note-hint"
+              title="微编辑：点击页面文本行替换内容（Enter 提交 / Esc 取消）"
+            >
+              {editLines === null
+                ? "提取文本层…"
+                : `微编辑 · ${patches.length} 处修改（点击文本行编辑）`}
+            </span>
+            <button
+              className="doc-note-btn"
+              title="另存「原名 (编辑版).pdf」到源目录（未编辑内容原样保留）"
+              disabled={patches.length === 0}
+              onClick={() => onRequestSave?.(path)}
+            >
+              保存
+            </button>
+            <button
+              className="doc-note-btn"
+              title="替换原文件（需确认；原件进回收站可恢复）"
+              disabled={patches.length === 0}
+              onClick={() => void onRequestReplace?.(path)}
+            >
+              替换原件…
+            </button>
+            <button
+              className="doc-note-btn"
+              title="退出微编辑（未保存的修改将丢弃，需确认）"
+              onClick={() => void onExitEdit?.(path)}
+            >
+              退出编辑
+            </button>
+          </>
         ) : (
           caps.docNoteEdit &&
           onEnterEdit && (
@@ -609,9 +913,45 @@ export const PdfNoteView = memo(function PdfNoteView({
         </button>
       </div>
       <div className="pdf-note-main">
-        {outlineOpen && outline && (
+        {outlineOpen && outline && !editActive && (
           <aside className="pdf-outline" role="navigation" aria-label="PDF 大纲">
             <OutlineTree nodes={outline} depth={0} onJump={(n) => void jumpToOutline(n)} />
+          </aside>
+        )}
+        {editActive && (
+          <aside className="pdf-patch-panel" aria-label="PDF 微编辑补丁列表">
+            <div className="pdf-patch-head">
+              修改清单（{patches.length}）
+              {editNotice && <div className="pdf-patch-notice">{editNotice}</div>}
+            </div>
+            {patches.length === 0 && !editNotice && (
+              <div className="pdf-patch-empty">点击页面上的文本行开始编辑；Enter 提交，Esc 取消。</div>
+            )}
+            <ul className="pdf-patch-list">
+              {patches.map((p) => (
+                <li key={p.lineKey} className="pdf-patch-item">
+                  <button
+                    className="pdf-patch-jump"
+                    title={`跳到第 ${p.page} 页`}
+                    onClick={() => scrollToPage(p.page)}
+                  >
+                    P{p.page}
+                  </button>
+                  <span className="pdf-patch-texts" title={`${p.origText} → ${p.newText}`}>
+                    <span className="pdf-patch-orig">{p.origText}</span>
+                    <span className="pdf-patch-arrow">→</span>
+                    <span className="pdf-patch-new">{p.newText}</span>
+                  </span>
+                  <button
+                    className="pdf-patch-revert"
+                    title="撤销该行修改"
+                    onClick={() => revertLinePatch(p.lineKey)}
+                  >
+                    撤销
+                  </button>
+                </li>
+              ))}
+            </ul>
           </aside>
         )}
         <div
@@ -624,6 +964,7 @@ export const PdfNoteView = memo(function PdfNoteView({
               {(() => {
                 const slots = [];
                 const [first, last] = visibleRange;
+                const patchMap = new Map(patches.map((p) => [p.lineKey, p]));
                 for (let i = first; i <= last && i < sizes.length; i++) {
                   slots.push(
                     <PdfPage
@@ -636,6 +977,22 @@ export const PdfNoteView = memo(function PdfNoteView({
                       total={sizes.length}
                       borrow={borrow}
                       giveBack={giveBack}
+                      edit={
+                        editActive && editLines
+                          ? {
+                              lines: editLines[i] ?? [],
+                              patches: patchMap,
+                              editingLineKey: editing?.line.key ?? null,
+                              editingValue: editing?.value ?? "",
+                              onEditingValue: (v) =>
+                                setEditing((e) => (e ? { ...e, value: v } : e)),
+                              onLineClick: openLineEditor,
+                              onCommit: (line) =>
+                                commitLineEdit(line, editing?.value ?? line.text, editing?.coverColor),
+                              onCancel: () => setEditing(null),
+                            }
+                          : undefined
+                      }
                     />
                   );
                 }

@@ -114,6 +114,42 @@ export function invalidateDocNoteBytes(path: string): void {
   if (docBytesCache?.path === path) docBytesCache = null;
 }
 
+// ---- DE 轮 M3：微编辑行（命中层数据源，纯函数）--------------------------------
+
+/** 微编辑行：piecesToLines 的可点击形态（用户空间几何 + 稳定行键）。 */
+export interface PdfEditLine {
+  page: number;
+  key: string;
+  text: string;
+  x0: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** 单页 pieces（可选带 rotated 标记——原 transform b/c 分量非零的旋转 run）
+ *  → 可编辑行序列。旋转 run 被过滤：patch 模型只承载水平行（任务书 §4.2
+ *  拒绝场景，静默跳过不崩溃）。空行剔除。 */
+export function piecesToEditLines(
+  page: number,
+  pieces: Array<PdfTextPiece & { rotated?: boolean }>
+): PdfEditLine[] {
+  const lines = piecesToLines(
+    pieces.filter((p) => !p.rotated && p.str.trim().length > 0)
+  );
+  return lines
+    .filter((l) => l.text.length > 0)
+    .map((l) => ({
+      page,
+      key: pdfLineKey(page, l.y, l.x0),
+      text: l.text,
+      x0: l.x0,
+      y: l.y,
+      width: l.width,
+      height: l.height,
+    }));
+}
+
 // ---- 转 Markdown：PDF 文本重建启发式（纯函数）--------------------------------
 
 /** pdfjs TextItem 的结构子集（getTextContent 逐 piece 映射后的输入）。 */
@@ -148,6 +184,10 @@ interface PdfLine {
   y: number;
   text: string;
   height: number;
+  /** 行左缘 x（用户空间；DE 轮 M3 命中层/patch bbox 用）。 */
+  x0: number;
+  /** 行宽（用户空间；x1 = x0 + width）。 */
+  width: number;
 }
 
 /** 单页 pieces → 行序列：按 y 降序（视觉自上而下）容差聚类，行内按 x 排序
@@ -178,8 +218,10 @@ function piecesToLines(pieces: PdfTextPiece[]): PdfLine[] {
       text += s;
       prevEnd = p.x + p.width;
     }
+    const x0 = cur.reduce((m, p) => Math.min(m, p.x), Number.POSITIVE_INFINITY);
+    const x1 = cur.reduce((m, p) => Math.max(m, p.x + p.width), Number.NEGATIVE_INFINITY);
     const h = cur.reduce((m, p) => Math.max(m, p.height), 0) || 10;
-    lines.push({ y: curY, text: text.trim(), height: h });
+    lines.push({ y: curY, text: text.trim(), height: h, x0, width: Math.max(0, x1 - x0) });
     cur = [];
   };
   for (const p of sorted) {
