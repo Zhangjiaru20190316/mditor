@@ -30,21 +30,21 @@ Thumbs.db
 desktop.ini
 mditor/perf/fixtures/
 
-# 性能实验原始测量数据（证据链只保留 md 报告与 png 截图，原始数据本地生成不入库）
-mditor/perf/results/*.json
-mditor/perf/results/*.jsonl
-mditor/perf/results/*.cpuprofile
-mditor/perf/results/*.html
-mditor/perf/results/*.pdf
-mditor/perf/results/*.log
-mditor/perf/results/*.txt
-mditor/perf/results/screen.png
+# 性能实验原始测量数据（不入库；证据链产物按需 git add -f 显式入库）
+mditor/perf/results/**/*.json
+mditor/perf/results/**/*.jsonl*
+mditor/perf/results/**/*.cpuprofile
+mditor/perf/results/**/*.html
+mditor/perf/results/**/*.pdf
+mditor/perf/results/**/*.log
+mditor/perf/results/**/*.txt
+mditor/perf/results/**/*.png
+mditor/perf/tmp/
 mditor/perf/tmp-*/
 
 # Computer-use / Harmony 构建工具本地状态
 .cua/
 .hvigor/
-mditor/perf/results/screen.png
 
 # 私人工作区文件（G1：不进公开仓库——本地文件保留，仅取消跟踪）
 memory/
@@ -58,19 +58,20 @@ TOOLS.md
 
 # 游离截图（G4：防止 git add . 误提交）
 d1.jpeg
-mditor/d2.jpeg
+mditor/d?.jpeg
+mditor/s?.jpeg
 
 # 覆盖率产物（N32 基线数据在报告中，目录不入库）
 mditor/coverage/
 
-# 会话调试产物（含云存储 AccessKey / 私有笔记文件名，绝不入库）
+# 会话调试产物（云迁移/真机取证：含云存储 AccessKey / 私有笔记文件名，绝不入库）
 __pycache__/
-mditor-cloud-*.py
-mditor-cloud-objects.json
+mditor-cloud-*
+mditor-device-*
 mditor-restore-*
 mditor-analyze-missing.py
 mditor-sync-pending-deletes.*
 
-# 临时测量产物（体积大、中间态）
-mditor/perf/tmp/
-mditor-device-mditor.json.*
+# DE 轮阶段 0 spike：夹具与产物可由脚本再生成（报告 + 结果 JSON/PNG 进库）
+mditor/perf/de-spike/fixtures/
+mditor/perf/de-spike/out/

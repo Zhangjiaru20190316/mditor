@@ -1,0 +1,117 @@
+[
+  {
+    "name": "foreign-edge.pdf",
+    "origBytes": 62154,
+    "origTextItems": 24,
+    "origAnnots": 2,
+    "os-true": {
+      "bytes": 56959,
+      "loadMs": 4,
+      "saveMs": 7,
+      "rssDeltaMB": 2,
+      "textAnnotsPreserved": true,
+      "diff": "IDENTICAL"
+    },
+    "os-false": {
+      "bytes": 62134,
+      "loadMs": 2,
+      "saveMs": 18,
+      "rssDeltaMB": 0,
+      "textAnnotsPreserved": true,
+      "diff": "IDENTICAL"
+    }
+  },
+  {
+    "name": "lib-form.pdf",
+    "origBytes": 7496308,
+    "origTextItems": 18,
+    "origAnnots": 2,
+    "os-true": {
+      "bytes": 7342826,
+      "loadMs": 18,
+      "saveMs": 14,
+      "rssDeltaMB": 23,
+      "textAnnotsPreserved": true,
+      "diff": "IDENTICAL"
+    },
+    "os-false": {
+      "bytes": 7496308,
+      "loadMs": 19,
+      "saveMs": 15,
+      "rssDeltaMB": -25,
+      "textAnnotsPreserved": true,
+      "diff": "IDENTICAL"
+    },
+    "formFields": {
+      "orig": [
+        {
+          "name": "spike.text1",
+          "ctor": "PDFTextField",
+          "value": "prefilled"
+        },
+        {
+          "name": "spike.check1",
+          "ctor": "PDFCheckBox",
+          "value": false
+        }
+      ],
+      "roundtrip": [
+        {
+          "name": "spike.text1",
+          "ctor": "PDFTextField",
+          "value": "prefilled"
+        },
+        {
+          "name": "spike.check1",
+          "ctor": "PDFCheckBox",
+          "value": false
+        }
+      ],
+      "preserved": true
+    }
+  },
+  {
+    "name": "big-50mb.pdf",
+    "origBytes": 56107330,
+    "origTextItems": 3,
+    "origAnnots": 0,
+    "os-true": {
+      "bytes": 55955434,
+      "loadMs": 39,
+      "saveMs": 53,
+      "rssDeltaMB": 161,
+      "textAnnotsPreserved": true,
+      "diff": "IDENTICAL"
+    },
+    "os-false": {
+      "bytes": 56107330,
+      "loadMs": 39,
+      "saveMs": 44,
+      "rssDeltaMB": 0,
+      "textAnnotsPreserved": true,
+      "diff": "IDENTICAL"
+    }
+  },
+  {
+    "name": "rotate-crop.pdf",
+    "origBytes": 7491870,
+    "origTextItems": 3,
+    "origAnnots": 0,
+    "os-true": {
+      "bytes": 7340018,
+      "loadMs": 14,
+      "saveMs": 9,
+      "rssDeltaMB": 22,
+      "textAnnotsPreserved": true,
+      "diff": "IDENTICAL"
+    },
+    "os-false": {
+      "bytes": 7491870,
+      "loadMs": 15,
+      "saveMs": 7,
+      "rssDeltaMB": 18,
+      "textAnnotsPreserved": true,
+      "diff": "IDENTICAL"
+    }
+  }
+]

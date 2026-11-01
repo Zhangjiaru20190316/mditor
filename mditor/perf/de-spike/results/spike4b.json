@@ -1,0 +1,56 @@
+{
+  "raw": {
+    "htmlInLen": 779,
+    "mdLen": 592,
+    "html1Len": 1692,
+    "md2Len": 607,
+    "html2Len": 1691,
+    "mdStable": false,
+    "htmlStable": false,
+    "firstDiff": "@107: [/docx-spike)\n\n1.  编号项 A\n2.  编号项 B\n\n-   圆点项甲\n\n<ta] vs [/docx-spike)\n\n1.  编号项 A\n    \n2.  编号项 B\n    \n\n-  ]",
+    "imgDataUrlAlive": true,
+    "tableAlive": false,
+    "footnoteAlive": true,
+    "mdSample": "",
+    "html1HasTable": false,
+    "html1TableCtx": "><p>圆点项甲</p></li></ul><p><span data-value=\"&lt;table&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td colspan=&quot;2&quot;&gt;&lt;p&gt;表头横跨两列&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td rowspan=&quot;2&quot;&gt;&lt;p&gt;纵向合并起点&lt;/p&gt;&lt;/td&gt;&lt;td&gt;&lt;p&gt;右侧单元 1&lt;/p&gt;&lt;/td&g",
+    "h1Alive": true,
+    "h2Alive": true,
+    "mdHasPipeTable": false,
+    "md3Stable": true,
+    "timings": {
+      "toMd": 17,
+      "mount1": 76,
+      "getHtml1": 1,
+      "mount2": 17,
+      "getHtml2": 0
+    }
+  },
+  "unwrap": {
+    "htmlInLen": 779,
+    "mdLen": 484,
+    "html1Len": 1326,
+    "md2Len": 499,
+    "html2Len": 1325,
+    "mdStable": false,
+    "htmlStable": false,
+    "firstDiff": "@107: [/docx-spike)\n\n1.  编号项 A\n2.  编号项 B\n\n-   圆点项甲\n\n| 表] vs [/docx-spike)\n\n1.  编号项 A\n    \n2.  编号项 B\n    \n\n-  ]",
+    "imgDataUrlAlive": true,
+    "tableAlive": true,
+    "footnoteAlive": true,
+    "mdSample": ".  编号项 B\n\n-   圆点项甲\n\n| 表头横跨两列 |  |\n| --- | --- |\n| 纵向合并起点 | 右侧单元 1 |\n| 右侧单元 2 |  |\n\n正文带脚注[\\[1\\]](#footnote-1)（脚注挂在句尾）\n\n文本框内部文字 TextBox Content\n\nSmartArt 兜底文字 Fallback\n\n分页后的段落\n\n![](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAA",
+    "html1HasTable": true,
+    "html1TableCtx": "",
+    "h1Alive": true,
+    "h2Alive": true,
+    "mdHasPipeTable": true,
+    "md3Stable": true,
+    "timings": {
+      "toMd": 1,
+      "mount1": 20,
+      "getHtml1": 0,
+      "mount2": 18,
+      "getHtml2": 0
+    }
+  }
+}
