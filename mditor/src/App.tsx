@@ -67,7 +67,26 @@ import {
   makeHtmlTab,
   importHtmlNotes,
 } from "./lib/htmlNote";
+import {
+  DOC_NOTE_RE,
+  docTabKey,
+  isDocxNote,
+  isDocxTab,
+  isPdfNote,
+  isPdfTab,
+  makeDocxTab,
+  makePdfTab,
+  convertDocNoteToMd as runDocNoteConversion,
+  PdfNoTextLayerError,
+} from "./lib/docNote";
+import { isReadonlyTab, isDocEditActive, isViewOnlyTab } from "./lib/noteKind";
+import {
+  discardDocEdit,
+  enterDocEdit,
+} from "./lib/docNoteEdit";
 import { HtmlNoteView } from "./components/HtmlNoteView";
+import { PdfNoteView } from "./components/PdfNoteView";
+import { DocxNoteView } from "./components/DocxNoteView";
 import { HtmlToMdDialog } from "./components/HtmlToMdDialog";
 import { readFresh, peekHoverContent } from "./lib/filePrefetch";
 import { prepareDoc } from "./lib/parsePipeline";
@@ -447,14 +466,14 @@ function App() {
       if (key === activeKeyRef.current) return;
       const target = tabsRef.current.find((t) => t.key === key);
       if (!target) return;
-      // HN 轮：html 标签激活——不进编辑器/showDoc（只读视图，iframe 承载）。
-      // 切走前的 md 标签照常「落盘优于弹窗」；切到 html 后 fileApi.doc 仍保留
-      // 上一篇 md 的状态（编辑器隐藏，切回 md 标签时 showDoc 重建）。
-      if (isHtmlTab(target)) {
+      // HN/MF 轮：只读标签（html/pdf/docx）激活——不进编辑器/showDoc（视图
+      // 组件承载）。切走前的 md 标签照常「落盘优于弹窗」；切到只读标签后
+      // fileApi.doc 仍保留上一篇 md 的状态（编辑器隐藏，切回时 showDoc 重建）。
+      if (isReadonlyTab(target)) {
         const curDoc = fileApiRef.current.doc;
         const curKey = activeKeyRef.current;
-        const curIsHtml = isHtmlTab(tabsRef.current.find((t) => t.key === curKey));
-        if (!curIsHtml) {
+        const curIsReadonly = isReadonlyTab(tabsRef.current.find((t) => t.key === curKey));
+        if (!curIsReadonly) {
           const curContent = curDoc.dirty ? getCurrentContent() : curDoc.content;
           let curDirty = curDoc.dirty;
           if (curDoc.dirty && curDoc.path) {
@@ -525,10 +544,10 @@ function App() {
           if (isStale(token)) return;
         }
       }
-      // HN 轮：从 html 标签切回 md 时，curKey 是 html 标签——它没有可写回的
-      // 编辑器状态（上面的 flush 已把背后 md 的脏内容落盘），不能被 md 快照
-      // 覆写。
-      if (!isHtmlTab(tabsRef.current.find((t) => t.key === curKey))) {
+      // HN/MF 轮：从只读标签（html/pdf/docx）切回 md 时，curKey 是只读标签
+      // ——它没有可写回的编辑器状态（上面的 flush 已把背后 md 的脏内容落盘），
+      // 不能被 md 快照覆写。
+      if (!isReadonlyTab(tabsRef.current.find((t) => t.key === curKey))) {
         setTabs((ts) =>
           ts.map((t) =>
             t.key === curKey
@@ -597,10 +616,21 @@ function App() {
       const idx = cur.findIndex((t) => t.key === key);
       if (idx < 0) return;
       const target = cur[idx];
-      // HN 轮：html 标签——只读视图，无脏态无保存（编辑器读取全绕开），直接
-      // 移除；关活动标签时邻居接管：md 邻居要 showDoc 重建编辑器内容（编辑器
-      // 此前显示的是切换前的旧 md），html 邻居仅切 key。
-      if (isHtmlTab(target)) {
+      // HN/MF 轮：只读标签（html/pdf/docx）——无脏态无保存（编辑器读取全绕
+      // 开），直接移除；关活动标签时邻居接管：md 邻居要 showDoc 重建编辑器
+      // 内容（编辑器此前显示的是切换前的旧 md），只读邻居仅切 key。
+      if (isReadonlyTab(target)) {
+        // DE 轮：编辑态标签获得关闭确认（G4）——脏编辑必须显式丢弃；
+        // 干净编辑态直接释放状态机条目。
+        if (isDocEditActive(target) && !opts?.migrated) {
+          if (target.dirty) {
+            const ok = await confirmDialog(
+              `「${target.name}」有未保存的编辑，关闭将丢弃。确认关闭？`
+            );
+            if (!ok) return;
+          }
+          if (target.path) discardDocEdit(target.path);
+        }
         const remaining0 = cur.filter((t) => t.key !== key);
         if (remaining0.length === 0) {
           const k = `untitled-${++untitledSeqRef.current}`;
@@ -615,7 +645,7 @@ function App() {
           const next = remaining0[Math.min(idx, remaining0.length - 1)];
           setActiveKey(next.key);
           activeKeyRef.current = next.key;
-          if (!isHtmlTab(next)) {
+          if (!isReadonlyTab(next)) {
             fileApiRef.current.showDoc(
               { path: next.path, content: next.content, dirty: next.dirty },
               next.key
@@ -698,14 +728,20 @@ function App() {
       const cur = tabsRef.current;
       const target = cur.find((t) => t.key === key);
       if (!target) return;
+      // DE 轮：编辑态标签的缓冲在模块级状态机（本窗 JS 上下文），跨窗迁移
+      // 即丢失——先退出编辑/保存再移动（不静默丢内容）。
+      if (target.docEdit) {
+        void showAlert("请先退出编辑模式，再移动标签到新窗口", "Mditor", "warning");
+        return;
+      }
       const isActive = key === activeKeyRef.current;
       const fa = fileApiRef.current;
       let path = target.path;
       let content = target.content;
       let dirty = target.dirty;
-      // HN 轮：html 标签即使在活动位也没有编辑器状态——fileApi.doc 属于上一篇
-      // md，不参与迁移。
-      if (isActive && !isHtmlTab(target)) {
+      // HN/MF 轮：只读标签即使在活动位也没有编辑器状态——fileApi.doc 属于
+      // 上一篇 md，不参与迁移。
+      if (isActive && !isReadonlyTab(target)) {
         const d = fa.doc;
         path = d.path;
         dirty = d.dirty;
@@ -727,12 +763,12 @@ function App() {
       const scrollTop = isActive
         ? (document.querySelector<HTMLElement>(".mditor-editor-host")?.scrollTop ?? 0)
         : 0;
-      // HN 轮：html 标签迁移——无脏态无编辑器内容，载荷原样（kind 保留），
-      // 新窗恢复时走 html 分支不进编辑器。
+      // HN/MF 轮：只读标签迁移——无脏态无编辑器内容，载荷原样（kind 保留），
+      // 新窗恢复时走只读分支不进编辑器。
       try {
         await moveTabToNewWindow(
           { key: target.key, path, name: target.name, dirty, content, ...(target.kind ? { kind: target.kind } : {}) },
-          isActive && !isHtmlTab(target) ? scrollTop : 0
+          isActive && !isReadonlyTab(target) ? scrollTop : 0
         );
       } catch (e) {
         noteOpError("move-tab-window", e);
@@ -752,14 +788,22 @@ function App() {
   const flushDirtyTabs = useCallback(async (): Promise<{
     savedFailed: boolean;
     hasDirtyUntitled: boolean;
+    hasUnsavedDocEdit: boolean;
   }> => {
     const fa = fileApiRef.current;
     let savedFailed = false;
     let hasDirtyUntitled = false;
+    let hasUnsavedDocEdit = false;
     for (const t of tabsRef.current) {
-      // HN 轮：html 标签恒干净（只读视图），活动 html 标签也不读编辑器——
-      // fileApi.doc 属于上一篇 md，不能算到 html 头上。
-      if (t.key === activeKeyRef.current && !isHtmlTab(t)) {
+      // DE 轮：编辑态标签的保存走 docNoteSave（另存/替换对话框流程），不能
+      // 在关窗序列里静默落盘——脏编辑并入最终确认，绝不静默丢。
+      if (isDocEditActive(t)) {
+        if (t.dirty) hasUnsavedDocEdit = true;
+        continue;
+      }
+      // HN/MF 轮：只读标签恒干净，活动只读标签也不读编辑器——fileApi.doc
+      // 属于上一篇 md，不能算到只读标签头上。
+      if (t.key === activeKeyRef.current && !isReadonlyTab(t)) {
         const d = fa.doc;
         if (!d.dirty) continue;
         if (d.path) {
@@ -787,7 +831,7 @@ function App() {
         hasDirtyUntitled = true;
       }
     }
-    return { savedFailed, hasDirtyUntitled };
+    return { savedFailed, hasDirtyUntitled, hasUnsavedDocEdit };
   }, [getCurrentContent]);
 
   /** 关闭/退出共用序列：先落盘，再对「无处可写/写失败」的内容做最终确认。
@@ -796,7 +840,7 @@ function App() {
     // 落盘步骤加硬上限：任何一步 IPC 挂起（写盘/动态导入）都不能让窗口
     // 永远关不掉——超时按「保存失败」继续走确认流程。自动保存间隔默认
     // 30s，最坏丢 30s 编辑，远好于应用无法关闭（v3.9.6）。
-    let r: { savedFailed: boolean; hasDirtyUntitled: boolean };
+    let r: { savedFailed: boolean; hasDirtyUntitled: boolean; hasUnsavedDocEdit: boolean };
     try {
       r = await Promise.race([
         flushDirtyTabs(),
@@ -809,12 +853,14 @@ function App() {
       ]);
     } catch (err) {
       noteOpError("shutdown-flush", err);
-      r = { savedFailed: true, hasDirtyUntitled: false };
+      r = { savedFailed: true, hasDirtyUntitled: false, hasUnsavedDocEdit: false };
     }
-    if (r.hasDirtyUntitled || r.savedFailed) {
-      const msg = r.hasDirtyUntitled
-        ? "有未命名文档（或保存失败的文档）尚未落盘，关闭后将丢失这些内容。确定关闭？"
-        : "部分文档保存失败，关闭后将丢失这些修改。确定关闭？";
+    if (r.hasDirtyUntitled || r.savedFailed || r.hasUnsavedDocEdit) {
+      const msg = r.hasUnsavedDocEdit
+        ? "有 PDF/Word 编辑模式的未保存修改，关闭后将丢失。确定关闭？"
+        : r.hasDirtyUntitled
+          ? "有未命名文档（或保存失败的文档）尚未落盘，关闭后将丢失这些内容。确定关闭？"
+          : "部分文档保存失败，关闭后将丢失这些修改。确定关闭？";
       try {
         const ok = await confirmDialog(msg);
         if (!ok) return false;
@@ -918,14 +964,14 @@ function App() {
   }, []);
 
   // 活动 useFile 状态（saveAs 改路径 / dirty 变化）同步回标签记录。
-  // HN 轮：活动标签为 html 时不同步——fileApi.doc 属于切到 html 前的那篇 md，
-  // 写回会把只读视图标签的 path/name 覆盖成 md 的。
+  // HN/MF 轮：活动标签为只读视图（html/pdf/docx）时不同步——fileApi.doc
+  // 属于切到只读标签前的那篇 md，写回会把只读标签的 path/name 覆盖成 md 的。
   useEffect(() => {
     const doc = fileApi.doc;
     setTabs((ts) =>
       ts.map((t) => {
         if (t.key !== activeKeyRef.current) return t;
-        if (isHtmlTab(t)) return t;
+        if (isReadonlyTab(t)) return t;
         const name = doc.path ? baseName(doc.path) : "未命名.md";
         if (t.path === doc.path && t.dirty === doc.dirty && t.name === name) return t;
         return { ...t, path: doc.path, name, dirty: doc.dirty };
@@ -1194,7 +1240,7 @@ function App() {
       const curActive = tabsRef.current.find((t) => t.key === activeKeyRef.current);
       const replaceCurrent =
         !!curActive &&
-        !isHtmlTab(curActive) &&
+        !isReadonlyTab(curActive) &&
         curActive.path == null &&
         !curActive.dirty &&
         curActive.content === "";
@@ -1214,14 +1260,97 @@ function App() {
     [activateTab, snapshotActiveTab]
   );
 
-  /** FileTree / 最近列表 / 启动参数的统一路由：html → 只读视图，md → 编辑器。 */
+  // ---- MF 轮：PDF / Word 标签（只读视图，不进编辑器/useFile）------------------
+  /** 打开（或激活）一篇 PDF/Word 笔记。复制 openHtmlNote 的结构：目录级授权
+   *  （视图经 fs.readFile 直读字节）、tabPathKey 去重（同路径复用已开标签，
+   *  pdf/docx 前缀 key 互不碰撞）、空未命名标签原位替换；不触发切换动画
+   *  （视图组件自带加载态），不触碰 fileApi。 */
+  const openDocNote = useCallback(
+    async (path: string) => {
+      getAdapter()
+        .app.grantFsScope?.([dirOf(path)], true)
+        ?.catch(() => undefined);
+      const pk = tabPathKey(path);
+      const existing = tabsRef.current.find(
+        (t) => t.path != null && tabPathKey(t.path) === pk
+      );
+      if (existing) {
+        if (existing.key !== activeKeyRef.current) await activateTab(existing.key);
+        return;
+      }
+      const curActive = tabsRef.current.find((t) => t.key === activeKeyRef.current);
+      const replaceCurrent =
+        !!curActive &&
+        !isReadonlyTab(curActive) &&
+        curActive.path == null &&
+        !curActive.dirty &&
+        curActive.content === "";
+      const tab = isPdfNote(path) ? makePdfTab(path) : makeDocxTab(path);
+      const key = replaceCurrent && curActive ? curActive.key : tab.key;
+      const finalTab = { ...tab, key };
+      if (replaceCurrent && curActive) {
+        // 原位替换空未命名标签（沿用旧 key，与 openPath 同策略）。
+        setTabs((ts) => ts.map((t) => (t.key === key ? finalTab : t)));
+      } else {
+        snapshotActiveTab();
+        setTabs((ts) => [...ts, finalTab]);
+      }
+      setActiveKey(key);
+      activeKeyRef.current = key;
+    },
+    [activateTab, snapshotActiveTab]
+  );
+
+  /** FileTree / 最近列表 / 启动参数的统一路由：html/pdf/docx → 只读视图，
+   *  md → 编辑器。 */
   const openNoteAny = useCallback(
     (path: string) => {
       if (isHtmlNote(path)) void openHtmlNote(path);
+      else if (isPdfNote(path) || isDocxNote(path)) void openDocNote(path);
       else void openPath(path);
     },
-    [openPath, openHtmlNote]
+    [openPath, openHtmlNote, openDocNote]
   );
+  // MF 轮：file_open 对话框路由用（useMenuCommands 经 ref 读最新）。
+  const openNoteAnyRef = useRef(openNoteAny);
+  openNoteAnyRef.current = openNoteAny;
+
+  // ---- DE 轮：pdf/docx 编辑态（条件只读铁律，任务书 §4.3/§4.4）--------------
+  /** 进入编辑态：TabItem.docEdit 置位（dirty 圆点/关闭确认/Ctrl+S 随之生效），
+   *  状态机捕获磁盘指纹（baseMtime/baseSize，保存前外部修改校验基准）。 */
+  const enterDocEditMode = useCallback(async (path: string) => {
+    const k = docTabKey(path);
+    setTabs((ts) => ts.map((t) => (t.key === k ? { ...t, docEdit: true } : t)));
+    try {
+      await enterDocEdit(path);
+    } catch (e) {
+      // stat 失败（文件被移动等）：回滚编辑态，不假成功。
+      noteOpError("doc-edit-enter", e);
+      setTabs((ts) => ts.map((t) => (t.key === k ? { ...t, docEdit: undefined } : t)));
+      void showAlert("进入编辑模式失败（无法读取文件状态）", "Mditor", "error");
+    }
+  }, []);
+
+  /** 退出编辑态：脏编辑先确认丢弃；释放状态机条目并回到 MF 轮恒只读。返回
+   *  false = 用户取消（视图保持编辑态）。 */
+  const exitDocEditMode = useCallback(async (path: string): Promise<boolean> => {
+    const k = docTabKey(path);
+    const tab = tabsRef.current.find((t) => t.key === k);
+    if (tab?.dirty) {
+      const ok = await confirmDialog(
+        `「${tab.name}」有未保存的编辑，退出将丢弃。确认退出编辑？`
+      );
+      if (!ok) return false;
+    }
+    discardDocEdit(path);
+    setTabs((ts) =>
+      ts.map((t) => (t.key === k ? { ...t, docEdit: undefined, dirty: false } : t))
+    );
+    return true;
+  }, []);
+
+  // （saveDocEditTab：Ctrl+S 编辑态分流目标——定义挪至 flashStatus 之后，
+  //  见 doExport 附近；此处不占位。）
 
   // 导出诊断把手（EX 轮观测）：把编辑器真源只读暴露给 window.__exportDebug
   // （perf/ CDP 复现与验收走模型序列化 getHTML，而非实时 DOM），外加 open(path)
@@ -1461,9 +1590,9 @@ function App() {
       setTabs([tab]);
       setActiveKey(tab.key);
       activeKeyRef.current = tab.key;
-      // HN 轮：html 标签恢复——不进编辑器（新窗的空白缓冲保留在隐藏编辑器里，
-      // html 视图按 kind 直接接管）。
-      if (!isHtmlTab(tab)) {
+      // HN/MF 轮：只读标签（html/pdf/docx）恢复——不进编辑器（新窗的空白
+      // 缓冲保留在隐藏编辑器里，只读视图按 kind 直接接管）。
+      if (!isReadonlyTab(tab)) {
         fileApiRef.current.showDoc(
           { path: tab.path, content: tab.content, dirty: tab.dirty },
           tab.key
@@ -1546,8 +1675,8 @@ function App() {
         const next = remaining[Math.min(idx, remaining.length - 1)];
         setActiveKey(next.key);
         activeKeyRef.current = next.key;
-        // HN 轮：接管的邻居可能是 html 标签——不进编辑器。
-        if (!isHtmlTab(next)) {
+        // HN/MF 轮：接管的邻居可能是只读标签（html/pdf/docx）——不进编辑器。
+        if (!isReadonlyTab(next)) {
           fa.showDoc({ path: next.path, content: next.content, dirty: next.dirty });
         }
       }
@@ -1681,9 +1810,11 @@ function App() {
   // 多标签页（V3.6）：打开进新标签页，不会丢当前文档 —— 无需脏确认。
   const maybeOpen = useCallback(
     async (path: string) => {
-      void openPath(path);
+      // MF 轮：CLI/启动参数可携带 pdf/docx（lib.rs 扩展名镜像扩容）——统一走
+      // openNoteAny 按扩展名路由；md 路径行为不变（仍 openPath）。
+      void openNoteAny(path);
     },
-    [openPath]
+    [openNoteAny]
   );
 
   // rAF-coalesced markdown mirror update. Vditor fires input on EVERY keystroke;
@@ -1800,6 +1931,8 @@ function App() {
           document.body.classList.remove("is-dragging-md");
           for (const path of p.paths ?? []) {
             if (/\.(md|markdown|mdx|mdown)$/i.test(path)) void openPath(path);
+            // MF 轮：拖入 pdf/docx = 打开只读预览（非导入，原文件不动）。
+            else if (DOC_NOTE_RE.test(path)) void openDocNote(path);
           }
           // HTML 导入：文件直接进；无扩展名路径异步探测目录且要求顶层有 html。
           const vault = workspacesRef.current[0];
@@ -1811,7 +1944,12 @@ function App() {
                 srcs.push(path);
                 continue;
               }
-              if (/\.(md|markdown|mdx|mdown)$/i.test(path) || path.includes(".")) continue;
+              if (
+                /\.(md|markdown|mdx|mdown)$/i.test(path) ||
+                DOC_NOTE_RE.test(path) ||
+                path.includes(".")
+              )
+                continue;
               const st = await getAdapter().fs.stat(path).catch(() => null);
               if (!st?.isDirectory) continue;
               const entries = await getAdapter().fs.readDir(path).catch(() => []);
@@ -1831,7 +1969,7 @@ function App() {
       document.body.classList.remove("is-dragging-md");
       unlisten?.();
     };
-  }, [openPath]);
+  }, [openPath, openDocNote]);
 
   // （全局快捷键监听（registered ONCE）已随 dispatchMenu 迁入 useMenuCommands：
   // Ctrl+S/N/O/I 等与菜单同名的动作在那里统一转发 dispatchMenu。）
@@ -1849,6 +1987,18 @@ function App() {
   }, []);
 
   // ---- HN 轮：HTML 笔记导入（= 拷贝入 vault；原文件不动，冲突自动改名）------
+  /** DE 轮：Ctrl+S 分流目标（useMenuCommands）——编辑态标签的保存走
+   *  docNoteSave 另存/替换流程。返回 false = 活动标签不在编辑态（调用方
+   *  回落 md 管线）。M1 为接线占位——Word 支路（M2）/PDF 支路（M3）交付。 */
+  const saveDocEditTab = useCallback(async (): Promise<boolean> => {
+    const tab = tabsRef.current.find((t) => t.key === activeKeyRef.current);
+    if (!isDocEditActive(tab)) return false;
+    flashStatus("该格式的保存功能即将交付（当前编辑面为占位态）", 6000);
+    return true;
+  }, [flashStatus]);
+  const saveDocEditTabRef = useRef(saveDocEditTab);
+  saveDocEditTabRef.current = saveDocEditTab;
+
   // 菜单与拖放两个入口共用；完成后广播 vault-mutated 刷新文件树并打开首篇。
   const doImportHtmlNotes = useCallback(
     async (srcs: string[], vaultRoot: string) => {
@@ -1926,6 +2076,36 @@ function App() {
         });
     },
     [flashStatus]
+  );
+
+  // MF 轮：PDF/Word「转为 Markdown 笔记」（视图顶栏 + 文件树右键共用）。
+  // 落盘走 docNote.convertDocNoteToMd（conflictFreeName 绝不覆盖），成功后
+  // openPath 直接打开新笔记；扫描版 PDF 显式中止并提示（不产空壳 MD）。
+  const convertDocNoteToMd = useCallback(
+    async (path: string) => {
+      try {
+        flashStatus("正在转换为 Markdown…", 8000);
+        const r = await runDocNoteConversion(path);
+        await openPath(r.mdPath);
+        flashStatus(`转换完成：${baseName(r.mdPath)}（${r.note}）`, 5000);
+      } catch (e) {
+        if (e instanceof PdfNoTextLayerError) {
+          void showAlert(
+            "无法转换",
+            "扫描版 PDF 无文本层，转换需要 OCR（暂未支持）。",
+            "error"
+          );
+        } else {
+          noteOpError("doc-note-convert", e);
+          flashStatus("转换失败", 5000);
+        }
+      }
+    },
+    [openPath, flashStatus]
+  );
+  const convertDocNoteToMdStable = useCallback(
+    (path: string) => void convertDocNoteToMd(path),
+    [convertDocNoteToMd]
   );
 
   // ----- multi-root workspace helpers (V4.4) -----
@@ -2029,6 +2209,12 @@ function App() {
     async (kind: "html" | "pdf" | "png" | "docx" | "latex") => {
       const ed = editorRef.current;
       if (!ed) return;
+      // DE 轮（§七 #10）：编辑态标签下隐藏编辑器承载的是切换前的旧 md，
+      // 导出必先退出编辑（提示不静默）。
+      if (isDocEditActive(tabsRef.current.find((t) => t.key === activeKeyRef.current))) {
+        flashStatus("请先退出编辑模式，再导出", 5000);
+        return;
+      }
       // LaTeX 走纯前端 md→tex（模块 3，铁律 2：不调 pandoc），输入是源码。
       if (kind === "latex") {
         const name =
@@ -2267,6 +2453,7 @@ function App() {
     activeKeyRef,
     activateTabRef,
     closeTabRef,
+    saveDocEditTabRef,
     setSidebarOpen,
     setSidebarTab,
     setSearchOpen,
@@ -2286,6 +2473,7 @@ function App() {
     addFolderFromDialog,
     replaceFolderFromDialog,
     importHtmlNote,
+    openNoteAnyRef,
   });
 
   const jumpToHeading = useCallback(
@@ -3045,9 +3233,12 @@ function App() {
   const openCitePanel = useCallback(() => setCiteOpen(true), []);
   const aiFlashcardStable = useCallback(() => void aiMakeFlashcard(), [aiMakeFlashcard]);
 
-  // HN 轮：标题/状态栏以活动标签为准（html 标签显示笔记名、恒干净；md 标签
-  // 与旧值一致——fileApi.doc 本就镜像活动 md）。
+  // HN/MF 轮：标题/状态栏以活动标签为准（只读标签显示笔记名、恒干净；md
+  // 标签与旧值一致——fileApi.doc 本就镜像活动 md）。
   const htmlActive = isHtmlTab(activeTabForTitle);
+  const pdfActive = isPdfTab(activeTabForTitle);
+  const docxActive = isDocxTab(activeTabForTitle);
+  const readonlyActive = htmlActive || pdfActive || docxActive;
   const docName =
     activeTabForTitle?.name ??
     (fileApi.doc.path ? baseName(fileApi.doc.path) : "未命名.md");
@@ -3056,7 +3247,13 @@ function App() {
     <div className={`app ${settingsApi.settings.focusMode ? "is-focus" : ""}`}>
       <TitleBar
         name={docName}
-        dirty={htmlActive ? false : fileApi.doc.dirty}
+        dirty={
+          isViewOnlyTab(activeTabForTitle)
+            ? false
+            : isDocEditActive(activeTabForTitle)
+              ? !!activeTabForTitle?.dirty
+              : fileApi.doc.dirty
+        }
         focusMode={focusMode}
         theme={settingsApi.settings.theme}
         typewriter={settingsApi.settings.typewriterMode}
@@ -3161,6 +3358,7 @@ function App() {
                   activePath={pendingPath ?? fileApi.doc.path}
                   onOpen={openNoteAny}
                   onOpenNewWindow={openInNewWindow}
+                  onConvertToMarkdown={convertDocNoteToMdStable}
                   onChanged={onTreeChange}
                   excludedPaths={excludedSet}
                   onExclude={handleExclude}
@@ -3268,7 +3466,7 @@ function App() {
       <main
         className={`main${docSwitching ? " is-switching" : ""}`}
         data-heavy={switchHeavy ? "" : undefined}
-        data-html-note={htmlActive ? "" : undefined}
+        data-readonly-view={readonlyActive ? "" : undefined}
       >
         <SearchBar
           open={searchOpen}
@@ -3288,8 +3486,8 @@ function App() {
           onWatcherStatus={onWatcherStatus}
           onModeChange={setEditMode}
         />
-        {/* HN 轮：html 标签的活动视图（编辑器经 data-html-note 隐藏；卸载随
-            标签关闭/切换——iframe 生命周严格跟标签走，无泄漏滞留）。 */}
+        {/* HN 轮：html 标签的活动视图（编辑器经 data-readonly-view 隐藏；卸载
+            随标签关闭/切换——iframe 生命周期严格跟标签走，无泄漏滞留）。 */}
         {htmlActive && activeTabForTitle?.path && (
           <HtmlNoteView
             path={activeTabForTitle.path}
@@ -3298,6 +3496,28 @@ function App() {
               getAdapter().capabilities.multiWindow ? openInNewWindow : undefined
             }
             onConvertToMarkdown={setHtmlToMd}
+          />
+        )}
+        {/* MF 轮：pdf/docx 标签的活动视图（同一让位机制；视图组件内部门控
+            能力位——harmony 降级为「用系统应用打开」提示页，不假成功）。 */}
+        {pdfActive && activeTabForTitle?.path && (
+          <PdfNoteView
+            path={activeTabForTitle.path}
+            onOpenExternal={openExternalNote}
+            onConvertToMarkdown={convertDocNoteToMdStable}
+            editActive={isDocEditActive(activeTabForTitle)}
+            onEnterEdit={enterDocEditMode}
+            onExitEdit={exitDocEditMode}
+          />
+        )}
+        {docxActive && activeTabForTitle?.path && (
+          <DocxNoteView
+            path={activeTabForTitle.path}
+            onOpenExternal={openExternalNote}
+            onConvertToMarkdown={convertDocNoteToMdStable}
+            editActive={isDocEditActive(activeTabForTitle)}
+            onEnterEdit={enterDocEditMode}
+            onExitEdit={exitDocEditMode}
           />
         )}
       </main>
@@ -3430,8 +3650,8 @@ function App() {
 
       <StatusBar
         name={docName}
-        path={htmlActive ? activeTabForTitle?.path ?? null : fileApi.doc.path}
-        dirty={htmlActive ? false : fileApi.doc.dirty}
+        path={readonlyActive ? activeTabForTitle?.path ?? null : fileApi.doc.path}
+        dirty={readonlyActive ? false : fileApi.doc.dirty}
         words={words}
         mode={editMode}
         autosaveMsg={autosaveMsg}

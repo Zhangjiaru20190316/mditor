@@ -147,7 +147,29 @@ export interface SyncSettings {
    * 删除动作。归一：值 trim、空值剔除（见 normalizeSyncSettings）。
    */
   remoteDirs: Record<string, string>;
+  /**
+   * 同步方向（v5.2）：bidirectional = 双向合并（默认，既有行为）；
+   * uploadOnly = 仅上传（本地为备份源——本地改动/删除传播到云端，
+   * 远端改动被忽略）；downloadOnly = 仅下载（云端为准——远端改动
+   * 下载到本地、本地删除被云端拉回，本地改动被忽略，且引擎铁律
+   * 「永不删除本地文件」保证云端删除不会动本地）。归一：白名单外
+   * 回落 bidirectional（见 normalizeSyncSettings）。
+   */
+  syncDirection: SyncDirection;
+  /**
+   * 冲突策略（v5.2）：newestWins = 新者胜（默认，既有行为）；
+   * localFirst / remoteFirst = 指定胜者。败者副本机制（.冲突-时间戳）
+   * 在所有策略下原样保留。仅作用于「内容不同」分支；时钟不可信时
+   * 维持远端胜兜底。归一：白名单外回落 newestWins。
+   */
+  conflictPolicy: ConflictPolicy;
 }
+
+/** 同步方向（v5.2）：引擎 ops 计划层按此过滤/重映射动作矩阵输出。 */
+export type SyncDirection = "bidirectional" | "uploadOnly" | "downloadOnly";
+
+/** 冲突胜者策略（v5.2）：resolveConflict 内容不同分支的胜者判定。 */
+export type ConflictPolicy = "newestWins" | "localFirst" | "remoteFirst";
 
 export interface Settings {
   theme: Theme;
@@ -528,6 +550,8 @@ export interface DocState {
  * HN 轮（可交互 HTML 笔记）：`kind: "html"` 的标签是只读视图对象——dirty 恒
  * false、content 恒空，不进编辑器/useFile/docCache 全套（App 按 kind 分发到
  * HtmlNoteView）。缺省（undefined）= md，兼容既有构造点。
+ * MF 轮（多格式笔记）：kind 扩 "pdf" | "docx"——同为只读视图对象（分发到
+ * PdfNoteView/DocxNoteView），只读判别经 lib/noteKind.isReadonlyTab 收敛。
  */
 export interface TabItem {
   key: string;
@@ -535,21 +559,33 @@ export interface TabItem {
   path: string | null;
   /** Display name (basename or 未命名.md). */
   name: string;
-  /** Dirty flag mirrored from useFile while this tab is active. */
+  /** Dirty flag mirrored from useFile while this tab is active. DE 轮起
+   *  pdf/docx 编辑态标签的 dirty 由 docNoteEdit 状态机（经视图编辑面）
+   *  写入——useFile 之外的第二个（也是唯一的另一个）写入者。 */
   dirty: boolean;
   /** Content snapshot taken when the tab was switched away from / created. */
   content: string;
-  /** HN 轮：标签类型判别（md 缺省 | html 只读视图）。 */
-  kind?: "md" | "html";
+  /** HN 轮引入、MF 轮扩展：标签类型判别（md 缺省 | html/pdf/docx 只读视图）。 */
+  kind?: "md" | "html" | "pdf" | "docx";
+  /** DE 轮（原位编辑）：pdf/docx 标签是否处于编辑态。缺省 undefined 兼容
+   *  既有构造点（makePdfTab/makeDocxTab 等不写此字段）；判别统一走
+   *  lib/noteKind.isDocEditActive / isViewOnlyTab。 */
+  docEdit?: boolean;
 }
 
 /**
  * 正文字体预设。选择某个预设会一次性写入 fontFamily，并把 fontPreset 记录下来
- * （供设置面板下拉框回显；用户随后手动改字体栈会把 fontPreset 置空为「自定义」）。
+ * （供设置面板选择器回显；用户随后手动改字体栈会把 fontPreset 置空为「自定义」）。
  * 预设数据本体（FONT_PRESETS / MONO_FONT_PRESETS）在 ./defaults。
  */
 export interface FontPreset {
   id: string;
   name: string;
   stack: string;
+  /** 选择器面板里的分组标题；缺省归入「其他」。 */
+  group?: string;
+  /** 预览行里的示例文本（缺省用正文/代码各自的默认示例）。 */
+  sample?: string;
+  /** 字体由应用内置（fonts.css 的 @font-face 供字），选择器显示「内置」徽标。 */
+  bundled?: boolean;
 }

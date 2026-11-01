@@ -1,0 +1,108 @@
+{
+  "label": "i10-pages",
+  "blocks": 500,
+  "scale": 2,
+  "mode": "vector",
+  "reps": 1,
+  "ts": "2026-10-30T10:44:13.107Z",
+  "counts": {
+    "inline": 423,
+    "display": 91,
+    "blocks": 500
+  },
+  "math": {
+    "renderBlockMath": 29.9,
+    "renderDegradedMath": 292.2
+  },
+  "sanitize": 203.7,
+  "pdf": {
+    "wallMs": 28213,
+    "timings": {
+      "factory": 1635.5999999996275,
+      "measure": 85.79999999981374,
+      "paginate": 1,
+      "text": 751.5,
+      "raster": 21996.300000000745,
+      "assemble": 2921.699999999255,
+      "text.patchPlan": 17,
+      "text.material": 484.6000000005588,
+      "text.blockDecor": 3.7000000001862645,
+      "raster.trim": 490.09999999869615,
+      "raster.settle": 70.50000000279397,
+      "raster.serialize": 2276.399999999441,
+      "raster.crop": 4643.800000001676,
+      "raster.addPage": 2934.5,
+      "write": 57.90000000037253,
+      "resources": 1416,
+      "settle": 8.299999999813735
+    },
+    "pages": 36,
+    "bytes": 3618967,
+    "pageHashes": [
+      "b3a645ce580d1bfe",
+      "9a762bdc14871067",
+      "42845f9130b091b8",
+      "334bed55142222ca",
+      "5f814339eed2ce76",
+      "f124ac432346cafc",
+      "e65ed0204dc91219",
+      "201625f3a5ad832f",
+      "10605bad5dcb6ba6",
+      "737be7d51e921046",
+      "a7b671be6ef6bfc0",
+      "1be473a0f4d601c7",
+      "ca646b3b742dc85a",
+      "8bd2208c207b4ab1",
+      "c67fbb1841ed5aab",
+      "c553006ec2a71856",
+      "326ea889e7425247",
+      "13bf8d707f977b70",
+      "7ec5b69cbe7b9c36",
+      "4b3e4ea78f064662",
+      "441a1d241397748c",
+      "4ebbea95fb01cb99",
+      "ea6282160ef6cbc9",
+      "d2a3c8e7f8e97bdb",
+      "4d1990ba0c80fbae",
+      "41a7eadf149854bb",
+      "7047e977cef6fabe",
+      "9ab31875be060824",
+      "6a5fd72631eba0f2",
+      "22b85871624ee238",
+      "5a1ad89359a966fa",
+      "67a679cf0812cfa2",
+      "da8f5f31f9c29e0b",
+      "89ed81b843e398b1",
+      "52c18be49f7980e7",
+      "cc2e1e4a1fd5f0c6"
+    ],
+    "patchPlan": {
+      "blockPatches": 142,
+      "inlinePatches": 357,
+      "residualPatches": 0,
+      "nativeImages": 0
+    },
+    "textPlan": {
+      "totalChars": 26610,
+      "vectorChars": 14152,
+      "shadowChars": 12458,
+      "reasons": {
+        "raster-scope": 7852,
+        "katex": 4606
+      }
+    },
+    "vectorMode": true,
+    "vectorFallback": null,
+    "assemble": {
+      "pages": 36,
+      "fontEmbedded": true,
+      "latinFontsEmbedded": 3,
+      "embedFontMs": 55,
+      "textRunsPlaced": 5568,
+      "glyphsPlaced": 25196,
+      "textOpsPlaced": 10968,
+      "visibleRunsPlaced": 705,
+      "visibleGlyphsPlaced": 13804
+    }
+  }
+}

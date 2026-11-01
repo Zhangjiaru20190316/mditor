@@ -101,12 +101,15 @@ fn focused_webview_window<R: tauri::Runtime>(
     }
 }
 
-/// Extension list — kept in sync with `MD_FILTERS` in `src/lib/tauriFs.ts`.
-const MD_EXTS: &[&str] = &["md", "markdown", "mdx", "mdown"];
+/// Extension list — kept in sync with `MD_FILTERS` in `src/lib/tauriFs.ts`, the
+/// pdf/docx sets in `src/lib/docNote.ts`, the sync whitelist in
+/// `src/lib/sync/ignore.ts` and `bundle.fileAssociations` in `tauri.conf.json`
+/// (五处同步). MF 轮：pdf/docx 加入——CLI/启动参数打开只读预览标签。
+const MD_EXTS: &[&str] = &["md", "markdown", "mdx", "mdown", "pdf", "docx"];
 
-/// Scan CLI args for the first value that looks like a Markdown file and
-/// actually exists on disk. Skips flags (anything starting with `-`) so
-/// Tauri/webview args are ignored.
+/// Scan CLI args for the first value that looks like a note file (md via
+/// `MD_FILTERS`, plus pdf/docx — MF 轮) and actually exists on disk. Skips
+/// flags (anything starting with `-`) so Tauri/webview args are ignored.
 fn find_md_arg(args: &[String]) -> Option<String> {
     args.iter().skip(1).find_map(|a| {
         if a.starts_with('-') {

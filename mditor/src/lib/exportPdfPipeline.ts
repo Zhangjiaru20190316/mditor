@@ -139,6 +139,305 @@ export const mmToPt = (mm: number): number => (mm * 72) / 25.4;
  * 装饰/降级域；raster = 旧满铺位图 + Tr 3 影子层。矢量路径任何阶段失败
  * （AbortError 除外）自动整体回退 raster 重跑——绝不丢导出，回退原因入 meta。
  */
+/** modern-screenshot 样式内联白名单（EX 优化轮 #4）：默认逐元素 diff 全量
+ * ~350 个计算样式属性（每属性一次 getPropertyValue + Map 写 + 多数一次
+ * clone 上的 setProperty），公式密集文档里克隆阶段 90% 耗时来自这里。工厂
+ * 文档的视觉面完全由受控 CSS（主题 + EXPORT_PROSE_CSS + KaTeX）决定， paint/layout
+ * 相关属性收口到本清单即保持渲染等价（页面 PNG 哈希回归验证）。 */
+export const MS_STYLE_PROPS: string[] = [
+  // 排版
+  "font", "font-family", "font-size", "font-style", "font-variant", "font-weight",
+  "font-feature-settings", "font-kerning", "font-stretch", "font-synthesis",
+  "letter-spacing", "word-spacing", "line-height", "line-break", "text-align",
+  "text-align-last", "text-indent", "text-justify", "text-overflow",
+  "text-rendering", "text-shadow", "text-transform", "text-decoration-line",
+  "text-decoration-style", "text-decoration-color", "text-decoration-thickness",
+  "text-underline-offset", "text-underline-position", "white-space", "word-break",
+  "overflow-wrap", "word-wrap", "vertical-align", "color", "tab-size", "hyphens",
+  "direction", "unicode-bidi", "writing-mode", "orphans", "widows",
+  "-webkit-text-fill-color", "-webkit-text-stroke-color", "-webkit-text-stroke-width",
+  "-webkit-font-smoothing", "-webkit-rtl-ordering",
+  // 盒模型 / 定位
+  "display", "position", "top", "right", "bottom", "left", "width", "height",
+  "min-width", "min-height", "max-width", "max-height", "margin-top",
+  "margin-right", "margin-bottom", "margin-left", "padding-top", "padding-right",
+  "padding-bottom", "padding-left", "box-sizing", "aspect-ratio", "float",
+  "clear", "z-index", "isolation", "overflow", "overflow-x", "overflow-y",
+  "visibility", "opacity", "transform", "transform-origin", "transform-box",
+  "translate", "rotate", "scale", "clip", "clip-path", "contain",
+  "content-visibility", "inset-block-start", "inset-inline-start",
+  // 弹性 / 网格
+  "flex", "flex-basis", "flex-direction", "flex-flow", "flex-grow", "flex-shrink",
+  "flex-wrap", "gap", "row-gap", "column-gap", "order", "align-content",
+  "align-items", "align-self", "justify-content", "justify-items",
+  "justify-self", "place-content", "place-items", "place-self", "grid",
+  "grid-area", "grid-auto-columns", "grid-auto-flow", "grid-auto-rows",
+  "grid-column", "grid-row", "grid-template", "grid-template-areas",
+  "grid-template-columns", "grid-template-rows",
+  // 边框 / 背景 / 阴影（含 -x/-y 长名）
+  "border", "border-width", "border-style", "border-color", "border-top",
+  "border-right", "border-bottom", "border-left", "border-top-width",
+  "border-top-style", "border-top-color", "border-right-width",
+  "border-right-style", "border-right-color", "border-bottom-width",
+  "border-bottom-style", "border-bottom-color", "border-left-width",
+  "border-left-style", "border-left-color", "border-image", "border-radius",
+  "border-top-left-radius", "border-top-right-radius",
+  "border-bottom-right-radius", "border-bottom-left-radius",
+  "background", "background-color", "background-image", "background-position",
+  "background-position-x", "background-position-y", "background-size",
+  "background-repeat", "background-origin", "background-clip",
+  "background-attachment", "background-blend-mode", "box-shadow", "outline",
+  "outline-width", "outline-style", "outline-color", "outline-offset",
+  // 表格 / 列表 / 嵌入
+  "border-collapse", "border-spacing", "table-layout", "empty-cells",
+  "caption-side", "list-style", "list-style-type", "list-style-position",
+  "list-style-image", "object-fit", "object-position", "image-rendering",
+  "mix-blend-mode", "filter", "backdrop-filter", "will-change",
+  "columns", "column-count", "column-width", "column-rule",
+  "-webkit-line-clamp", "-webkit-box-orient", "-webkit-box-align",
+  "-webkit-box-direction", "-webkit-box-pack",
+];
+
+// ---------------------------------------------------------------------------
+// 直连 foreignObject 光栅（EX 优化轮 #8）：
+//
+// modern-screenshot 的 domToCanvas 对窗口子树做「逐元素 getComputedStyle diff
+// + 内联到克隆」——公式密集文档每 chunk 数千元素，克隆阶段独占 serialize
+// 耗时的大头（探针实测 5.1s/chunk）。工厂文档是受控环境：全部样式来自注入
+// 的 <style>（主题 CSS + EXPORT_PROSE_CSS + 工厂版式 CSS），没有任何外部
+// 样式表。因此把同一份样式表文本内嵌进 SVG，让 SVG 引擎自己解析选择器，
+// DOM 用原生 cloneNode(true)（零样式计算）+ XMLSerializer 产出合法 XML。
+// 字体 URL → data URL（SVG-as-image 拦截外链资源；会话级缓存）。
+//
+// 仅 vector 模式启用：该模式位图只承载补丁（公式/代码块），原生图已被
+// visibility:hidden（外链 img 在 SVG-image 中被拦截也无视觉影响）；raster
+// 模式整页入图、可能含未内联的外链图片，继续走 domToCanvas（它会抓取并
+// 内联图片资源）。任何异常逐 chunk 回退 domToCanvas，绝不丢导出。
+// ---------------------------------------------------------------------------
+
+const FONT_DATA_URL_CACHE = new Map<string, string>();
+const FONT_DATA_URL_CACHE_CAP = 64;
+
+const CSS_URL_RE = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result));
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(blob);
+  });
+}
+
+/** 样式表里的字体 URL 全部内嵌为 data URL（SVG-as-image 无外链权限）。 */
+async function inlineCssFontUrls(css: string, baseUri: string): Promise<string> {
+  const jobs: Array<Promise<void>> = [];
+  const resolved = new Map<string, string>();
+  let failed = 0;
+  CSS_URL_RE.lastIndex = 0;
+  for (const m of css.matchAll(CSS_URL_RE)) {
+    const u = m[2];
+    if (u.startsWith("data:") || resolved.has(u)) continue;
+    // 只内联 woff2（EX 复审 P1）：@font-face 的 src 声明 woff2/woff/ttf 多候
+    // 选时浏览器只取首个支持的候选（Chromium 恒 woff2），全量内联 = SVG 载荷
+    // ~3 倍白背（ttf 单文件远大于 woff2）。其余候选留在原样，不会被用到；
+    // 与 exportMath.ts inlineKatexFonts 同一既定模式。代价：仅发布 ttf/woff
+    // 的字体面不内联（SVG 内退回系统字体）——KaTeX 与主题字体均 woff2 首发。
+    if (!/\.woff2([?#]|$)/i.test(u)) continue;
+    resolved.set(u, m[0]); // 先占位：失败时保留原 url()
+    jobs.push(
+      (async () => {
+        if (FONT_DATA_URL_CACHE.has(u)) {
+          resolved.set(u, `url("${FONT_DATA_URL_CACHE.get(u)}")`);
+          return;
+        }
+        try {
+          const abs = new URL(u, baseUri);
+          const res = await fetch(abs.href);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const dataUrl = await blobToDataUrl(await res.blob());
+          if (FONT_DATA_URL_CACHE.size >= FONT_DATA_URL_CACHE_CAP) {
+            const first = FONT_DATA_URL_CACHE.keys().next().value;
+            if (first !== undefined) FONT_DATA_URL_CACHE.delete(first);
+          }
+          FONT_DATA_URL_CACHE.set(u, dataUrl);
+          resolved.set(u, `url("${dataUrl}")`);
+        } catch {
+          /* 失败向上聚合（见下）：工厂里该面已 loaded（渲染正常），SVG 内却
+           * 会被外链拦截退系统字体——保留 url() 的「同语义」并不成立。 */
+          failed++;
+        }
+      })()
+    );
+  }
+  if (jobs.length === 0) return css;
+  await Promise.all(jobs);
+  // 任一保留面内联失败 → 抛出让调用方整程回退 domToCanvas（EX 复审 P2-3：
+  // 静默降级 = 直连路径字形退化且 directOk 仍真，宁走慢路不走错路）。
+  if (failed > 0) throw new Error(`direct 字体内联失败 ${failed} 处`);
+  // 替换回调直接用捕获组（正则组 2 = 裸 URL）——不要从 whole 反解：URL 里
+  // 允许的字符（如 path 段）会连 url( 前缀一起被捕进反解组，键永远对不上，
+  // 内联静默失效（EX #8 复盘：fontFaces 20 / dataUri 0 的根因）。
+  return css.replace(CSS_URL_RE, (whole, _q, u: string) => {
+    const r = resolved.get(u);
+    return r && r !== whole ? r : whole;
+  });
+}
+
+/** 工厂文档样式表文本（style 元素全文）。选择器改写：SVG 上下文没有
+ *  html/body 元素——body/html 规则（.vditor-reset 基础字号、版心宽度、
+ *  主题背景/颜色）改写到包装类 .msvg-shim 上，由包装 div 携带（class=
+ *  "vditor-reset msvg-shim"），继承链与工厂逐位对齐。只改选择器位置的
+ *  token（前邻 ^/空白/{/},/>，后邻空白+选择器字符（含 * 与函数形 ( ）），
+ *  属性值/URL 不受影响。字符集为防御性全集：当前 app CSS 无这些形态。 */
+const HTML_BODY_SELECTOR_RE = /(^|[\s,{}>])(?:html|body)\b(?=\s*[ ,>+~.[:#{(*])/gm;
+const MSVG_SHIM_CLASS = "msvg-shim";
+
+/** 优化轮 #12：@font-face 按实际使用裁剪。KaTeX 声明 ~20 个字体面，典型
+ *  文档只用其中一部分；每个 @font-face 的 base64 内联是直连 SVG 载荷主体，
+ *  每 chunk 的 SVG 解码都重复解析全部字体。浏览器按需加载字体面——工厂
+ *  文档 fonts.ready 后，status=loaded 的面 = 全文档用到的面的并集（超集
+ *  覆盖任意 chunk 子窗口）。匹配按 family+weight+style 三元组；解析不出
+ *  或匹配不到的规则一律保留（宁多勿缺，缺面 = 字体回退 = 像素变化）。 */
+function pruneUnusedFontFaces(css: string, factoryDoc: Document): string {
+  const normW = (w: string): string =>
+    w === "bold" ? "700" : w === "normal" || w === "" ? "400" : w;
+  const loaded = new Set<string>();
+  try {
+    factoryDoc.fonts?.forEach?.((f) => {
+      if (f.status === "loaded") {
+        loaded.add(
+          `${f.family.replace(/^["']|["']$/g, "")}|${normW(String(f.weight))}|${f.style}`
+        );
+      }
+    });
+  } catch {
+    return css; // 字体集不可枚举（旧引擎）：全量保留
+  }
+  if (loaded.size === 0) return css;
+  let pruned = 0;
+  const kept = css.replace(/@font-face\s*\{[^}]*\}/g, (rule) => {
+    const fam = rule.match(/font-family:\s*([^;}]+)/i)?.[1]?.trim();
+    if (!fam) return rule;
+    const weight = normW(rule.match(/font-weight:\s*([^;}]*)/i)?.[1]?.trim() ?? "");
+    const style = rule.match(/font-style:\s*([^;}]*)/i)?.[1]?.trim() || "normal";
+    if (loaded.has(`${fam.replace(/^["']|["']$/g, "")}|${weight}|${style}`)) return rule;
+    pruned++;
+    return "";
+  });
+  return pruned > 0 ? kept : css;
+}
+
+export async function buildDirectRasterCss(
+  factoryDoc: Document,
+  baseUri: string
+): Promise<string> {
+  let css = "";
+  for (const s of Array.from(factoryDoc.querySelectorAll("style"))) {
+    css += s.textContent + "\n";
+  }
+  css = css.replace(HTML_BODY_SELECTOR_RE, `$1.${MSVG_SHIM_CLASS}`);
+  css = pruneUnusedFontFaces(css, factoryDoc);
+  return inlineCssFontUrls(css, baseUri);
+}
+
+// 优化轮 #10：cssInline（含 ~1MB 内联字体 base64）跨 chunk 恒定。若每 chunk
+// 都把它塞进 <style> 再整段 encodeURIComponent，编码成本随 chunk 数线性放大。
+// 改为：style 里放短标记，序列化后把标记（encodeURIComponent 后形态不变）拼接
+// 成一次性编码并按 cssInline 字符串记忆的整段。标记含随机后缀防撞文档内容。
+let DIRECT_CSS_ENC_CACHE: { css: string; encoded: string } | null = null;
+const DIRECT_CSS_MARK = `__mditor_direct_css_${Math.random().toString(36).slice(2)}__`;
+
+/** 直连光栅一个 chunk 窗口 → 画布（异常向上抛，调用方回退 domToCanvas；
+ *  perf 探针亦直接调用）。 */
+export async function rasterWindowDirect(
+  win: HTMLElement,
+  cssInline: string,
+  widthCss: number,
+  heightCss: number,
+  scale: number,
+  bg: string
+): Promise<HTMLCanvasElement> {
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const doc = win.ownerDocument!;
+  const svg = doc.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("width", String(widthCss));
+  svg.setAttribute("height", String(heightCss));
+  const styleEl = doc.createElement("style");
+  styleEl.textContent = DIRECT_CSS_MARK;
+  svg.appendChild(styleEl);
+  const fo = doc.createElementNS(SVG_NS, "foreignObject");
+  fo.setAttribute("x", "0");
+  fo.setAttribute("y", "0");
+  fo.setAttribute("width", String(widthCss));
+  fo.setAttribute("height", String(heightCss));
+  const theme = doc.documentElement.getAttribute("data-theme") ?? "light";
+  // 背景解析为不透明色：工厂 html 背景可为透明（var(--bg) 缺位）——透明
+  // fillRect 是空操作，会把整页留成 alpha-0 黑底（flattened 视角全黑）。
+  const bgParsed = parseCssColor(bg);
+  const opaqueBg =
+    bgParsed && bgParsed.a >= 1
+      ? bg
+      : (() => {
+          const c = parseCssColor(
+            doc.defaultView?.getComputedStyle(doc.body).backgroundColor || "#ffffff"
+          );
+          return c && c.a >= 1
+            ? `rgb(${c.r},${c.g},${c.b})`
+            : "#ffffff";
+        })();
+  const wrap = doc.createElement("div");
+  wrap.setAttribute("data-theme", theme);
+  wrap.setAttribute("class", `vditor-reset ${MSVG_SHIM_CLASS}`);
+  // win 的窗口语义（overflow:hidden + 尺寸）以行内样式原样携带。
+  wrap.setAttribute("style", `${win.style.cssText};background:${opaqueBg};`);
+  wrap.appendChild(win.cloneNode(true));
+  fo.appendChild(wrap);
+  svg.appendChild(fo);
+  const xml = new XMLSerializer().serializeToString(svg);
+  // data URL 而非 blob URL（EX #10 复盘）：blob: SVG 经 <img> 绘入画布会
+  // 污染画布（toDataURL 全程 SecurityError，实测 i11），data: 则按同源
+  // 干净资源处理。encodeURIComponent 是必要成本——但样式表部分只付一次。
+  if (!DIRECT_CSS_ENC_CACHE || DIRECT_CSS_ENC_CACHE.css !== cssInline) {
+    // XML 文本转义后编码：拼接路径绕过了 XMLSerializer 的文本转义，CSS 里的
+    // `&`（嵌套选择器）/`]]>` 会拼出非法 XML → 解码失败静默回退 ms 路径。
+    // 转义后经 XML 解析还原为原字符，与整段序列化语义等价。
+    DIRECT_CSS_ENC_CACHE = {
+      css: cssInline,
+      encoded: encodeURIComponent(
+        cssInline.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      ),
+    };
+  }
+  // 序列化产物里 style 节点形如 <style xmlns="…xhtml">__mditor_direct_css…</style>
+  // （HTML 命名空间元素被 XMLSerializer 补 xmlns）。标记匹配在 raw XML 上做
+  // （标记为 XML 文本安全字符集），命中则头/尾分别编码、中间拼缓存好的整段
+  // CSS 编码——大字符串只编码一次。未命中（序列化形态变化）回退全量编码。
+  const markMatch = xml.match(new RegExp(`<style[^>]*>${DIRECT_CSS_MARK}</style>`));
+  let xmlEnc: string;
+  if (markMatch?.index !== undefined) {
+    const head = xml.slice(0, markMatch.index + markMatch[0].indexOf(`>${DIRECT_CSS_MARK}`) + 1);
+    const tail = xml.slice(markMatch.index + markMatch[0].length - "</style>".length);
+    xmlEnc = `${encodeURIComponent(head)}${DIRECT_CSS_ENC_CACHE.encoded}${encodeURIComponent(tail)}`;
+  } else {
+    styleEl.textContent = cssInline;
+    xmlEnc = encodeURIComponent(new XMLSerializer().serializeToString(svg));
+  }
+  const dataUrl = `data:image/svg+xml;charset=utf-8,${xmlEnc}`;
+  const img = new Image();
+  img.src = dataUrl;
+  await img.decode();
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(widthCss * scale));
+  canvas.height = Math.max(1, Math.round(heightCss * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("直连光栅：画布 2D 上下文不可用");
+  ctx.fillStyle = opaqueBg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
 export async function runPdfPipeline(
   html: string,
   css: string,
@@ -170,7 +469,7 @@ async function runPdfPipelineOnce(
   o: PdfPipelineOptions,
   vector: boolean
 ): Promise<PdfPipelineResult> {
-  const t = { factory: 0, measure: 0, paginate: 0, text: 0, raster: 0, assemble: 0 };
+  const t: Record<string, number> = { factory: 0, measure: 0, paginate: 0, text: 0, raster: 0, assemble: 0 };
   const paper = PDF_PAPERS[o.paper ?? "A4"];
   const marginPt = mmToPt(o.marginMm ?? 15);
   const scale = o.rasterScale ?? 2;
@@ -233,8 +532,11 @@ async function runPdfPipelineOnce(
 
     // ---- 5. 文本素材 + 补丁计划 + 块装饰（一次全量收集；textLayer=false 跳过）----
     t0 = performance.now();
+    const subText: Record<string, number> = {};
+    let ts0 = performance.now();
     const emptyHiding: DecorationHiding = { borderEls: [], quoteEls: [], bgEls: [], decorEls: [], imgEls: [] };
     const patchPlan = vectorActive ? collectPatchPlan(handle) : null;
+    subText.patchPlan = performance.now() - ts0;
     // 字形覆盖检测（阶段四）：fontkit 直读全量字体，(codePoint) 级缓存。
     // 缺字形（emoji/特殊符号）→ 判定 no-glyph → 残留补丁兜底，绝不画 notdef。
     // RVF 阶段一双字体：拉丁域字符查 Inter（Regular 代表四变体覆盖面），
@@ -292,6 +594,7 @@ async function runPdfPipelineOnce(
         glyphChecker = undefined; // 检测不可用：保守跳过检测
       }
     }
+    ts0 = performance.now();
     const material = wantText
       ? collectTextMaterial(handle, {
           vector: vectorActive,
@@ -308,8 +611,11 @@ async function runPdfPipelineOnce(
             totalChars: 0, vectorChars: 0, shadowChars: 0, syntheticBoldChars: 0, syntheticItalicChars: 0, latinTrueVariantChars: 0, reasons: {} as Record<string, number>,
           },
         };
+    subText.material = performance.now() - ts0;
     const fragments = material.fragments;
+    ts0 = performance.now();
     const blockDecor = vectorActive ? collectBlockDecorations(handle) : null;
+    subText.blockDecor = performance.now() - ts0;
     // 满铺位图退位（RV 阶三）：页底色改矢量矩形（内容盒同尺寸）。
     const patchSources: PatchSource[] = patchPlan
       ? [
@@ -345,6 +651,7 @@ async function runPdfPipelineOnce(
 
     // ---- 7. 分块光栅 + 逐页入册 ----
     t0 = performance.now();
+    const subRaster: Record<string, number> = {};
     await rasterizeAndAssemble(handle, paginated.pages, {
       contentWidthPx,
       contentHeightPx,
@@ -366,6 +673,7 @@ async function runPdfPipelineOnce(
       vectorActive,
       assembler,
       signal,
+      sub: subRaster,
       onProgress: (done, total, note) =>
         progress({ stage: "raster", done, total, note }),
       onPagePng: o.onPagePng,
@@ -375,6 +683,9 @@ async function runPdfPipelineOnce(
     // ---- 8. 落册 ----
     const bytes = await assembler.save();
     t.assemble = performance.now() - t0 - t.raster;
+    for (const [k, v] of Object.entries(subText)) t[`text.${k}`] = v;
+    for (const [k, v] of Object.entries(subRaster)) t[`raster.${k}`] = v;
+    Object.assign(t, handle.timings ?? {});
     return {
       bytes,
       meta: {
@@ -1604,6 +1915,7 @@ interface RasterizeArgs {
   vectorActive: boolean;
   assembler: Awaited<ReturnType<typeof createPdfAssembler>>;
   signal?: AbortSignal;
+  sub?: Record<string, number>;
   onProgress: (done: number, total: number, note?: string) => void;
   onPagePng?: (index: number, dataUrl: string) => void;
 }
@@ -1735,13 +2047,43 @@ async function rasterizeAndAssemble(
   win.appendChild(content);
   content.style.position = "relative";
 
-  const { domToPng } = await import("modern-screenshot");
+  const { createContext, destroyContext, domToCanvas } = await import(
+    "modern-screenshot"
+  );
+  // 上下文跨 chunk 复用（EX 优化轮 #3）：字体 dataURL 的 requests 缓存、
+  // defaultComputedStyles 缓存与 waitUntilLoad 都只做一次——每 chunk 重建
+  // context 时 KaTeX 的 ~20 个 woff2 会被重复 fetch+base64。
+  const msContext = await createContext(win, {
+    width: a.contentWidthPx,
+    height: a.contentHeightPx,
+    scale: a.scale,
+    backgroundColor: bg,
+    autoDestruct: false,
+    includeStyleProperties: MS_STYLE_PROPS,
+    features: {
+      copyScrollbar: false, // 工厂窗口 overflow:hidden，无滚动条面
+      removeAbnormalAttributes: false, // 编辑器产物属性均规范，免逐元素扫描
+      restoreScrollPosition: false,
+    },
+    debug: (window as unknown as { __msDebug?: boolean }).__msDebug === true,
+  });
   const bySide = Math.floor(MAX_CANVAS_SIDE / (a.contentHeightPx * a.scale));
   const byPixels = Math.floor(
     MAX_CANVAS_PIXELS /
       (a.contentWidthPx * a.scale * a.contentHeightPx * a.scale)
   );
-  const perChunk = Math.max(1, Math.min(bySide, byPixels, MAX_PAGES_PER_CHUNK));
+  // SVG-as-image 的光栅面（宽或高）超过 ~8192 设备像素时 foreignObject 内容
+  // 出现渐进丢失（实测 8344px 高的 chunk 底部公式整行缺墨、右侧截断——
+  // 像素级对比定罪）。直连路径按设备高收口 chunk 页数；回退路径不受影响
+  // 但统一采用（多余 chunk 的固定开销很小）。
+  const byRasterSurface = Math.max(
+    1,
+    Math.floor(8000 / (a.contentHeightPx * a.scale))
+  );
+  const perChunk = Math.max(
+    1,
+    Math.min(bySide, byPixels, MAX_PAGES_PER_CHUNK, byRasterSurface)
+  );
 
   const pageCanvas = document.createElement("canvas");
   pageCanvas.width = Math.round(a.contentWidthPx * a.scale);
@@ -1751,31 +2093,115 @@ async function rasterizeAndAssemble(
   pageCtx.fillStyle = bg;
   const pw = pageCanvas.width;
   const ph = pageCanvas.height;
-  // 补丁裁片画布（按需建；每片独立尺寸）。
-  const patchCanvas = document.createElement("canvas");
-  const patchCtx = patchCanvas.getContext("2d");
-  if (!patchCtx) throw new Error("无法创建补丁画布（2D 上下文不可用）");
-  /** chunk 位图内裁片 → PNG 字节。 */
+  // 补丁裁片画布（按需建；每片独立尺寸）。EX 优化轮 #5：裁片改每片独立
+  // 画布 + toBlob 异步编码（浏览器编码线程池并行），替代共享画布上的同步
+  // toDataURL（主线程逐片 PNG 编码曾是 crop 阶段全部成本）。
+  interface PatchCrop {
+    canvas: HTMLCanvasElement;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }
+  const patchCanvasPool: HTMLCanvasElement[] = [];
+  const takePatchCanvas = (): HTMLCanvasElement => {
+    const c = patchCanvasPool.pop() ?? document.createElement("canvas");
+    const ctx = c.getContext("2d");
+    if (ctx) ctx.clearRect(0, 0, c.width, c.height);
+    return c;
+  };
+  /** chunk 位图内裁片（同步绘制，编码延后并行）。 */
   const cropPatch = (
-    img: HTMLImageElement,
+    img: HTMLImageElement | HTMLCanvasElement,
     sx: number,
     sy: number,
     sw: number,
-    sh: number
-  ): { bytes: Uint8Array; mime: "image/png" } | null => {
+    sh: number,
+    out: PatchCrop
+  ): boolean => {
     const cx = Math.max(0, Math.round(sx));
     const cy = Math.max(0, Math.round(sy));
     const cw = Math.max(1, Math.min(Math.round(sw), img.width - cx));
     const ch = Math.max(1, Math.min(Math.round(sh), img.height - cy));
-    if (cw <= 0 || ch <= 0 || cx >= img.width || cy >= img.height) return null;
-    patchCanvas.width = cw;
-    patchCanvas.height = ch;
-    patchCtx.clearRect(0, 0, cw, ch);
-    patchCtx.drawImage(img, cx, cy, cw, ch, 0, 0, cw, ch);
-    return { bytes: dataUrlToBytes(patchCanvas.toDataURL("image/png")), mime: "image/png" };
+    if (cw <= 0 || ch <= 0 || cx >= img.width || cy >= img.height) return false;
+    out.canvas = takePatchCanvas();
+    out.canvas.width = cw;
+    out.canvas.height = ch;
+    const ctx = out.canvas.getContext("2d");
+    if (!ctx) return false;
+    // 源/目标同为 scale 后设备像素、尺寸差 <1px：关闭平滑免双线性重采样
+    // （软件渲染下逐片重采样曾是 crop 阶段主成本），整数对齐即像素精确。
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, cx, cy, cw, ch, 0, 0, cw, ch);
+    return true;
+  };
+  /** 一页的裁片批量编码（并行 toBlob → bytes）。 */
+  // 编码失败计数器（复用 timings 子表的计数字段惯例，值恒为小整数）。
+  const count = (k: string): void => {
+    if (a.sub) a.sub[k] = (a.sub[k] ?? 0) + 1;
+  };
+  const encodePatches = async (
+    crops: Array<{ crop: PatchCrop; x: number; y: number; w: number; h: number }>
+  ): Promise<Array<{ bytes: Uint8Array; mime: "image/png" } & PatchSource>> => {
+    if (crops.length === 0) return [];
+    const out: Array<{ bytes: Uint8Array; mime: "image/png" } & PatchSource> = [];
+    await Promise.all(
+      crops.map(
+        (c, i) =>
+          new Promise<void>((resolve) => {
+            c.crop.canvas.toBlob((blob) => {
+              if (blob) {
+                // catch 兜底（EX 复审 P2-2）：arrayBuffer 理论拒绝时若不落
+                // resolve，外层 Promise.all 永不 settle → 页循环 await 挂死
+                // 且不可取消。补丁缺失好过导出卡死；失败计数入 sub 供诊断。
+                blob
+                  .arrayBuffer()
+                  .then((ab) => {
+                    out[i] = {
+                      bytes: new Uint8Array(ab),
+                      mime: "image/png",
+                      x: c.x,
+                      y: c.y,
+                      w: c.w,
+                      h: c.h,
+                    };
+                    resolve();
+                  })
+                  .catch(() => {
+                    count("crop.arrayBufferFail");
+                    resolve();
+                  });
+              } else {
+                count("crop.blobNull");
+                resolve();
+              }
+            }, "image/png");
+          })
+      )
+    );
+    for (const c of crops) {
+      c.crop.canvas.width = 0;
+      c.crop.canvas.height = 0;
+      patchCanvasPool.push(c.crop.canvas);
+    }
+    return out.filter(Boolean);
   };
 
   const trim = new ChunkTrim(content);
+  // 直连光栅样式（vector 模式；构建失败 → 全程 domToCanvas）。perf 开关：
+  // window.__noDirectRaster = true 强制回退路径（A/B 对比用）。
+  let directCss: string | null = null;
+  if (
+    a.vectorActive &&
+    !(window as unknown as { __noDirectRaster?: boolean }).__noDirectRaster
+  ) {
+    try {
+      directCss = await buildDirectRasterCss(doc, doc.baseURI);
+    } catch {
+      directCss = null;
+    }
+  }
+  let directOk = directCss !== null;
   // 矢量文本摘除 + 装饰遮蔽：整段光栅期间统一生效（颜色/边框色不参与布局，
   // 块测量/文本素材均在此之前完成——坐标面不受影响）。还原在 finally。
   const undoTransparency =
@@ -1783,6 +2209,14 @@ async function rasterizeAndAssemble(
   const undoDecor =
     a.hiding.length > 0 ? applyDecorationTransparency(a.hiding[0], a.hiding.slice(1)) : null;
   try {
+    const sub = a.sub ?? {};
+    const bump = (k: string, ms: number): void => {
+      sub[k] = (sub[k] ?? 0) + ms;
+    };
+    // EX 优化轮 #11 复盘：曾尝试跨 chunk 预启动（下一 chunk 的 trim/光栅与本
+    // chunk 编码装册重叠），实测更慢（i15：serialize 2.0→7.1s、encodeWait
+    // 6.9→8.1s）——SVG 解码与 toBlob 编码抢同一线程池，encodeWait 是编码器
+    // 吞吐瓶颈而非主线程空闲，预启动只制造竞争。保留串行结构。
     for (let start = 0; start < pages.length; start += perChunk) {
       if (a.signal?.aborted) throw new DOMException("导出已取消", "AbortError");
       const chunk = pages.slice(start, start + perChunk);
@@ -1793,44 +2227,92 @@ async function rasterizeAndAssemble(
       const chunkSpan = chunkBottom - chunkTop;
       win.style.height = `${chunkSpan}px`;
       content.style.transform = `translateY(${-chunkTop}px)`;
+      let ts0 = performance.now();
       trim.apply(chunkTop, chunkBottom);
+      bump("trim", performance.now() - ts0);
       // 平移后布局收帧：不依赖 rAF（后台/被遮挡窗口的 rAF 会被暂停，
       // 挂死导出——见 exportRenderFactory 同款注释）——强制同步布局读 +
       // 双定时器翻两轮事件循环。
+      ts0 = performance.now();
       void content.scrollHeight;
       await new Promise((res) => setTimeout(res, 0));
       void content.scrollHeight;
       await new Promise((res) => setTimeout(res, 0));
-      const dataUrl = await domToPng(win, {
-        width: a.contentWidthPx,
-        height: chunkSpan,
-        scale: a.scale,
-        backgroundColor: bg,
-      });
+      bump("settle", performance.now() - ts0);
+      // 画布直取（EX 优化轮 #2/#8）：vector 模式优先直连 foreignObject 光栅
+      // （原生克隆 + 样式表内嵌，跳过逐元素计算样式 diff）；异常回退
+      // domToCanvas（ms 上下文）。raster 模式始终走 domToCanvas（外链图片
+      // 需要库内抓取内联）。
+      ts0 = performance.now();
+      msContext.width = a.contentWidthPx;
+      msContext.height = chunkSpan;
+      let chunkCanvas: HTMLCanvasElement;
+      if (directOk) {
+        try {
+          chunkCanvas = await rasterWindowDirect(
+            win,
+            directCss!,
+            a.contentWidthPx,
+            chunkSpan,
+            a.scale,
+            bg
+          );
+        } catch {
+          directOk = false;
+          sub["serialize.directFallback"] = 1;
+          chunkCanvas = await domToCanvas(msContext);
+        }
+      } else {
+        chunkCanvas = await domToCanvas(msContext);
+      }
+      bump("serialize", performance.now() - ts0);
       trim.restore();
-      const img = new Image();
-      img.src = dataUrl;
-      await img.decode();
+      const img = chunkCanvas;
       const plan = pageSlicePlan(chunk, chunkTop, a.scale);
+      // EX 优化轮 #6：本 chunk 全部页的裁片一次画完并把 toBlob 编码全部
+      // 立刻挂起（浏览器编码线程池并行）——编码与逐页 addPage 的主线程
+      // 工作重叠，替代「每页画→等编码→入册」的串行等待。
+      const chunkPatchBytes: Array<Promise<Array<{ bytes: Uint8Array; mime: "image/png" } & PatchSource>>> =
+        chunk.map(() => Promise.resolve([]));
+      if (a.vectorActive && patchPlacements) {
+        ts0 = performance.now();
+        for (let i = 0; i < chunk.length; i++) {
+          const pageIndex = start + i;
+          const wTop = chunk[i].top;
+          const pendingCrops: Array<{ crop: PatchCrop; x: number; y: number; w: number; h: number }> = [];
+          for (const p of patchPlacements[pageIndex]) {
+            const crop: PatchCrop = {
+              canvas: null as unknown as HTMLCanvasElement,
+              x: p.x,
+              y: p.y,
+              w: p.w,
+              h: p.h,
+            };
+            if (
+              cropPatch(
+                img,
+                p.x * a.scale,
+                (wTop + p.y - chunkTop) * a.scale,
+                p.w * a.scale,
+                p.h * a.scale,
+                crop
+              )
+            ) {
+              pendingCrops.push({ crop, x: p.x, y: p.y, w: p.w, h: p.h });
+            }
+          }
+          chunkPatchBytes[i] = encodePatches(pendingCrops);
+        }
+        bump("crop", performance.now() - ts0);
+      }
       for (let i = 0; i < chunk.length; i++) {
         const pageIndex = start + i;
         const wTop = chunk[i].top;
         // 矢量模式：补丁裁片（页窗口可见部分从 chunk 位图裁出）+ 原生图；
         // 满铺位图退位。raster 模式：整页位图不变。
         let pageImage: { bytes: Uint8Array; mime: "image/png" | "image/jpeg" } | null = null;
-        const patches: Array<{ bytes: Uint8Array; mime: "image/png" } & PatchSource> = [];
-        if (a.vectorActive && patchPlacements) {
-          for (const p of patchPlacements[pageIndex]) {
-            const crop = cropPatch(
-              img,
-              p.x * a.scale,
-              (wTop + p.y - chunkTop) * a.scale,
-              p.w * a.scale,
-              p.h * a.scale
-            );
-            if (crop) patches.push({ ...crop, x: p.x, y: p.y, w: p.w, h: p.h });
-          }
-        } else {
+        if (!(a.vectorActive && patchPlacements)) {
+          ts0 = performance.now();
           pageCtx.fillRect(0, 0, pw, ph);
           pageCtx.drawImage(
             img,
@@ -1847,14 +2329,16 @@ async function rasterizeAndAssemble(
             useJpeg ? "image/jpeg" : "image/png",
             0.92
           );
+          bump("crop", performance.now() - ts0);
           pageImage = { bytes: dataUrlToBytes(pageDataUrl), mime: useJpeg ? "image/jpeg" : "image/png" };
           a.onPagePng?.(pageIndex, pageDataUrl);
         }
-        // 调试页图（矢量模式）：底色 + 补丁合成（近似位图层视图）。
-        if (a.vectorActive && a.onPagePng) {
+        // 调试页图（矢量模式）：底色 + 补丁合成（近似位图层视图）。源仍取
+        // chunk 位图浮点源矩形（与历史字节可比，作视觉回归基准面）。
+        if (a.vectorActive && a.onPagePng && patchPlacements) {
           pageCtx.fillStyle = bg;
           pageCtx.fillRect(0, 0, pw, ph);
-          for (const p of patches) {
+          for (const p of patchPlacements[pageIndex]) {
             pageCtx.drawImage(
               img,
               p.x * a.scale,
@@ -1869,6 +2353,12 @@ async function rasterizeAndAssemble(
           }
           a.onPagePng(pageIndex, pageCanvas.toDataURL("image/png"));
         }
+        // 补丁 PNG 编码等待（EX 优化轮 #10 计时归位：并行 toBlob 的池吞吐
+        // 等待原先落在 raster 桶的未归类区间）。
+        ts0 = performance.now();
+        const patches = a.vectorActive ? await chunkPatchBytes[i] : [];
+        bump("encodeWait", performance.now() - ts0);
+        ts0 = performance.now();
         await a.assembler.addPage(
           pageImage,
           runsPerPage[pageIndex],
@@ -1886,15 +2376,20 @@ async function rasterizeAndAssemble(
               }))
             : undefined
         );
+        bump("addPage", performance.now() - ts0);
         a.onProgress(pageIndex + 1, pages.length);
       }
-      // 即弃：分块位图与解码图随下一轮 GC；显式断引用帮助引擎回收。
-      img.src = "";
+      // 即弃：分块画布随下一轮 GC；无需显式断引用（无 dataURL 常驻串）。
     }
   } finally {
     undoDecor?.();
     undoTransparency?.();
     trim.restore();
+    try {
+      destroyContext(msContext);
+    } catch {
+      /* 上下文已随页面销毁 */
+    }
     // 工厂回收前把 content 归位（destroy 只移除 iframe，无副作用亦可）。
     try {
       parent.insertBefore(content, win);

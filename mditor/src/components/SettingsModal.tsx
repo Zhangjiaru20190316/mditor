@@ -41,6 +41,7 @@ import {
 } from "../lib/sync/s3";
 import { useDelayedUnmount } from "../hooks/useDelayedUnmount";
 import { CloseIcon, ChevronRightIcon, LogoIcon } from "./icons";
+import { FontPresetPicker } from "./FontPresetPicker";
 
 /** 分区导航项（固定高度，供滑动指示条做等距 translateY 定位）。 */
 const SECTIONS = [
@@ -311,6 +312,23 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
   const setSync = (patch: Partial<SyncSettings>) =>
     setDraft((d) => ({ ...d, sync: { ...d.sync, ...patch } }));
 
+  // 触发方式整合（v5.2）：底层仍是 autoSync + autoSyncIntervalMin 两个正交
+  // 字段（存储格式与 trigger 逻辑零改动，旧配置无损），UI 重组为单一
+  // select——读写互映射；切到含定时模式且间隔为 0 时填 10（与归一兜底一致）。
+  const syncAutoMode: "manual" | "save" | "timer" | "both" = draft.sync.autoSync
+    ? draft.sync.autoSyncIntervalMin > 0
+      ? "both"
+      : "save"
+    : draft.sync.autoSyncIntervalMin > 0
+      ? "timer"
+      : "manual";
+  const setSyncAutoMode = (m: "manual" | "save" | "timer" | "both") => {
+    const interval = draft.sync.autoSyncIntervalMin;
+    if (m === "manual") setSync({ autoSync: false, autoSyncIntervalMin: 0 });
+    else if (m === "save") setSync({ autoSync: true, autoSyncIntervalMin: 0 });
+    else setSync({ autoSync: m === "both", autoSyncIntervalMin: interval > 0 ? interval : 10 });
+  };
+
   /** 预设切换：endpoint/region 仅空值预填（不粗暴覆盖已填值）；寻址风格
    *  属预设语义本身，随预设切换（高级折叠里可再改）。 */
   const pickSyncProvider = (id: string) => {
@@ -422,25 +440,26 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
                   </span>
                 </Field>
 
-                <Field label="字体预设">
-                  <select
-                    value={draft.fontPreset}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      const p = FONT_PRESETS.find((x) => x.id === id);
-                      if (p) setDraft((d) => ({ ...d, fontPreset: id, fontFamily: p.stack }));
-                      else set("fontPreset", "");
-                    }}
-                  >
-                    <option value="">自定义</option>
-                    {FONT_PRESETS.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="hint">选择预设会覆盖下方字体栈；也可直接手动编辑（将切回「自定义」）。</span>
-                </Field>
+                {/* 字体预设选择器：不用 Field（其 <label> 会把面板行点击转发给
+                    触发按钮造成开合抖动），用同款 .field div 结构。 */}
+                <div className="field">
+                  <span className="field-label">字体预设</span>
+                  <span className="field-control">
+                    <FontPresetPicker
+                      presets={FONT_PRESETS}
+                      value={draft.fontPreset}
+                      defaultSample="Aa 字体设计感 123"
+                      ariaLabel="字体预设"
+                      onSelect={(id, stack) =>
+                        setDraft((d) => ({ ...d, fontPreset: id, fontFamily: stack }))
+                      }
+                      onCustom={() => set("fontPreset", "")}
+                    />
+                    <span className="hint">
+                      选择预设会覆盖下方字体栈；也可直接手动编辑（将切回「自定义」）。带「内置」徽标的字体随应用自带（OFL 开源授权），未安装同款字体的机器同样生效。
+                    </span>
+                  </span>
+                </div>
 
                 <Field label="正文字体栈">
                   <input
@@ -453,24 +472,21 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
                   />
                 </Field>
 
-                <Field label="代码字体预设">
-                  <select
-                    value={draft.monoFontPreset}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      const p = MONO_FONT_PRESETS.find((x) => x.id === id);
-                      if (p) setDraft((d) => ({ ...d, monoFontPreset: id, monoFontFamily: p.stack }));
-                      else set("monoFontPreset", "");
-                    }}
-                  >
-                    <option value="">自定义</option>
-                    {MONO_FONT_PRESETS.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
+                <div className="field">
+                  <span className="field-label">代码字体预设</span>
+                  <span className="field-control">
+                    <FontPresetPicker
+                      presets={MONO_FONT_PRESETS}
+                      value={draft.monoFontPreset}
+                      defaultSample="fn 设计感() { 0O 1lI => != }"
+                      ariaLabel="代码字体预设"
+                      onSelect={(id, stack) =>
+                        setDraft((d) => ({ ...d, monoFontPreset: id, monoFontFamily: stack }))
+                      }
+                      onCustom={() => set("monoFontPreset", "")}
+                    />
+                  </span>
+                </div>
 
                 <Field label="代码字体栈">
                   <input
@@ -1349,6 +1365,45 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
                   </Field>
                 )}
 
+                <Field label="同步方向">
+                  <select
+                    disabled={!syncSupported}
+                    value={draft.sync.syncDirection}
+                    onChange={(e) =>
+                      setSync({ syncDirection: e.target.value as SyncSettings["syncDirection"] })
+                    }
+                  >
+                    <option value="bidirectional">双向同步（默认）</option>
+                    <option value="uploadOnly">仅上传——本地为准，备份到云端</option>
+                    <option value="downloadOnly">仅下载——云端为准，本端只读</option>
+                  </select>
+                  <span className="hint">
+                    仅上传：本地改动与删除会传播到云端，远端改动被忽略（还有其他
+                    设备在写同一目录时请勿用）。仅下载：本地改动被忽略（不上传），
+                    云端删除不会删除本地文件，本地删除的文件会被云端拉回。切换
+                    方向后下一轮按新方向重算，不会误删文件。
+                  </span>
+                </Field>
+
+                <Field label="冲突策略">
+                  <select
+                    disabled={!syncSupported}
+                    value={draft.sync.conflictPolicy}
+                    onChange={(e) =>
+                      setSync({ conflictPolicy: e.target.value as SyncSettings["conflictPolicy"] })
+                    }
+                  >
+                    <option value="newestWins">新者胜（默认）</option>
+                    <option value="localFirst">本端优先</option>
+                    <option value="remoteFirst">云端优先</option>
+                  </select>
+                  <span className="hint">
+                    两侧同时被修改时谁成为正式版本；败者始终存为同目录
+                    「.冲突-时间戳」副本，不会丢失。仅上传/仅下载模式下冲突分别
+                    按本端/云端收编（败者副本机制不变），此策略不参与。
+                  </span>
+                </Field>
+
                 <button
                   type="button"
                   className="field-collapsible"
@@ -1372,26 +1427,37 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
                     </span>
                   </Field>
                   <Field label="自动同步">
-                    <input
-                      type="checkbox"
+                    <select
                       disabled={!syncSupported}
-                      checked={draft.sync.autoSync}
-                      onChange={(e) => setSync({ autoSync: e.target.checked })}
-                    />
-                    <span className="hint">保存后 5 秒防抖触发 + 按下述间隔定时。</span>
-                  </Field>
-                  <Field label="定时间隔（分钟，0=关闭）">
-                    <input
-                      type="number"
-                      min={0}
-                      step={1}
-                      disabled={!syncSupported}
-                      value={draft.sync.autoSyncIntervalMin}
+                      value={syncAutoMode}
                       onChange={(e) =>
-                        setSync({ autoSyncIntervalMin: Math.max(0, Number(e.target.value) || 0) })
+                        setSyncAutoMode(e.target.value as "manual" | "save" | "timer" | "both")
                       }
-                    />
+                    >
+                      <option value="manual">仅手动</option>
+                      <option value="save">保存后自动同步</option>
+                      <option value="timer">按间隔定时同步</option>
+                      <option value="both">保存后 + 定时</option>
+                    </select>
+                    <span className="hint">
+                      保存后 5 秒防抖触发。手动同步始终可用（状态栏云图标 /
+                      文件菜单「立即同步」）。
+                    </span>
                   </Field>
+                  {(syncAutoMode === "timer" || syncAutoMode === "both") && (
+                    <Field label="定时间隔（分钟）">
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        disabled={!syncSupported}
+                        value={draft.sync.autoSyncIntervalMin}
+                        onChange={(e) =>
+                          setSync({ autoSyncIntervalMin: Math.max(1, Number(e.target.value) || 0) })
+                        }
+                      />
+                    </Field>
+                  )}
                   <Field label="启动时同步">
                     <input
                       type="checkbox"

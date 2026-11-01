@@ -45,6 +45,63 @@ const MODES: { value: EditMode; label: string }[] = [
   { value: "sv", label: "源码模式" },
 ];
 
+/**
+ * 云同步进度环（v5.2）：云图标外圈 17×17 SVG 进度弧，替代旧的整只图标
+ * 旋转。progress 为 null（扫描/比对阶段，无可量化进度）时不画环、云图标
+ * 呼吸脉冲（CSS，见 global.css 的 sb-sync-breathe）；非 syncing 完全静止。
+ */
+function SyncRing({
+  active,
+  progress,
+}: {
+  active: boolean;
+  /** 0..1；null = 阶段性无可量化进度（呼吸脉冲）。 */
+  progress: number | null;
+}) {
+  const SIZE = 17;
+  const STROKE = 1.6;
+  const half = SIZE / 2;
+  const r = half - STROKE;
+  const c = 2 * Math.PI * r;
+  const showArc = active && progress != null;
+  return (
+    <span className={`sb-sync-ring${active && progress == null ? " sb-sync-breathe" : ""}`}>
+      {showArc && (
+        <svg
+          className="sb-sync-ring-svg"
+          width={SIZE}
+          height={SIZE}
+          viewBox={`0 0 ${SIZE} ${SIZE}`}
+          aria-hidden="true"
+        >
+          <circle
+            cx={half}
+            cy={half}
+            r={r}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={STROKE}
+            opacity={0.2}
+          />
+          <circle
+            cx={half}
+            cy={half}
+            r={r}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={STROKE}
+            strokeLinecap="round"
+            strokeDasharray={c}
+            strokeDashoffset={c * (1 - Math.min(Math.max(progress, 0), 1))}
+            transform={`rotate(-90 ${half} ${half})`}
+          />
+        </svg>
+      )}
+      <CloudIcon size={active ? 11 : 13} className="sb-sync-cloud" />
+    </span>
+  );
+}
+
 export const StatusBar = memo(function StatusBar({
   name,
   path,
@@ -132,12 +189,37 @@ export const StatusBar = memo(function StatusBar({
     };
   }, []);
 
-  // 云同步指示（v4.12）：自包含 useSync 订阅（不穿透父组件），点击 = 手动
-  // 同步。四态渲染：idle 灰云 / syncing 旋转 / offline 云+斜杠 / error 红。
-  // 鸿蒙运行时不渲染该元素（§7.5.3——不是错误态/转圈，是彻底隐藏）。
+  // 云同步指示（v4.12；v5.2 进度环）：自包含 useSync 订阅（不穿透父组件），
+  // 点击 = 手动同步。四态渲染：idle 灰云 / syncing 呼吸+进度环 / offline
+  // 半透明 / error 红。browser 预览运行时不渲染（isSyncSupported 唯一判定）。
   const sync = useSync();
+  const syncing = sync.status === "syncing";
+  const phase = syncing ? sync.last?.phase : undefined;
+  const done = syncing ? (sync.last?.done ?? 0) : 0;
+  const total = syncing ? (sync.last?.total ?? 0) : 0;
+  // 环形进度：transfer 阶段画 done/total 弧；finalize 满环一瞬；scan/list
+  // （total=0，无可量化进度）→ null → 呼吸脉冲。多根工作区逐根同步时按根
+  // 重置——进度环显示当前根的进度，tooltip 计数同源。
+  const syncProgress =
+    phase === "finalize" ? 1 : phase === "transfer" && total > 0 ? done / total : null;
   const syncTooltip = useMemo(() => {
-    if (!sync.last) return "云同步：点击立即同步";
+    // v5.2：syncing 首行显示阶段与可量化进度（引擎早已广播，此前 UI 未用）。
+    let head = "云同步：点击立即同步";
+    if (sync.last?.status === "syncing") {
+      const { phase, done, total, currentFile } = sync.last;
+      const file = currentFile ? `：${currentFile}` : "";
+      head =
+        phase === "scan"
+          ? "正在扫描本地改动…"
+          : phase === "list"
+            ? "正在读取远端清单…"
+            : phase === "transfer"
+              ? total > 0
+                ? `正在传输 ${done}/${total}${file}`
+                : "正在传输…"
+              : "正在收尾…";
+    }
+    if (!sync.last) return head;
     const t = sync.last.lastSyncAt
       ? `上次同步 ${new Date(sync.last.lastSyncAt).toLocaleTimeString()}`
       : "";
@@ -145,11 +227,13 @@ export const StatusBar = memo(function StatusBar({
     const note = sync.last.status === "offline" ? "\n离线中——恢复网络后自动重试" : "";
     // D6：本轮提示（时钟冲突/超限跳过等）直接进 tooltip——此前只沉在诊断总线。
     const notes = (sync.last.notes ?? []).map((n) => `\n⚠ ${n}`).join("");
-    return `云同步：点击立即同步${t ? `\n${t}` : ""}${note}${err}${notes}`;
+    return `${head}${t ? `\n${t}` : ""}${note}${err}${notes}`;
   }, [sync.last]);
   const syncLabel =
     sync.status === "syncing"
-      ? "同步中…"
+      ? total > 0
+        ? `同步中 ${done}/${total}`
+        : "同步中…"
       : sync.status === "offline"
         ? "离线"
         : sync.status === "error"
@@ -219,7 +303,7 @@ export const StatusBar = memo(function StatusBar({
             sync.syncNow();
           }}
         >
-          <CloudIcon size={15} className={sync.status === "syncing" ? "spin" : undefined} />
+          <SyncRing active={syncing} progress={syncProgress} />
         </button>
       )}
       <span className="sb-status-sep" />

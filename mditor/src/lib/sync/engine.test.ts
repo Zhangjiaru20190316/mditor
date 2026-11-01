@@ -3,6 +3,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  applyDirection,
   bytesEqual,
   computeLocalState,
   computeRemoteState,
@@ -13,17 +14,19 @@ import {
   isContentEtag,
   moveFileWithFallback,
   remoteEpochMs,
+  resolveConflictWinner,
   resolveRemoteDir,
   sameSecond,
   syncWorkspace,
   type EngineSideState,
   type LocalScanFile,
+  type PlannedOp,
   type SyncIO,
 } from "./engine";
 import { readManifest, parseManifest, serializeManifest, emptyManifest, writeManifest, rootHash } from "./manifest";
 import type { SyncManifest } from "./manifest";
 import { isIgnoredName, isIgnoredRelPath, isTooDeep, isTooLarge } from "./ignore";
-import type { S3Object, SyncManifestFile } from "./types";
+import type { ConflictPolicy, S3Object, SyncDirection, SyncManifestFile } from "./types";
 
 // manifest.ts 的真实 IO 经平台适配层——这里 mock 一个内存版（读写文本文件）。
 // 引擎本体只吃注入的 SyncIO，不受影响。
@@ -215,13 +218,16 @@ class MemIO implements SyncIO {
   }
 }
 
-async function run(io: MemIO) {
+async function run(
+  io: MemIO,
+  mode?: { direction?: SyncDirection; conflictPolicy?: ConflictPolicy }
+) {
   const warnings: string[] = [];
   const states: Array<{ phase: string; total: number }> = [];
   const outcome = await syncWorkspace(ROOT, PREFIX, io, {
     onState: (e) => states.push({ phase: e.phase, total: e.total }),
     warn: (m) => warnings.push(m),
-  });
+  }, undefined, undefined, mode);
   return { ...outcome, warnings, states };
 }
 
@@ -772,31 +778,39 @@ describe("D1/D2/D4 数据安全回归", () => {
     expect(r.summary.deletedRemote).toBe(1);
   });
 
-  it("扩展名白名单（v5.1.2）：仅 .md/.html 参与同步，PDF 等附件双侧忽略", async () => {
+  it("扩展名白名单（v5.1.2 → MF 轮修订）：md/html/pdf/docx 参与同步，其余附件双侧忽略", async () => {
     io.putLocal("note.md", "A");
     io.putRemote("note.md", "A"); // syncedManifest 需要双侧就位
     io.putLocal("page.html", "<b>B</b>");
-    io.putLocal("教材.pdf", "P");
-    io.putLocal("图.png", "I");
+    io.putLocal("教材.pdf", "P"); // MF 轮：纳入白名单 → 上传
+    io.putLocal("报告.DOCX", "D"); // 大写扩展名同样参与（大小写不敏感）
+    io.putLocal("图.png", "I"); // 附件仍不同步
     io.putLocal("无扩展名", "X");
-    io.putRemote("legacy.pdf", "OLD"); // 远端旧副本（清单也跟踪着）
+    io.putRemote("legacy.pptx", "OLD"); // 非白名单远端旧副本（清单也跟踪着）
+    io.putRemote("老规则.pdf", "ORPHAN"); // 老规则遗留云端 pdf（无清单记录）
 
     const m = syncedManifest(io, ["note.md"]);
-    m.files["legacy.pdf"] = {
+    m.files["legacy.pptx"] = {
       local: { mtimeMs: 1, size: 3, md5: null },
       remote: { etag: "e", size: 3, lastModified: "2026-09-13T10:00:00Z" },
     };
     io.manifests.set(ROOT, m);
 
     const r = await syncWorkspace(ROOT, PREFIX, io, HOOKS, "fp-1");
-    expect(r.summary.uploaded).toBe(1); // 只有 page.html 上传（note.md 已是基线 skip）
-    expect(io.remote.has(`${FULL}教材.pdf`)).toBe(false); // PDF 不上传
-    expect(io.remote.has(`${FULL}legacy.pdf`)).toBe(true); // 旧云端副本保留（孤儿）
-    // 清单只跟踪 md/html；pdf 记录被 clearRecord 自然剔除。
+    expect(r.summary.uploaded).toBe(3); // page.html + 教材.pdf + 报告.DOCX（note.md 已是基线 skip）
+    expect(io.remote.has(`${FULL}教材.pdf`)).toBe(true); // pdf 上传
+    expect(io.remote.has(`${FULL}报告.DOCX`)).toBe(true); // 大写 docx 上传
+    expect(io.remote.has(`${FULL}图.png`)).toBe(false); // png 不上传
+    expect(io.remote.has(`${FULL}legacy.pptx`)).toBe(true); // 非白名单旧云端副本保留（孤儿不删）
+    // 老规则遗留的云端 pdf 无清单记录 → absent|new：下载回归（换机不丢）。
+    expect(io.local.has("老规则.pdf")).toBe(true);
+    expect(r.summary.downloaded).toBe(1);
+    // 清单只跟踪白名单类型；pptx 记录被 clearRecord 自然剔除。
     const files = io.manifests.get(ROOT)!.files;
     expect(files["note.md"]).toBeDefined();
     expect(files["page.html"]).toBeDefined();
-    expect(files["legacy.pdf"]).toBeUndefined();
+    expect(files["教材.pdf"]).toBeDefined();
+    expect(files["legacy.pptx"]).toBeUndefined();
   });
 
   it("D1：换桶/换前缀（指纹失配）→ 按首同步重算，绝不产生删除", async () => {
@@ -946,5 +960,210 @@ describe("moveFileWithFallback（trashMove 跨盘回退，2026-09-28 日志修�
       })
     ).rejects.toThrow("copy failed");
     expect(removed).toEqual([]);
+  });
+});
+
+// ---- 方向模式与冲突策略（v5.2）----------------------------------------------
+
+describe("applyDirection：方向模式收窄（v5.2 纯函数映射表）", () => {
+  const mk = (action: PlannedOp["action"], withLocal = true, withRemote = false): PlannedOp => ({
+    relPath: "a.md",
+    action,
+    ...(withLocal ? { local: { relPath: "a.md", mtimeMs: 1000_000, size: 1 } } : {}),
+    ...(withRemote ? { remote: obj(`${FULL}a.md`, "A", "2026-09-13T10:00:00Z") } : {}),
+  });
+
+  it("双向 / 缺省：原样透传，零忽略", () => {
+    const ops = [mk("download", false, true), mk("upload"), mk("conflict", true, true)];
+    expect(applyDirection(ops, "bidirectional")).toEqual({ ops, ignoredRemote: 0, ignoredLocal: 0 });
+    expect(applyDirection(ops, undefined)).toEqual({ ops, ignoredRemote: 0, ignoredLocal: 0 });
+  });
+
+  it("仅上传：download/restoreLocal 丢弃；upload/deleteRemote/clearRecord 保留", () => {
+    const plan = applyDirection(
+      [mk("download", false, true), mk("restoreLocal", false, true), mk("upload"), mk("deleteRemote", false, true), mk("clearRecord")],
+      "uploadOnly"
+    );
+    expect(plan.ops.map((o) => o.action)).toEqual(["upload", "deleteRemote", "clearRecord"]);
+    expect(plan.ignoredRemote).toBe(2);
+    expect(plan.ignoredLocal).toBe(0);
+  });
+
+  it("仅上传：有本地文件的冲突保留（resolveConflict 本地胜）；缺本地的冲突丢弃", () => {
+    const plan = applyDirection([mk("conflict", true, true), mk("conflict", false, true)], "uploadOnly");
+    expect(plan.ops.map((o) => o.action)).toEqual(["conflict"]);
+    expect(plan.ignoredRemote).toBe(1);
+  });
+
+  it("仅下载：upload 丢弃；deleteRemote → restoreLocal；download/clearRecord 保留", () => {
+    const plan = applyDirection(
+      [mk("upload"), mk("deleteRemote", false, true), mk("clearRecord"), mk("download", false, true)],
+      "downloadOnly"
+    );
+    expect(plan.ops.map((o) => o.action)).toEqual(["restoreLocal", "clearRecord", "download"]);
+    expect(plan.ignoredLocal).toBe(1);
+  });
+
+  it("仅下载：缺远端的 deleteRemote（不可达格）保守丢弃，不产出无载荷的 restoreLocal", () => {
+    const plan = applyDirection([mk("deleteRemote", false, false)], "downloadOnly");
+    expect(plan.ops).toEqual([]);
+    expect(plan.ignoredLocal).toBe(0);
+  });
+
+  it("仅下载：有远端的冲突保留（resolveConflict 云端胜）；缺远端的冲突丢弃", () => {
+    const plan = applyDirection([mk("conflict", true, true), mk("conflict", true, false)], "downloadOnly");
+    expect(plan.ops.map((o) => o.action)).toEqual(["conflict"]);
+    expect(plan.ignoredLocal).toBe(1);
+  });
+
+  it("resolveConflictWinner：方向优先于策略；双向 + newestWins = 新者胜（undefined）", () => {
+    expect(resolveConflictWinner("uploadOnly", "remoteFirst")).toBe("local");
+    expect(resolveConflictWinner("downloadOnly", "localFirst")).toBe("remote");
+    expect(resolveConflictWinner("bidirectional", "localFirst")).toBe("local");
+    expect(resolveConflictWinner("bidirectional", "remoteFirst")).toBe("remote");
+    expect(resolveConflictWinner("bidirectional", "newestWins")).toBeUndefined();
+    expect(resolveConflictWinner(undefined, undefined)).toBeUndefined();
+  });
+});
+
+describe("syncWorkspace：仅上传 / 仅下载（v5.2，内存桩端到端）", () => {
+  it("仅上传：远端改动被忽略（不下载、notes 计数），本地文件原样", async () => {
+    io.putLocal("a.md", "A");
+    await run(io); // 基线（双向）
+    io.putRemote("a.md", "A2", "2026-09-13T12:00:00Z");
+    io.putRemote("new-remote.md", "R", "2026-09-13T12:00:00Z");
+    const { summary } = await run(io, { direction: "uploadOnly" });
+    expect(summary.downloaded).toBe(0);
+    expect(summary.notes.join()).toContain("仅上传模式：已忽略 2 个远端改动");
+    expect(dec.decode(io.local.get("a.md")!.content)).toBe("A"); // 未被远端覆盖
+  });
+
+  it("仅上传：本地改动上传；本地删除传播到云端（D1 保险量级以下）", async () => {
+    io.putLocal("a.md", "A");
+    io.putLocal("b.md", "B");
+    await run(io);
+    io.putLocal("a.md", "A-edit", 2000_000);
+    io.local.delete("b.md");
+    const { summary } = await run(io, { direction: "uploadOnly" });
+    expect(summary.uploaded).toBe(1);
+    expect(summary.deletedRemote).toBe(1);
+    expect(dec.decode(io.remote.get(`${FULL}a.md`)!.content)).toBe("A-edit");
+    expect(io.remote.has(`${FULL}b.md`)).toBe(false);
+  });
+
+  it("仅上传：云端丢失照常自愈重传（本地为存在性事实源）", async () => {
+    io.putLocal("a.md", "A");
+    await run(io);
+    io.remote.delete(`${FULL}a.md`);
+    const { summary } = await run(io, { direction: "uploadOnly" });
+    expect(summary.uploaded).toBe(1);
+    expect(io.remote.has(`${FULL}a.md`)).toBe(true);
+  });
+
+  it("仅上传：冲突按本地收编（远端更新也强制本地胜），远端败者存副本且双端可见", async () => {
+    io.putLocal("a.md", "BASE");
+    await run(io);
+    io.putLocal("a.md", "LOCAL-NEW", Date.UTC(2020, 0, 1)); // 本地旧——newestWins 会判远端胜
+    io.putRemote("a.md", "REMOTE-NEW", "2026-09-13T13:00:00Z");
+    const { summary } = await run(io, { direction: "uploadOnly" });
+    expect(summary.conflicts).toBe(1);
+    expect(summary.downloaded).toBe(0);
+    expect(dec.decode(io.local.get("a.md")!.content)).toBe("LOCAL-NEW");
+    expect(dec.decode(io.remote.get(`${FULL}a.md`)!.content)).toBe("LOCAL-NEW");
+    const m = io.manifests.get(ROOT)!.files;
+    const copyRel = Object.keys(m).find((k) => /^a\.冲突-\d{8}-\d{6}\.md$/.test(k));
+    expect(copyRel).toBeDefined();
+    expect(dec.decode(io.remote.get(`${FULL}${copyRel}`)!.content)).toBe("REMOTE-NEW");
+  });
+
+  it("仅下载：changed×changed 冲突按云端收编（本地改动存副本不丢）", async () => {
+    io.putLocal("a.md", "A");
+    await run(io);
+    io.putLocal("a.md", "A-edit", 2000_000);
+    io.putRemote("a.md", "A2", "2026-09-13T12:00:00Z");
+    const { summary } = await run(io, { direction: "downloadOnly" });
+    expect(summary.conflicts).toBe(1);
+    expect(summary.uploaded).toBe(0);
+    expect(dec.decode(io.local.get("a.md")!.content)).toBe("A2"); // 云端为准
+    const m = io.manifests.get(ROOT)!.files;
+    const copyRel = Object.keys(m).find((k) => /^a\.冲突-\d{8}-\d{6}\.md$/.test(k));
+    expect(copyRel).toBeDefined();
+    expect(dec.decode(io.local.get(copyRel!)!.content)).toBe("A-edit"); // 败者副本
+  });
+
+  it("仅下载：本地删除被云端拉回（deleteRemote → restoreLocal）", async () => {
+    io.putLocal("a.md", "A");
+    await run(io);
+    io.local.delete("a.md");
+    const { summary } = await run(io, { direction: "downloadOnly" });
+    expect(summary.deletedRemote).toBe(0);
+    expect(summary.downloaded).toBe(1);
+    expect(dec.decode(io.local.get("a.md")!.content)).toBe("A");
+  });
+
+  it("仅下载：云端删除不删本地文件（v5.1.2 铁律——自愈 upload 被忽略）", async () => {
+    io.putLocal("a.md", "A");
+    await run(io);
+    io.remote.delete(`${FULL}a.md`);
+    const { summary } = await run(io, { direction: "downloadOnly" });
+    expect(summary.uploaded).toBe(0);
+    expect(io.local.has("a.md")).toBe(true);
+    expect(summary.notes.join()).toContain("仅下载模式：已忽略 1 个本地改动");
+  });
+
+  it("仅下载：纯新增本地文件不上传（留在本地，切回双向时再上传）", async () => {
+    io.putLocal("a.md", "A");
+    await run(io);
+    io.putLocal("b.md", "B", 2000_000);
+    const { summary } = await run(io, { direction: "downloadOnly" });
+    expect(summary.uploaded).toBe(0);
+    expect(io.local.has("b.md")).toBe(true);
+    expect(io.remote.has(`${FULL}b.md`)).toBe(false);
+  });
+
+  it("切回双向：仅上传期忽略的远端改动随仅下载轮落下，被忽略的本地新增随双向轮上传", async () => {
+    io.putLocal("a.md", "A");
+    await run(io);
+    io.putRemote("a.md", "A2", "2026-09-13T12:00:00Z");
+    await run(io, { direction: "uploadOnly" }); // 忽略远端改动
+    expect(dec.decode(io.local.get("a.md")!.content)).toBe("A");
+    io.putLocal("b.md", "B", 2000_000);
+    await run(io, { direction: "downloadOnly" }); // a.md 下载放行；b.md 上传被忽略
+    expect(dec.decode(io.local.get("a.md")!.content)).toBe("A2");
+    const { summary } = await run(io); // 切回双向
+    expect(summary.uploaded).toBe(1); // b.md
+    expect(summary.downloaded).toBe(0);
+    expect(summary.deletedRemote).toBe(0); // 无误删风暴
+  });
+});
+
+describe("冲突策略（v5.2，双向）", () => {
+  it("localFirst：远端更新时本地仍胜，远端败者存副本", async () => {
+    io.putLocal("a.md", "BASE");
+    await run(io);
+    io.putLocal("a.md", "LOCAL-OLD", Date.UTC(2020, 0, 1));
+    io.putRemote("a.md", "REMOTE-NEW", "2026-09-13T13:00:00Z");
+    const { summary } = await run(io, { conflictPolicy: "localFirst" });
+    expect(summary.conflicts).toBe(1);
+    expect(dec.decode(io.local.get("a.md")!.content)).toBe("LOCAL-OLD");
+    expect(dec.decode(io.remote.get(`${FULL}a.md`)!.content)).toBe("LOCAL-OLD");
+    const m = io.manifests.get(ROOT)!.files;
+    const copyRel = Object.keys(m).find((k) => /^a\.冲突-\d{8}-\d{6}\.md$/.test(k));
+    expect(copyRel).toBeDefined();
+    expect(dec.decode(io.remote.get(`${FULL}${copyRel}`)!.content)).toBe("REMOTE-NEW");
+  });
+
+  it("remoteFirst：本地更新时远端仍胜，本地败者存副本", async () => {
+    io.putLocal("a.md", "BASE");
+    await run(io);
+    io.putLocal("a.md", "LOCAL-NEW", Date.UTC(2026, 8, 13, 12, 0, 0));
+    io.putRemote("a.md", "REMOTE-OLD", "2020-01-01T00:00:00Z");
+    const { summary } = await run(io, { conflictPolicy: "remoteFirst" });
+    expect(summary.conflicts).toBe(1);
+    expect(dec.decode(io.local.get("a.md")!.content)).toBe("REMOTE-OLD");
+    const m = io.manifests.get(ROOT)!.files;
+    const copyRel = Object.keys(m).find((k) => /^a\.冲突-\d{8}-\d{6}\.md$/.test(k));
+    expect(copyRel).toBeDefined();
+    expect(dec.decode(io.local.get(copyRel!)!.content)).toBe("LOCAL-NEW");
   });
 });

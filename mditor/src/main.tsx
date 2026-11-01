@@ -27,6 +27,17 @@ import "katex/dist/katex.min.css";
 // 回归守卫见 src/lib/mathKatexDedupe.test.ts。）
 import "katex/contrib/mhchem";
 import "highlight.js/styles/github.css";
+// 内置字体（设置面板「字体预设」带「内置」徽标者）：webfont npm 包按
+// unicode-range 切片（仅取用到的分片，未选中的字体零加载），family 名与
+// defaults.ts 预设栈一一对应（守卫测试见 src/lib/fontPresets.test.ts）。
+// 得意黑无 npm webfont 包，走 fonts.css 手动注册（public/assets/fonts）。
+import "lxgw-wenkai-lite-webfont/lxgwwenkailite-regular.css";
+import "@fontsource/maple-mono/400.css";
+import "@fontsource/zcool-qingke-huangyou/400.css";
+import "@fontsource/ma-shan-zheng/400.css";
+// 手动 @font-face 注册表（Noto Sans SC 复用 PDF 导出资产 + 得意黑）。
+// 无优先级冲突，位置不敏感；放在 global.css 之前让声明先于消费方出现。
+import "./styles/fonts.css";
 import "./styles/global.css";
 import "./styles/annotation.css";
 // 材质基建层（v5）：圆角/玻璃/纵深 token 扩展 + 组件挂材质。必须在

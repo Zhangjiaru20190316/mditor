@@ -234,6 +234,14 @@ const HARMONY_CAPS: PlatformCapabilities = {
   // HN 轮：mditor-asset:// 下 iframe 相对解析/隔离未真机验证（spike ④）——
   // 保守关：HTML 笔记标签降级为「用系统浏览器打开」提示页，不假成功。
   htmlNoteView: false,
+  // MF 轮：pdf/docx 应用内预览未真机验证（大文件 base64 桥内存 + pdfjs
+  // worker 在 ArkWeb 的性能）——保守关：只读标签降级为「用系统应用打开」
+  // 提示页，不假成功；文件树照常显示（展示面不受门控影响）。
+  pdfNoteView: false,
+  docxNoteView: false,
+  // DE 轮：编辑面内存 + ArkWeb 长任务未真机验证——保守关，MF 轮只读体验
+  // 原样（预览本就门控关闭，编辑入口随视图门控不可见）。
+  docNoteEdit: false,
 };
 
 export const harmonyAdapter: PlatformAdapter = {

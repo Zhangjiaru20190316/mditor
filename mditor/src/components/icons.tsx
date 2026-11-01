@@ -212,6 +212,29 @@ export function HtmlFileIcon({ size, className }: IconProps) {
   );
 }
 
+/** PDF 笔记：文档 + 正文行（MF 轮，与 html 的尖括号角标区分）。 */
+export function PdfFileIcon({ size, className }: IconProps) {
+  return (
+    <Svg size={size} className={className}>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+      <path d="M14 3v5h5" />
+      <path d="M9 13h6" />
+      <path d="M9 16h4" />
+    </Svg>
+  );
+}
+
+/** Word 笔记：文档 + W 字形（MF 轮）。 */
+export function DocxFileIcon({ size, className }: IconProps) {
+  return (
+    <Svg size={size} className={className}>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+      <path d="M14 3v5h5" />
+      <path d="m9.5 12 1 5 1.5-3.5L13.5 17l1-5" />
+    </Svg>
+  );
+}
+
 /* ---------------- 面板开关 / AI / 专注 ---------------- */
 
 /** 侧边栏：左分栏面板。 */

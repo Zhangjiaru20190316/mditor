@@ -1,5 +1,247 @@
 # Changelog
 
+
+## 未发布：多格式笔记支持（MF 轮）——PDF / Word 只读预览 + 转 Markdown + 纳入云同步
+
+任务书：`docs/multiformat-note-support-task.md`（范围决策 2026-10-31 用户已确认）。
+架构完全复制 HN 轮母版（htmlNote + HtmlNoteView），只读语义铁律原样继承。
+
+### 架构底座
+
+- `TabItem.kind` 扩 `"pdf" | "docx"`（只读视图对象：dirty 恒 false、content 恒
+  空，不进编辑器/useFile/docCache/批注/双链/RAG 全套）；
+- 新建 `lib/docNote.ts`：扩展名判别 / tab 构造（`pdf-`/`docx-` 前缀 key）纯函数
+  面（`.doc` 老格式明确不支持——不进树/对话框/白名单）+ 字节单条缓存
+  （pdfjs 渲染与转 MD 共用同一份字节）+ 转 MD 管线（见下）；副作用面全部
+  收在 docNote（模块纪律同 htmlNote）；
+- 新建 `lib/noteKind.ts` `isReadonlyTab`：全仓只读判别收敛（App.tsx 12 处 +
+  TabsBar 2 处 `isHtmlTab` 只读判定位全量替换——漏写一处 = 只读标签误进
+  编辑器/自动保存的事故面归零）；图标分发等需区分具体格式的消费点仍用
+  htmlNote/docNote 具体判别；
+- 能力门控 `pdfNoteView` / `docxNoteView`（tauri=true；harmony=false——大文件
+  base64 桥内存 + worker 性能未真机验证，降级卡片「用系统应用打开」，
+  不假成功；文件树照常显示）。
+
+### PDF 查看器（`PdfNoteView`，pdfjs-dist@6.4.299 锁版）
+
+- 字节经 fs.readFile 二进制通道直读（不走 asset URL）；pdfjs 库 + worker
+  全部懒加载（`lib/pdfjsLazy.ts` 单例），worker 经 Vite `?url` 产物以 module
+  worker 注入，CSP 双镜像（tauri.conf.json + index.html meta）放行
+  `worker-src 'self' blob:`（tauriCspConfig.test.ts 钉死）；
+- 分页渲染：可视窗口 + 1.5 屏预渲染（滚动区间由累积偏移推导，零
+  IntersectionObserver），canvas 页缓存 5 页 LRU（离屏归还/回借位图，滚回
+  零重渲染），devicePixelRatio 上限 2（内存护栏）；缩放档位 50%–300% +
+  适宽（跨页各自铺满，缩放/侧栏拖宽锚定当前页）；左侧大纲树（书签递归，
+  dest 解析跳页）；页码吸底徽标 + 顶栏页码；重载按钮（字节缓存绕过）；
+- 错误态：加密（PasswordException）/ 损坏（InvalidPDFException）/ 通用错误
+  分文案，重试 + 系统应用打开；卸载/path 切换必 destroy（loadingTask）+
+  取消进行中 RenderTask——反复开关无泄漏（对齐导出管线 AbortSignal 纪律）；
+- 入口：文件树双击 / 拖入（= 打开预览非导入）/ CLI 与启动参数（Rust
+  `MD_EXTS` 镜像扩 pdf/docx，`maybeOpen` 统一走 openNoteAny 按扩展名路由）。
+
+### Word 查看器（`DocxNoteView`，docx-preview@0.4.1 锁版）
+
+- docx-preview 离屏渲染 → 输出 HTML/CSS 过 `exportSanitize.ts` 消毒闸门
+  （S10 红线）→ 完整 srcdoc 注入 `sandbox=""` 全限制沙箱 iframe（无脚本无
+  同源；样式泄露与脚本执行双双不可能；图片 useBase64URL 内联）；
+- 版式渲染失败自动降级 mammoth 语义 HTML（同样消毒），顶栏提示「版式预览
+  不可用，已切换结构预览」。
+
+### 一键「转为 Markdown 笔记」（视图顶栏 + 文件树右键）
+
+- docx：mammoth → turndown（复用 htmlToMarkdown）；图片 data URL 拆出落
+  `<md 同目录>/assets/`（对齐 imageManager 惯例），MD 内相对路径引用；
+- pdf：pdfjs 逐页 getTextContent → 启发式段落重建（y 分行 + 行距聚类分段 +
+  CJK 直连/西文补空格 + 列表起头识别，页间 `---`）；纯函数
+  `rebuildPdfParagraphs` 可 vitest；**扫描版无文本层显式中止**
+  （PdfNoTextLayerError → 提示建议 OCR，不产空壳 MD）；
+- 落盘：源文件同目录 `原名.md`，冲突复用 HN 轮 `conflictFreeName`（绝不
+  覆盖）；成功后 openPath 直接打开新笔记；
+- UI 文案写明质量预期（「提取纯文本，排版/图片/公式丢失」）。
+
+### 云同步白名单扩容（触碰 v5.1.2 冻结规则，最高风险项）
+
+- `sync/ignore.ts` `SYNCABLE_EXTS`：`{md, html}` → `{md, html, pdf, docx}`
+  （注释：v5.1.2 决策 → MF 轮修订，仍收死不可配）；其余同步代码零改动
+  （传输字节透明）；50MB 上限维持（无分片，内存护栏）；
+- engine.test.ts 白名单测试改锚：pdf/docx（含大写 .DOCX）上传断言 +
+  「老规则遗留云端 pdf 无清单记录 → absent|new 下载回归（换机不丢）」新
+  语义钉死 + 非白名单孤儿（pptx）保留语义迁移；
+- **混跑矩阵**（双端锁步发版，仅「少同步」不误删）：老桌面×新鸿蒙——老端
+  对 pdf/docx 不上传不删除（List 过滤侧无删除动作）→ 安全；新桌面×老鸿蒙
+  同理反向安全。结论：混跑窗口期内新端文件暂不上云，无数据丢失路径。
+
+### 验证
+
+- 单测：docNote 17 例（判别/tab 构造/key/正则/段落重建/dataUrl）、noteKind
+  3 例、PdfNoteView 降级态 4 例、CSP worker-src 钉 1 例、engine 白名单改锚；
+  全量 1257 用例零回归；
+- 构建：`npm run build`（pdfjs 436KB / worker 1.26MB / docx-preview 76KB /
+  mammoth 均为独立懒 chunk，入口 chunk 仅含动态 import 引用——首屏库增量
+  为零）+ `npm run build:harmony`（BUILD SUCCESSFUL，行为门控关闭）+
+  `cargo check`；eslint/tsc --noEmit 全绿。
+- 待手测（桌面 Windows）：50MB 大文件首屏/翻页、大纲跳转、加密损坏错误态、
+  转全流程（含图片落盘）、minio 双假桶同步往返、鸿蒙包降级卡片冒烟。
+
+## 未发布：PDF 导出直连光栅定案与性能收口（EX #8–#18，mexport 轮）
+
+结题报告：`docs/export-perf-direct-raster-report.md`（2026-10-30）。大文档
+多公式 PDF 导出正确性定案 + 三项有效优化：500 块全管线 74.4s→**24.0s
+（3.1x）**，36 页哈希 i10→i18 全程一致，npm test 1204/1204 全绿。
+
+### 正确性定案：direct 是对的，「参照」是错的
+
+- 交接疑团「direct 路径哈希全变 + 累积垂直位移」实为**测量参照系错误**：
+  modern-screenshot `domToCanvas` 的 iframe 克隆存在累积布局漂移（320 块
+  fixture 文档末段偏移 ~400 CSS px、单调放大），i7 以前的全部哈希参照都
+  建立在该漂移的渲染上；
+- 证明工具 `perf/mexport-isolate8.mjs`（四方真值对比，可复用验收工具）：
+  工厂 iframe 挪到屏上 `Page.captureScreenshot` 取真值做行墨带结构对比——
+  direct（字体修复后）64/64 带全同、max 1 设备像素（mean 0.03）；ms 默认
+  与管线配置均 0/64、max 809 px（配置无关）；
+- 附带修复隐性缺陷：ms 位图漂移导致大文档公式补丁按工厂 rect 裁错区域、
+  逐页错位。
+
+### 修复的 bug
+
+- **字体内联静默失效**（`inlineCssFontUrls`）：反解 URL 的正则未排除
+  `(`，提取 key 带 `url(` 前缀与 resolved 裸 URL 永不相等 → 替换从未发生
+  （实测 fontFaces 20 / dataUri 0），SVG-image 拦截外链字体 → 公式回退
+  roman、布局发散；修法：replace 回调直接消费捕获组；
+- **标记拼接路径 XML 转义缺口**（本轮引入、当轮修复）：CSS 编码缓存把
+  raw CSS 拼进 XML 绕过 XMLSerializer 文本转义，`&`/`]]>` 拼出非法 XML →
+  解码失败静默回退漂移的 ms 路径；缓存前过 `& < >` 文本转义。
+
+### 有效优化（i10 → i18）
+
+- #10 CSS 编码缓存：随机标记定位 + raw XML 头尾定位分段编码（serialize
+  2.22→2.00s，主收益在 #12）；
+- #13 woff2 独占内联（复审 P1）：@font-face src 多候选全量内联 = 载荷
+  ~3 倍白背，收窄到仅 woff2（serialize 1.17→0.86s，总墙钟 25.9→24.0s）；
+- #12 @font-face 按使用裁剪：`document.fonts` loaded 的 family|weight|style
+  三元组并集过滤未用面（serialize 2.00→1.17s）；
+- 计时归位：`raster.encodeWait` 子计时（并行 toBlob 编码器池吞吐等待 ~7s
+  单列归因）。
+
+### 失败尝试（已回退，教训入代码注释）
+
+- #11a blob URL 替代 data URL：blob SVG 经 `<img>` 绘入画布即污染
+  （toDataURL SecurityError）整管回退 raster（45.8s）；data: 才是同源干净
+  资源；
+- #11b 跨 chunk 预启动流水线：27.1s 更慢——SVG 解码与 toBlob 编码抢同一
+  线程池，encodeWait 是编码器吞吐瓶颈而非主线程空闲。
+
+### 验证与工具沉淀
+
+- 单测新增 6 例（prune 三元组/引号族名/bold 归一/旧引擎全量保留、woff2
+  独占内联 + woff/ttf 原样、内联失败抛出回退、html/body 选择器改写含
+  `body>*`/`body .x` 形态）；`npm run build` ✅；
+- 基准工具 `perf/mexport.mjs` 入库（经 CDP 驱动 `src/dev/exportBench.ts`
+  暴露的 `window.__mexport`）；
+- 证据链：`perf/results/mexport/i10~i18-*.json`（失败尝试 i11/i14/i15
+  留档）+ `isodump8/` 真值四方对比图；页面 dump（i10/i17-pages-pages）为
+  本地留档未入库；
+- 遗留：raster 模式仍走 domToCanvas（ms 漂移同样影响大文档整页位图导出）；
+  encodeWait（~7s）为下一个最大单块。
+
+## 5.1.5（2026-11-01）：内置设计感字体 + 预览式字体选择器（FD 轮）
+
+设置面板字体选项此前全是系统字体栈（未装同款字体即静默回退成默认字，
+「设计感」不可靠），选择器是无预览、无分组的原生 `<select>`。本轮：
+
+### 内置字体（OFL 开源授权，六款）
+
+- **两条供字路线**（`FontPreset.bundled` 标记 + 选择器「内置」徽标）：
+  - webfont npm 包（`main.tsx` import 切片 css，unicode-range 按需加载——
+    未选中的字体零请求）：`lxgw-wenkai-lite-webfont`（霞鹜文楷 Lite）、
+    `@fontsource/maple-mono`（Maple Mono）、`@fontsource/zcool-qingke-huangyou`
+    （站酷黄油体）、`@fontsource/ma-shan-zheng`（马善政楷书）；
+  - `src/styles/fonts.css` 手动注册 → `public/assets/fonts/`（与 PDF 导出
+    共用资产目录，CSP `font-src 'self'` 已覆盖）：思源黑体（复用 PDF 导出
+    已有的 NotoSansSC-Regular.otf，零新增体积）、得意黑
+    （SmileySans-Oblique.ttf.woff2 单文件，无 npm webfont 包）；
+- 各字体 OFL 授权文本随 `public/assets/fonts/*-OFL.txt` 入库；
+- 选型说明：原计划的资源圆体（Resource Han Rounded）GitHub 直连/代理均
+  不可达，替换为同属「圆润可爱」组的站酷庆科黄油体；得意黑经
+  @fontpkg/smiley-sans 取得（官方 npm 包已 unpublish）。
+
+### 预设扩充（正文 6→10、代码 5→7，`defaults.ts`）
+
+- 升级 `wenkai` / `sans`：栈前置内置 family，从此真实生效；
+- 新增正文：`mashanzheng` 马善政楷书、`kaiti` 系统楷体（零体积）、
+  `smiley` 得意黑、`huangyou` 站酷黄油体；
+- 新增代码：`maple` Maple Mono（内置）、`sarasa` 更纱黑体 Mono（系统栈）；
+- `types.ts FontPreset` 新增可选 `group`（分组标题）/ `sample`（预览示例）/
+  `bundled`（内置徽标）。
+
+### 预览式字体选择器（`components/FontPresetPicker.tsx`，替代原生 select）
+
+- 每行用该预设**自己的字体栈**渲染名称与示例——内置字体所见即所得；
+- 分组展示（常用/手写楷体/美术标题/圆润可爱/书卷衬线；代码侧常用/特色
+  等宽）、搜索过滤、当前选中 ✓、顶部保留「自定义」项；
+- 零第三方依赖：绝对定位面板 + document mousedown / Esc 关闭；样式只用
+  既有 design tokens（`global.css` 的 `.fpp-*` 段）；不得放回 Field 的
+  `<label>` 里（label 点击转发会让面板开合抖动）——用同款 `.field` div
+  结构，SettingsModal 注释钉死此约束；
+- 触发按钮名称以当前预设自己的字体渲染，关闭状态也可见字体气质。
+
+### 守卫与已知边界
+
+- `lib/fontPresets.test.ts`：预设 id 唯一/默认值可回显、bundled 栈首
+  family 必须在 fonts.css 或四个 webfont 包 css 中注册（防改名静默回退）、
+  内置清单锚定；
+- `SettingsModal.test.tsx` 字体耦合用例改写为选择器交互（开面板点预设→
+  栈写入；手改栈→回「自定义」），新增面板分组/徽标/搜索用例；
+- **修复（打包含此修复）**：选择器面板入场动画 `fpp-in` 原本带 opacity
+  0→1——面板首开要同步拉取全部字体切片，主线程/合成器被打满时透明度
+  动画可能冻结在中间帧，整块面板呈半透明、下层字段透出来（用户实截图
+  「字体堆叠到一起」；冻结在 0 帧时面板整块不可见）。改为只动 transform
+  的 4px 下滑入场：面板任何时刻完全不透明，动画冻结至多偏 4px。与
+  global.css 动效速查表既有家规同源——涉及可见性的动画不做透明度中间态
+  （「不只压时长，否则会有一帧可感的闪暗」）；
+- 已知边界（与所有历史预设一致，非本轮范围）：PDF 矢量导出文本层
+  （`exportVectorText.ts`）硬编码 Inter/NotoSansSC 映射，不随正文预设变化。
+
+## 未发布：云同步进度环 + 同步方向/冲突策略模式（转圈动画退役）
+
+### 状态栏指示器：整只云图标旋转 → 呼吸脉冲 + 环形进度环
+
+- **问题**：syncing 态把 15px 云图标整体 CSS 旋转（`sb-sync-spin`）——观感
+  差，且引擎早已逐文件广播的进度数据（phase/done/total/currentFile）UI 完全
+  没用，用户只能看到「同步中…」黑洞。
+- **改造**（`src/components/StatusBar.tsx` + `styles/global.css`）：云图标外
+  包 17×17 SVG 进度环——transfer 阶段画 done/total 进度弧（stroke
+  currentColor，随四态配色），finalize 满环一瞬；scan/list（无可量化进度）
+  改为云图标透明度呼吸脉冲（1.6s ease-in-out，不旋转）；idle/error/offline
+  完全静止。tooltip 首行显示阶段与计数（「正在传输 3/12：笔记/日记.md」），
+  aria-label 同步 n/m；`html[data-motion="none"]` 下呼吸一并停用（无障碍
+  对齐）。进度环组件内联于 StatusBar（唯一使用点）。
+
+### 同步模式：方向 + 冲突策略 + 触发方式整合
+
+- **同步方向** `syncDirection`（默认 bidirectional）：引擎 ops 计划层收窄
+  （`applyDirection` 纯函数，动作矩阵本体不动）——仅上传（本地为准备份：
+  远端改动忽略、本地删除传播云端、云端丢失自愈重传）；仅下载（云端为准：
+  本地改动忽略、本地删除被云端拉回、云端删除不删本地——v5.1.2 铁律不破）。
+  两种单向模式下冲突按本端/云端收编（仍走 resolveConflict，败者副本机制
+  不变，双侧零丢失）；被忽略改动留 manifest 旧记录，切回双向按 changed 重
+  算，无误删风暴；被忽略数量聚合进 summary.notes（状态栏 tooltip 可见）。
+- **冲突策略** `conflictPolicy`（默认 newestWins = 既有新者胜）：localFirst /
+  remoteFirst 显式指定胜者（`resolveConflictWinner`；显式胜者无需时钟不可信
+  兜底），败者副本 `.冲突-时间戳` 在所有策略下保留。
+- **触发方式整合**（纯 UI，存储格式零迁移）：「保存后自动同步」勾选 + 定时
+  间隔（0=关）重组为单一「自动同步」select（仅手动 / 保存后 / 定时 / 保存
+  后+定时），间隔输入仅含定时模式时显示；底层仍是 autoSync +
+  autoSyncIntervalMin 正交字段，trigger 逻辑零改动，旧配置无损。
+- **登记**：types.ts（SyncSettings 两新字段 + 枚举）、defaults.ts、
+  settingsNormalize.ts（白名单归一，未知值回落默认）、SettingsModal 云同步
+  分区（方向/策略两个 select + 触发方式重组，hint 写明删除语义边界）、
+  trigger.ts（syncWorkspace 传 mode——设置每轮实时读取，改方向/策略即时生效，
+  无需重建触发器）。
+- **测试**：engine.test.ts 新增 applyDirection 映射表 7 例 + 仅上传/仅下载
+  端到端 9 例 + 冲突策略 2 例；settingsNormalize 新增白名单归一 1 例。全量
+  1232 绿（此前 1213，+19），tsc/eslint 干净。
+
 ## 未发布：鸿蒙文件树全树失联（join 剥前导斜杠）+ 桌面字面键源头收敛（StorePath::parse）
 
 ### 鸿蒙文件树「能看到文件名、打不开」：path-shim.join 剥掉前导斜杠

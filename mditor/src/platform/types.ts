@@ -222,6 +222,16 @@ export interface PlatformCapabilities {
    *  实测（docs/html-note-spike-report.md）；harmony 未验证（mditor-asset://
    *  的相对解析/隔离行为待真机）——保守关，UI 降级为「外部浏览器打开」。 */
   htmlNoteView: boolean;
+  /** 多格式笔记（MF 轮）：应用内 PDF 预览（pdfjs）。桌面已验证；harmony
+   *  未真机验证（大文件 base64 桥内存 + worker 性能）——保守关，降级为
+   *  「系统应用打开」。 */
+  pdfNoteView: boolean;
+  /** 多格式笔记（MF 轮）：应用内 Word 预览（docx-preview/mammoth）。同上。 */
+  docxNoteView: boolean;
+  /** 多格式笔记编辑（DE 轮）：docx 结构化编辑 + 文字 PDF 微编辑。桌面已验证
+   *  （阶段 0 spike 四闸门全 A，docs/doc-note-edit-spike-report.md）；harmony
+   *  未真机验证（编辑面内存 + ArkWeb 长任务）——保守关，仅保留 MF 轮只读。 */
+  docNoteEdit: boolean;
 }
 
 /** 平台适配器：业务代码唯一入口（经 platform/index.getAdapter()）。 */

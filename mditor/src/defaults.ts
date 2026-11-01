@@ -146,6 +146,8 @@ export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
   autoSyncIntervalMin: 10,
   syncOnStart: true,
   remoteDirs: {},
+  syncDirection: "bidirectional",
+  conflictPolicy: "newestWins",
 };
 
 /**
@@ -288,68 +290,130 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 // 正文字体预设（选择行为说明见 types.ts FontPreset / 设置面板回显逻辑）。
+// 标注「内置」的预设由应用自带字体真实供字——webfont npm 包（unicode-range
+// 切片，main.tsx import）或 public/assets/fonts 的 @font-face（src/styles/fonts.css），
+// 未装同款字体的机器上同样生效；其余预设依赖系统已装字体，缺字时静默回退到栈后方。
+// 内置 family 名与栈的对应关系由 src/lib/fontPresets.test.ts 守卫。
 export const FONT_PRESETS: FontPreset[] = [
   {
     id: "system",
     name: "系统默认",
+    group: "常用",
     stack:
       '"Segoe UI", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
   },
   {
     id: "ios",
     name: "iOS SF 风格",
+    group: "常用",
     stack:
       '-apple-system, "SF Pro Text", "PingFang SC", "Segoe UI", "HarmonyOS Sans SC", sans-serif',
   },
   {
     id: "claude",
     name: "Claude 风格",
+    group: "常用",
     stack:
       'ui-sans-serif, -apple-system, "Segoe UI", system-ui, "PingFang SC", "Microsoft YaHei", sans-serif',
   },
   {
-    id: "serif",
-    name: "衬线优雅",
-    stack:
-      '"Source Han Serif SC", "Noto Serif SC", "Songti SC", Georgia, serif',
+    id: "sans",
+    name: "思源黑体",
+    group: "常用",
+    bundled: true,
+    stack: '"Noto Sans SC", "Source Han Sans SC", system-ui, sans-serif',
   },
   {
     id: "wenkai",
     name: "霞鹜文楷",
-    stack: '"LXGW WenKai", "Source Han Sans SC", system-ui, sans-serif',
+    group: "手写楷体",
+    bundled: true,
+    sample: "永和九年，岁在癸丑。Aa 123",
+    stack: '"LXGW WenKai Lite", "LXGW WenKai", "Source Han Sans SC", system-ui, sans-serif',
   },
   {
-    id: "sans",
-    name: "思源黑体",
-    stack: '"Source Han Sans SC", "Noto Sans SC", system-ui, sans-serif',
+    id: "kaiti",
+    name: "系统楷体",
+    group: "手写楷体",
+    sample: "落霞与孤鹜齐飞。Aa 123",
+    stack: '"Kaiti SC", KaiTi, STKaiti, "LXGW WenKai", serif',
+  },
+  {
+    id: "mashanzheng",
+    name: "马善政楷书",
+    group: "手写楷体",
+    bundled: true,
+    sample: "书山有路勤为径。Aa 123",
+    stack: '"Ma Shan Zheng", "Kaiti SC", KaiTi, serif',
+  },
+  {
+    id: "smiley",
+    name: "得意黑",
+    group: "美术标题",
+    bundled: true,
+    sample: "设计感，来自倾斜的锋利。Aa 123",
+    stack: '"Smiley Sans", "Noto Sans SC", "Source Han Sans SC", system-ui, sans-serif',
+  },
+  {
+    id: "huangyou",
+    name: "站酷黄油体",
+    group: "圆润可爱",
+    bundled: true,
+    sample: "圆圆的笔画很治愈呀。Aa 123",
+    stack: '"ZCOOL QingKe HuangYou", "Noto Sans SC", "Source Han Sans SC", system-ui, sans-serif',
+  },
+  {
+    id: "serif",
+    name: "衬线优雅",
+    group: "书卷衬线",
+    stack:
+      '"Source Han Serif SC", "Noto Serif SC", "Songti SC", Georgia, serif',
   },
 ];
 
-/** 代码字体预设。 */
+/** 代码字体预设（「内置」说明同 FONT_PRESETS）。 */
 export const MONO_FONT_PRESETS: FontPreset[] = [
   {
     id: "jetbrains",
     name: "JetBrains Mono",
+    group: "常用",
     stack: '"JetBrains Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace',
   },
   {
     id: "cascadia",
     name: "Cascadia Code",
+    group: "常用",
     stack: '"Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", Menlo, monospace',
   },
   {
     id: "firacode",
     name: "Fira Code",
+    group: "常用",
     stack: '"Fira Code", "JetBrains Mono", Consolas, "SF Mono", Menlo, monospace',
   },
   {
     id: "sfmono",
     name: "SF Mono",
+    group: "常用",
     stack: '"SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, Menlo, monospace',
   },
   {
     id: "consolas",
     name: "Consolas",
+    group: "常用",
     stack: 'Consolas, "JetBrains Mono", "Cascadia Code", "SF Mono", Menlo, monospace',
+  },
+  {
+    id: "maple",
+    name: "Maple Mono",
+    group: "特色等宽",
+    bundled: true,
+    stack: '"Maple Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace',
+  },
+  {
+    id: "sarasa",
+    name: "更纱黑体 Mono",
+    group: "特色等宽",
+    stack: '"Sarasa Mono SC", "Sarasa Mono JF", "Maple Mono", "JetBrains Mono", Consolas, monospace',
   },
 ];

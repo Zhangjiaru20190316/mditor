@@ -100,6 +100,29 @@ describe("normalizeSyncSettings（v4.12 云同步设置幂等归一）", () => {
     ).toBe(10);
     expect(normalizeSyncSettings({ autoSyncIntervalMin: NaN }).autoSyncIntervalMin).toBe(10);
   });
+
+  it("v5.2：syncDirection / conflictPolicy 白名单归一——缺失/未知/类型错回落默认，合法值保留；幂等", () => {
+    const d = normalizeSyncSettings(undefined);
+    expect(d.syncDirection).toBe("bidirectional");
+    expect(d.conflictPolicy).toBe("newestWins");
+    expect(normalizeSyncSettings({ syncDirection: "uploadOnly" }).syncDirection).toBe("uploadOnly");
+    expect(normalizeSyncSettings({ syncDirection: "downloadOnly" }).syncDirection).toBe(
+      "downloadOnly"
+    );
+    expect(normalizeSyncSettings({ syncDirection: "sideways" }).syncDirection).toBe(
+      "bidirectional"
+    );
+    expect(normalizeSyncSettings({ syncDirection: 42 }).syncDirection).toBe("bidirectional");
+    expect(normalizeSyncSettings({ conflictPolicy: "localFirst" }).conflictPolicy).toBe(
+      "localFirst"
+    );
+    expect(normalizeSyncSettings({ conflictPolicy: "remoteFirst" }).conflictPolicy).toBe(
+      "remoteFirst"
+    );
+    expect(normalizeSyncSettings({ conflictPolicy: "whoWins" }).conflictPolicy).toBe("newestWins");
+    const once = normalizeSyncSettings({ syncDirection: "downloadOnly", conflictPolicy: "localFirst" });
+    expect(normalizeSyncSettings(once)).toEqual(once);
+  });
 });
 
 describe("pickEditorSettings（P10 Editor 窄切片）", () => {

@@ -1,0 +1,38 @@
+/*
+ * 应用内置字体 — 手动 @font-face 注册表。
+ *
+ * 两条供字路线（都只声明已内嵌的字重，其余由浏览器合成；font-display: swap
+ * 避免换字体时的整段白屏；浏览器仅在字体被页面实际引用时才拉取文件）：
+ *
+ * 1. webfont npm 包（main.tsx 里 import，unicode-range 切片按需加载）：
+ *    - "LXGW WenKai Lite"   ← lxgw-wenkai-lite-webfont
+ *    - "Maple Mono"         ← @fontsource/maple-mono
+ *    - "ZCOOL QingKe HuangYou" ← @fontsource/zcool-qingke-huangyou
+ *    - "Ma Shan Zheng"      ← @fontsource/ma-shan-zheng
+ * 2. 本文件注册 → public/assets/fonts/（与 PDF 导出管线共用资产目录，
+ *    CSP font-src 'self' data: 已覆盖，见 tauri.conf.json / index.html）：
+ *    - "Noto Sans SC"（复用 PDF 导出已有的 NotoSansSC-Regular.otf，零新增体积）
+ *    - "Smiley Sans"（得意黑，无 npm webfont 包，单文件 woff2）
+ *
+ * family 名与 defaults.ts 预设栈一一对应，守卫测试见 src/lib/fontPresets.test.ts。
+ * 各字体 OFL 授权文本同目录：*-OFL.txt。
+ */
+
+/* —— 思源黑体（复用 PDF 导出已有的 NotoSansSC-Regular.otf，零新增体积） —— */
+@font-face {
+  font-family: "Noto Sans SC";
+  src: url("/assets/fonts/NotoSansSC-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* —— 得意黑（atelier-anchor/smiley-sans，OFL；该字体仅有一个内斜风格，
+      无独立 Regular，浏览器的合成倾斜/加粗均以其为基准） —— */
+@font-face {
+  font-family: "Smiley Sans";
+  src: url("/assets/fonts/SmileySans-Oblique.ttf.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}

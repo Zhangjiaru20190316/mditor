@@ -34,6 +34,10 @@ export function normalizeSyncSettings(raw: unknown): SyncSettings {
   }
 
   const interval = Number(s.autoSyncIntervalMin);
+  // v5.2：方向/冲突策略白名单归一（未知字符串回落默认——配置可能来自
+  // 手改的 mditor.json 或未来版本移除的枚举值）。
+  const DIRECTIONS: readonly string[] = ["bidirectional", "uploadOnly", "downloadOnly"];
+  const POLICIES: readonly string[] = ["newestWins", "localFirst", "remoteFirst"];
   return {
     enabled: bool(s.enabled, d.enabled),
     provider:
@@ -53,6 +57,12 @@ export function normalizeSyncSettings(raw: unknown): SyncSettings {
       Number.isFinite(interval) && interval >= 0 ? Math.floor(interval) : d.autoSyncIntervalMin,
     syncOnStart: bool(s.syncOnStart, d.syncOnStart),
     remoteDirs,
+    syncDirection: DIRECTIONS.includes(s.syncDirection as string)
+      ? (s.syncDirection as SyncSettings["syncDirection"])
+      : d.syncDirection,
+    conflictPolicy: POLICIES.includes(s.conflictPolicy as string)
+      ? (s.conflictPolicy as SyncSettings["conflictPolicy"])
+      : d.conflictPolicy,
   };
 }
 

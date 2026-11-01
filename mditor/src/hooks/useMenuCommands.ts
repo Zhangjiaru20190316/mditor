@@ -17,6 +17,7 @@ import type {
 } from "react";
 import { getAdapter } from "../platform";
 import { noteOpError } from "../lib/opDebug";
+import { openNoteFromDialog } from "../lib/tauriFs";
 import { openEmptyNewWindow } from "../lib/multiWindow";
 import { vaultIndex } from "../lib/vaultIndex";
 import { persistImage } from "../lib/imageManager";
@@ -67,6 +68,9 @@ export interface UseMenuCommandsDeps {
   closeTabRef: MutableRefObject<
     (key: string, opts?: { migrated?: boolean }) => Promise<void>
   >;
+  /** DE 轮：pdf/docx 编辑态标签的保存分流（另存/替换流程）。返回 false =
+   *  活动标签不在编辑态，调用方回落 md 管线保存。 */
+  saveDocEditTabRef: MutableRefObject<() => Promise<boolean>>;
   // ---- setState setters（稳定引用）----
   setSidebarOpen: Dispatch<SetStateAction<boolean>>;
   setSidebarTab: Dispatch<SetStateAction<SidebarTab>>;
@@ -94,6 +98,9 @@ export interface UseMenuCommandsDeps {
   replaceFolderFromDialog: () => Promise<void>;
   /** HN 轮：「导入 HTML 笔记…」（稳定链路：workspacesRef/openHtmlNote）。 */
   importHtmlNote: () => Promise<void>;
+  /** MF 轮：统一打开路由的 ref 镜像（file_open 对话框选到 pdf/docx 时走
+   *  只读预览标签，md 走编辑器管线）。 */
+  openNoteAnyRef: MutableRefObject<(path: string) => void>;
 }
 
 export function useMenuCommands(deps: UseMenuCommandsDeps) {
@@ -110,6 +117,7 @@ export function useMenuCommands(deps: UseMenuCommandsDeps) {
     activeKeyRef,
     activateTabRef,
     closeTabRef,
+    saveDocEditTabRef,
     setSidebarOpen,
     setSidebarTab,
     setSearchOpen,
@@ -129,6 +137,7 @@ export function useMenuCommands(deps: UseMenuCommandsDeps) {
     addFolderFromDialog,
     replaceFolderFromDialog,
     importHtmlNote,
+    openNoteAnyRef,
   } = deps;
 
   // ----- 统一菜单分发器：原生 `menu` 事件（macOS）与前端菜单栏（Windows）共用 -----
@@ -156,8 +165,22 @@ export function useMenuCommands(deps: UseMenuCommandsDeps) {
         break;
       case "file_open":
         void (async () => {
-          const ok = await fa.open();
-          if (ok) setRecentKey((k) => k + 1);
+          // MF 轮：打开对话框并入 PDF/Word 档（DOC_FILTERS）——pdf/docx 只取
+          // 路径经 openNoteAny 走只读预览；md 语义不变（openPath 编辑器管线，
+          // 与 useFile.open 的 md 分支等价）。
+          try {
+            const r = await openNoteFromDialog();
+            if (!r) return;
+            if (r.content == null) {
+              openNoteAnyRef.current(r.path);
+            } else {
+              await fa.openPath(r.path, r.content);
+            }
+            setRecentKey((k) => k + 1);
+          } catch (e) {
+            noteOpError("file-open", e);
+            flashStatus("打开失败", 5000);
+          }
         })();
         break;
       case "file_open_folder":
@@ -174,6 +197,12 @@ export function useMenuCommands(deps: UseMenuCommandsDeps) {
         setQuickOpen(true);
         break;
       case "file_save":
+        // DE 轮：编辑态标签（pdf/docx 原位编辑）分流到 docNoteSave 流程，
+        // 绝不落进 md 管线（fa.doc 属于切换前隐藏的旧 md）。
+        if (tabsRef.current.find((t) => t.key === activeKeyRef.current)?.docEdit) {
+          void saveDocEditTabRef.current();
+          break;
+        }
         // 乐观反馈：立即提示「已保存」，不等待落盘；失败时覆盖为「保存失败」。
         // 保存成功后把内存内容推进全库索引（单文件增量，铁律 4）。
         flashStatus("已保存");

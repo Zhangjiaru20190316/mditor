@@ -16,9 +16,18 @@
 
 import { memo, useEffect, useRef, useState } from "react";
 import type { TabItem } from "../types";
-import { CloseIcon, MarkdownFileIcon, HtmlFileIcon } from "./icons";
+import { CloseIcon, MarkdownFileIcon, HtmlFileIcon, PdfFileIcon, DocxFileIcon } from "./icons";
 import { ContextMenu, type CtxEntry } from "./ContextMenu";
 import { isHtmlTab } from "../lib/htmlNote";
+import { isPdfTab, isDocxTab } from "../lib/docNote";
+
+/** 标签图标四态分发（md 缺省 / html / pdf / docx，MF 轮扩为按 kind 区分）。 */
+function TabIcon({ t }: { t: TabItem }) {
+  if (isPdfTab(t)) return <PdfFileIcon size={13} className="tabbar-tab-icon" />;
+  if (isDocxTab(t)) return <DocxFileIcon size={13} className="tabbar-tab-icon" />;
+  if (isHtmlTab(t)) return <HtmlFileIcon size={13} className="tabbar-tab-icon" />;
+  return <MarkdownFileIcon size={13} className="tabbar-tab-icon" />;
+}
 
 interface Props {
   tabs: TabItem[];
@@ -116,11 +125,7 @@ export const TabsBar = memo(function TabsBar({
               }
             }}
           >
-            {isHtmlTab(t) ? (
-              <HtmlFileIcon size={13} className="tabbar-tab-icon" />
-            ) : (
-              <MarkdownFileIcon size={13} className="tabbar-tab-icon" />
-            )}
+            <TabIcon t={t} />
             <span className="tabbar-tab-name">{t.name}</span>
             <button
               className={`tabbar-tab-close${t.dirty ? " dirty" : ""}`}
@@ -139,11 +144,7 @@ export const TabsBar = memo(function TabsBar({
       {/* 关闭退场残影：纯视觉，不响应交互、不参与 tablist 语义 */}
       {ghosts.map((t) => (
         <div key={`ghost-${t.key}`} className="tabbar-tab closing" aria-hidden="true">
-          {isHtmlTab(t) ? (
-            <HtmlFileIcon size={13} className="tabbar-tab-icon" />
-          ) : (
-            <MarkdownFileIcon size={13} className="tabbar-tab-icon" />
-          )}
+          <TabIcon t={t} />
           <span className="tabbar-tab-name">{t.name}</span>
           <button className={`tabbar-tab-close${t.dirty ? " dirty" : ""}`} tabIndex={-1}>
             {t.dirty && <span className="tabbar-tab-dot" />}

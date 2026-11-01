@@ -84,10 +84,13 @@ import {
   FolderOpenIcon,
   MarkdownFileIcon,
   HtmlFileIcon,
+  PdfFileIcon,
+  DocxFileIcon,
   ChevronRightIcon,
   CloseIcon,
 } from "./icons";
 import { isHtmlNote } from "../lib/htmlNote";
+import { isPdfNote, isDocxNote, isDocNote } from "../lib/docNote";
 
 /** Notification fired up to App after a tree mutation. */
 export type TreeChange =
@@ -124,6 +127,9 @@ interface Props {
   onOpen: (path: string) => void;
   /** v4.8 多窗口：右键「在新窗口打开」——不动本窗标签，新窗直接加载该文档。 */
   onOpenNewWindow?: (path: string) => void;
+  /** MF 轮：右键「转为 Markdown 笔记」——仅 pdf/docx 文件项显示（未传入时
+   *  隐藏该项；回调为 App 稳定引用）。 */
+  onConvertToMarkdown?: (path: string) => void;
   onChanged?: (change: TreeChange) => void;
   /** Absolute paths removed from the workspace tree (kept on disk). */
   excludedPaths: Set<string>;
@@ -139,7 +145,7 @@ interface MenuState {
   node: TreeNode;
 }
 
-export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOpenNewWindow, onChanged, excludedPaths, onExclude, onRemoveRoot }: Props) {
+export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOpenNewWindow, onConvertToMarkdown, onChanged, excludedPaths, onExclude, onRemoveRoot }: Props) {
   // T4: lazy tree state — dir path → loaded children, the expanded set, and the
   // set of dirs whose children are currently being read (for a "…" placeholder).
   const [childrenMap, setChildrenMap] = useState<Map<string, TreeNode[]>>(new Map());
@@ -175,6 +181,8 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
   onOpenRef.current = onOpen;
   const onOpenNewWindowRef = useRef(onOpenNewWindow);
   onOpenNewWindowRef.current = onOpenNewWindow;
+  const onConvertToMdRef = useRef(onConvertToMarkdown);
+  onConvertToMdRef.current = onConvertToMarkdown;
   const onExcludeRef = useRef(onExclude);
   onExcludeRef.current = onExclude;
   const onRemoveRootRef = useRef(onRemoveRoot);
@@ -986,6 +994,7 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
           entries={treeMenuEntries(menu.node, {
             onOpen: openFile,
             onOpenNewWindow: (p) => onOpenNewWindowRef.current?.(p),
+            onConvertToMarkdown: (p) => onConvertToMdRef.current?.(p),
             onRename: startRename,
             onDelete: deleteNode,
             onNewFile: (dir) => void createItem("file", dir),
@@ -1227,7 +1236,15 @@ const FileNode = memo(function FileNode({
           />
         )}
         <span className="ft-icon">
-          {isHtmlNote(node.name) ? <HtmlFileIcon size={15} /> : <MarkdownFileIcon size={15} />}
+          {isPdfNote(node.name) ? (
+            <PdfFileIcon size={15} />
+          ) : isDocxNote(node.name) ? (
+            <DocxFileIcon size={15} />
+          ) : isHtmlNote(node.name) ? (
+            <HtmlFileIcon size={15} />
+          ) : (
+            <MarkdownFileIcon size={15} />
+          )}
         </span>
         {renaming ? (
           <RenameInput
@@ -1307,6 +1324,8 @@ interface TreeMenuCallbacks {
   onOpen: (path: string) => void;
   /** v4.8：右键「在新窗口打开」（仅文件项；未传入时隐藏该项）。 */
   onOpenNewWindow?: (path: string) => void;
+  /** MF 轮：右键「转为 Markdown 笔记」（仅 pdf/docx 文件项；未传入时隐藏）。 */
+  onConvertToMarkdown?: (path: string) => void;
   onRename: (path: string) => void;
   onDelete: (node: TreeNode) => void;
   onNewFile: (dir: string) => void;
@@ -1341,6 +1360,14 @@ function treeMenuEntries(node: TreeNode, cb: TreeMenuCallbacks): CtxEntry[] {
         mkItem("open", "打开", () => cb.onOpen(node.path)),
         ...(cb.onOpenNewWindow
           ? [mkItem("open-new-window", "在新窗口打开", () => cb.onOpenNewWindow?.(node.path))]
+          : []),
+        // MF 轮：多格式笔记专属——转 Markdown（.md/.html 文件不显示）。
+        ...(cb.onConvertToMarkdown && isDocNote(node.name)
+          ? [
+              mkItem("convert-md", "转为 Markdown 笔记", () =>
+                cb.onConvertToMarkdown?.(node.path)
+              ),
+            ]
           : []),
         mkItem("rename", "重命名", () => cb.onRename(node.path)),
         mkItem("copy", "复制路径", () => void cb.onCopyPath(node.path)),

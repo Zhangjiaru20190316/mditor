@@ -8,6 +8,7 @@ import type { DirEntry } from "../platform/types";
 import { dirname, basename, join, extname } from "./path-shim";
 import { tracedIo } from "./ipcTrace";
 import { isHtmlNote } from "./htmlNote";
+import { isDocNote } from "./docNote";
 
 export interface TreeNode {
   name: string;
@@ -25,8 +26,16 @@ export const HTML_FILTERS = [
   { name: "HTML", extensions: ["html", "htm"] },
 ];
 
-/** 单一来源的 Markdown 扩展名集合。Rust lib.rs 的 MD_EXTS 与 tauri.conf.json
- *  的 bundle.fileAssociations 是无法共享的镜像，改动时需三处同步。 */
+/** 多格式笔记选择器的过滤组（MF 轮）。不含 .doc——前端解析不可行，明确
+ *  不支持（对话框层面引导用户先转存 .docx）。 */
+export const DOC_FILTERS = [
+  { name: "PDF", extensions: ["pdf"] },
+  { name: "Word", extensions: ["docx"] },
+];
+
+/** 单一来源的 Markdown 扩展名集合。Rust lib.rs 的 MD_EXTS、tauri.conf.json
+ *  的 bundle.fileAssociations、docNote.ts 的 PDF/DOCX 集合与 sync/ignore.ts
+ *  的同步白名单是无法共享的镜像，改动时需五处同步。 */
 export const MD_EXTS = new Set([".md", ".markdown", ".mdx", ".mdown"]);
 
 /** 名字是否以 Markdown 扩展名结尾（导出文件名去后缀等场景）。 */
@@ -45,6 +54,30 @@ export async function openMd(): Promise<{ path: string; content: string } | null
     { slowMs: Infinity }
   );
   if (!path || typeof path !== "string") return null;
+  const content = await tracedIo("file:read", `读取 ${basename(path)}`, () =>
+    getAdapter().fs.readTextFile(path)
+  );
+  return { path, content };
+}
+
+/**
+ * 打开笔记对话框（file_open 统一入口，MF 轮扩）：过滤器并入 PDF/Word 档
+ * （DOC_FILTERS）。Markdown 正常读文本内容；pdf/docx 只返回路径
+ * （content=null）——由调用方路由到只读预览标签（App.openNoteAny），
+ * 不进文本读取管线。HTML 笔记沿用 HN 轮「导入」流，不在此列。
+ */
+export async function openNoteFromDialog(): Promise<{
+  path: string;
+  content: string | null;
+} | null> {
+  const path = await tracedIo(
+    "ipc:dialog",
+    "openNoteFromDialog:打开文件对话框",
+    () => getAdapter().dialog.pickOpenFile([...MD_FILTERS, ...DOC_FILTERS]),
+    { slowMs: Infinity }
+  );
+  if (!path || typeof path !== "string") return null;
+  if (isDocNote(path)) return { path, content: null };
   const content = await tracedIo("file:read", `读取 ${basename(path)}`, () =>
     getAdapter().fs.readTextFile(path)
   );
@@ -95,8 +128,9 @@ export async function saveMdAs(
  * Read a SINGLE level of `dir` (non-recursive) for the lazy file tree.
  *
  * Skips `.`-hidden entries, `node_modules`, and excludedPaths; keeps only `.md`
- * files + directories（HN 轮：外加 .html/.htm 笔记——文件树是两套体系的
- * 汇合面，图标由 FileTree 按扩展名区分）. Directories are returned with
+ * files + directories（HN 轮：外加 .html/.htm 笔记；MF 轮：外加 .pdf/.docx
+ * 多格式笔记——文件树是各体系的汇合面，图标由 FileTree 按扩展名区分）.
+ * Directories are returned with
  * `children: undefined` — their contents are loaded on demand when expanded
  * (see FileTree). Directories are always included (even ones that may be empty)
  * so the user can expand them to find out; emptiness is revealed at expand time
@@ -127,7 +161,7 @@ export async function readDirLevel(
     if (e.isDirectory) {
       // children deferred — lazy-loaded when the folder is expanded.
       out.push({ name: e.name, path: fullPath, isDir: true });
-    } else if (isMarkdown(e.name) || isHtmlNote(e.name)) {
+    } else if (isMarkdown(e.name) || isHtmlNote(e.name) || isDocNote(e.name)) {
       out.push({ name: e.name, path: fullPath, isDir: false });
     }
   }
@@ -143,8 +177,8 @@ export async function readDirLevel(
  * file vanished, prune the recent list) gets the COMPLETE set of removed md
  * paths regardless of which folders were expanded in the tree.
  *
- * HN 轮：同时收集 .html/.htm（html 标签同样要在删除后关闭）——函数名保留
- * （调用方语义「收集受影响的笔记」不变）。
+ * HN 轮：同时收集 .html/.htm；MF 轮：外加 .pdf/.docx（只读标签同样要在
+ * 删除后关闭）——函数名保留（调用方语义「收集受影响的笔记」不变）。
  *
  * `hintIsDir` (when known) skips the directory auto-detect probe; left
  * undefined, it is inferred by attempting to read `path` as a directory.
@@ -171,7 +205,7 @@ export async function collectMdPathsFromDisk(
   }
 
   if (!isDir) {
-    return isMarkdown(path) || isHtmlNote(path) ? [path] : [];
+    return isMarkdown(path) || isHtmlNote(path) || isDocNote(path) ? [path] : [];
   }
 
   // Walk the directory tree iteratively (skip `.`-hidden + node_modules, same
@@ -197,7 +231,8 @@ export async function collectMdPathsFromDisk(
       if (e.name.startsWith(".") || e.name === "node_modules") continue;
       const full = join(dir, e.name);
       if (e.isDirectory) stack.push({ dir: full });
-      else if (isMarkdown(e.name) || isHtmlNote(e.name)) out.push(full);
+      else if (isMarkdown(e.name) || isHtmlNote(e.name) || isDocNote(e.name))
+        out.push(full);
     }
   }
   return out;

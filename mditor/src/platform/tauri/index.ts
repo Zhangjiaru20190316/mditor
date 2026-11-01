@@ -18,6 +18,12 @@ const ALL_TRUE: PlatformCapabilities = {
   windowControls: true,
   // HN 轮：Windows spike 结论 A（docs/html-note-spike-report.md）。
   htmlNoteView: true,
+  // MF 轮：pdfjs / docx-preview 桌面直读（字节经 fs.readFile 二进制通道）。
+  pdfNoteView: true,
+  docxNoteView: true,
+  // DE 轮：docx 结构化编辑 + 文字 PDF 微编辑（spike 闸门已过，见
+  // docs/doc-note-edit-spike-report.md）。
+  docNoteEdit: true,
 };
 
 export const tauriAdapter: PlatformAdapter = {

@@ -190,10 +190,13 @@ export interface RenderFactoryHandle {
   doc: Document;
   /** 版心容器（坐标基准；分页/文本层/光栅都相对它取 rect）。 */
   content: HTMLElement;
-  /** 未就绪资源（就绪阶段产出；调用方并入 C2 列报）。 */
+  /** 未就绪资源（就绪阶段产出；调用方并入 C2 显式列报）。 */
   readonly issues: FactoryResourceIssue[];
   /** 就绪是否触发了超时（诊断位）。 */
   timedOut: boolean;
+  /** 子阶段计时（诊断/性能归因：write=文档写入+解析，resources=图片+字体，
+   *  settle=双定时器收帧）。毫秒。 */
+  readonly timings: { write: number; resources: number; settle: number };
   /** 幂等回收：移除 iframe。连续导出不得堆积。 */
   destroy(): void;
 }
@@ -217,12 +220,14 @@ export async function renderInFactory(
     "position:fixed;left:-20000px;top:0;border:0;pointer-events:none;" +
     `width:${o.contentWidthPx}px;height:600px;`;
   let destroyed = false;
+  const timings = { write: 0, resources: 0, settle: 0 };
   const handle: RenderFactoryHandle = {
     iframe,
     doc: null as unknown as Document,
     content: null as unknown as HTMLElement,
     issues: [],
     timedOut: false,
+    timings,
     destroy: () => {
       if (destroyed) return;
       destroyed = true;
@@ -235,12 +240,16 @@ export async function renderInFactory(
     if (!doc) throw new Error("无法创建离屏渲染文档（iframe contentDocument 为空）");
     handle.doc = doc;
     o.onProgress?.({ stage: "write", done: 1, total: 1 });
+    let ts0 = performance.now();
     doc.open();
     doc.write(full);
     doc.close();
     const content = doc.getElementById("mditor-export-content");
     if (!content) throw new Error("工厂文档结构异常（缺少版心容器）");
     handle.content = content as HTMLElement;
+    timings.write = performance.now() - ts0;
+    // 复位（EX 复审 P2-1）：否则 resources 记到的是 write+resources 双计。
+    ts0 = performance.now();
 
     const abort = new Promise<never>((_, reject) => {
       o.signal?.addEventListener(
@@ -258,12 +267,14 @@ export async function renderInFactory(
       }),
       abort,
     ]);
+    timings.resources = performance.now() - ts0;
     handle.issues.push(...r.issues);
     handle.timedOut = r.timedOut;
     o.onProgress?.({ stage: "fonts", done: 1, total: 1 });
     // 布局收帧：双 setTimeout + 强制同步布局读。不依赖 rAF——被遮挡/
     // 最小化窗口的 rAF 会被 Chromium 暂停（EX-P 实测挂死根因：用户导出中
     // 切走窗口 = 导出永不完成）。KaTeX 标记是静态 HTML，无脚本需要等。
+    ts0 = performance.now();
     await Promise.race([
       (async () => {
         void handle.content.scrollHeight; // 强制重排
@@ -273,6 +284,7 @@ export async function renderInFactory(
       })(),
       abort,
     ]);
+    timings.settle = performance.now() - ts0;
     o.onProgress?.({ stage: "layout", done: 1, total: 1 });
     if (o.signal?.aborted) throw new DOMException("导出已取消", "AbortError");
     return handle;

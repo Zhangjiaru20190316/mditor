@@ -146,16 +146,35 @@ describe("SettingsModal", () => {
 
   it("字体预设耦合：选预设写入字体栈，手改字体栈切回「自定义」", () => {
     const m = renderModal();
-    const preset = control<HTMLSelectElement>("字体预设");
-    fireEvent.change(preset, { target: { value: "wenkai" } });
+    // 字体选择器（FontPresetPicker）替代了原生 select：点触发按钮开面板，
+    // 点预例试图——语义与旧 select 的 onChange 完全一致（id + stack 同写）。
+    fireEvent.click(screen.getByRole("button", { name: "字体预设" }));
+    fireEvent.click(screen.getByRole("option", { name: /霞鹜文楷/ }));
     const stack = control<HTMLInputElement>("正文字体栈");
     expect(stack.value).toContain("LXGW WenKai"); // 真实 FONT_PRESETS 栈写入
     fireEvent.change(stack, { target: { value: "Custom, serif" } });
-    expect(preset.value).toBe(""); // fontPreset 置空 = 自定义
+    expect(screen.getByRole("button", { name: "字体预设" }).textContent).toContain("自定义");
     clickApply();
     const draft = appliedDraft(m);
     expect(draft.fontPreset).toBe("");
     expect(draft.fontFamily).toBe("Custom, serif");
+  });
+
+  it("字体选择器面板：分组渲染、内置徽标、自定义项与搜索过滤", () => {
+    renderModal();
+    fireEvent.click(screen.getByRole("button", { name: "字体预设" }));
+    const listbox = screen.getByRole("listbox", { name: "字体预设" });
+    // 五个分组（常用/手写楷体/美术标题/圆润可爱/书卷衬线）+ 顶部自定义项。
+    expect(listbox.querySelectorAll(".fpp-group-label")).toHaveLength(5);
+    expect(listbox.textContent).toContain("自定义");
+    // 内置徽标：正文侧五款自带字体（sans/wenkai/mashanzheng/smiley/huangyou）。
+    expect(listbox.querySelectorAll(".fpp-badge")).toHaveLength(5);
+    // 搜索过滤：输「楷」命中名字/分组含楷的预设——霞鹜文楷 + 系统楷体 +
+    // 马善政楷书（外加置顶的自定义行）。
+    const search = listbox.querySelector<HTMLInputElement>(".fpp-search input")!;
+    fireEvent.change(search, { target: { value: "楷" } });
+    expect(listbox.querySelectorAll(".fpp-row")).toHaveLength(4); // 自定义 + 3 楷系
+    expect(listbox.textContent).toContain("马善政楷书");
   });
 
   it("编辑行为：拼写检查开关、KaTeX 宏原文透传、自动保存非法输入回退 0", () => {

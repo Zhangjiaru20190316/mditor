@@ -32,11 +32,14 @@ export function isTooDeep(relPath: string): boolean {
   return relPath.split("/").filter((s) => s !== "").length > MAX_SYNC_DEPTH;
 }
 
-/** 参与同步的扩展名白名单（v5.1.2 产品决策）：只同步软件内的笔记类型——
- * Markdown 与可交互 HTML。PDF/图片等附件只留在工作区，不进云端（已存在
- * 的旧云端副本保留为孤儿对象，不做删除）。本地扫描与远端 List 双侧一致
- * 过滤，与忽略规则同样收死不可配，避免双端清单语义漂移。 */
-const SYNCABLE_EXTS: ReadonlySet<string> = new Set(["md", "html"]);
+/** 参与同步的扩展名白名单（v5.1.2 决策 → MF 轮修订）：只同步软件内的
+ * 笔记类型——Markdown、可交互 HTML、PDF 与 Word(.docx)（多格式笔记，
+ * docs/multiformat-note-support-task.md §4.7）。图片等其余附件仍只留在
+ * 工作区，不进云端（已存在的旧云端副本保留为孤儿对象，不做删除；老
+ * 规则遗留的云端 pdf/docx 无清单记录 → 新端按 absent|new 下载回归）。
+ * 本地扫描与远端 List 双侧一致过滤，与忽略规则同样收死不可配，避免
+ * 双端清单语义漂移（桌面与鸿蒙锁步发版，混跑矩阵见任务书）。 */
+const SYNCABLE_EXTS: ReadonlySet<string> = new Set(["md", "html", "pdf", "docx"]);
 
 /** 相对路径的扩展名是否在同步白名单内（大小写不敏感；无扩展名不同步）。 */
 export function isSyncableRelPath(relPath: string): boolean {

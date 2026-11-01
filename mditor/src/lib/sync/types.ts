@@ -5,7 +5,12 @@
 // 此处 re-export 方便 sync 模块内单一 import；S3Object / SyncStateEvent /
 // 操作与摘要类型只在同步引擎内部流转，定义于此。
 
-export type { SyncSettings, S3ProviderPreset } from "../../types";
+export type {
+  SyncSettings,
+  S3ProviderPreset,
+  SyncDirection,
+  ConflictPolicy,
+} from "../../types";
 export { SYNC_PROVIDERS } from "../../defaults";
 
 /** s3_list / s3_head 返回的远端对象元数据（镜像 Rust 侧 S3Object）。 */

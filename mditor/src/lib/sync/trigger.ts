@@ -162,7 +162,12 @@ export function assembleSyncTrigger(opts: SyncTriggerOptions): SyncTrigger | nul
                   },
                 }
               : {}),
-          }, fingerprint, spec.remoteDir);
+          }, fingerprint, spec.remoteDir, {
+            // v5.2：方向与冲突策略——设置在每轮实时读取（s 取自本轮 getSettings），
+            // 修改即时生效，无需重建触发器。
+            direction: s.syncDirection,
+            conflictPolicy: s.conflictPolicy,
+          });
           accumulate(total, outcome.summary);
           netErrorStreak = 0; // 任一根成功即视为链路可用
         } catch (e) {

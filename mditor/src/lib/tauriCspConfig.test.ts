@@ -80,4 +80,22 @@ describe("tauri.conf.json CSP 配置（打包版公式渲染命门）", () => {
     // frame-src 的镜像必须同样放行三平台 asset 源。
     expect(metaCsp).toContain("frame-src asset: http://asset.localhost mditor-asset:");
   });
+
+  // MF 轮（多格式笔记）：pdfjs 的解析 worker。缺席时回退 default-src 'self'
+  // 在部分 WebView 形态下拦掉 module worker 实例化——两份镜像都要放行
+  // 'self'（Vite 产物内 worker URL）与 blob:（兜底 inline 形态）。
+  it("worker-src 显式放行 'self' 与 blob:（pdfjs worker 的命门）", () => {
+    for (const [label, csp] of [
+      ["tauri.conf.json", conf.app?.security?.csp ?? ""],
+      ["index.html meta", metaCsp],
+    ] as const) {
+      const workerSrc = csp
+        .split(";")
+        .map((d) => d.trim())
+        .find((d) => d.startsWith("worker-src"));
+      expect(workerSrc, label).toBeDefined();
+      expect(workerSrc, label).toContain("'self'");
+      expect(workerSrc, label).toContain("blob:");
+    }
+  });
 });

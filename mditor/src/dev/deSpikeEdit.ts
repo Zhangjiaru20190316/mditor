@@ -118,7 +118,8 @@ export async function runCrepeRoundtrip(
   const md = await convertHtmlToMarkdown(srcHtml);
   r.timings.toMd = Math.round(performance.now() - t0);
   r.mdLen = md.length;
-  r.mdSample = md.slice(md.indexOf("|") - 20, md.indexOf("|") + 220);
+  const ti = md.indexOf("|");
+  r.mdSample = ti < 0 ? "" : md.slice(Math.max(0, ti - 20), ti + 220);
 
   const i1 = await mountCrepe(md);
   r.timings.mount1 = i1.ms;
@@ -128,8 +129,10 @@ export async function runCrepeRoundtrip(
   r.html1Len = html1.length;
   r.html1HasTable = /<table/.test(html1);
   if (!r.html1HasTable) {
-    const ti = md.indexOf("|");
-    r.html1TableCtx = html1.slice(Math.max(0, html1.indexOf("表头横跨两列") - 120), html1.indexOf("表头横跨两列") + 160);
+    r.html1TableCtx = html1.slice(
+      Math.max(0, html1.indexOf("表头横跨两列") - 120),
+      html1.indexOf("表头横跨两列") + 160
+    );
   }
 
   const md2 = await convertHtmlToMarkdown(pre(html1));

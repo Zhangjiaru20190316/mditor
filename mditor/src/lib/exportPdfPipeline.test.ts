@@ -3,11 +3,12 @@
 // （perf/ex3-*）。
 
 // @vitest-environment jsdom
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
 import {
   PDF_PAPERS,
   applyTextTransparency,
   blockIntersectsWindow,
+  buildDirectRasterCss,
   dataUrlToBytes,
   fragmentsToPageRuns,
   measureBlocks,
@@ -503,3 +504,107 @@ describe("pearsonBestLag（调试 A/B 行剖面互相关）", () => {
 
 // 进度面：类型契约编译即验证（此处仅引用防止未用告警）。
 export type _ProgressSmoke = PdfExportProgress;
+
+// ---------------------------------------------------------------------------
+// 直连光栅 CSS 构造（EX #12/#13 复审）：@font-face 按使用裁剪 + woff2 内联。
+// jsdom 无 FontFaceSet → 原型注入假面集；fetch 全局打桩。
+// ---------------------------------------------------------------------------
+function mkFactoryDoc(css: string, faces?: Array<{ family: string; weight: string; style: string; status: string }>): Document {
+  const doc = document.implementation.createHTMLDocument("export-factory");
+  const style = doc.createElement("style");
+  style.textContent = css;
+  doc.head.appendChild(style);
+  if (faces) {
+    Object.defineProperty(doc, "fonts", {
+      value: { forEach: (cb: (f: unknown) => void) => faces.forEach(cb) },
+      configurable: true,
+    });
+  }
+  return doc;
+}
+
+describe("buildDirectRasterCss：@font-face 按使用裁剪", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, blob: async () => new Blob([new Uint8Array([9])], { type: "font/woff2" }) }))
+    );
+  });
+
+  it("已加载三元组保留，未用面裁掉", async () => {
+    const css =
+      "@font-face{font-family:KaTeX_Main;src:url(f.woff2) format('woff2')}" +
+      "@font-face{font-family:KaTeX_Main;font-weight:bold;src:url(fb.woff2)}" +
+      "@font-face{font-family:UnusedFace;src:url(u.woff2)}";
+    const doc = mkFactoryDoc(css, [
+      { family: "KaTeX_Main", weight: "normal", style: "normal", status: "loaded" },
+      { family: "KaTeX_Main", weight: "700", style: "normal", status: "loaded" },
+    ]);
+    const out = await buildDirectRasterCss(doc, "http://x.test/");
+    expect(out).toContain("font-family:KaTeX_Main");
+    expect(out.match(/@font-face/g)).toHaveLength(2);
+    expect(out).not.toContain("UnusedFace");
+  });
+
+  it("带引号族名 + bold↔700 归一匹配；未加载面不裁同族其他字重未用者", async () => {
+    const css =
+      "@font-face{font-family:'Quoted';font-weight:bold;src:url(q.woff2)}" +
+      "@font-face{font-family:'Quoted';font-style:italic;src:url(qi.woff2)}";
+    const doc = mkFactoryDoc(css, [
+      { family: "Quoted", weight: "700", style: "normal", status: "loaded" },
+    ]);
+    const out = await buildDirectRasterCss(doc, "http://x.test/");
+    expect(out.match(/@font-face/g)).toHaveLength(1);
+    expect(out).toContain("font-weight:bold");
+    expect(out).not.toContain("italic");
+  });
+
+  it("fonts 不可枚举（旧引擎）：全量保留不裁", async () => {
+    const css = "@font-face{font-family:F;src:url(f.woff2)}@font-face{font-family:G;src:url(g.woff2)}";
+    const doc = mkFactoryDoc(css);
+    const out = await buildDirectRasterCss(doc, "http://x.test/");
+    expect(out.match(/@font-face/g)).toHaveLength(2);
+  });
+});
+
+describe("buildDirectRasterCss：woff2 独占内联（EX 复审 P1）", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("仅 woff2 内联为 data:，woff/ttf 候选原样保留", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, blob: async () => new Blob([new Uint8Array([1, 2, 3])], { type: "font/woff2" }) }))
+    );
+    const css =
+      "@font-face{font-family:K;src:url(http://x.test/a.woff2) format('woff2'),url(http://x.test/a.woff) format('woff'),url(http://x.test/a.ttf) format('truetype')}";
+    const doc = mkFactoryDoc(css, [
+      { family: "K", weight: "normal", style: "normal", status: "loaded" },
+    ]);
+    const out = await buildDirectRasterCss(doc, "http://x.test/");
+    expect(out).toContain("url(\"data:font/woff2");
+    expect(out).toContain("url(http://x.test/a.woff)");
+    expect(out).toContain("url(http://x.test/a.ttf)");
+  });
+
+  it("woff2 获取失败 → 抛出（调用方回退 domToCanvas，不静默降级）", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 404 })));
+    // URL 独立于上个用例：FONT_DATA_URL_CACHE 是模块级缓存，同 URL 会命中。
+    const css = "@font-face{font-family:K;src:url(http://x.test/miss.woff2) format('woff2')}";
+    const doc = mkFactoryDoc(css, [
+      { family: "K", weight: "normal", style: "normal", status: "loaded" },
+    ]);
+    await expect(buildDirectRasterCss(doc, "http://x.test/")).rejects.toThrow("字体内联失败");
+  });
+
+  it("html/body 选择器改写到 msvg-shim（含 body>div / body * 形态）", async () => {
+    const css = "body{margin:0}html,body{padding:0}body>*{box-sizing:border-box}body .x{color:red}";
+    const doc = mkFactoryDoc(css);
+    const out = await buildDirectRasterCss(doc, "http://x.test/");
+    expect(out).not.toMatch(/(^|[\s,{}>])(html|body)\{/);
+    expect(out).toContain(".msvg-shim{margin:0}");
+    expect(out).toContain(".msvg-shim>*{box-sizing:border-box}");
+    expect(out).toContain(".msvg-shim .x{color:red}");
+  });
+});

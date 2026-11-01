@@ -26,7 +26,14 @@ import { getAdapter } from "../../platform";
 import { basename, extname, joinAbs, toPosix } from "../path-shim";
 import { s3Delete, s3GetFile, s3List, s3PutFile } from "./s3";
 import { readManifest, writeManifest, type SyncManifest } from "./manifest";
-import type { S3ConfigPayload, S3Object, SyncManifestFile, SyncSummary } from "./types";
+import type {
+  S3ConfigPayload,
+  S3Object,
+  SyncManifestFile,
+  SyncSummary,
+  SyncDirection,
+  ConflictPolicy,
+} from "./types";
 import { EMPTY_SYNC_SUMMARY } from "./types";
 import { isIgnoredName, isIgnoredRelPath, isSyncableRelPath, isTooDeep, isTooLarge, MAX_SYNC_DEPTH } from "./ignore";
 
@@ -210,6 +217,97 @@ export function decideAction(l: EngineSideState, r: EngineSideState): EngineActi
 }
 
 // ---------------------------------------------------------------------------
+// 方向模式（v5.2）：矩阵输出 → 模式执行面（纯函数）
+// ---------------------------------------------------------------------------
+
+/** applyDirection 的结果：收窄后的计划 + 被忽略改动的计数（进 summary.notes）。 */
+export interface DirectionPlan {
+  ops: PlannedOp[];
+  /** 被忽略的远端侧改动数（仅上传模式）。 */
+  ignoredRemote: number;
+  /** 被忽略的本地侧改动数（仅下载模式）。 */
+  ignoredLocal: number;
+}
+
+/**
+ * 方向模式在 ops 计划层收窄执行面（v5.2）：动作矩阵本体不动（所有方向
+ * 共享同一状态判定），仅对矩阵输出重映射/丢弃——
+ *
+ * - uploadOnly（本地为主，备份镜像）：丢弃 download/restoreLocal（远端
+ *   改动不落本地）；upload/deleteRemote/clearRecord 照常（本地删除传播
+ *   到云端，D1 批量删除保险仍然生效）；远端丢失自愈 upload 照常（本地
+ *   为存在性事实源）。冲突保留给 resolveConflict（本地胜 + 败者副本，
+ *   双侧数据零丢失），仅「收编会走下载」的单侧缺失格在计划层丢弃。
+ * - downloadOnly（云端为准）：丢弃 upload（本地改动不上云）；deleteRemote
+ *   （本地删×远端在）→ restoreLocal——本地删除被云端拉回；远端被删×
+ *   本地在的自愈 upload 丢弃——v5.1.2 铁律：引擎永不删除本地文件，云端
+ *   删除不传播。冲突保留给 resolveConflict（远端胜 + 败者副本）。
+ *
+ * 被忽略的改动留在 manifest 旧记录上（本轮不更新），切回双向时自然按
+ * changed 重新评估，无误删风险。
+ */
+export function applyDirection(
+  ops: PlannedOp[],
+  direction: SyncDirection | undefined
+): DirectionPlan {
+  if (direction === undefined || direction === "bidirectional") {
+    return { ops, ignoredRemote: 0, ignoredLocal: 0 };
+  }
+  const out: PlannedOp[] = [];
+  let ignoredRemote = 0;
+  let ignoredLocal = 0;
+  for (const op of ops) {
+    if (direction === "uploadOnly") {
+      if (op.action === "download" || op.action === "restoreLocal") {
+        ignoredRemote++;
+        continue;
+      }
+      if (op.action === "conflict" && !op.local) {
+        // 缺本地的冲突格（absent×same/changed、deleted×changed）：收编只可
+        // 能走下载（与方向相悖）或镜像删除远端改动版（无副本）——保守丢弃。
+        ignoredRemote++;
+        continue;
+      }
+      out.push(op);
+      continue;
+    }
+    // downloadOnly
+    if (op.action === "upload") {
+      ignoredLocal++;
+      continue;
+    }
+    if (op.action === "deleteRemote") {
+      // 本地删×远端在 → 云端为准，restoreLocal 拉回（不删本地、不上传）。
+      if (op.remote) out.push({ ...op, action: "restoreLocal" });
+      continue;
+    }
+    if (op.action === "conflict" && !op.remote) {
+      // 缺远端的冲突格（changed×absent 等）：收编只可能走上传——丢弃。
+      ignoredLocal++;
+      continue;
+    }
+    out.push(op); // download / restoreLocal / clearRecord / 双侧齐的 conflict
+  }
+  return { ops: out, ignoredRemote, ignoredLocal };
+}
+
+/**
+ * 方向 + 冲突策略 → 冲突胜者覆盖（v5.2）。undefined = 新者胜（既有行为）：
+ * 双向 + newestWins。方向优先于策略（仅上传/仅下载的胜者是方向的必然
+ * 推论）；显式策略下时钟不可信不再需要兜底——胜者本就确定。
+ */
+export function resolveConflictWinner(
+  direction: SyncDirection | undefined,
+  policy: ConflictPolicy | undefined
+): "local" | "remote" | undefined {
+  if (direction === "uploadOnly") return "local";
+  if (direction === "downloadOnly") return "remote";
+  if (policy === "localFirst") return "local";
+  if (policy === "remoteFirst") return "remote";
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
 // 冲突辅助（纯函数）
 // ---------------------------------------------------------------------------
 
@@ -293,7 +391,7 @@ export interface SyncOutcome {
   aborted?: "mass-delete";
 }
 
-interface PlannedOp {
+export interface PlannedOp {
   relPath: string;
   action: EngineAction;
   local?: LocalScanFile;
@@ -338,10 +436,14 @@ export async function syncWorkspace(
    *  不一致 ⇒ 对着新桶/新前缀用旧清单会把全部已跟踪文件判成「远端已删除」
    *  ⇒ 整库进回收站。改为按首同步重算（首同步矩阵不产生任何删除动作）。 */
   remoteIdentity?: string,
-  remoteDir?: string
+  remoteDir?: string,
+  /** v5.2：方向与冲突策略。缺省 = 双向 + 新者胜（既有行为）。 */
+  mode?: { direction?: SyncDirection; conflictPolicy?: ConflictPolicy }
 ): Promise<SyncOutcome> {
   const summary: SyncSummary = { ...EMPTY_SYNC_SUMMARY, notes: [] };
   const fullPrefix = fullPrefixOf(prefix, root, remoteDir);
+  const direction = mode?.direction;
+  const conflictWinner = resolveConflictWinner(direction, mode?.conflictPolicy);
 
   hooks.onState({ phase: "scan", done: 0, total: 0 });
 
@@ -411,8 +513,8 @@ export async function syncWorkspace(
   ]);
   for (const k of suspended) keys.delete(k);
 
-  // 5. 逐 key 判定 L/R → 查矩阵 → 计划列表。
-  const ops: PlannedOp[] = [];
+  // 5. 逐 key 判定 L/R → 查矩阵 → 计划列表 → 方向模式收窄（v5.2）。
+  const planned: PlannedOp[] = [];
   for (const key of keys) {
     const record = files[key];
     const local = localMap.get(key);
@@ -422,7 +524,15 @@ export async function syncWorkspace(
       computeRemoteState(remote, record)
     );
     if (action === "skip") continue;
-    ops.push({ relPath: key, action, local, remote });
+    planned.push({ relPath: key, action, local, remote });
+  }
+  const dirPlan = applyDirection(planned, direction);
+  const ops = dirPlan.ops;
+  if (dirPlan.ignoredRemote > 0) {
+    summary.notes.push(`仅上传模式：已忽略 ${dirPlan.ignoredRemote} 个远端改动（本地为准）。`);
+  }
+  if (dirPlan.ignoredLocal > 0) {
+    summary.notes.push(`仅下载模式：已忽略 ${dirPlan.ignoredLocal} 个本地改动（云端为准）。`);
   }
 
   // 6. 执行顺序：冲突（含其副本上传/下载，按 key 内聚）→ 普通下载 → 普通
@@ -496,7 +606,7 @@ export async function syncWorkspace(
   for (const op of conflicts) {
     tick(op.relPath);
     try {
-      await resolveConflict(op, { root, fullPrefix, io, files, localMap, remoteMap, summary, hooks });
+      await resolveConflict(op, { root, fullPrefix, io, files, localMap, remoteMap, summary, hooks, winner: conflictWinner });
       summary.conflicts++;
     } catch (e) {
       summary.failed++;
@@ -616,13 +726,16 @@ interface ConflictCtx {
   remoteMap: Map<string, S3Object>;
   summary: SyncSummary;
   hooks: SyncHooks;
+  /** v5.2 胜者覆盖（方向/冲突策略解析结果）；undefined = 新者胜（既有行为）。 */
+  winner?: "local" | "remote";
 }
 
 /**
  * 冲突三分支：
  *  1. 内容相同（流式字节比对）→ 无副本，新者覆盖另一侧；
  *  2. 内容不同 → 新者胜（本地 mtime vs 远端 lastModified），败者存
- *     `.冲突-时间戳` 副本（同目录）且双端可见；
+ *     `.冲突-时间戳` 副本（同目录）且双端可见；v5.2 起方向/冲突策略可
+ *     覆盖胜者（ctx.winner——显式胜者无需时钟兜底），副本机制不变；
  *  3. 时钟不可信（无法比出新者）→ 远端胜执行第 2 步 + 摘要 note 人工确认。
  *
  * v4.12.4：远端版本先由 Rust 暂存到 app-data 临时文件再流式比对——冲突
@@ -668,11 +781,15 @@ async function resolveConflict(op: PlannedOp, ctx: ConflictCtx): Promise<void> {
       return;
     }
 
-    // 分支 2/3：新者胜，败者保副本。
+    // 分支 2/3：胜者判定（v5.2：方向/冲突策略可覆盖；缺省新者胜），败者保副本。
     const lTime = local.mtimeMs;
     const rTime = remoteEpochMs(remote.lastModified);
     let localWins: boolean;
-    if (Number.isNaN(rTime)) {
+    if (ctx.winner === "local") {
+      localWins = true;
+    } else if (ctx.winner === "remote") {
+      localWins = false;
+    } else if (Number.isNaN(rTime)) {
       localWins = false;
       const msg = `冲突时钟不可信（远端 lastModified 无法解析），已按远端为准，请人工确认：${key}`;
       summary.notes.push(msg);

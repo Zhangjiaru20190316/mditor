@@ -85,7 +85,8 @@ describe("inlineExportImages 本地图（语义与旧 inlineLocalImages 一致 +
     expect(r.html).toContain('src="fake.png"');
   });
 
-  it("总预算耗尽 → 后续图片 budget（保留引用）", async () => {
+  // 7×9.5MB 缓冲的 base64 往返单跑 ~4s，并行负载下会越过默认 5s——显式放宽。
+  it("总预算耗尽 → 后续图片 budget（保留引用）", { timeout: 20_000 }, async () => {
     // 总预算 64MB：7 张各 9.5MB（单图 <10MB 过 oversize 门），前 6 张 inlined
     // （57MB），第 7 张 66.5MB > 64MB → budget。同一 buffer 引用挂 7 个路径。
     const big = new Uint8Array(Math.round(INLINE_IMG_MAX_BYTES * 0.95));
@@ -204,7 +205,7 @@ describe("inlineExportImages 远程图（D-5：fetch→dataURL，失败显式入
     expect(r.missing).toEqual([]);
   });
 
-  it("远程图计入总预算（7×9.5MB → 恰好 1 张 budget）", async () => {
+  it("远程图计入总预算（7×9.5MB → 恰好 1 张 budget）", { timeout: 20_000 }, async () => {
     const big = new Uint8Array(Math.round(INLINE_IMG_MAX_BYTES * 0.95));
     big.set(GIF.subarray(0, 6), 0);
     const urls = Array.from({ length: 7 }, (_, i) => `https://x.test/b${i}.gif`);
