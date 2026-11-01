@@ -24,6 +24,7 @@
   --accent: #0a84ff; /* systemBlue (dark) */
   --accent-soft: rgba(10, 132, 255, 0.2);
   --mark-bg: rgba(255, 214, 10, 0.32); /* ==高光== 系统黄（暗色降透明度） */
+  --block-selection: rgba(10, 132, 255, 0.18); /* 跨块选区覆盖层（blockSelectionHighlight） */
   --danger: #ff453a;
   --danger-soft: rgba(255, 69, 58, 0.16);
   --danger-border: rgba(255, 69, 58, 0.4);

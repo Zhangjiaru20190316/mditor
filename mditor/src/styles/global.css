@@ -1445,6 +1445,32 @@ body.is-resizing .sidebar {
 .mditor-milkdown .ProseMirror:focus {
   outline: none;
 }
+
+/* ---------- 跨块选区高亮（lib/blockSelectionHighlight.ts） ----------
+   拖选跨过代码块/公式块时，块是嵌套 CodeMirror 编辑面（nodeview 全吞事
+   件），浏览器原生选区画不进去——插件对「完全被选区覆盖」的 code_block/
+   image/table/hr 加 .mditor-block-selected。用 ::after 覆盖层而非背景色/
+   内阴影：代码块、KaTeX 预览、表格单元格都有不透明子背景，只有覆盖层能
+   盖在上面。颜色跟各主题 --block-selection。 */
+.mditor-milkdown .ProseMirror .mditor-block-selected {
+  position: relative;
+}
+.mditor-milkdown .ProseMirror .mditor-block-selected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--block-selection, rgba(79, 70, 229, 0.14));
+  pointer-events: none;
+}
+/* big 档 code_block 回落纯 pre/code（CodeMirror 特性关闭），原生选区可画，
+   覆盖层关掉避免双重高亮；image/table/hr 仍是 nodeview/叶子，覆盖层保留。 */
+.mditor-editor-host[data-big]
+  .ProseMirror
+  .milkdown-code-block.mditor-block-selected::after {
+  display: none;
+}
+
 /* 首交互样式重算熔断（大文档卡顿根修）：crepe 的 cursor.css 只在
    .ProseMirror-focused 上定义 --prosemirror-virtual-cursor-color ——
    聚焦/失焦切换使这个自定义属性在「无 → 有」间翻转，Blink 必须作废

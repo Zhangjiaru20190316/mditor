@@ -24,6 +24,7 @@
   --accent: #007aff; /* systemBlue */
   --accent-soft: rgba(0, 122, 255, 0.12);
   --mark-bg: rgba(255, 214, 10, 0.42); /* ==高光== 系统黄 */
+  --block-selection: rgba(0, 122, 255, 0.14); /* 跨块选区覆盖层（blockSelectionHighlight） */
   /* 语义色：文字档用 HIG 亮色模式加深变体（#D70015/#248A3D，Apple 官方
      无障碍文本色），soft/diff 底用原生 systemRed #FF3B30 / systemGreen
      #34C759 的透明变体。 */

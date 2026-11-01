@@ -19,6 +19,7 @@
   --accent: #d97757;        /* 品牌橙棕，暗底下提亮 */
   --accent-soft: #3a2a22;
   --mark-bg: rgba(250, 204, 21, 0.32); /* ==高光== 背景色（深色主题，提亮） */
+  --block-selection: rgba(217, 119, 87, 0.17); /* 跨块选区覆盖层（blockSelectionHighlight） */
   /* 语义色（v4.1 变量化）：暖调暗色——文字暖提亮、底色深暖，无亮块 */
   --danger: #e08573;
   --danger-soft: #3a2a26;
