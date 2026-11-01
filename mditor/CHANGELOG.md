@@ -1,6 +1,38 @@
 # Changelog
 
 
+## 未发布：跨块选区高亮——一次选中文字 + 中间的代码块/公式块
+
+### 根因
+
+富文本档的代码块与公式块（公式块即 `code_block(language:"LaTeX")`，Crepe 把
+`$$…$$` 归一承载）是嵌套的 CodeMirror 编辑面（`@milkdown/components`
+code-block nodeview `stopEvent()` 全吞）。浏览器原生拖选无法把 DOM 选区伸进
+嵌套 contenteditable——跨块拖选时块被「绕过」：PM 状态选区其实已完整覆盖块
+（`getSelection` 的 `textBetween`、复制、批注锚点全走状态选区，内容本就不丢），
+但浏览器只能在块外两侧画高亮，视觉上块像「没被选中」，一次拖选拿不到
+「文字 + 中间块」的完整反馈。
+
+### 修复
+
+- `lib/blockSelectionHighlight.ts`：对「完全被选区覆盖」的 code_block /
+  image / table / horizontal_rule 加 `Decoration.node` class
+  `.mditor-block-selected`（paragraph/heading 等文本块浏览器原生可画，不
+  叠加；部分覆盖不加——CM 内三击整选由 CM 自画）。装饰走 PM 官方通道上 DOM
+  （`updateOuterDeco → patchOuterDeco` 只在现有 DOM 原地改类名，不重建
+  nodeview、不重挂 CodeMirror）；状态选区零改动，复制/SelectionToolbar/
+  AI 划选问答行为不变；
+- 注册：`useMilkdown.ts` 全档无条件（big 档 code_block 回落纯 pre/code 原生
+  可画，覆盖层由 CSS 在 `[data-big]` 下关闭避免双重高亮；image/table 在
+  big 档仍是 nodeview，覆盖层保留）；
+- 样式：`::after` 覆盖层而非背景色/内阴影（代码块、KaTeX 预览、表格单元格
+  都有不透明子背景，只有覆盖层能盖在上面）+ 7 主题各配
+  `--block-selection`（跟随各自 accent 色调）；
+- 单测 `blockSelectionHighlight.test.ts`（10 例）：完全覆盖判定、容器嵌套
+  下钻、collapsed/部分覆盖/NodeSelection 不命中、纯编辑事务装饰映射保持。
+
+sv（源码）模式是单个 CodeMirror 文档，原生支持跨块选择，不涉及。
+
 ## 未发布：Word / 文字 PDF 原位编辑（DE 轮）——条件只读 + patch 模型 + 表格预处理配方
 
 任务书：`docs/prompt-word-pdf-editing.md`（范围决策 2026-11-01 用户已确认）。
