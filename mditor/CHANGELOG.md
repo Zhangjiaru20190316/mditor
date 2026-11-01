@@ -1,7 +1,7 @@
 # Changelog
 
 
-## 未发布：跨块选区高亮——一次选中文字 + 中间的代码块/公式块
+## 5.2.0（2026-11-01）：跨块选区高亮——一次选中文字 + 中间的代码块/公式块
 
 ### 根因
 
@@ -33,7 +33,7 @@ code-block nodeview `stopEvent()` 全吞）。浏览器原生拖选无法把 DOM
 
 sv（源码）模式是单个 CodeMirror 文档，原生支持跨块选择，不涉及。
 
-## 未发布：Word / 文字 PDF 原位编辑（DE 轮）——条件只读 + patch 模型 + 表格预处理配方
+## 5.2.0（2026-11-01）：Word / 文字 PDF 原位编辑（DE 轮）——条件只读 + patch 模型 + 表格预处理配方
 
 任务书：`docs/prompt-word-pdf-editing.md`（范围决策 2026-11-01 用户已确认）。
 阶段 0 可行性闸门四项全 A：`docs/doc-note-edit-spike-report.md`。
