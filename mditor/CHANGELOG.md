@@ -1,6 +1,90 @@
 # Changelog
 
 
+## 未发布：Word / 文字 PDF 原位编辑（DE 轮）——条件只读 + patch 模型 + 表格预处理配方
+
+任务书：`docs/prompt-word-pdf-editing.md`（范围决策 2026-11-01 用户已确认）。
+阶段 0 可行性闸门四项全 A：`docs/doc-note-edit-spike-report.md`。
+
+### 阶段 0（spike 闸门，先行独立提交）
+
+- **pdf-lib load→save 保真（A）**：外部生成器（Chromium + pdfcraft 增量链）/
+  表单注释 / 53MB / 旋转裁剪四类夹具——文本层逐 item（transform ε=0.01pt）+
+  注释 + 表单域全等，视觉 diff 零区域；增量历史折叠为全量重写（终态保留）；
+- **坐标映射（A）**：pdfjs textContent transform 与 pdf-lib 用户空间**恒等**
+  （/Rotate、CropBox 均不破坏 patch 层，dx/dy=0.000）；覆盖矩形几何（desc
+  0.30 / asc 1.12 / 左右 1pt，视觉验收零残留）；底色定案 = 白 + 编辑时采样；
+- **CJK 重绘（A，带强制前置条件）**：宽度两引擎 0 误差；收缩一发公式精确；
+  **缺字形 + subset:true = fontkit 流回调异步 RangeError，try/catch 兜不住、
+  杀宿主进程**——字形逐码点前置检查升格为进程安全红线；
+- **Crepe 独立实例往返（A，带表格配方）**：mammoth HTML → turndown → Crepe
+  幂等收敛（第二轮起逐字稳定）；表格往返死亡链（单元格 `<p>` → turndown 拒
+  转 → 原始 HTML 表滞留 → Crepe 丢弃）由三步预处理断开（解包 p / 列数归一 /
+  首行提升 th），**每次进入编辑面都要执行**（Crepe 自身序列化也包 p）。
+
+### M1 条件只读底座
+
+- `noteKind` 拆三判别：`isReadonlyTab`（语义更新为「md 管线隔离」，**含编辑
+  态恒真**，全部管线隔离调用位一行不改）/ `isDocEditActive`（`TabItem.docEdit`）/
+  `isViewOnlyTab`（dirty 圆点、关闭确认、Ctrl+S 分流的判定源）；
+- `lib/docNoteEdit.ts` 状态机：`converting→editing→saving` 相位 + Word
+  htmlBuffer / PDF patches（唯一事实源）+ baseMtime/baseSize 指纹（保存前
+  外部修改校验，防覆盖他人改动）；
+- 接线：TitleBar dirty 分流、closeTab 编辑确认（脏编辑显式丢弃）、Ctrl+S 经
+  `saveDocEditTabRef` 分流（useMenuCommands）、导出在编辑态先提示退出、
+  编辑态标签禁止移到新窗口（缓冲在本窗 JS 上下文）、关窗序列并入未保存编辑
+  确认；能力位 `docNoteEdit`（tauri=true / harmony=false）。
+
+### M2 Word 结构化编辑
+
+- `convertDocxForEdit`（核心按字节入参）：mammoth 语义 HTML（图片 data URL
+  内联全程不落盘）→ S10 消毒 → 表格三步预处理 → turndown → Crepe
+  defaultValue；`flattenedSpans` 检测驱动「合并单元格平铺」UI 提示；
+- `exporter.buildDocx(ctx)` 从 exportDocx 抽出（对外行为零变化，四格式导出
+  零回归）；保存链 = Crepe getHTML → buildDocx（主题 CSS 复用 collectThemeCss）；
+- `lib/docNoteSave.ts` 保存语义：**默认另存「原名 (编辑版)」**（Ctrl+S 零
+  对话框，conflictFreeName 绝不覆盖，原件一字节不动）；**替换原件** = 显式
+  按钮 + 强文案二次确认（明示「按 mditor 样式重新生成」）→ 原件 `trash_file`
+  进回收站 → 新字节占原路径 → 缓存失效 + 指纹 rebase；
+- DocxNoteView 编辑面：独立 Crepe 实例（懒加载，主编辑器/useMilkdown 零
+  接触）；切走标签 getHTML 序列化进状态机（保态保 dirty），切回重水合；
+  保真边界文案不静默；
+- 端到端实证（headless Edge 真浏览器）：docx → mammoth → Crepe → buildDocx →
+  再解析 8 项结构检查全真 + 产物 zip 结构断言全真（`perf/de-spike/
+  m2-word-e2e.mjs`）。
+
+### M3 文字 PDF 微编辑
+
+- patch 模型：`PdfPatch { page, lineKey, origText, newText, bbox, baseline,
+  fontSize, coverColor }`；命中层 = pdfjs 文本层行聚类（`piecesToEditLines`，
+  旋转 run 过滤）→ canvas 上方透明命中框（用户空间→屏幕：viewBox 原点 + y
+  翻转）→ 点击行内编辑（Enter 提交 / Esc 取消，打开时采样底色入 patch）；
+  侧栏：修改清单（跳转 / 逐条撤销）；
+- `applyPdfPatches`：**始终从原始字节重放**（幂等，绝不二次叠加）；加密
+  load 直接抛错（禁 ignoreEncryption）；/Rotate≠0 整页拒绝（预览照常）；
+  字形守护红线（fontkit 逐码点检查，未检查文本绝不进 drawText）；Noto
+  subset 嵌入 + Inter 拉丁变体；覆盖矩形 spike② 几何 + 采样底色；收缩
+  一发公式 + 0.55 下限；拒绝逐条列报（全拒抛错不产假成功）；
+- node 全链单测：pdf-lib 造源 → pdfjs 行提取 → 应用（三类拒绝）→ 回读
+  新文本落位原基线 dx/dy≈0（spike② 回归锚）。
+
+### M4 转 MD 质量增强 + 收尾
+
+- `rebuildPdfParagraphs`：字号聚类映射 ATX 标题（>1.7×→#、>1.4×→##、
+  >1.15×→###；需独立成行——行距 > 1.2×中位 + 短行 + 非列表，软换行大字
+  不误判）；项目符号 → `- `、数字/字母编号 → `N. `（保留原编号，软换行
+  并入列表项）；
+- docx 转 MD：合并单元格平铺检测 → 结果提示明示（spike④ 保真清单落文案）。
+
+### 验证
+
+- vitest 1302 用例全绿（阶段 0 起 +45：noteKind 拆分 8 / 状态机 10 / 表格
+  预处理 + 保存语义 12 / PDF 微编辑 12 / 转换质量 3 等）；tsc / eslint /
+  `npm run build` 全绿；
+- 桌面手测清单（任务书 §五）与 harmony 冒烟待执行（门控关闭、编辑入口
+  不可见）。
+
+
 ## 未发布：多格式笔记支持（MF 轮）——PDF / Word 只读预览 + 转 Markdown + 纳入云同步
 
 任务书：`docs/multiformat-note-support-task.md`（范围决策 2026-10-31 用户已确认）。

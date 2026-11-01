@@ -8,8 +8,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { PDFDocument, degrees } from "pdf-lib";
 
+import { applyPdfPatches } from "./docNotePdfEdit";
 import {
-  applyPdfPatches,
   chooseFontKind,
   coverRectOf,
   fitFontSize,
@@ -17,7 +17,7 @@ import {
   patchFromLine,
   revertPatch,
   upsertPatch,
-} from "./docNotePdfEdit";
+} from "./docNotePdfPatch";
 import { piecesToEditLines, type PdfTextPiece } from "./docNote";
 import type { PdfPatch } from "./docNote";
 

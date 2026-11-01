@@ -30,7 +30,7 @@ import {
   type PdfPatch,
 } from "../lib/docNote";
 import { beginEditing, resumeDocEdit, updateDocEditBuffer } from "../lib/docNoteEdit";
-import { patchFromLine, revertPatch, upsertPatch } from "../lib/docNotePdfEdit";
+import { patchFromLine, revertPatch, upsertPatch } from "../lib/docNotePdfPatch";
 import { loadPdfjs } from "../lib/pdfjsLazy";
 import { ExpandIcon, PdfFileIcon, RefreshIcon } from "./icons";
 

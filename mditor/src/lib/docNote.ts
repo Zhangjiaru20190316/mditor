@@ -241,13 +241,49 @@ function piecesToLines(pieces: PdfTextPiece[]): PdfLine[] {
 }
 
 /**
- * PDF 多页文本 → Markdown 纯文本（任务书 §4.6 启发式）：
+ * PDF 多页文本 → Markdown 纯文本（任务书 §4.6 启发式；DE 轮 M4 质量增强）：
  *   * 按 y 坐标分行（容差 = 字号一半），行内按 x 排序；
  *   * 行距聚类分段（行距 > 字号 × 1.9 或列表起头 → 新段落；段内软换行
  *     合并——CJK 邻接直连、西文补空格）；
+ *   * M4 标题层级：字号相对页中位字号显著更大（>1.7×→#、>1.4×→##、
+ *     >1.15×→###）且独立成行（前行距 > 1.2×中位、短文本、非列表）→ 映射
+ *     ATX 标题；软换行的大字号行不误判（不独立）；
+ *   * M4 列表语法：项目符号行 → `- `；数字/字母编号行 → `N. `（保留原
+ *     编号），后续软换行并入列表项；
  *   * 页间 `---` 分隔。
  * 纯函数（pdfjs 不参与），vitest 可直接构造 pieces 验证。
  */
+
+/** 列表起头判定与拆解：项目符号 / 数字 / 字母编号（短行才算，防正文误判）。 */
+interface BulletMatch {
+  marker: string;
+  body: string;
+}
+function matchBulletish(text: string): BulletMatch | null {
+  if (text.trim().length === 0 || text.trim().length >= 200) return null;
+  let m = /^\s*([•·◦‣▪•-])\s*(.*)$/.exec(text);
+  if (m && m[2].length > 0) return { marker: "- ", body: m[2].trim() };
+  m = /^\s*(\d{1,3})\s*[.、)）]\s*(.*)$/.exec(text);
+  if (m && m[2].length > 0) return { marker: `${m[1]}. `, body: m[2].trim() };
+  m = /^\s*([a-zA-Z])\s*[.、)）]\s*(.*)$/.exec(text);
+  if (m && m[2].length > 0) return { marker: `${m[1].toLowerCase()}. `, body: m[2].trim() };
+  return null;
+}
+
+/** 标题层级（0 = 非标题）：字号显著大于页中位 + 短行 + 非列表。 */
+function headingLevelOf(
+  height: number,
+  medianH: number,
+  text: string,
+  bullet: BulletMatch | null
+): 0 | 1 | 2 | 3 {
+  if (bullet || text.trim().length === 0 || text.trim().length > 80) return 0;
+  if (height > medianH * 1.7) return 1;
+  if (height > medianH * 1.4) return 2;
+  if (height > medianH * 1.15) return 3;
+  return 0;
+}
+
 export function rebuildPdfParagraphs(pages: PdfTextPiece[][]): string {
   const pageTexts: string[] = [];
   for (const pieces of pages) {
@@ -259,15 +295,24 @@ export function rebuildPdfParagraphs(pages: PdfTextPiece[][]): string {
     let cur = "";
     let prevY = Number.NaN;
     for (const line of lines) {
-      // 列表起头（项目符号 / 编号）强制起新段。
-      const bulletish =
-        /^\s*([•·◦‣▪‣-]|\d{1,3}[.、)]|[a-zA-Z][.、)])/.test(line.text) &&
-        line.text.trim().length < 200;
-      if (cur === "") {
+      const bullet = matchBulletish(line.text);
+      const level = headingLevelOf(line.height, medianH, line.text, bullet);
+      // 标题独立成行的佐证：页首行，或与前行距 > 1.2×中位（软换行的大字号
+      // 行不满足——防正文大字误判）。
+      const gapBefore = Number.isNaN(prevY) ? Number.POSITIVE_INFINITY : prevY - line.y;
+      const standalone = gapBefore > medianH * 1.2;
+      if (level > 0 && standalone) {
+        if (cur !== "") paras.push(cur);
+        paras.push(`${"#".repeat(level)} ${line.text.trim()}`);
+        cur = "";
+      } else if (bullet) {
+        // 列表项独立起段（软换行的后续行并入本项）。
+        if (cur !== "") paras.push(cur);
+        cur = `${bullet.marker}${bullet.body}`;
+      } else if (cur === "") {
         cur = line.text;
       } else {
-        const gap = prevY - line.y; // y 向上：向下推进为正
-        if (gap > medianH * PARAGRAPH_GAP_RATIO || bulletish) {
+        if (gapBefore > medianH * PARAGRAPH_GAP_RATIO) {
           paras.push(cur);
           cur = line.text;
         } else {
@@ -423,7 +468,12 @@ export function loadMammoth(): Promise<MammothLike> {
  *  htmlToMarkdown）。图片字节由调用方落盘（convertDocNoteToMd）。 */
 export async function convertDocxToMarkdown(
   path: string
-): Promise<{ markdown: string; images: Array<{ name: string; bytes: Uint8Array }> }> {
+): Promise<{
+  markdown: string;
+  images: Array<{ name: string; bytes: Uint8Array }>;
+  /** DE 轮 M4：表格含合并单元格（GFM 平铺降级——提示用，spike④ 清单）。 */
+  flattenedSpans: boolean;
+}> {
   const bytes = await readDocNoteBytes(path);
   const mammoth = await loadMammoth();
   // arrayBuffer 传副本——不暴露缓存本体给 mammoth 的 unzip 层。
@@ -444,9 +494,10 @@ export async function convertDocxToMarkdown(
     images.push({ name, bytes: parsed.bytes });
     img.setAttribute("src", `assets/${name}`);
   });
+  const flattenedSpans = !!doc.querySelector("td[colspan],td[rowspan],th[colspan],th[rowspan]");
   const { convertHtmlToMarkdown } = await import("./htmlToMarkdown");
   const markdown = await convertHtmlToMarkdown(doc.body.innerHTML);
-  return { markdown, images };
+  return { markdown, images, flattenedSpans };
 }
 
 export interface DocConvertResult {
@@ -577,7 +628,9 @@ export async function convertDocNoteToMd(path: string): Promise<DocConvertResult
       }
     }
     content = r.markdown;
-    note = r.images.length > 0 ? `已转换（${r.images.length} 张图片落 assets/）` : "已转换";
+    note =
+      (r.images.length > 0 ? `已转换（${r.images.length} 张图片落 assets/）` : "已转换") +
+      (r.flattenedSpans ? "；表格含合并单元格，已按平铺表格转换" : "");
   }
   await fs.writeTextFile(mdPath, content);
   return { mdPath, note };

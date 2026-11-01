@@ -155,12 +155,54 @@ describe("rebuildPdfParagraphs", () => {
     expect(rebuildPdfParagraphs([line])).toBe("Hel lo");
   });
 
-  it("项目符号起新段", () => {
+  it("项目符号转 MD 列表语法（DE 轮 M4）", () => {
     const page = [
       P("• 项目一", 0, 100, 50),
       P("• 项目二", 0, 88, 50),
     ];
-    expect(rebuildPdfParagraphs([page])).toBe("• 项目一\n\n• 项目二");
+    expect(rebuildPdfParagraphs([page])).toBe("- 项目一\n\n- 项目二");
+  });
+
+  it("M4：数字/字母编号转 MD 有序列表（保留原编号；软换行并入列表项）", () => {
+    const page = [
+      P("1、采购清单如下", 0, 100, 20),
+      P("2、验收标准见附录", 0, 86, 20),
+      P("b) 次要条款", 0, 72, 20),
+    ];
+    expect(rebuildPdfParagraphs([page])).toBe(
+      "1. 采购清单如下\n\n2. 验收标准见附录\n\nb. 次要条款"
+    );
+    // 软换行延续并入前一项（gap 16 < 20×1.9，无新 bullet）。
+    const wrapped = [
+      P("- 第一项开头", 0, 100, 20),
+      P("第一项的换行延续", 0, 84, 20),
+    ];
+    expect(rebuildPdfParagraphs([wrapped])).toBe("- 第一项开头第一项的换行延续");
+  });
+
+  it("M4：字号聚类映射标题层级（#/##/###）", () => {
+    // 正文行占多数 → 页中位字号 20；24→###、30→##、40→#；标题与前行距需
+    // > 1.2×中位（真实页面正文占多数，中位数即正文字号）。P 第 5 参为字号。
+    const page = [
+      P("大标题一级", 0, 700, 60, 40),
+      P("二级标题样例", 0, 650, 60, 30),
+      P("三级小节标题", 0, 610, 60, 24),
+      P("正文第一行占位，字号二十。", 0, 570, 60, 20),
+      P("正文第二行占位，字号二十。", 0, 556, 60, 20),
+      P("正文第三行占位，字号二十。", 0, 542, 60, 20),
+      P("正文第四行占位，字号二十。", 0, 528, 60, 20),
+      P("正文第五行软换行延续", 0, 514, 60, 20),
+    ];
+    const out = rebuildPdfParagraphs([page]);
+    expect(out).toContain("# 大标题一级");
+    expect(out).toContain("## 二级标题样例");
+    expect(out).toContain("### 三级小节标题");
+    expect(out.startsWith("# 大标题一级")).toBe(true);
+  });
+
+  it("M4：软换行的大字号行不误判为标题（行距不足 1.2×中位）", () => {
+    const page = [P("大字行", 0, 100, 40, 30), P("大字行续", 0, 88, 40, 30)];
+    expect(rebuildPdfParagraphs([page])).toBe("大字行大字行续");
   });
 
   it("页间 --- 分隔；空页跳过", () => {
