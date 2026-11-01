@@ -69,6 +69,7 @@ import { mathLiveGuardPlugin } from "../lib/mathLiveGuard";
 import { normalizeMathDelimiters } from "../lib/mathNormalize";
 import { mathConfigSignature, parseMathMacros } from "../lib/mathConfig";
 import { cvIntrinsicPlugin, startCvPrewarm } from "../lib/cvMemory";
+import { blockSelectionHighlight } from "../lib/blockSelectionHighlight";
 import { startMathCachePrewarm } from "../lib/mathCachePrewarm";
 import { noteScrollWrite } from "../lib/scrollDebug";
 import { sysEmit } from "../lib/sysDebug";
@@ -919,6 +920,13 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       if (cvDocRef.current) {
         crepe.editor.use(cvIntrinsicPlugin);
       }
+
+      // 跨块选区高亮：拖选跨过代码块/公式块时块被嵌套 CodeMirror
+      // 编辑面绕过、原生选区画不进去——对完全被覆盖的 code_block/image/
+      // table/hr 加 node 装饰补视觉（状态选区零改动）。全档无条件注册；
+      // big 档 code_block 回落纯 pre/code 原生可画，覆盖层由 CSS 在
+      // [data-big] 下关闭。见 lib/blockSelectionHighlight.ts 头注。
+      crepe.editor.use(blockSelectionHighlight);
 
       try {
         await crepe.create();
