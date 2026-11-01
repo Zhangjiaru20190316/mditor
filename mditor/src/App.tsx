@@ -82,8 +82,12 @@ import {
 import { isReadonlyTab, isDocEditActive, isViewOnlyTab } from "./lib/noteKind";
 import {
   discardDocEdit,
+  endSaving,
   enterDocEdit,
+  markSaving,
+  type DocEditHandle,
 } from "./lib/docNoteEdit";
+import { DocNoteConflictError, saveDocNoteEdited } from "./lib/docNoteSave";
 import { HtmlNoteView } from "./components/HtmlNoteView";
 import { PdfNoteView } from "./components/PdfNoteView";
 import { DocxNoteView } from "./components/DocxNoteView";
@@ -1987,17 +1991,108 @@ function App() {
   }, []);
 
   // ---- HN 轮：HTML 笔记导入（= 拷贝入 vault；原文件不动，冲突自动改名）------
-  /** DE 轮：Ctrl+S 分流目标（useMenuCommands）——编辑态标签的保存走
-   *  docNoteSave 另存/替换流程。返回 false = 活动标签不在编辑态（调用方
-   *  回落 md 管线）。M1 为接线占位——Word 支路（M2）/PDF 支路（M3）交付。 */
+  /** DE 轮 M2：编辑面命令句柄注册表（键 = docTabKey）。视图挂载编辑面时注册
+   *  { serialize }，卸载/切走时注销——App 统一编排保存，视图不碰落盘。 */
+  const docEditHandlesRef = useRef(new Map<string, DocEditHandle>());
+  const registerDocEditHandle = useCallback((path: string, handle: DocEditHandle | null) => {
+    const k = docTabKey(path);
+    if (handle) docEditHandlesRef.current.set(k, handle);
+    else docEditHandlesRef.current.delete(k);
+  }, []);
+
+  /** 编辑面 → TabItem.dirty 回写（docNoteEdit 之外唯一的 dirty 写入路径）。 */
+  const onDocEditDirtyChange = useCallback((path: string, dirty: boolean) => {
+    const k = docTabKey(path);
+    setTabs((ts) => ts.map((t) => (t.key === k ? { ...t, dirty } : t)));
+  }, []);
+
+  /** 保存成功后按路径递增——视图据此清内部状态/重载预览（替换原件场景）。 */
+  const [docEditSavedTokens, setDocEditSavedTokens] = useState<Record<string, number>>({});
+  const bumpDocEditSaved = useCallback((path: string) => {
+    const k = docTabKey(path);
+    setDocEditSavedTokens((m) => ({ ...m, [k]: (m[k] ?? 0) + 1 }));
+  }, []);
+
+  /** 保存执行体（Ctrl+S 与视图按钮共用）。mode=replace 的二次确认由
+   *  replaceDocEditTab 完成；本函数只管保存语义（指纹校验 + 另存/替换）。 */
+  const runDocEditSave = useCallback(
+    async (path: string, mode: "save-as" | "replace"): Promise<boolean> => {
+      const handle = docEditHandlesRef.current.get(docTabKey(path));
+      if (!handle) {
+        flashStatus("编辑面尚未就绪", 4000);
+        return false;
+      }
+      if (isPdfNote(path)) {
+        // PDF 支路（M3 交付：applyPdfPatches 原始字节重放）。
+        flashStatus("PDF 微编辑保存随 M3 交付", 5000);
+        return false;
+      }
+      markSaving(path);
+      try {
+        const r = await saveDocNoteEdited(
+          path,
+          async () => {
+            const html = handle.serialize().htmlBuffer ?? "";
+            const { buildDocx } = await import("./lib/exporter");
+            const { collectThemeCss } = await import("./lib/themeCss");
+            const b = await buildDocx({ html, css: collectThemeCss(), docPath: null });
+            return b.bytes;
+          },
+          mode
+        );
+        const k = docTabKey(path);
+        setTabs((ts) => ts.map((t) => (t.key === k ? { ...t, dirty: false } : t)));
+        bumpDocEditSaved(path);
+        flashStatus(
+          r.mode === "replace"
+            ? "已替换原文件（原件已移入回收站）"
+            : `已另存「${baseName(r.path)}」`,
+          6000
+        );
+        return true;
+      } catch (e) {
+        if (e instanceof DocNoteConflictError) {
+          void showAlert(
+            "原文件已被外部程序修改，本次保存未执行。可退出编辑后重新打开以加载新内容。",
+            "Mditor",
+            "warning"
+          );
+        } else {
+          noteOpError("doc-edit-save", e);
+          void showAlert(`保存失败：${String(e).slice(0, 160)}`, "Mditor", "error");
+        }
+        return false;
+      } finally {
+        endSaving(path);
+      }
+    },
+    [flashStatus, bumpDocEditSaved]
+  );
+
+  /** DE 轮：Ctrl+S 分流目标（useMenuCommands）——编辑态默认另存（零对话框，
+   *  conflictFreeName 兜底，G3「默认另存」语义）。返回 false = 活动标签不在
+   *  编辑态（调用方回落 md 管线）。 */
   const saveDocEditTab = useCallback(async (): Promise<boolean> => {
     const tab = tabsRef.current.find((t) => t.key === activeKeyRef.current);
-    if (!isDocEditActive(tab)) return false;
-    flashStatus("该格式的保存功能即将交付（当前编辑面为占位态）", 6000);
-    return true;
-  }, [flashStatus]);
+    if (!isDocEditActive(tab) || !tab?.path) return false;
+    return runDocEditSave(tab.path, "save-as");
+  }, [runDocEditSave]);
   const saveDocEditTabRef = useRef(saveDocEditTab);
   saveDocEditTabRef.current = saveDocEditTab;
+
+  /** 替换原件（显式按钮）：二次确认文案按格式分级（任务书 §五 2/4）——
+   *  确认即执行（按钮 = 第一次，本对话框 = 第二次）。 */
+  const replaceDocEditTab = useCallback(
+    async (path: string): Promise<void> => {
+      const copy = isPdfNote(path)
+        ? "替换原文件：未编辑内容保留原样，被编辑行按补丁重绘；原件将移入系统回收站（可恢复）。确认替换？"
+        : "替换原文件：保存产物按 mditor 样式重新生成（原字体/页眉页脚/分节/文本框不保留）；原件将移入系统回收站（可恢复）。确认替换？";
+      const ok = await choiceDialog(copy, "替换原文件", "取消");
+      if (!ok) return;
+      await runDocEditSave(path, "replace");
+    },
+    [runDocEditSave]
+  );
 
   // 菜单与拖放两个入口共用；完成后广播 vault-mutated 刷新文件树并打开首篇。
   const doImportHtmlNotes = useCallback(
@@ -3508,6 +3603,11 @@ function App() {
             editActive={isDocEditActive(activeTabForTitle)}
             onEnterEdit={enterDocEditMode}
             onExitEdit={exitDocEditMode}
+            onRegisterEditHandle={registerDocEditHandle}
+            onDirtyChange={onDocEditDirtyChange}
+            onRequestSave={(p) => void runDocEditSave(p, "save-as")}
+            onRequestReplace={replaceDocEditTab}
+            savedToken={docEditSavedTokens[docTabKey(activeTabForTitle.path)] ?? 0}
           />
         )}
         {docxActive && activeTabForTitle?.path && (
@@ -3518,6 +3618,11 @@ function App() {
             editActive={isDocEditActive(activeTabForTitle)}
             onEnterEdit={enterDocEditMode}
             onExitEdit={exitDocEditMode}
+            onRegisterEditHandle={registerDocEditHandle}
+            onDirtyChange={onDocEditDirtyChange}
+            onRequestSave={(p) => void runDocEditSave(p, "save-as")}
+            onRequestReplace={replaceDocEditTab}
+            savedToken={docEditSavedTokens[docTabKey(activeTabForTitle.path)] ?? 0}
           />
         )}
       </main>

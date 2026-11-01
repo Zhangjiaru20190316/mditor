@@ -414,6 +414,90 @@ export interface DocConvertResult {
   note: string;
 }
 
+// ---- DE 轮 M2：Word 原位编辑水合管线（spike④ 配方）----------------------------
+
+/** mammoth HTML → 编辑面可承载 HTML 的预处理（纯函数，DOMParser 不执行脚本）。
+ *  spike④-B 实测配方（docs/doc-note-edit-spike-report.md）——每次进入编辑面
+ *  都要执行（含切回重水合，Crepe 自身序列化的表格也包 <p>）：
+ *  ① 消毒闸门（S10 延伸：mammoth 产物进编辑面必过）；
+ *  ② 单元格内 <p> 解包为 <span>（turndown-gfm 拒绝块级单元格→保留原始 HTML
+ *     表→Crepe 丢弃，表格死亡链的断点）；
+ *  ③ 各行截齐/补齐到最大列数 + 首行提升 <th>（GFM 管道表无 colspan/rowspan
+ *     且要求首行表头——合并单元格降级为平铺，内容不丢）。
+ *  返回 flattenedSpans = 输入含合并单元格（调用方据此提示降级）。 */
+export function preprocessMammothHtmlForEdit(html: string): {
+  html: string;
+  flattenedSpans: boolean;
+} {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  doc
+    .querySelectorAll("script,style,noscript,template")
+    .forEach((el) => el.remove());
+  const flattenedSpans = !!doc.querySelector("td[colspan],td[rowspan],th[colspan],th[rowspan]");
+  // span 属性先检测后剥离（GFM 管道表无合并语义，留着只会污染透传 HTML）。
+  doc.querySelectorAll("td[colspan],td[rowspan],th[colspan],th[rowspan]").forEach((cell) => {
+    cell.removeAttribute("colspan");
+    cell.removeAttribute("rowspan");
+  });
+  doc.querySelectorAll("td p, th p").forEach((p) => {
+    const span = p.ownerDocument.createElement("span");
+    span.innerHTML = p.innerHTML;
+    p.replaceWith(span);
+  });
+  doc.querySelectorAll("table").forEach((t) => {
+    const rows = [...t.querySelectorAll("tr")];
+    const maxCells = Math.max(0, ...rows.map((r) => r.querySelectorAll("td,th").length));
+    rows.forEach((r, ri) => {
+      const cells = [...r.querySelectorAll("td,th")];
+      while (cells.length > maxCells) cells.pop()?.remove();
+      while (r.querySelectorAll("td,th").length < maxCells) {
+        r.appendChild(r.ownerDocument.createElement(ri === 0 ? "th" : "td"));
+      }
+      if (ri === 0) {
+        r.querySelectorAll("td").forEach((td) => {
+          const th = td.ownerDocument.createElement("th");
+          th.innerHTML = td.innerHTML;
+          td.replaceWith(th);
+        });
+      }
+    });
+  });
+  return { html: doc.body.innerHTML, flattenedSpans };
+}
+
+export interface DocxForEditResult {
+  /** 编辑面初始 markdown（Crepe defaultValue；经消毒 + 表格三步预处理）。 */
+  markdown: string;
+  /** mammoth 原始语义 HTML（图片 data URL 内联保持，全程不落盘）。 */
+  html: string;
+  /** 输入含合并单元格——编辑面将平铺（保存前提示文案用）。 */
+  flattenedSpans: boolean;
+}
+
+/** docx → 编辑面初始 markdown（M2，任务书 §4.1）：mammoth 语义 HTML（图片
+ *  data URL 内联）→ 消毒 + 表格预处理 → convertHtmlToMarkdown（turndown）。
+ *  与 convertDocxToMarkdown 的差异：图片不拆 assets/（编辑期全程内联，
+ *  保存链 prepareExportHtml/buildDocx 原生接受 data URL）。核心按字节入参
+ *  （convertDocxBytesForEdit），路径封装只负责取字节。 */
+export async function convertDocxBytesForEdit(bytes: Uint8Array): Promise<DocxForEditResult> {
+  const mammoth = await loadMammoth();
+  const ab = bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength
+  ) as ArrayBuffer;
+  const res = await mammoth.convertToHtml({ arrayBuffer: ab });
+  const { sanitizeExportHtml } = await import("./exportSanitize");
+  const pre = preprocessMammothHtmlForEdit(sanitizeExportHtml(res.value));
+  const { convertHtmlToMarkdown } = await import("./htmlToMarkdown");
+  const markdown = await convertHtmlToMarkdown(pre.html);
+  return { markdown, html: res.value, flattenedSpans: pre.flattenedSpans };
+}
+
+/** 路径封装：字节经 docNote 单条缓存（与视图/转 MD 共享）。 */
+export async function convertDocxForEdit(path: string): Promise<DocxForEditResult> {
+  return convertDocxBytesForEdit(await readDocNoteBytes(path));
+}
+
 /**
  * 一键「转为 Markdown 笔记」（任务书 §4.6）：
  *   * 目标 `.md` 放源文件同目录，命名 `原名.md`，冲突复用 HN 轮的

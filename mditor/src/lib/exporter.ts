@@ -702,12 +702,16 @@ export function ensureBrowserNodeGlobals(): void {
   if (g.Buffer === undefined) g.Buffer = MiniBuffer;
 }
 
-export async function exportDocx(
-  ctx: ExportContext,
-  suggestedName = "untitled.docx"
-): Promise<ExportOutcome> {
-  const path = await getAdapter().dialog.pickSaveFile(suggestedName, DOCX_FILTER);
-  if (!path) return { path: null, missing: [] };
+/**
+ * HTML → .docx 字节（EX 轮 exportDocx 中段抽取为可复用纯构建；DE 轮 M2 起
+ * Word 原位编辑的保存链复用此函数）。顺序与 exportDocx 历史行为逐项一致：
+ * S10 消毒 → 图片内联（本地+远程，未内联列报 C2）→ juice CSS 内联 →
+ * browser 全局垫片 → @turbodocx/html-to-docx。不落盘——路径决策（导出对话
+ * 框 / docNoteSave 另存/替换）由调用方承担。
+ */
+export async function buildDocx(
+  ctx: ExportContext
+): Promise<{ bytes: Uint8Array; missing: ExportImageReportItem[] }> {
   // V3.6：先把本地图片内联成 data URL —— 浏览器构建没有 sharp，相对引用的
   // 图片会被转换器直接丢弃（V3.5 已知问题）。EX Fix-C2：远程图一并抓取，
   // 失败项显式列报（转换器静默丢图的输入侧防线）。
@@ -735,8 +739,18 @@ export async function exportDocx(
   };
   const result = await htmlToDocx(inlined, null, documentOptions);
   const bytes = toArrayBuffer(result);
-  await getAdapter().fs.writeFile(path, new Uint8Array(bytes));
-  return { path, missing };
+  return { bytes: new Uint8Array(bytes), missing };
+}
+
+export async function exportDocx(
+  ctx: ExportContext,
+  suggestedName = "untitled.docx"
+): Promise<ExportOutcome> {
+  const path = await getAdapter().dialog.pickSaveFile(suggestedName, DOCX_FILTER);
+  if (!path) return { path: null, missing: [] };
+  const r = await buildDocx(ctx);
+  await getAdapter().fs.writeFile(path, r.bytes);
+  return { path, missing: r.missing };
 }
 
 /**

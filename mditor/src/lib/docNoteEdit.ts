@@ -34,6 +34,13 @@ export interface DocEditState {
 
 const states = new Map<string, DocEditState>();
 
+/** 编辑面注册到 App 的命令句柄（App 统一编排保存/序列化，视图持实例）。
+ *  挂载编辑面时注册、卸载/切走时注销（键 = docTabKey）。 */
+export interface DocEditHandle {
+  /** 序列化当前编辑缓冲（Word: Crepe getHTML 产物；PDF: patch 快照）。 */
+  serialize(): { htmlBuffer?: string; patches?: PdfPatch[] };
+}
+
 function keyOf(path: string): string {
   return docTabKey(path);
 }

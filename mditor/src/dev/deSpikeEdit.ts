@@ -189,3 +189,65 @@ export async function fixtureTableProbe(): Promise<{ tableAlive: boolean; html: 
   i.host.remove();
   return { tableAlive: /<table/.test(html), html };
 }
+
+// M2 端到端验收（真浏览器）：docx 字节 → mammoth+预处理 → 独立 Crepe →
+// getHTML → buildDocx → 产物再经 mammoth 解析验证结构存活。返回产物 base64
+// 供驱动侧落盘 + jszip 结构断言。
+export async function runWordEditE2E(docxB64: string): Promise<{
+  markdownLen: number;
+  htmlLen: number;
+  outBytes: number;
+  outB64: string;
+  checks: Record<string, boolean>;
+  backSample: string;
+}> {
+  const bin = atob(docxB64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+
+  const { convertDocxBytesForEdit } = await import("../lib/docNote");
+  const r = await convertDocxBytesForEdit(bytes);
+
+  const i1 = await mountCrepe(r.markdown);
+  const html = i1.crepe.editor.action(getHTML());
+  await i1.crepe.destroy();
+  i1.host.remove();
+
+  const { buildDocx } = await import("../lib/exporter");
+  const { collectThemeCss } = await import("../lib/themeCss");
+  const b = await buildDocx({ html, css: collectThemeCss(), docPath: null });
+
+  const { loadMammoth } = await import("../lib/docNote");
+  const mammoth = await loadMammoth();
+  const ab = b.bytes.buffer.slice(
+    b.bytes.byteOffset,
+    b.bytes.byteOffset + b.bytes.byteLength
+  ) as ArrayBuffer;
+  const back = await mammoth.convertToHtml({ arrayBuffer: ab });
+
+  const checks: Record<string, boolean> = {
+    h1: /<h1/.test(back.value),
+    h2: /<h2/.test(back.value),
+    ol: /<ol/.test(back.value),
+    ul: /<ul/.test(back.value),
+    strong: /<strong/.test(back.value),
+    table: /<table/.test(back.value),
+    imgDataUrl: /<img[^>]+src="data:/.test(back.value),
+    link: /<a href/.test(back.value),
+  };
+  let outBin = "";
+  const CH = 0x8000;
+  for (let i = 0; i < b.bytes.length; i += CH) {
+    outBin += String.fromCharCode(...b.bytes.subarray(i, i + CH));
+  }
+  const outB64 = btoa(outBin);
+  return {
+    markdownLen: r.markdown.length,
+    htmlLen: html.length,
+    outBytes: b.bytes.length,
+    outB64,
+    checks,
+    backSample: back.value.slice(0, 300),
+  };
+}
+(globalThis as unknown as { __deSpikeWordE2E?: unknown }).__deSpikeWordE2E = { runWordEditE2E };

@@ -64,6 +64,16 @@ interface Props {
   onEnterEdit?: (path: string) => void | Promise<void>;
   /** DE 轮：退出编辑（脏编辑时 App 侧确认；返回 false = 取消退出）。 */
   onExitEdit?: (path: string) => Promise<boolean> | void;
+  /** DE 轮 M3：编辑面命令句柄注册（挂载注册 / 卸载注销）。M3 接线。 */
+  onRegisterEditHandle?: (path: string, handle: import("../lib/docNoteEdit").DocEditHandle | null) => void;
+  /** DE 轮 M3：编辑面 → TabItem.dirty 回写。M3 接线。 */
+  onDirtyChange?: (path: string, dirty: boolean) => void;
+  /** DE 轮 M3：保存（另存）请求。M3 接线。 */
+  onRequestSave?: (path: string) => void;
+  /** DE 轮 M3：替换原件请求（App 侧二次确认）。M3 接线。 */
+  onRequestReplace?: (path: string) => void | Promise<void>;
+  /** DE 轮 M3：保存成功令牌（递增触发视图清态/重载）。M3 接线。 */
+  savedToken?: number;
 }
 
 // ---- 单页（命令式 canvas：React 不管控其子树，避免 reconcile 冲突）-----------
