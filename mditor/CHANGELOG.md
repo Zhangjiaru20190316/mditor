@@ -1,6 +1,200 @@
 # Changelog
 
 
+## 5.3.0（2026-11-03）：打印笔记（PI2）——应用内打印全自研，四格式一入口，不经任何外部程序
+
+任务书：`docs/prompt-print-notes.md`（PR 轮）+ 用户重设计指令（2026-11-03：
+自己写组件、不调用外部功能）。开发报告：`docs/in-app-print-report.md`。
+
+### 根因（为什么推翻 PR 轮的外部通道）
+
+PR 轮打印经「临时 HTML/PDF + openExternal 交系统浏览器/PDF 阅读器」——体验
+割裂（打印动作跳出应用、依赖 .html 文件关联、浏览器里再弹一次打印框），
+且 docx/html 需要用户在外部程序里二次操作。用户拍板重做：**打印必须应用内
+完成、组件自己写、不调用任何外部功能**。同时历史铁律继续成立且更强：webview
+打印（wry#707 静默限制 + RC-4 超大 DOM 崩溃，`docs/export-overhaul-report.md`）
+不复活——新方案根本不碰 webview 打印设施，`printIronRule.test.ts` 升级为
+**全仓零 print 调用字面量**（连 PR 轮的「打印模板唯一例外」也一并退役）。
+
+### 方案（自研四层）
+
+- **Rust GDI 直打引擎（`src-tauri/src/printing.rs`，新）**：`list_printers`
+  （EnumPrinters + 默认标记）/ `print_png_job`（后台线程：DocumentProperties
+  DEVMODE 两步法协商纸张 → CreateDC → 逐页 PNG 解码 → StretchDIBits 等比
+  居中到可打印区；HALFTONE 缩放；逐页按位图宽高比 ResetDC 切横竖向，支持
+  混排 PDF）/ `print_job_cancel`（页边界生效）。进度经 `print-job-progress`
+  事件回推；release panic=abort 下全路径零 panic（错误全走显式字符串）。
+  依赖仅 windows-sys 两个 feature 扩展 + png crate（纯 Rust 解码器）；
+- **PDF 管线横向（`exportPdfPipeline.ts` 小改）**：`orientation` 选项——
+  横向版心宽高交换，单点注入（工厂版心/分页/组装器尺寸全部由此派生），
+  导出路径不传该参数、行为零变化；
+- **内容层（`lib/printJob.ts`，重构自 printNote.ts）**：四 kind 打印源单一
+  事实源——md 走 `buildExportContext`（与导出同序）、docx 走 mammoth（副本
+  纪律）、html 走**应用内重排版**（提取 body + 收集内联/本地 link 样式 +
+  css url() 绝对化 + 本地图内联；远程样式表跳过并提示——保真度边界）、
+  pdf 原文件零转码直打；`runPrintJob` 编排（job 目录逐页 PNG → invoke →
+  事件等待 → 目录清理，先注册监听再启动零竞态）；`parsePageRange` 页码
+  范围解析（中文逗号/分号容忍、去重排序、显式错误文案）；
+- **自研对话框（`components/PrintDialog.tsx`，核心交付物）**：左侧打印机/
+  份数/页码范围/纸张/方向/边距/打印质量（150/300 DPI），右侧 pdf.js 分页
+  预览（可视渲染 + LRU 页缓存 + dpr 感知，借 PdfNoteView 惯用法）——
+  **所见即所打**（打印页由同一 doc 光栅化）；参数改动防抖 500ms 重排（旧
+  预览保留可见）；「保存 PDF…」直存当前预览；偏好记忆（`printPrefs` 新
+  设置键：纸张/方向/边距/上次打印机，Word 同款）；无打印机降级为仅保存
+  PDF；打印中页边界取消 + 双阶段进度（渲染/打印）。
+
+### 从 PR 轮继承与退役
+
+- 继承：`wrapStandaloneHtml` 共享骨架抽取（exporter）、tauri.conf.json 的
+  shell.open 本地路径正则（HtmlNoteView 按钮仍用）、菜单/键位/视图按钮
+  入口（`file_print` / Ctrl+Shift+P）、`cleanupOldPrintFiles` 48h 清理
+  （升级为递归清理遗留 job 目录与旧件）；
+- 退役：`lib/printNote.ts` 整体删除（浏览器/PDF 阅读器双通道、
+  `wrapPrintHtml`/`injectPrintAssets`/自动打印脚本模板）；`printChannel`
+  设置键删除（migrateSettings 幂等清除 + printPrefs 归一）；
+  `PlatformCapabilities.print` 语义改为应用内打印（harmony 维持保守关——
+  GDI 为 Windows 实装，鸿蒙打印 API 留待后续轮次）。
+
+### 发布前加固轮（2026-11-04，全量审查 + 性能/动效迭代）
+
+- **安全面**：移除 shell:allow-open 的 `$APPDATA/**` 死条目（plugin-shell
+  2.3.5 的 open 只认 tauri.conf.json 正则，条目系 PR 轮遗留装饰）；正则
+  本体保留——它修的是「用系统应用打开」本地文件的存量坏损。`print_png_job`
+  增页路径域校验（仅 appDataDir/print/），命令面不成为把盘上任意文件送
+  物理打印机的外泄通道；
+- **bug 修复**：默认打印机标记失效（GetDefaultPrinterW 返回长度含 NUL）；
+  打印↔重排防抖竞态（打印中 doc 被重排销毁→打印中途失败，三重修复）；
+  CSS url() 背景图 file:/// 被 CSP 静默拦截（改 fs 读取 + base64 data:
+  内联，与 <img> 同语义）；invoke 窗口期取消竞态补发；多窗口同秒作业目录
+  碰撞（目录名并入 jobId）；HORZRES≤0 静默白页改显式失败；排版失败后改
+  参数可重试（不再逼用户关掉重开）；
+- **性能**：份数下沉 DEVMODE dmCopies（驱动接受则页循环单遍，同一 PNG 不
+  再每份重复解码——300 DPI 多份大文档省分钟级纯 CPU；驱动不接受自动回退
+  外循环并回写 dmCopies=1 防叠加复制）；
+- **UI/动效**：对话框进出场动画（退场播完再卸载）、控件过渡 + focus-visible
+  焦点环、预览 canvas 轻淡入、lively 档 sheet 曲线 + 侧栏字段级联；「无」
+  档/reduced-motion 由全局 kill switch 压为瞬时。
+
+### 二次加固轮（2026-11-06，三路并行代码审查：漏洞/竞态/泄漏 + 性能与动效迭代）
+
+P0×1 / P1×5 / P2×15 全量修复；1343 → 1347 前端测试 + Rust 34 → 35 全绿。
+
+- **P0 安全（任意代码执行通道封堵）**：`plugins.shell.open` 正则原允许任意
+  盘符/UNC 路径——`open` 命令经 ShellExecuteExW 默认 verb，对 .exe/.bat 等
+  等效「渲染进程可执行任意程序」（capability 的 url 白名单对 open 不生效，
+  该正则是唯一闸门；plugin-shell 源码 scope.rs:207 核实）。收紧为外链
+  （https?/mailto/tel）+ 白名单文档扩展名（`$` 锚定挡 `a.pdf.exe` 双扩展
+  绕过，8.3 短名同被挡）；目录/无扩展名不放行——日志目录改走新专用命令
+  `open_logs_dir`（commands.rs，后端解析路径，前端零输入面；devMode
+  诊断面板改道）。正则语义用 Rust 测试钉死（lib.rs `shell_open_scope_tests`
+  ——该正则运行时才编译，语法错误=启动 panic，cargo check 不覆盖）；
+- **P1 路径遍历**：`print_png_job` 页路径校验只做分隔符归一+前缀比较，
+  `print/../../x.png` 可绕过（把盘上任意 PNG 送物理打印机的外泄通道没闭合
+  ——正是该校验的存在意义）。改词法规范化（消除 `./..` 段、越顶拒绝，
+  commands.rs `is_log_path_confined` 同款威胁模型）后再前缀比较；
+- **P1 打印错文档**：对话框开着时再按 Ctrl+Shift+P（穿透模态）只替换
+  request prop——内容源 effect 依赖 `[]` 不响应，标题换成文档 B、实际打出
+  文档 A（所见非所打，打印中触发时静默完成无从察觉）。`doPrint` 防重入
+  （`printReqRef` 守卫 + 提示），关闭后自然解锁；
+- **P1 pdfjs 泄漏**：改参数触发重排（新 AbortController）后立即关对话框——
+  卸载 cleanup 只 abort 初始 ctrl（早已完成），在途重排跑完全程把新 pdfjs
+  文档写回 `docTaskRef`，而 destroy 已执行过→worker 端悬挂到窗口销毁。
+  cleanup 补 `layoutAbortRef.current?.abort()`（runLayout 内已有 abort→
+  destroy 分支接手收尾）+ 清残留防抖定时器；
+- **P1 密钥不可恢复丢失（既有缺陷）**：凭据库单槽位瞬时读取失败（凭据服务
+  重启窗口）与「无值」不可区分→MARK 被清成空串→该会话任一次保存触发
+  `secretDel`——AI/同步密钥静默永久丢失、零提示。双点修复：hydrate 读
+  失败单独标记（保留 MARK 不清空 + sysEmit warn）；saveSettings 遇 MARK
+  跳过 secretDel（值在库里只是没读出来，删=销毁）。回归锚点
+  `store.secrets.test.ts`（故障会话→保存→库恢复→密钥完整水合）；
+- **P1 UI 冻结**：`list_printers` 同步命令在主线程跑 EnumPrintersW（网络
+  打印机/spooler 慢时整窗冻结秒级）——改 async + `spawn_blocking`；
+- **P2 批量**：取消后终态事件永不到达（GDI 长阻塞/事件丢失）时前端永卡
+  printing——settled 加 15s 超时按已取消收场；已取消作业即使先收到 done
+  也不再报「已发送到打印队列」；份数/纸张非法值从静默钳制/丢弃改显式报错
+  （对齐铁律 5）；锁中毒三处统一毒化取值（insert 被跳过=不可取消的幽灵
+  作业）；job_id 注册表判重；PNG 解码加 512MB 像素上限（巨型分配是 abort、
+  catch 不住，release panic=abort 整进程闪退）；偏好回写首挂跳过（打开
+  对话框看一眼不再写盘+全窗口广播，lastPrinter 不被默认打印机静默覆盖）；
+  CropBox 原点非零的外来 PDF 预览比例失真（view[2]-view[0]）；jobId 补随机
+  段（多窗口同毫秒可撞：注册表串线/事件互收/目录互删）；「保存 PDF…」
+  忙碌态防重复触发；`inlineCssUrls` 共享 g 正则改每次调用局部实例（循环内
+  await 的 lastIndex 互踩雷）；打印临时件启动清理加 main 窗口门控（doc-*
+  子窗口不再重复扫盘）；printPrefs 值域三处手写抽 `lib/pdfPaperValues.ts`
+  零依赖模块单一事实源（store.ts 首屏路径引重模块的纪律不破）；
+- **UI/动效/可达性**：对话框焦点圈禁（Tab 循环面板内 + 打开即聚焦首控件
+  ——此前键盘可落到被遮住的背景 UI）；页卡入场动效（lively 档前三张
+  25ms 级联）；对话框内提示条（矢量回退/远程样式跳过此前打进被模态遮住
+  的底部状态栏=用户看不到）；「无」档/reduced-motion 全局 kill switch 继续
+  覆盖；
+- **测试**：PrintDialog 5→8 例（失败复位+显式报错 / 打印中取消传递与收场 /
+  docx 源准备失败态）；store.secrets +1 例密钥丢失回归；Rust +1 例正则
+  语义锚点。
+
+### 锚点
+
+- `printJob.test.ts`（19 例）：页范围解析 / html 提取各形态（大写标签、
+  残缺文档、远程 link 计数）/ css url() data: 内联（含失败计数）/ 临时件
+  命名 / 清理 / 作业编排（完整链含 jobId 目录前缀、failed 抛错且目录仍
+  清理、渲染阶段 abort 不触 invoke）；
+- `PrintDialog.test.tsx`（8 例）：ready 控件齐全 / 无打印机降级 / 自定义
+  范围校验与打印传参+偏好回写 / pdf kind 参数禁用 / Esc 关闭 / 失败复位+
+  显式报错 / 打印中取消传递与收场 / docx 源准备失败态；
+- `printIronRule.test.ts`（升级）：全仓零 print 字面量 + printJob 零
+  openExternal 引用；
+- `defaults.test.ts`：printPrefs 键与默认值锚定；管线横向数学锚点；
+- 首屏零增量：打印面只在 `PrintDialog-*.js`（18 kB）/ `printJob-*.js`
+  独立 chunk，`print-job-progress`/`printdlg-` 标记在 index 等 chunk 零命中。
+
+### 已知边界
+
+- GDI 位图打印（150/300 DPI）：文字质量与矢量无肉眼差异；打印机队列状态
+  不回查（完成口径 =「已发送到打印队列」）；
+- html 笔记应用内重排版：页面宽度驱动布局会重排、远程样式表跳过（对话框
+  明示）；需要原样时用「保存 PDF」外自行处理；
+- 打印机未装所选纸张：驱动默认处理（缩放/提示），与 Word 同行为；取消在
+  页边界生效（当前页输出完成后停止）。
+
+### 云同步按工作区自定义范围（2026-11-06，每根过滤 + 云端副本清理）
+
+设置 → 云同步 →「云端目录名与同步范围」每根新增「范围…」对话框
+（`SyncScopeDialog.tsx`）：① 启用开关（停用根整根跳过，云端副本保留）；
+② 同步文件类型「跟随默认 / 自定义」（替换式完整白名单，默认
+md/html/pdf/docx 预置 chips + 自由追加）；③ 目录树勾选（懒加载
+`fs.readDir`，仅目录、三态复选、`.` 目录恒不同步禁用态）；④ 高级排除
+规则（含 `*` 叶子锚定通配 / 字面目录语义，`lib/sync/ignore.ts`
+`isExcludedRelPath` 纯匹配器）。安全语义（`ignore.ts` 头注释）：每根配置
+在本地扫描与远端 List **双侧一致**过滤——范围外远端对象对本端不可见、
+永不误删；被排除的已跟踪条目走 `deleted|deleted → clearRecord` 自然清出
+清单，云端副本保留为孤儿；范围配置**不**折进 `remoteFingerprint`（变更靠
+矩阵收敛，避免全库首同步冲突副本风暴）。用户确认「同时删除云端副本」走
+`pendingPurges` 持久化队列，引擎 purge 阶段执行（不受批量删除保险拦截，
+范围内 key 跳过保护，失败留队列重试，成功经 `onPurged` 回调清除）。
+锚点：`ignore.test.ts`（白名单参数化 + 排除匹配器）/ `engine.test.ts`
+（custom 白名单双侧生效、clearRecord 零删除、purge 成功/失败/非法路径）/
+`trigger.test.ts`（停用根零网络、队列执行与回调）/ `settingsNormalize.test.ts`
+（rootOptions / pendingPurges 归一）。
+
+### 按工作区选择文件树显示的笔记类型（2026-11-06，v5.3）
+
+打开的工作区不必显示全部类型：每根可选 Markdown/HTML/PDF/Word 哪些出现在
+文件树（`Settings.workspaceOptions: Record<根, { fileTypes?: NoteKind[] }>`，
+替换式，缺省 = 全部）。三个入口：① 添加/替换工作区选完文件夹后弹一次
+`WorkspaceFileDialog`（默认全选，确认才入工作区，取消 = 中止；全选不写键）；
+② 设置 → 工作区 每根行「文件类型…」（随「应用」落盘）；③ 文件树根区头部
+「类型」按钮（即时落盘）。管线：`tauriFs.resolveTreeExts`（类型子集 → 扩展
+名并集；空/全选 → undefined 不过滤）→ `readDirLevel` 第三参 `allowed`
+（目录恒保留；`collectMdPathsFromDisk` 删除收集不受影响）。**生效面仅文件
+树**——全局搜索 / QuickSwitcher / RAG 索引行为不变（它们本就不含
+pdf/docx）。FileTree 重载 effect 依赖 `fileTypesKey`（JSON 串，原始值防
+无关重渲整树重读）；根匹配用既有 `rootOf`。a11y 修正：多控件分组 Field
+（含按钮的「云端目录名与同步范围」「文件树显示的笔记类型」）从 `<label>`
+改 `FieldGroup`（div）——label 隐式关联会把整段分组文本算进按钮的
+accessible name。锚点：`tauriFs.test.ts`（resolveTreeExts + allowed 过滤）/
+`WorkspaceFileDialog.test.tsx` / `SettingsModal.test.tsx`（每根行 + 全选删
+键）/ `FileTree.test.tsx`（「类型」按钮）/ `settingsNormalize.test.ts`
+（workspaceOptions 归一：白名单子集、空表/全选剔键）。
+
 ## 5.2.0（2026-11-01）：跨块选区高亮——一次选中文字 + 中间的代码块/公式块
 
 ### 根因
