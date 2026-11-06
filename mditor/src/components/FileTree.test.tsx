@@ -80,6 +80,31 @@ afterEach(() => {
   cleanup();
 });
 
+describe("FileTree 根区「类型」按钮（v5.3 按工作区选文件树类型）", () => {
+  it("onEditFileTypes 提供时渲染「类型」按钮，点击回传根路径", async () => {
+    const onEditFileTypes = vi.fn();
+    render(
+      <FileTree
+        roots={[ROOT]}
+        activePath={null}
+        onOpen={vi.fn()}
+        excludedPaths={new Set()}
+        onEditFileTypes={onEditFileTypes}
+      />
+    );
+    await waitFor(() => expect(rows()).toHaveLength(3));
+    const btn = document.querySelector<HTMLButtonElement>(".ft-section-kinds");
+    expect(btn).not.toBeNull();
+    fireEvent.click(btn!);
+    expect(onEditFileTypes).toHaveBeenCalledWith(ROOT);
+  });
+
+  it("未提供 onEditFileTypes 时按钮不渲染（既有用法零变化）", async () => {
+    await mountTree();
+    expect(document.querySelector(".ft-section-kinds")).toBeNull();
+  });
+});
+
 describe("FileTree 键盘可达（roving tabindex + 方向键导航）", () => {
   it("初始 tab stop：无 activePath 时为第一行；仅该行 tabIndex=0", async () => {
     await mountTree();

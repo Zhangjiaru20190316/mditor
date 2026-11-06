@@ -137,6 +137,14 @@ interface Props {
   onExclude?: (path: string) => void;
   /** 把一个根从工作区移除（多根区头的 ×；磁盘不受影响，App 负责持久化）。 */
   onRemoveRoot?: (root: string) => void;
+  /**
+   * v5.3 按工作区选文件树类型：根路径 → 允许显示的扩展名集合
+   * （App 由 settings.workspaceOptions 经 resolveTreeExts 预展开；缺根或
+   * undefined = 不过滤）。仅传给 readDirLevel 的文件分支。
+   */
+  treeExtsByRoot?: Record<string, ReadonlySet<string> | undefined>;
+  /** v5.3：根区头部「类型」按钮——打开该根的文件类型选择对话框。 */
+  onEditFileTypes?: (root: string) => void;
 }
 
 interface MenuState {
@@ -145,7 +153,7 @@ interface MenuState {
   node: TreeNode;
 }
 
-export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOpenNewWindow, onConvertToMarkdown, onChanged, excludedPaths, onExclude, onRemoveRoot }: Props) {
+export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOpenNewWindow, onConvertToMarkdown, onChanged, excludedPaths, onExclude, onRemoveRoot, treeExtsByRoot, onEditFileTypes }: Props) {
   // T4: lazy tree state — dir path → loaded children, the expanded set, and the
   // set of dirs whose children are currently being read (for a "…" placeholder).
   const [childrenMap, setChildrenMap] = useState<Map<string, TreeNode[]>>(new Map());
@@ -187,8 +195,20 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
   onExcludeRef.current = onExclude;
   const onRemoveRootRef = useRef(onRemoveRoot);
   onRemoveRootRef.current = onRemoveRoot;
+  const onEditFileTypesRef = useRef(onEditFileTypes);
+  onEditFileTypesRef.current = onEditFileTypes;
   const excludedPathsRef = useRef(excludedPaths);
   excludedPathsRef.current = excludedPaths;
+  // v5.3 每根类型集合镜像（稳定回调读活值）+ 变更键（重载 effect 依赖用
+  // 原始串——Record 引用不稳定，直接进依赖数组会随无关渲染整树重读）。
+  const treeExtsRef = useRef(treeExtsByRoot);
+  treeExtsRef.current = treeExtsByRoot;
+  const fileTypesKey = JSON.stringify(treeExtsByRoot ?? {});
+  /** dir 所属根的允许扩展名集合；无匹配根 / 未配置 → undefined（不过滤）。 */
+  const allowedFor = useCallback((dir: string): ReadonlySet<string> | undefined => {
+    const root = rootOf(dir, rootsRef.current);
+    return root ? treeExtsRef.current?.[root] : undefined;
+  }, []);
   // Ref mirrors of the lazy-map state, read inside stable callbacks/effects.
   const childrenMapRef = useRef(childrenMap);
   childrenMapRef.current = childrenMap;
@@ -244,7 +264,7 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
   // ---- (re)load one level into the centralized map ------------------------
   const reloadDir = useCallback(async (dir: string) => {
     try {
-      const entries = await readDirLevel(dir, excludedPathsRef.current);
+      const entries = await readDirLevel(dir, excludedPathsRef.current, allowedFor(dir));
       setChildrenMap((prev) => {
         const old = prev.get(dir);
         // Unchanged listing → keep the previous Map (and every memo'd subtree
@@ -272,7 +292,7 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
     const token = ++refreshTokenRef.current;
     void (async () => {
       const results = await Promise.allSettled(
-        dirs.map((d) => readDirLevel(d, excludedPathsRef.current))
+        dirs.map((d) => readDirLevel(d, excludedPathsRef.current, allowedFor(d)))
       );
       if (token !== refreshTokenRef.current) return; // superseded by a newer ↻
       const updates: Array<[string, TreeNode[]]> = [];
@@ -317,7 +337,7 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
       // changes: additions get their level, removals are pruned below).
       for (const r of roots) {
         try {
-          updates.push([r, await readDirLevel(r, excludedPaths)]);
+          updates.push([r, await readDirLevel(r, excludedPaths, allowedFor(r))]);
         } catch {
           /* ignore unreadable */
         }
@@ -329,7 +349,7 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
       );
       for (const d of loaded) {
         try {
-          updates.push([d, await readDirLevel(d, excludedPaths)]);
+          updates.push([d, await readDirLevel(d, excludedPaths, allowedFor(d))]);
         } catch {
           /* ignore */
         }
@@ -365,7 +385,7 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
     return () => {
       cancelled = true;
     };
-  }, [rootsKey, excludedPaths]);
+  }, [rootsKey, excludedPaths, fileTypesKey, allowedFor]);
 
   // ---- auto-load + expand the active file's ancestor chain ----------------
   // So the open file is always reachable in a lazily-loaded tree, walk up from
@@ -398,7 +418,7 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
           try {
             newChildren.push([
               parent,
-              await readDirLevel(parent, excludedPathsRef.current),
+              await readDirLevel(parent, excludedPathsRef.current, allowedFor(parent)),
             ]);
           } catch {
             /* ignore */
@@ -498,7 +518,7 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
           return n;
         });
         try {
-          const entries = await readDirLevel(path, excludedPathsRef.current);
+          const entries = await readDirLevel(path, excludedPathsRef.current, allowedFor(path));
           setChildrenMap((prev) => {
             const n = new Map(prev);
             n.set(path, entries);
@@ -935,6 +955,18 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
                 />
                 <FolderIcon size={14} className="ft-section-ico" />
                 <span className="ft-section-name">{basename(r) || r}</span>
+                {onEditFileTypes && (
+                  <button
+                    className="ft-section-x ft-section-kinds"
+                    title="设置此工作区在文件树中显示的笔记类型"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEditFileTypesRef.current?.(r);
+                    }}
+                  >
+                    类型
+                  </button>
+                )}
                 {onRemoveRoot && (
                   <button
                     className="ft-section-x"

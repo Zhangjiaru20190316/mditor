@@ -7,8 +7,10 @@ import { getAdapter } from "../platform";
 import type { DirEntry } from "../platform/types";
 import { dirname, basename, join, extname } from "./path-shim";
 import { tracedIo } from "./ipcTrace";
-import { isHtmlNote } from "./htmlNote";
-import { isDocNote } from "./docNote";
+import { isHtmlNote, HTML_EXTS } from "./htmlNote";
+import { isDocNote, PDF_EXTS, DOCX_EXTS } from "./docNote";
+import type { NoteKind } from "../types";
+import { NOTE_KINDS } from "../defaults";
 
 export interface TreeNode {
   name: string;
@@ -43,6 +45,38 @@ export const MD_EXT_RE = /\.(md|markdown|mdx|mdown)$/i;
 
 export function isMarkdown(name: string): boolean {
   return MD_EXTS.has(extname(name).toLowerCase());
+}
+
+/**
+ * 笔记类型 → 扩展名集合（v5.3 按工作区选文件树类型）。键与 types.NoteKind
+ * / defaults.NOTE_KINDS 一一对应；md 桶复用 MD_EXTS（md 家族四扩展名归一
+ * 类），其余桶与各自模块的单一事实源同源。
+ */
+export const NOTE_KIND_EXTS: Record<NoteKind, ReadonlySet<string>> = {
+  md: MD_EXTS,
+  html: HTML_EXTS,
+  pdf: PDF_EXTS,
+  docx: DOCX_EXTS,
+};
+
+/**
+ * 类型子集 → 文件树过滤用的扩展名并集。undefined / 空表 / 覆盖全部四类
+ * → 返回 undefined（= 不过滤，readDirLevel 走既有三谓词并集，既有行为
+ * 零变化）。白名单外的类型忽略。
+ */
+export function resolveTreeExts(
+  kinds?: readonly string[]
+): ReadonlySet<string> | undefined {
+  if (!kinds || kinds.length === 0) return undefined;
+  const valid = kinds.filter((k): k is NoteKind =>
+    (NOTE_KINDS as readonly string[]).includes(k)
+  );
+  if (valid.length === 0 || valid.length === NOTE_KINDS.length) return undefined;
+  const out = new Set<string>();
+  for (const k of valid) {
+    for (const ext of NOTE_KIND_EXTS[k]) out.add(ext);
+  }
+  return out;
 }
 
 /** Show an open-file dialog and return {path, content} or null if cancelled. */
@@ -138,7 +172,11 @@ export async function saveMdAs(
  */
 export async function readDirLevel(
   dir: string,
-  exclude?: Set<string>
+  exclude?: Set<string>,
+  /** v5.3 按工作区选文件树类型：允许显示的扩展名集合（resolveTreeExts
+   *  产物）。undefined = 不过滤（三谓词并集，既有行为）。仅影响文件分支
+   *  ——目录恒保留；删除收集（collectMdPathsFromDisk）不受此参数影响。 */
+  allowed?: ReadonlySet<string>
 ): Promise<TreeNode[]> {
   if (!(await getAdapter().fs.exists(dir))) return [];
   const out: TreeNode[] = [];
@@ -161,7 +199,11 @@ export async function readDirLevel(
     if (e.isDirectory) {
       // children deferred — lazy-loaded when the folder is expanded.
       out.push({ name: e.name, path: fullPath, isDir: true });
-    } else if (isMarkdown(e.name) || isHtmlNote(e.name) || isDocNote(e.name)) {
+    } else if (
+      allowed
+        ? allowed.has(extname(e.name).toLowerCase())
+        : isMarkdown(e.name) || isHtmlNote(e.name) || isDocNote(e.name)
+    ) {
       out.push({ name: e.name, path: fullPath, isDir: false });
     }
   }
