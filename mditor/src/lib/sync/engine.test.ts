@@ -113,6 +113,9 @@ class MemIO implements SyncIO {
   renames: Array<[string, string]> = [];
   // 故障注入：key 命中时对应操作抛错（幂等重入测试用）。
   failPut: Set<string> = new Set();
+  // v5.3 purge 测试：删除调用记录 + 故障注入。
+  deletes: string[] = [];
+  failDelete: Set<string> = new Set();
 
   /** 与 platform mock 的 appDataDir 一致（syncTempFile 的落点）。 */
   private static readonly TMP = "C:/appdata/sync/tmp";
@@ -175,6 +178,8 @@ class MemIO implements SyncIO {
     return o;
   }
   async s3Delete(key: string): Promise<void> {
+    this.deletes.push(key);
+    if (this.failDelete.has(key)) throw new Error("SYNC-999: injected delete failure");
     this.remote.delete(key);
   }
   async readManifest(): Promise<SyncManifest | null> {
@@ -220,7 +225,12 @@ class MemIO implements SyncIO {
 
 async function run(
   io: MemIO,
-  mode?: { direction?: SyncDirection; conflictPolicy?: ConflictPolicy }
+  mode?: {
+    direction?: SyncDirection;
+    conflictPolicy?: ConflictPolicy;
+    scope?: { exts: ReadonlySet<string>; exclude: { excludedDirs?: readonly string[]; excludePatterns?: readonly string[] } };
+    purgeRemote?: readonly string[];
+  }
 ) {
   const warnings: string[] = [];
   const states: Array<{ phase: string; total: number }> = [];
@@ -1167,3 +1177,129 @@ describe("冲突策略（v5.2，双向）", () => {
     expect(dec.decode(io.local.get(copyRel!)!.content)).toBe("LOCAL-NEW");
   });
 });
+
+// ---- 每根同步范围（v5.3）-----------------------------------------------------
+
+describe("每根同步范围：自定义扩展名白名单（v5.3）", () => {
+  it("custom 白名单双侧一致生效：png 进出，md 全部不可见", async () => {
+    const scope = { exts: new Set(["png"]), exclude: {} };
+    io.putLocal("a.png", "PNG");
+    io.putLocal("a.md", "MD");
+    io.putRemote("b.png", "RPNG");
+    io.putRemote("b.md", "RMD");
+    const { summary } = await run(io, { scope });
+    expect(summary.uploaded).toBe(1); // a.png
+    expect(summary.downloaded).toBe(1); // b.png
+    expect(io.remote.has(`${FULL}a.md`)).toBe(false); // 本地 md 不可见
+    expect(io.local.has("b.md")).toBe(false); // 远端 md 不可见
+    expect(io.manifests.get(ROOT)!.files["a.png"]).toBeDefined();
+    expect(io.manifests.get(ROOT)!.files["a.md"]).toBeUndefined();
+  });
+
+  it("无 scope = 内置白名单，既有行为零变化", async () => {
+    io.putLocal("a.png", "PNG");
+    io.putLocal("a.md", "MD");
+    const { summary } = await run(io);
+    expect(summary.uploaded).toBe(1); // 只有 a.md
+    expect(io.remote.has(`${FULL}a.md`)).toBe(true);
+    expect(io.remote.has(`${FULL}a.png`)).toBe(false);
+  });
+});
+
+describe("每根同步范围：目录排除与 clearRecord 语义（v5.3）", () => {
+  /** 基线：a.md 与 assets/b.md 双侧同步完成（清单已记录）。 */
+  async function baseline(): Promise<void> {
+    io.putLocal("a.md", "A");
+    io.putLocal("assets/b.md", "B");
+    io.putRemote("a.md", "A");
+    io.putRemote("assets/b.md", "B");
+    await run(io);
+    expect(io.manifests.get(ROOT)!.files["assets/b.md"]).toBeDefined();
+    io.deletes.length = 0; // 基线轮不计入断言
+  }
+
+  it("排除已跟踪目录 → 只清清单记录（clearRecord），零删除动作、本地与云端副本原样", async () => {
+    await baseline();
+    const { summary, warnings } = await run(io, {
+      scope: { exts: DEFAULT_SYNCABLE_EXTS_FOR_TEST(), exclude: { excludedDirs: ["assets"] } },
+    });
+    expect(summary.deletedRemote).toBe(0);
+    expect(io.deletes).toHaveLength(0); // 云端对象不动（孤儿保留）
+    expect(io.local.has("assets/b.md")).toBe(true); // 本地文件不动
+    expect(io.manifests.get(ROOT)!.files["assets/b.md"]).toBeUndefined(); // 记录清出
+    expect(io.manifests.get(ROOT)!.files["a.md"]).toBeDefined(); // 范围内照常
+    expect(warnings.join()).not.toContain("中止");
+  });
+
+  it("重新包含 → 清单已清空按 new|new 冲突走内容比对，同内容无副本衔接", async () => {
+    await baseline();
+    // 排除一轮（清记录）。
+    await run(io, {
+      scope: { exts: DEFAULT_SYNCABLE_EXTS_FOR_TEST(), exclude: { excludedDirs: ["assets"] } },
+    });
+    // 重新包含：双侧内容一致 → 冲突分支内容比对 → 无副本。
+    const { summary } = await run(io);
+    expect(summary.conflicts).toBe(1);
+    expect([...io.local.keys()].some((k) => k.includes("冲突"))).toBe(false);
+    expect(io.manifests.get(ROOT)!.files["assets/b.md"]).toBeDefined();
+  });
+});
+
+describe("purge 阶段（v5.3）：用户确认的云端副本清除", () => {
+  /** 范围：a.md 在范围内；assets/ 整目录被排除（远端对象对本端不可见）。 */
+  function excludedScope(): {
+    exts: ReadonlySet<string>;
+    exclude: { excludedDirs: string[] };
+  } {
+    return { exts: DEFAULT_SYNCABLE_EXTS_FOR_TEST(), exclude: { excludedDirs: ["assets"] } };
+  }
+
+  it("范围外 key 删除远端对象并清记录；范围内 key 跳过保护", async () => {
+    io.putLocal("a.md", "A");
+    io.putRemote("a.md", "A");
+    io.putRemote("assets/old.md", "OLD"); // 被排除目录下的远端副本
+    await run(io); // 基线（a.md 入清单）
+    io.deletes.length = 0;
+    const { purged, purgeFailed, summary } = await run(io, {
+      scope: excludedScope(),
+      purgeRemote: ["assets/old.md", "a.md"], // a.md 在范围内 → 必须跳过
+    });
+    expect(purged).toEqual(["assets/old.md"]);
+    expect(purgeFailed).toEqual([]);
+    expect(io.remote.has(`${FULL}assets/old.md`)).toBe(false);
+    expect(io.remote.has(`${FULL}a.md`)).toBe(true); // 活跃内容不受 purge 队列影响
+    expect(summary.notes.join()).toContain("已回到同步范围");
+  });
+
+  it("删除失败 → 进 purgeFailed 留队列重试；清单照常落盘", async () => {
+    io.putRemote("gone/lost.md", "L");
+    io.failDelete.add(`${FULL}gone/lost.md`);
+    const { purged, purgeFailed } = await run(io, {
+      scope: { exts: DEFAULT_SYNCABLE_EXTS_FOR_TEST(), exclude: { excludedDirs: ["gone"] } },
+      purgeRemote: ["gone/lost.md"],
+    });
+    expect(purged).toEqual([]);
+    expect(purgeFailed).toEqual(["gone/lost.md"]);
+    expect(io.manifests.get(ROOT)).toBeDefined(); // purge 失败不影响清单落盘
+  });
+
+  it("非法路径（.. 段）拒执行并计入失败", async () => {
+    const { purged, purgeFailed } = await run(io, { purgeRemote: ["../escape.md"] });
+    expect(purged).toEqual([]);
+    expect(purgeFailed).toEqual(["../escape.md"]);
+    expect(io.deletes).toHaveLength(0);
+  });
+
+  it("空 purge 队列 → 完全不进入 purge 分支（既有轮次零变化）", async () => {
+    io.putLocal("a.md", "A");
+    const { purged, purgeFailed } = await run(io, { purgeRemote: [] });
+    expect(purged).toEqual([]);
+    expect(purgeFailed).toEqual([]);
+    expect(io.deletes).toHaveLength(0);
+  });
+});
+
+/** 引擎测试专用：默认白名单集合（与生产 DEFAULT_SYNCABLE_EXTS 同构）。 */
+function DEFAULT_SYNCABLE_EXTS_FOR_TEST(): ReadonlySet<string> {
+  return new Set(["md", "html", "pdf", "docx"]);
+}

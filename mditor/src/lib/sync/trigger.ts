@@ -12,7 +12,7 @@
 import { getAdapter } from "../../platform";
 import type { Settings } from "../../types";
 import { sysEmit } from "../sysDebug";
-import { createDefaultSyncIO, fullPrefixOf, syncWorkspace } from "./engine";
+import { createDefaultSyncIO, fullPrefixOf, resolveRootScope, syncWorkspace } from "./engine";
 import { isSyncSupported, parseSyncError, syncConfigPayload, SYNC_ERROR_CODES } from "./s3";
 import { remoteFingerprint } from "./manifest";
 import { publishSyncState } from "./status";
@@ -44,6 +44,12 @@ export interface SyncTriggerOptions {
   getSettings: () => Settings;
   /** 读当前工作区根列表。 */
   getRoots: () => SyncRootSpec[];
+  /**
+   * v5.3：purge 阶段成功删除的云端副本回调——App 据此把这些 relPath 从
+   * settings.sync.pendingPurges[root] 移除并落盘。缺省 = 不清理（队列原样
+   * 保留，仅测试场景）。
+   */
+  onPurged?(root: string, purged: string[]): void;
 }
 
 export interface SyncTrigger {
@@ -111,6 +117,21 @@ export function assembleSyncTrigger(opts: SyncTriggerOptions): SyncTrigger | nul
       for (const spec of specs) {
         const root = spec.path;
         if (disposed) return;
+        // v5.3 每根范围：本根被停用 → 整根跳过（云端已有副本保留不动，
+        // 清单原样保留；重新启用后按既有 3-way 语义自然续接）。静默跳过：
+        // 这是用户配置的预期行为，不进状态事件，只留诊断。
+        const rootOpts = s.rootOptions[root];
+        if (rootOpts?.enabled === false) {
+          sysEmit("sync:root-skipped", `工作区已停用云同步，本轮跳过：${root}`, {
+            level: "info",
+            data: { root },
+          });
+          continue;
+        }
+        // v5.3：范围覆盖与待清除队列每轮实时解析（与 direction/policy 同一
+        // 惯例——设置修改即时生效，无需重建触发器）。
+        const scope = resolveRootScope(rootOpts);
+        const purge = s.pendingPurges[root];
         await publishTracked({ status: "syncing", phase: "scan", root, done: 0, total: 0 });
         try {
           // D1：远端身份指纹（endpoint+bucket+完整前缀）。remoteDir 参与指纹
@@ -164,11 +185,16 @@ export function assembleSyncTrigger(opts: SyncTriggerOptions): SyncTrigger | nul
               : {}),
           }, fingerprint, spec.remoteDir, {
             // v5.2：方向与冲突策略——设置在每轮实时读取（s 取自本轮 getSettings），
-            // 修改即时生效，无需重建触发器。
+            // 修改即时生效，无需重建触发器。v5.3：每根范围覆盖与待清除队列
+            // 同样每轮实时解析。
             direction: s.syncDirection,
             conflictPolicy: s.conflictPolicy,
+            ...(scope ? { scope } : {}),
+            ...(purge && purge.length > 0 ? { purgeRemote: purge } : {}),
           });
           accumulate(total, outcome.summary);
+          // v5.3：purge 成功清单上抛（App 从 pendingPurges 移除并落盘）。
+          if (outcome.purged.length > 0) opts.onPurged?.(root, outcome.purged);
           netErrorStreak = 0; // 任一根成功即视为链路可用
         } catch (e) {
           const info = parseSyncError(e);

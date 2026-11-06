@@ -24,6 +24,7 @@
 
 import { getAdapter } from "../../platform";
 import { basename, extname, joinAbs, toPosix } from "../path-shim";
+import type { RootSyncOptions } from "../../types";
 import { s3Delete, s3GetFile, s3List, s3PutFile } from "./s3";
 import { readManifest, writeManifest, type SyncManifest } from "./manifest";
 import type {
@@ -35,7 +36,17 @@ import type {
   ConflictPolicy,
 } from "./types";
 import { EMPTY_SYNC_SUMMARY } from "./types";
-import { isIgnoredName, isIgnoredRelPath, isSyncableRelPath, isTooDeep, isTooLarge, MAX_SYNC_DEPTH } from "./ignore";
+import {
+  DEFAULT_SYNCABLE_EXTS,
+  isExcludedRelPath,
+  isIgnoredName,
+  isIgnoredRelPath,
+  isSyncableRelPath,
+  isTooDeep,
+  isTooLarge,
+  MAX_SYNC_DEPTH,
+  type RootExcludeRules,
+} from "./ignore";
 
 /** 引擎内部状态：规格 4 态 + absent（见文件头注释）。 */
 export type EngineSideState = "same" | "changed" | "deleted" | "new" | "absent";
@@ -389,6 +400,44 @@ export interface SyncOutcome {
   firstSync: boolean;
   /** D1：本轮被安全保险中止（未落盘清单，下轮原样重算）。 */
   aborted?: "mass-delete";
+  /** v5.3 purge 阶段成功删除的云端对象 relPath（调用方据此清 pendingPurges）。 */
+  purged: string[];
+  /** v5.3 purge 阶段删除失败的 relPath（留在队列下轮重试）。 */
+  purgeFailed: string[];
+}
+
+/**
+ * 每根同步范围（v5.3）：由 trigger 从 SyncSettings.rootOptions[root] 解析
+ * 传入；undefined = 全默认（内置白名单、无排除）。
+ */
+export interface RootSyncScope {
+  /** 扩展名白名单（custom 模式为用户列表，default 模式为 DEFAULT_SYNCABLE_EXTS）。 */
+  exts: ReadonlySet<string>;
+  /** 排除规则（目录前缀 + 通配），传给 isExcludedRelPath。 */
+  exclude: RootExcludeRules;
+}
+
+/**
+ * RootSyncOptions → 引擎 scope（v5.3，trigger 每轮实时解析）。全部为默认
+ * 时返回 undefined（引擎走既有行为，零语义变化）；extensionMode=custom 且
+ * 列表为空的配置归一层已剔除，这里再兜底一次回落内置白名单。
+ */
+export function resolveRootScope(
+  opts: RootSyncOptions | undefined
+): RootSyncScope | undefined {
+  if (!opts) return undefined;
+  const exts =
+    opts.extensionMode === "custom" && opts.extensions && opts.extensions.length > 0
+      ? new Set<string>(opts.extensions)
+      : undefined;
+  const hasExclude =
+    (opts.excludedDirs !== undefined && opts.excludedDirs.length > 0) ||
+    (opts.excludePatterns !== undefined && opts.excludePatterns.length > 0);
+  if (!exts && !hasExclude) return undefined;
+  return {
+    exts: exts ?? DEFAULT_SYNCABLE_EXTS,
+    exclude: { excludedDirs: opts.excludedDirs, excludePatterns: opts.excludePatterns },
+  };
 }
 
 export interface PlannedOp {
@@ -437,13 +486,26 @@ export async function syncWorkspace(
    *  ⇒ 整库进回收站。改为按首同步重算（首同步矩阵不产生任何删除动作）。 */
   remoteIdentity?: string,
   remoteDir?: string,
-  /** v5.2：方向与冲突策略。缺省 = 双向 + 新者胜（既有行为）。 */
-  mode?: { direction?: SyncDirection; conflictPolicy?: ConflictPolicy }
+  /** v5.2：方向与冲突策略。缺省 = 双向 + 新者胜（既有行为）。v5.3 增补：
+   *  scope = 每根同步范围（undefined = 全默认）；purgeRemote = 待清除云端
+   *  副本 relPath 队列（用户显式确认过，purge 阶段执行，不受批量删除保险
+   *  约束——已确认的删除不是保险要拦截的「疑似误配」）。 */
+  mode?: {
+    direction?: SyncDirection;
+    conflictPolicy?: ConflictPolicy;
+    scope?: RootSyncScope;
+    purgeRemote?: readonly string[];
+  }
 ): Promise<SyncOutcome> {
   const summary: SyncSummary = { ...EMPTY_SYNC_SUMMARY, notes: [] };
   const fullPrefix = fullPrefixOf(prefix, root, remoteDir);
   const direction = mode?.direction;
   const conflictWinner = resolveConflictWinner(direction, mode?.conflictPolicy);
+  // v5.3 每根范围：白名单与排除规则在本地扫描 / 远端 List 双侧一致应用。
+  const exts = mode?.scope?.exts ?? DEFAULT_SYNCABLE_EXTS;
+  const exclude = mode?.scope?.exclude;
+  const purged: string[] = [];
+  const purgeFailed: string[] = [];
 
   hooks.onState({ phase: "scan", done: 0, total: 0 });
 
@@ -473,7 +535,14 @@ export async function syncWorkspace(
   const suspended = new Set<string>();
   const localMap = new Map<string, LocalScanFile>();
   for (const f of scanned) {
-    if (isIgnoredRelPath(f.relPath) || !isSyncableRelPath(f.relPath) || isTooDeep(f.relPath)) continue;
+    if (
+      isIgnoredRelPath(f.relPath) ||
+      !isSyncableRelPath(f.relPath, exts) ||
+      isExcludedRelPath(f.relPath, exclude) ||
+      isTooDeep(f.relPath)
+    ) {
+      continue;
+    }
     if (isTooLarge(f.size)) {
       hooks.warn(`文件超过 50MB 上限，本轮跳过同步：${f.relPath}`);
       summary.skipped++;
@@ -490,7 +559,15 @@ export async function syncWorkspace(
   for (const obj of remoteList) {
     if (!obj.key.startsWith(fullPrefix)) continue;
     const relPath = obj.key.slice(fullPrefix.length);
-    if (relPath === "" || isIgnoredRelPath(relPath) || !isSyncableRelPath(relPath) || isTooDeep(relPath)) continue;
+    if (
+      relPath === "" ||
+      isIgnoredRelPath(relPath) ||
+      !isSyncableRelPath(relPath, exts) ||
+      isExcludedRelPath(relPath, exclude) ||
+      isTooDeep(relPath)
+    ) {
+      continue;
+    }
     // D7 前端侧防线：远端还原的 relPath 携带 .. / 反斜杠 / 控制字符 → 弃。
     // eslint-disable-next-line no-control-regex -- 控制字符正是要拒绝的目标
     if (relPath.split("/").includes("..") || relPath.includes("\\") || /[\x00-\x1f]/.test(relPath)) {
@@ -678,7 +755,7 @@ export async function syncWorkspace(
             `若非本意，多为同步前缀/桶配置变更所致，请核对云同步设置。云端文件未被改动。`
         );
         hooks.onState({ phase: "finalize", done, total: ops.length });
-        return { summary, firstSync, aborted: "mass-delete" };
+        return { summary, firstSync, aborted: "mass-delete", purged, purgeFailed };
       }
     }
   }
@@ -700,8 +777,40 @@ export async function syncWorkspace(
     tick();
   }
 
+  // ---- 6e. purge：清除用户显式确认过「同时删除云端副本」的对象（v5.3）----
+  //  与 6d 的矩阵删除不同：这批 key 来自同步范围对话框的显式确认（排除时
+  //  连带清理），不是保险要拦截的「疑似误配」，不走批量删除保险。安全约束：
+  //  当前仍在同步范围内的 key（扫描视图中本地或远端存在）一律跳过——用户
+  //  可能又把它包含了回来，陈旧队列不得删除活跃内容；删除失败的 key 由
+  //  调用方留在队列下轮重试。
+  const purgeList = mode?.purgeRemote;
+  if (purgeList && purgeList.length > 0) {
+    for (const raw of purgeList) {
+      tick(raw);
+      try {
+        // D7 同款防线：purge 名单来自持久化设置，执行删除前再核一遍路径。
+        if (raw.split("/").includes("..") || raw.includes("\\") || /[\x00-\x1f]/.test(raw)) {
+          throw new Error("非法路径");
+        }
+        if (localMap.has(raw) || remoteMap.has(raw)) {
+          summary.notes.push(`已回到同步范围，跳过清除云端副本：${raw}`);
+        } else {
+          await io.s3Delete(`${fullPrefix}${raw}`);
+          dropRecord(raw);
+          purged.push(raw);
+        }
+      } catch (e) {
+        purgeFailed.push(raw);
+        summary.failed++;
+        hooks.warn(`清除云端副本失败（下轮重试）：${raw}（${String(e).slice(0, 120)}）`);
+      }
+      done++;
+      tick();
+    }
+  }
+
   // 7/8. 落盘清单（唯一一次写清单——崩溃安全点）+ 完成时间。
-  hooks.onState({ phase: "finalize", done: ops.length, total: ops.length });
+  hooks.onState({ phase: "finalize", done, total: ops.length });
   summary.lastSyncAt = Date.now();
   await io.writeManifest(root, {
     version: 1,
@@ -710,7 +819,7 @@ export async function syncWorkspace(
     files,
     ...(remoteIdentity !== undefined ? { remoteFingerprint: remoteIdentity } : {}),
   });
-  return { summary, firstSync };
+  return { summary, firstSync, purged, purgeFailed };
 }
 
 // ---------------------------------------------------------------------------

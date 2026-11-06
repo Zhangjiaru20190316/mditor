@@ -14,7 +14,7 @@ import type { PlatformAdapter, RuntimeName } from "./types";
 import { tauriAdapter } from "./tauri";
 import { harmonyAdapter } from "./harmony";
 
-export type { PlatformAdapter, RuntimeName } from "./types";
+export type { PlatformAdapter, RuntimeName, DirEntry } from "./types";
 export { UnsupportedError } from "./errors";
 
 let cachedRuntime: RuntimeName | null = null;

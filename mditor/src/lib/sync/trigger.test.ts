@@ -308,3 +308,70 @@ describe("D1 逃生门（v5.1.1）：批量删除保险的手动确认放行", (
     t!.dispose();
   });
 });
+
+// ---- 每根同步范围（v5.3）-----------------------------------------------------
+
+describe("每根同步范围（v5.3）：停用跳过 / purge 队列执行", () => {
+  it("rootOptions[root].enabled=false → 整根跳过：零网络动作", async () => {
+    const root = "C:/ws/notes";
+    const settings = settingsWith({
+      enabled: true,
+      autoSync: false,
+      syncOnStart: false,
+      rootOptions: { [root]: { enabled: false } },
+    });
+    const t = assembleSyncTrigger({ getSettings: () => settings, getRoots: () => [root] });
+    await t!.syncNow();
+    expect(invokeMock.mock.calls.map((c) => c[0])).not.toContain("s3_list");
+    t!.dispose();
+  });
+
+  it("pendingPurges → purge 阶段删除队列对象，成功清单经 onPurged 上抛", async () => {
+    const root = "C:/ws/notes";
+    const settings = settingsWith({
+      enabled: true,
+      autoSync: false,
+      syncOnStart: false,
+      rootOptions: { [root]: { excludedDirs: ["assets"] } },
+      pendingPurges: { [root]: ["assets/old.md", "legacy/removed.md"] },
+    });
+    // 清单基线：assets/old.md 已被排除（deleted|deleted → clearRecord，矩阵
+    // 零删除）；legacy/removed.md 是无清单孤儿对象（purge 照删）。范围内 key
+    // 的跳过保护在 engine 层单测覆盖（trigger 桩无本地文件系统）。
+    const m = emptyManifest(root);
+    m.lastSyncAt = 1_000;
+    m.files["assets/old.md"] = {
+      local: { mtimeMs: 1, size: 1, md5: null },
+      remote: { etag: "e", size: 1, lastModified: "2026-01-01T00:00:00Z" },
+    };
+    await writeManifest(root, m);
+    invokeMock.mockImplementation(async (cmd: string): Promise<unknown> => {
+      if (cmd === "s3_list") {
+        return [
+          { key: "mditor/notes/assets/old.md", etag: "e", size: 1, lastModified: "2026-01-01T00:00:00Z" },
+        ];
+      }
+      if (cmd === "s3_delete") return undefined;
+      throw new Error(`unexpected ${cmd}`);
+    });
+    const onPurged = vi.fn();
+    const t = assembleSyncTrigger({
+      getSettings: () => settings,
+      getRoots: () => [root],
+      onPurged,
+    });
+    await t!.syncNow();
+    const deleteKeys = invokeMock.mock.calls
+      .filter((c) => c[0] === "s3_delete")
+      .map((c) => (c[1] as { key: string }).key);
+    expect(deleteKeys).toEqual([
+      "mditor/notes/assets/old.md",
+      "mditor/notes/legacy/removed.md",
+    ]);
+    expect(onPurged).toHaveBeenCalledWith(root, [
+      "assets/old.md",
+      "legacy/removed.md",
+    ]);
+    t!.dispose();
+  });
+});
