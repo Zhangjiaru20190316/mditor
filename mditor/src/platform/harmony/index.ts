@@ -226,13 +226,18 @@ const HARMONY_CAPS: PlatformCapabilities = {
   watch: true, // ArkTS stat 轮询（WatchManager.ets）
   trash: true, // 应用回收站 /AppData/trash（30 天启动清理）
   // EX 轮：PDF 已改自研纯前端管线（离屏 iframe + 分块光栅 + pdf-lib 组装，
-  // 无 window.print/系统打印依赖，richExport 同栈）。翻 true 前仍需真机
+  // 不依赖 webview 打印/系统打印，richExport 同栈）。翻 true 前仍需真机
   // spike 验证：①modern-screenshot 在 ArkWeb 的 foreignObject 光栅质量
   // ②pdf-lib 字节量在鸿蒙 JS 引擎的内存表现。保守维持 false。
   pdfExport: false,
   richExport: true, // exporter.ts 纯前端（LaTeX/DOCX/PNG 桥依赖已具备）
   remoteImageProxy: false,
   windowControls: false,
+  // PI2：打印为应用内实现（PrintDialog + GDI 直打），打印引擎在 Rust 侧
+  // cfg(windows)——鸿蒙无对应实装。真机路径需要接鸿蒙系统打印 API
+  //（print framework），留待后续轮次。降级惯例同 MF/DE 轮：菜单/键位不
+  // 渲染、不假成功。
+  print: false,
   // HN 轮：mditor-asset:// 下 iframe 相对解析/隔离未真机验证（spike ④）——
   // 保守关：HTML 笔记标签降级为「用系统浏览器打开」提示页，不假成功。
   htmlNoteView: false,

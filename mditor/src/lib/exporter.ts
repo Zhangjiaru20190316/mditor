@@ -85,8 +85,9 @@ export interface ImageInlineResult {
   missing: ExportImageReportItem[];
 }
 
-/** 字节 → base64 data URL（分块，避开 apply 栈溢出）。 */
-function bytesToDataUrl(bytes: Uint8Array, mime: string): string {
+/** 字节 → base64 data URL（分块，避开 apply 栈溢出）。PI2 起导出与打印
+ *  （printJob 的 CSS url() 内联）共用同一实现。 */
+export function bytesToDataUrl(bytes: Uint8Array, mime: string): string {
   let bin = "";
   const CHUNK = 0x8000;
   for (let i = 0; i < bytes.length; i += CHUNK) {
@@ -358,25 +359,41 @@ function currentTheme(): string {
   return document.documentElement.getAttribute("data-theme") ?? "light";
 }
 
-/** Wrap rendered HTML + theme CSS into a standalone document string. */
-export function wrapHtml(
-  html: string,
-  css: string,
-  title: string,
-  theme: string
-): string {
+/** Standalone 骨架的注入点（PR 轮抽取；PI2 起打印模板已退役，注入点保留
+ *  供未来 standalone 消费者复用）：charset/viewport/title/body 容器/
+ *  vditor-reset 与 EXPORT_PROSE_CSS 只此一处，消费者禁止复制分头维护。 */
+export interface HtmlShellOptions {
+  /** 正文 HTML（片段）。 */
+  html: string;
+  /** 主题 CSS（collectThemeCss 产物）。 */
+  css: string;
+  /** 文档标题（<title>）。 */
+  title: string;
+  /** data-theme 值；null = 不写该属性（CSS 变量退化 :root 浅色兜底）。 */
+  theme: string | null;
+  /** 追加在共享 CSS 之后、</style> 之前的规则块。 */
+  extraCss?: string;
+  /** 追加在 </body> 之前的内容。 */
+  beforeBodyEnd?: string;
+}
+
+/** 共享骨架（wrapHtml 原实现整体搬入，导出产物字节等价）+ 打印模板注入点。 */
+export function wrapStandaloneHtml(o: HtmlShellOptions): string {
+  const extraCss = o.extraCss ? `${o.extraCss}\n` : "";
+  const tail = o.beforeBodyEnd ? `\n${o.beforeBodyEnd}` : "";
   return `<!DOCTYPE html>
-<html lang="zh-CN" data-theme="${theme}">
+<html lang="zh-CN"${o.theme === null ? "" : ` data-theme="${o.theme}"`}>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${escapeHtml(title)}</title>
+<title>${escapeHtml(o.title)}</title>
 <style>
-${css}
+${o.css}
 ${EXPORT_PROSE_CSS}
 /* export-friendly defaults. 主题变量全部挂在 [data-theme=...] 下，html 不带
    该属性时 var(--bg)/var(--fg) 全部退化到 :root 浅色兜底——任何主题导出都
-   变成默认浅色。此处必须回写 data-theme。 */
+   变成默认浅色。此处必须回写 data-theme（theme 传 null 的消费者即是要恒
+   浅色形态）。 */
 html { background: var(--bg); } /* 根元素背景传播到画布：打印时整页带主题底色 */
 /* HX E-H1：整包收集的应用外壳规则（html/body height:100% + body
    overflow:hidden——无边框窗口语义）会随主题 CSS 进导出文件；body 的
@@ -390,12 +407,22 @@ mark { background: var(--mark-bg, rgba(255, 213, 79, 0.55)); color: inherit; bor
 @media print {
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
 }
-</style>
+${extraCss}</style>
 </head>
 <body class="vditor-reset">
-${html}
+${o.html}${tail}
 </body>
 </html>`;
+}
+
+/** Wrap rendered HTML + theme CSS into a standalone document string. */
+export function wrapHtml(
+  html: string,
+  css: string,
+  title: string,
+  theme: string
+): string {
+  return wrapStandaloneHtml({ html, css, title, theme });
 }
 
 function escapeHtml(s: string): string {

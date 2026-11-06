@@ -109,6 +109,9 @@ interface Props {
   onOpenExternal: (path: string) => void;
   /** M3：转为 Markdown 笔记（不传则不显示按钮）。 */
   onConvertToMarkdown?: (path: string) => void;
+  /** PI2：打印当前标签（App 注入统一 file_print 分发 → 应用内打印对话框；
+   *  caps.print 门控在注入处，不传则不显示按钮）。 */
+  onPrint?: () => void;
   /** DE 轮：编辑态激活（App 按 TabItem.docEdit 注入）。 */
   editActive?: boolean;
   /** DE 轮：进入微编辑模式（门控 caps.docNoteEdit 内可见）。 */
@@ -349,6 +352,7 @@ export const PdfNoteView = memo(function PdfNoteView({
   path,
   onOpenExternal,
   onConvertToMarkdown,
+  onPrint,
   editActive,
   onEnterEdit,
   onExitEdit,
@@ -906,6 +910,15 @@ export const PdfNoteView = memo(function PdfNoteView({
             onClick={() => onConvertToMarkdown(path)}
           >
             转 Markdown
+          </button>
+        )}
+        {onPrint && (
+          <button
+            className="doc-note-btn"
+            title="打印（应用内打印对话框，按原文件页面直打）"
+            onClick={onPrint}
+          >
+            打印
           </button>
         )}
         <button className="doc-note-btn" title="用系统应用打开" onClick={() => onOpenExternal(path)}>

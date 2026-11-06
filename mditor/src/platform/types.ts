@@ -235,6 +235,13 @@ export interface PlatformCapabilities {
    *  （阶段 0 spike 四闸门全 A，docs/doc-note-edit-spike-report.md）；harmony
    *  未真机验证（编辑面内存 + ArkWeb 长任务）——保守关，仅保留 MF 轮只读。 */
   docNoteEdit: boolean;
+  /** 打印笔记（PI2）：应用内打印——自研打印对话框（PrintDialog）+ 自研
+   *  PDF 管线排版 + Rust GDI 直打（printing.rs），不经任何外部程序、
+   *  全仓零 webview print 调用（铁律见 lib/printJob.ts 头注与
+   *  printIronRule.test.ts）。桌面（Windows）可用；harmony 保守关（GDI
+   *  引擎为 Windows 实装，鸿蒙打印 API 留待后续轮次），菜单/键位不渲染、
+   *  不假成功。 */
+  print: boolean;
 }
 
 /** 平台适配器：业务代码唯一入口（经 platform/index.getAdapter()）。 */

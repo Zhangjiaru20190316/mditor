@@ -2118,6 +2118,7 @@ version = "5.2.0"
 dependencies = [
  "futures-util",
  "object_store",
+ "png 0.17.16",
  "regex",
  "reqwest 0.12.28",
  "serde",

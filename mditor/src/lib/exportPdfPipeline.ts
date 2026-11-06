@@ -1,9 +1,12 @@
 // PDF 自研管线（EX 轮阶段三原型 / 阶段四全量落地）：离屏工厂 → 块测量 →
 // 分页器 → 分块光栅 → pdf-lib 组装（位图 + 可选隐形文本层）。
 //
-// 全链路应用内完成（用户铁律）：无 OS 打印对话框、无 window.print；唯一
-// 系统交互是调用方的 pickSaveFile。进度事件贯穿各阶段、AbortSignal 可取
-// 消、工厂 iframe/画布/中间位图随分块即弃（T2：峰值受画布预算约束）。
+// 全链路应用内完成（用户铁律）：无 OS 打印对话框、不调用 webview 的
+// print；唯一系统交互是调用方的 pickSaveFile。进度事件贯穿各阶段、
+// AbortSignal 可取消、工厂 iframe/画布/中间位图随分块即弃（T2：峰值受
+// 画布预算约束）。铁律锚点（PI2 加强版）：全仓零 print 调用字面量——
+// webview 打印已于 EX 轮整体退役且 PI2 应用内打印不复活它，见
+// printIronRule.test.ts。
 //
 // 依赖纪律：modern-screenshot（既有）/ pdf-lib / fontkit 全部函数内懒加载。
 // 字体（文本层）：应用源 public/assets/fonts/NotoSansSC-Regular.otf（OFL，
@@ -43,14 +46,13 @@ import {
   type PatchSource,
 } from "./exportVectorPatch";
 
-export const PDF_PAPERS = {
-  A4: { widthPt: 595.28, heightPt: 841.89, label: "A4（210×297mm）" },
-  Letter: { widthPt: 612, heightPt: 792, label: "Letter（216×279mm）" },
-  A3: { widthPt: 841.89, heightPt: 1190.55, label: "A3（297×420mm）" },
-} as const;
-export type PdfPaperId = keyof typeof PDF_PAPERS;
+// 纸张/边距值域单一事实源已抽至零依赖模块（store.ts 首屏路径共用）；此处
+// re-export 维持既有导入方（PrintDialog/exporter 等）不动。
+export { PDF_PAPERS, PDF_MARGIN_CHOICES, PDF_PAPER_IDS } from "./pdfPaperValues";
+export type { PdfPaperId } from "./pdfPaperValues";
 
-export const PDF_MARGIN_CHOICES = [10, 15, 20, 25] as const; // mm
+import { PDF_PAPERS, type PdfPaperId } from "./pdfPaperValues";
+
 export const PDF_SCALE_CHOICES = [1, 1.5, 2] as const; // 96/144/192 dpi 等效
 
 /** 单画布预算（沿 exportPng 惯例：T2 画布治理）。 */
@@ -87,6 +89,9 @@ export interface PdfExportProgress {
 
 export interface PdfPipelineOptions {
   paper?: PdfPaperId;
+  /** 页面方向（PI2 打印对话框）：landscape = 宽高交换（版心随之变宽变矮）。
+   *  缺省 portrait——导出路径不传该参数，行为与既往逐字节一致。 */
+  orientation?: "portrait" | "landscape";
   /** 四边统一边距（mm）。 */
   marginMm?: number;
   /** 光栅倍率（1/1.5/2 = 96/144/192dpi 等效）。 */
@@ -108,6 +113,8 @@ export interface PdfPipelineResult {
   meta: {
     pages: number;
     paper: PdfPaperId;
+    /** 本次是否横向（PI2；portrait 缺省时也回填，便于消费方直读）。 */
+    orientation: "portrait" | "landscape";
     contentWidthPx: number;
     contentHeightPx: number;
     rasterScale: number;
@@ -471,10 +478,15 @@ async function runPdfPipelineOnce(
 ): Promise<PdfPipelineResult> {
   const t: Record<string, number> = { factory: 0, measure: 0, paginate: 0, text: 0, raster: 0, assemble: 0 };
   const paper = PDF_PAPERS[o.paper ?? "A4"];
+  // PI2 横向：页面与版心宽高交换（分页/工厂版心/组装器尺寸全部由此派生）。
+  const orientation: "portrait" | "landscape" =
+    o.orientation === "landscape" ? "landscape" : "portrait";
+  const pageWidthPt = orientation === "landscape" ? paper.heightPt : paper.widthPt;
+  const pageHeightPt = orientation === "landscape" ? paper.widthPt : paper.heightPt;
   const marginPt = mmToPt(o.marginMm ?? 15);
   const scale = o.rasterScale ?? 2;
-  const contentWidthPt = paper.widthPt - 2 * marginPt;
-  const contentHeightPt = paper.heightPt - 2 * marginPt;
+  const contentWidthPt = pageWidthPt - 2 * marginPt;
+  const contentHeightPt = pageHeightPt - 2 * marginPt;
   const contentWidthPx = Math.round(contentWidthPt / PT_PER_PX);
   const contentHeightPx = Math.round(contentHeightPt / PT_PER_PX);
   const signal = o.signal;
@@ -638,8 +650,8 @@ async function runPdfPipelineOnce(
 
     // ---- 6. 组装器 ----
     const assembler = await createPdfAssembler({
-      pageWidthPt: paper.widthPt,
-      pageHeightPt: paper.heightPt,
+      pageWidthPt,
+      pageHeightPt,
       marginPt: { top: marginPt, right: marginPt, bottom: marginPt, left: marginPt },
       contentWidthPx,
       contentHeightPx,
@@ -691,6 +703,7 @@ async function runPdfPipelineOnce(
       meta: {
         pages: paginated.stats.pages,
         paper: o.paper ?? "A4",
+        orientation,
         contentWidthPx,
         contentHeightPx,
         rasterScale: scale,

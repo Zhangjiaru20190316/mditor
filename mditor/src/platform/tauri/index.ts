@@ -24,6 +24,9 @@ const ALL_TRUE: PlatformCapabilities = {
   // DE 轮：docx 结构化编辑 + 文字 PDF 微编辑（spike 闸门已过，见
   // docs/doc-note-edit-spike-report.md）。
   docNoteEdit: true,
+  // PI2（应用内打印）：PrintDialog + 自研 PDF 管线排版 + Rust GDI 直打
+  // （printing.rs），全程应用内完成、全仓零 webview print 调用。
+  print: true,
 };
 
 export const tauriAdapter: PlatformAdapter = {

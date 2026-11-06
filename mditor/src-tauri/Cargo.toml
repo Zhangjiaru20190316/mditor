@@ -52,11 +52,19 @@ object_store = { version = "0.13", default-features = false, features = ["aws"] 
 
 # S2：密钥系统凭据存储（Windows Credential Manager / DPAPI）。版本对齐依赖树
 # 中已有的 0.61.2（mio/notify/muda 等在用），不引入新的版本碎片。
+# PI2（应用内打印）：Gdi/Printing 两个 feature 供 printing.rs 的 GDI 直打
+# 引擎使用（EnumPrinters/DocumentProperties/CreateDC/StretchDIBits 全家）。
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
   "Win32_Security_Credentials",
   "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_Printing",
+  "Win32_Storage_Xps",
 ] }
+# PI2（应用内打印）：打印页 PNG 解码（纯 Rust，零外部程序）。前端 pdf.js
+# 光栅化的页图经临时文件传入，本侧解码为 BGRA 后 StretchDIBits 送打印机。
+png = "0.17"
 
 [features]
 # This feature is used for production builds or when a dev server is not

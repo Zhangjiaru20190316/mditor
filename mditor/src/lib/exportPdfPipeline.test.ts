@@ -320,6 +320,15 @@ describe("纸张数学", () => {
     expect(PDF_PAPERS.Letter.widthPt).toBe(612);
     expect(PDF_PAPERS.A3.heightPt).toBeCloseTo(1190.55, 1);
   });
+
+  it("横向版心（PI2 orientation=landscape）：版心宽高随纸面交换——A4 横向版心宽 = 纵向纸高−2×边距", () => {
+    const marginPt = mmToPt(15);
+    const wPortrait = (PDF_PAPERS.A4.widthPt - 2 * marginPt) / 0.75;
+    const wLandscape = (PDF_PAPERS.A4.heightPt - 2 * marginPt) / 0.75;
+    // 交换后版心变宽（差 ≈ (841.89−595.28)pt ≈ 328px）且纵向版心宽 < 横向版心高。
+    expect(Math.round(wLandscape - wPortrait)).toBeGreaterThan(300);
+    expect(wPortrait).toBeLessThan(wLandscape);
+  });
 });
 
 describe("fragmentsToPageRuns（页窗口二分归属）", () => {

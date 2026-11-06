@@ -11,6 +11,7 @@
 
 mod ai;
 mod commands;
+mod printing;
 mod s3;
 mod secrets;
 
@@ -211,6 +212,7 @@ pub fn run() {
         .manage(PendingFile(Mutex::new(None)))
         .manage(LastFocused(Mutex::new("main".to_string())))
         .manage(commands::TabPayloadStash(Mutex::new(HashMap::new())))
+        .manage(printing::PrintJobs::default())
         .invoke_handler(tauri::generate_handler![
             commands::append_log,
             commands::app_data_dir,
@@ -234,6 +236,10 @@ pub fn run() {
             s3::s3_head,
             commands::local_files_equal,
             commands::local_copy_file,
+            commands::open_logs_dir,
+            printing::list_printers,
+            printing::print_png_job,
+            printing::print_job_cancel,
             secrets::secret_set,
             secrets::secret_get,
             secrets::secret_del,
