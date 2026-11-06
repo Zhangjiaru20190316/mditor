@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // 内存 KV 模拟 plugin-store；凭据库模拟 Windows Credential Manager 语义。
 const kv = new Map<string, unknown>();
 const vault = new Map<string, string>();
+/** 模拟凭据服务瞬时故障（DPAPI/凭据服务重启窗口）：secretGet 全体 reject。 */
+const vaultFail = { get: false };
 
 vi.mock("../platform", () => ({
   detectRuntime: () => "tauri",
@@ -25,7 +27,10 @@ vi.mock("../platform", () => ({
       secretSet: async (key: string, value: string) => {
         vault.set(key, value);
       },
-      secretGet: async (key: string) => vault.get(key) ?? null,
+      secretGet: async (key: string) => {
+        if (vaultFail.get) throw new Error("vault busy");
+        return vault.get(key) ?? null;
+      },
       secretDel: async (key: string) => {
         vault.delete(key);
       },
@@ -116,5 +121,25 @@ describe("S2 密钥凭据存储（store.ts）", () => {
     kv.set("settings", s);
     const loaded = await loadSettings();
     expect(loaded.aiModels[0].apiKey).toBe("");
+  });
+
+  it("瞬时读取失败 ≠ 无值：MARK 保留，随后保存不删槽位（密钥不可恢复丢失的根因回归）", async () => {
+    await saveSettings(settingsWithKeys()); // 库里有值，盘上是 @keychain
+    expect(vault.get("ai.key.m1")).toBe("sk-aaa");
+    // 凭据服务瞬时故障窗口内启动：secretGet 全体 reject
+    vaultFail.get = true;
+    const loaded = await loadSettings();
+    vaultFail.get = false;
+    // 读取失败 ≠ 无值：MARK 原样保留（而非清成 ""）
+    expect(loaded.aiModels[0].apiKey).toBe("@keychain");
+    // 故障会话内用户改任一设置并保存：MARK 槽位跳过 secretDel，密钥本体不动
+    loaded.theme = "dark";
+    await saveSettings(loaded);
+    expect(vault.get("ai.key.m1")).toBe("sk-aaa");
+    const saved = kv.get("settings") as Settings;
+    expect(saved.aiModels[0].apiKey).toBe("@keychain");
+    // 凭据库恢复后重新加载：密钥完整水合回来
+    const reloaded = await loadSettings();
+    expect(reloaded.aiModels[0].apiKey).toBe("sk-aaa");
   });
 });

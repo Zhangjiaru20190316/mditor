@@ -70,6 +70,11 @@ export async function loadSettings(): Promise<Settings> {
   return hydrateSecrets(migrated);
 }
 
+/** hydrateSecrets 内部标记：凭据库读取失败（≠ 无值）。单槽位瞬时失败
+ *  （凭据服务重启/瞬时报错）绝不能与「用户未配置该密钥」混为一谈——后者
+ *  会把内存值清空，随后任一次保存触发 secretDel，密钥不可恢复地丢失。 */
+const VAULT_READ_ERROR = Symbol("vault-read-error");
+
 /**
  * S2：从系统凭据库水合密钥字段（凭据库优先）。凭据库不可用或读取失败时按
  * 磁盘明文现状继续（不阻断启动）。检测到磁盘明文（旧版本写入）时触发一次
@@ -85,12 +90,24 @@ async function hydrateSecrets(s: Settings): Promise<Settings> {
   };
   const slots = secretSlotsOf(out);
   let plaintextFound = false;
+  let readErrors = 0;
   try {
     const values = await Promise.all(
-      slots.map((x) => secretGet(x.slot).catch(() => null))
+      slots.map((x) =>
+        secretGet(x.slot).then(
+          (v) => v,
+          () => VAULT_READ_ERROR
+        )
+      )
     );
     slots.forEach((x, i) => {
       const fromVault = values[i];
+      if (fromVault === VAULT_READ_ERROR) {
+        // 读取失败：保留现状（MARK 不清空、明文不迁移），下次启动重试；
+        // saveSettings 对 MARK 槽位跳过 secretDel，密钥本体仍在库里。
+        readErrors++;
+        return;
+      }
       if (typeof fromVault === "string" && fromVault) {
         x.set(fromVault);
       } else if (x.get() && x.get() !== KEYCHAIN_MARK) {
@@ -101,6 +118,13 @@ async function hydrateSecrets(s: Settings): Promise<Settings> {
     });
   } catch {
     return s; // 凭据库整体不可读：按现状继续
+  }
+  if (readErrors > 0) {
+    sysEmit(
+      "settings:secret-hydrate",
+      `系统凭据库有 ${readErrors} 个槽位本次读取失败，已保留现状（密钥未动，下次启动重试）`,
+      { level: "warn", data: {} }
+    );
   }
   if (plaintextFound) {
     // 一次性迁移：写入凭据库 + 脱敏重写 mditor.json。内联 await（只发生在
@@ -195,7 +219,12 @@ export async function saveSettings(s: Settings): Promise<void> {
       for (const x of secretSlotsOf(s)) {
         const v = x.get();
         if (v && v !== KEYCHAIN_MARK) await secretSet(x.slot, v);
-        else await secretDel(x.slot).catch(() => undefined); // 清空输入 = 删槽位
+        else if (v === KEYCHAIN_MARK) {
+          // MARK = 值在凭据库里、但本会话 hydrate 没能读出来（读取失败被
+          // 保留）。此时 secretDel 会把读不到却真实存在的密钥删掉（永久丢
+          // 失）——跳过该槽位，等下次启动成功水合后再正常管理。
+          continue;
+        } else await secretDel(x.slot).catch(() => undefined); // 清空输入 = 删槽位
       }
       toPersist = {
         ...s,
