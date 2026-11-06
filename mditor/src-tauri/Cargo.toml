@@ -63,6 +63,12 @@ windows-sys = { version = "0.61", features = [
 # specified, DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
 
+# 安全锚点测试（shell_open_scope_tests）用：插件运行时才编译 tauri.conf.json
+# 的 shell.open 正则（写错 = 启动 panic），dev 侧提前用同一 regex crate 校验
+# 语法并钉住放行/拒绝语义。版本对齐依赖树已有版本，无新增碎片。
+[dev-dependencies]
+regex = "1"
+
 # Release profile — agressively optimize the final binary.
 #   lto=true         : cross-crate link-time optimization (inlines across crates)
 #   codegen-units=1  : whole-program optimization at the cost of compile time

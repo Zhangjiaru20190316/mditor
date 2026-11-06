@@ -374,3 +374,82 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running Mditor");
 }
+
+// ---------------------------------------------------------------------------
+// 安全锚点测试
+// ---------------------------------------------------------------------------
+
+/// `plugins.shell.open` 正则语义钉住（P0 修复的回归锚点）。
+///
+/// 该正则由 tauri-plugin-shell 在**运行时**编译（写错语法 = 插件初始化 panic，
+/// cargo check 不覆盖）；且它是 `plugin:shell|open` 的唯一闸门——capability
+/// 文件里的 url 白名单对 open 命令不生效。威胁模型：渲染进程被攻陷（XSS/
+/// 供应链）时不允许获得「以系统默认 verb 打开任意路径」= 任意可执行文件
+/// 执行通道。语义钉死为：外链（https?/mailto/tel）+ 白名单文档扩展名（`$`
+/// 锚定挡双扩展名绕过）。目录/无扩展名路径不放行——日志目录走专用命令
+/// `open_logs_dir`（commands.rs）。
+#[cfg(test)]
+mod shell_open_scope_tests {
+    #[test]
+    fn shell_open_regex_parses_and_pins_semantics() {
+        let conf = std::fs::read_to_string("tauri.conf.json")
+            .expect("tauri.conf.json 必须可读（测试从 crate 根运行）");
+        let v: serde_json::Value =
+            serde_json::from_str(&conf).expect("tauri.conf.json 必须是合法 JSON");
+        let pat = v["plugins"]["shell"]["open"]
+            .as_str()
+            .expect("plugins.shell.open 必须是字符串");
+        let re = regex::Regex::new(pat).expect(
+            "shell.open 正则必须可编译——运行时由 tauri-plugin-shell 编译，语法错误会让应用启动 panic",
+        );
+
+        // ---- 放行面（现有功能的全部合法目标；raw 字面量免转义歧义）----
+        let allow = [
+            // 外链（Editor.tsx openExternal：https?/mailto）。
+            "https://github.com/mditor",
+            "http://example.com/a?b=1",
+            "mailto:someone@example.com",
+            "tel:13800000000",
+            // 笔记/导出文件（openExternalNote：pdf/docx/html）。
+            "C:/Users/a/Documents/notes/report.pdf",
+            r"C:\Users\a\AppData\Roaming\x\doc.docx",
+            "C:/docs/page.html",
+            "C:/docs/page.htm",
+            // 白名单内其余文档扩展。
+            "C:/a/b.png",
+            "C:/a/b.jpg",
+            "C:/a/b.md",
+            "C:/a/b.txt",
+            "C:/a/b.mp4",
+            // 企业重定向文档目录（UNC）。
+            r"\\server\share\doc.pdf",
+            // macOS/Linux 文档路径。
+            "/Users/a/doc.pdf",
+        ];
+        for a in allow {
+            assert!(re.is_match(a), "shell.open 应放行：{a}");
+        }
+
+        // ---- 拒绝面（任意代码执行通道）----
+        let deny = [
+            // 可执行文件。
+            "C:/Users/a/Downloads/evil.exe",
+            r"C:\Users\a\evil.bat",
+            "C:/x.cmd",
+            "C:/x.msi",
+            "C:/x.scr",
+            "C:/x.ps1",
+            // 双扩展名（$ 锚定后 .pdf 不在串尾 → 整体不匹配）。
+            "C:/Users/a/a.pdf.exe",
+            r"C:\a\b.docx.bat",
+            // UNC 投递。
+            r"\\attacker.example\share\payload.exe",
+            // 无扩展名（目录/裸文件——8.3 短名也可携带 .exe，但无扩展名一律不放行）。
+            "C:/Users/a/AppData/Roaming/com.mditor.app/logs",
+            "C:/evil",
+        ];
+        for d in deny {
+            assert!(!re.is_match(d), "shell.open 必须拒绝：{d}");
+        }
+    }
+}

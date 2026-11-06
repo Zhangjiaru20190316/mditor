@@ -93,6 +93,7 @@ export const tauriApp: PlatformApp = {
     new Uint8Array(await invoke<ArrayBuffer>("fetch_image", { url })),
   convertFileSrc: (path) => convertFileSrc(path),
   openExternal: (target) => shellOpen(target),
+  openLogsDir: () => invoke("open_logs_dir").then(() => undefined),
   exitApp: (code = 0) => exit(code),
   webviewWindowCount: () => WebviewWindow.getAll().then((ws) => ws.length),
   createDocWindow: (path, handoff) =>

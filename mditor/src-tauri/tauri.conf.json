@@ -9,6 +9,11 @@
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"
   },
+  "plugins": {
+    "shell": {
+      "open": "((https?://\\w+|mailto:\\w+|tel:\\w+).+|[a-zA-Z]:[\\\\/][^\\n]*\\.(?i:pdf|docx?|html?|txt|md|csv|json|png|jpe?g|gif|webp|svg|bmp|ico|mp3|mp4|wav|ogg)$|\\\\\\\\[^\\n]*\\.(?i:pdf|docx?|html?|txt|md|csv|json|png|jpe?g|gif|webp|svg|bmp|ico|mp3|mp4|wav|ogg)$|/(?:Users|home|mnt|media|tmp|opt|var)[/\\\\][^\\n]*\\.(?i:pdf|docx?|html?|txt|md|csv|json|png|jpe?g|gif|webp|svg|bmp|ico|mp3|mp4|wav|ogg)$)"
+    }
+  },
   "app": {
     "windows": [
       {

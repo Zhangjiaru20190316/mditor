@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main + doc window capability: dialog + fs (read/write/watch anywhere) + store + shell-open. v4.8 多窗口：windows 覆盖 main 与 doc-*（不改则新窗口所有 invoke 失败）；增补 destroy（非最后一窗只能 destroy 自己）与 set-title（窗口标题同步）两项必需权限。",
+  "description": "Main + doc window capability: dialog + fs (read/write/watch anywhere) + store + shell-open. v4.8 多窗口：windows 覆盖 main 与 doc-*（不改则新窗口所有 invoke 失败）；增补 destroy（非最后一窗只能 destroy 自己）与 set-title（窗口标题同步）两项必需权限。PI2 打印改应用内 GDI 直打后不经 shell-open；openExternal 仅「用系统应用打开」/外链使用，其唯一值闸门是 tauri.conf.json plugins.shell.open 正则（plugin-shell 2.3.5 的 open 命令只校验该配置正则，本文件 url/path 条目为声明性 scope）；打印临时目录读写由 fs 侧 $APPDATA/** 覆盖。",
   "windows": ["main", "doc-*"],
   "permissions": [
     "core:default",

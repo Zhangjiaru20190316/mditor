@@ -108,6 +108,35 @@ pub fn app_data_dir(app: tauri::AppHandle) -> Result<String, String> {
     Ok(dir.to_string_lossy().into_owned())
 }
 
+/// 在资源管理器中打开应用 logs 目录（诊断面板「日志」按钮）。
+///
+/// 专设命令而非 shell.open 插件：`plugins.shell.open` 的正则白名单只放行
+/// 文档扩展名的文件（tauri.conf.json），目录打开走不通；这里路径完全由
+/// 后端解析（appDataDir/logs），前端无输入面，不构成可执行文件通道。
+#[command]
+pub fn open_logs_dir(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("logs");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    {
+        // explorer 对已存在目录的退出码不可靠（成功也返回 1），不做状态检查。
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("打开日志目录失败：{e}"))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = dir;
+        Err("当前平台不支持打开日志目录".into())
+    }
+}
+
 /// Hand off (and clear) a file path that was passed on the command line at
 /// startup — i.e. the app was launched by double-clicking a `.md` while it
 /// wasn't running. The React frontend calls this once after mounting.

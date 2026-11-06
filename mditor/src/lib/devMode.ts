@@ -628,14 +628,15 @@ export async function flushDevLogs(): Promise<void> {
 }
 
 /**
- * 在系统资源管理器打开 logs 目录（诊断面板「日志」按钮）。失败（如 shell
- * 权限被收回）时返回 null，调用方可回退为提示路径。
+ * 在系统资源管理器打开 logs 目录（诊断面板「日志」按钮）。失败（平台
+ * 不支持/资源管理器启动失败）时返回 null，调用方可回退为提示路径。
  */
 export async function openLogsDir(): Promise<string | null> {
   try {
-    const dir = await logsDir();
-    await getAdapter().app.openExternal(dir);
-    return dir;
+    // 专用后端命令而非 openExternal：shell.open 白名单只放行文档扩展名，
+    // 目录没有扩展名走不通（原先的任意路径通道 = 可执行文件执行通道）。
+    await getAdapter().app.openLogsDir();
+    return await logsDir();
   } catch {
     return null;
   }

@@ -178,6 +178,9 @@ export interface PlatformApp {
   convertFileSrc(path: string): string;
   /** 用系统浏览器打开 URL / 路径。 */
   openExternal(target: string): Promise<void>;
+  /** 在系统资源管理器打开应用日志目录（后端解析路径，不经 shell.open
+   *  白名单——目录无扩展名，走不通文档扩展名正则）。不支持的平台 reject。 */
+  openLogsDir(): Promise<void>;
   /** 进程退出。 */
   exitApp(code?: number): Promise<void>;
   /** 全 app webview 窗口数（多窗口收尾判定用）。 */

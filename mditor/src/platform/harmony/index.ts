@@ -199,6 +199,8 @@ const harmonyApp: PlatformApp = {
   // 虚拟路径 → mditor-asset:// URL，由 Index.ets 的 onInterceptRequest 供源。
   convertFileSrc: (path) => `mditor-asset://${encodeURIComponent(path)}`,
   openExternal: (target) => bridge.request("app.openExternal", { target }),
+  openLogsDir: () =>
+    Promise.reject(new UnsupportedError("鸿蒙版暂不支持打开日志目录")),
   exitApp: () => bridge.request("app.exitApp", {}),
   webviewWindowCount: () => Promise.resolve(1),
   createDocWindow: () =>
