@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "./defaults";
-import { normalizeSyncSettings, pickEditorSettings } from "./settingsNormalize";
+import { normalizeSyncSettings, normalizeWorkspaceOptions, pickEditorSettings } from "./settingsNormalize";
 import type { Settings } from "./types";
 
 describe("normalizeSyncSettings（v4.12 云同步设置幂等归一）", () => {
@@ -69,6 +69,86 @@ describe("normalizeSyncSettings（v4.12 云同步设置幂等归一）", () => {
     });
     // 幂等：归一结果再归一不变。
     expect(normalizeSyncSettings(once)).toEqual(once);
+  });
+
+  it("rootOptions（v5.3）：默认空对象；空覆盖条目整键剔除", () => {
+    expect(normalizeSyncSettings(undefined).rootOptions).toEqual({});
+    const once = normalizeSyncSettings({
+      rootOptions: {
+        "E:\\ws\\a": { enabled: true }, // 与默认等价 → 键剔除
+        "E:\\ws\\b": { enabled: false, extensionMode: "default" }, // 仅留 enabled
+      },
+    });
+    expect(once.rootOptions).toEqual({
+      "E:\\ws\\b": { enabled: false },
+    });
+    expect(normalizeSyncSettings(once)).toEqual(once);
+  });
+
+  it("rootOptions：custom 空白名单回落 default（剔除）；extensions 小写/去点/去重", () => {
+    const out = normalizeSyncSettings({
+      rootOptions: {
+        "E:\\ws\\a": {
+          extensionMode: "custom",
+          extensions: ["PNG", ".Md", "md", "csv", 42, "   "],
+        },
+      },
+    });
+    expect(out.rootOptions["E:\\ws\\a"]).toEqual({
+      extensionMode: "custom",
+      extensions: ["png", "md", "csv"],
+    });
+  });
+
+  it("rootOptions：excludedDirs 消毒（反斜杠 posix 化、拒 .. 与空段）、去重", () => {
+    const out = normalizeSyncSettings({
+      rootOptions: {
+        "E:\\ws\\a": {
+          excludedDirs: ["assets", "assets\\sub", "..\\escape", "notes/drafts/", "assets"],
+        },
+      },
+    });
+    expect(out.rootOptions["E:\\ws\\a"]!.excludedDirs).toEqual([
+      "assets",
+      "assets/sub",
+      "notes/drafts",
+    ]);
+  });
+
+  it("rootOptions：excludePatterns trim 去空行去重、超长剔除；上限 64 条", () => {
+    const out = normalizeSyncSettings({
+      rootOptions: {
+        "E:\\ws\\a": {
+          excludePatterns: ["*.tmp", "  *.tmp  ", "", "x".repeat(300)],
+        },
+      },
+    });
+    expect(out.rootOptions["E:\\ws\\a"]!.excludePatterns).toEqual(["*.tmp"]);
+    const many = normalizeSyncSettings({
+      rootOptions: {
+        "E:\\ws\\a": { excludePatterns: Array.from({ length: 80 }, (_, i) => `p${i}`) },
+      },
+    });
+    expect(many.rootOptions["E:\\ws\\a"]!.excludePatterns).toHaveLength(64);
+  });
+
+  it("pendingPurges（v5.3）：消毒去重、空队列剔除键、上限 2000", () => {
+    expect(normalizeSyncSettings(undefined).pendingPurges).toEqual({});
+    const out = normalizeSyncSettings({
+      pendingPurges: {
+        "E:\\ws\\a": ["assets/old.md", "assets/old.md", "..\\bad", "  notes/x.md  ", 7],
+        "E:\\ws\\b": [],
+      },
+    });
+    expect(out.pendingPurges).toEqual({
+      "E:\\ws\\a": ["assets/old.md", "notes/x.md"],
+    });
+    const many = normalizeSyncSettings({
+      pendingPurges: {
+        "E:\\ws\\a": Array.from({ length: 2100 }, (_, i) => `f${i}.md`),
+      },
+    });
+    expect(many.pendingPurges["E:\\ws\\a"]).toHaveLength(2000);
   });
 
   // ↓ Q4 新增锁定（迁移前先对旧实现跑绿，再随模块搬家）。
@@ -186,5 +266,43 @@ describe("pickEditorSettings（P10 Editor 窄切片）", () => {
     expect(picked.lineHeight).toBe(s.lineHeight);
     expect(picked.fontSize).toBe(15.5);
     expect(picked.lineHeight).toBe(2);
+  });
+});
+
+describe("normalizeWorkspaceOptions（v5.3 文件树按工作区选类型）", () => {
+  it("undefined / 非对象 → 空对象", () => {
+    expect(normalizeWorkspaceOptions(undefined)).toEqual({});
+    expect(normalizeWorkspaceOptions("boom")).toEqual({});
+    expect(normalizeWorkspaceOptions(42)).toEqual({});
+  });
+
+  it("fileTypes 白名单子集 + 去重；非法值与非法结构整键剔除", () => {
+    const out = normalizeWorkspaceOptions({
+      "E:\\ws\\a": { fileTypes: ["pdf", "md", "md", "bogus", 42] },
+      "E:\\ws\\b": { fileTypes: "pdf" },
+      "E:\\ws\\c": null,
+      "E:\\ws\\d": {},
+    });
+    expect(out).toEqual({
+      "E:\\ws\\a": { fileTypes: ["pdf", "md"] },
+    });
+  });
+
+  it("空表 / 全选四类 → 剔除键（等价默认行为）", () => {
+    const out = normalizeWorkspaceOptions({
+      "E:\\ws\\a": { fileTypes: [] },
+      "E:\\ws\\b": { fileTypes: ["md", "html", "pdf", "docx"] },
+      "E:\\ws\\c": { fileTypes: ["pdf"] },
+    });
+    expect(out).toEqual({
+      "E:\\ws\\c": { fileTypes: ["pdf"] },
+    });
+  });
+
+  it("幂等：归一结果再归一不变", () => {
+    const once = normalizeWorkspaceOptions({
+      "E:\\ws\\a": { fileTypes: ["pdf", "md"] },
+    });
+    expect(normalizeWorkspaceOptions(once)).toEqual(once);
   });
 });

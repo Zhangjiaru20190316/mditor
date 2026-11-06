@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS, isDarkTheme } from "./defaults";
 import type { Theme } from "./types";
 
-/** 重构前（v3.9.7）的 Settings 字段全集 + v4.1 motionLevel + v4.2 devMode + v4.4.1 bigDocPerformance + v4.6 mathAutoNumber/mathMacros + v4.6.1 bigDocViewport + v4.7 vaultIndexEnabled/wikiLinksEnabled + v4.7 模块 3 bibliographyPath/citationStyle + v4.9 Agent aiPanelMode/agentWriteMode + EX 轮 U2 exportPdfPaper/exportPdfMarginMm/exportPdfRasterScale + v5.0.6 bigDocViewport 锁定开启（默认值 false→true，UI 无此开关）。 */
+/** 重构前（v3.9.7）的 Settings 字段全集 + v4.1 motionLevel + v4.2 devMode + v4.4.1 bigDocPerformance + v4.6 mathAutoNumber/mathMacros + v4.6.1 bigDocViewport + v4.7 vaultIndexEnabled/wikiLinksEnabled + v4.7 模块 3 bibliographyPath/citationStyle + v4.9 Agent aiPanelMode/agentWriteMode + EX 轮 U2 exportPdfPaper/exportPdfMarginMm/exportPdfRasterScale + v5.0.6 bigDocViewport 锁定开启（默认值 false→true，UI 无此开关）+ RV 轮 exportPdfMode + PI2 printPrefs。 */
 const SETTING_KEYS = [
   "theme",
   "motionLevel",
@@ -38,6 +38,7 @@ const SETTING_KEYS = [
   "exportPdfMarginMm",
   "exportPdfRasterScale",
   "exportPdfMode",
+  "printPrefs",
   "mathAutoNumber",
   "mathMacros",
   "memoryGuard",
@@ -61,6 +62,7 @@ const SETTING_KEYS = [
   "aiActiveModelId",
   "aiQuickActions",
   "excludedPaths",
+  "workspaceOptions",
   "vaultIndexEnabled",
   "wikiLinksEnabled",
   "bibliographyPath",
@@ -100,6 +102,8 @@ const SCALAR_DEFAULTS: Record<string, unknown> = {
   exportPdfMarginMm: 15,
   exportPdfRasterScale: 2,
   exportPdfMode: "vector",
+  // PI2：printPrefs（对象，对话框偏好记忆）取代 PR 轮 printChannel——对象
+  // 不进标量锚点表（同 sync 处理），字段全集由上方 KEYS 覆盖。
   mathAutoNumber: false,
   mathMacros: "",
   memoryGuard: true,
@@ -156,6 +160,15 @@ describe("settings inventory（v4.0.0 分区重构防回归锚点）", () => {
     expect(DEFAULT_SETTINGS.sync.bucket).toBe("");
     expect(DEFAULT_SETTINGS.sync.secretAccessKey).toBe("");
     expect(DEFAULT_SETTINGS.sync.prefix).toBe("mditor/");
+  });
+
+  it("打印偏好默认值（PI2：A4/纵向/15mm/未记忆打印机）", () => {
+    expect(DEFAULT_SETTINGS.printPrefs).toEqual({
+      paper: "A4",
+      orientation: "portrait",
+      marginMm: 15,
+      lastPrinter: null,
+    });
   });
 });
 

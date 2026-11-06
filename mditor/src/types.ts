@@ -110,6 +110,41 @@ export interface S3ProviderPreset {
 }
 
 /**
+ * 单个工作区根的同步范围覆盖（v5.3）。全部字段可缺省——缺省 = 跟随全局
+ * 默认行为（同步全部内容，白名单 md/html/pdf/docx）。纯函数过滤在
+ * lib/sync/ignore.ts（isSyncableRelPath / isExcludedRelPath），引擎在
+ * 本地扫描与远端 List **双侧一致**应用同一份配置——范围外远端对象对本端
+ * 「不可见」，永不产生删除动作（被排除的已跟踪条目走 deleted|deleted →
+ * clearRecord 只清清单，云端副本保留为孤儿，本地文件不动）。
+ */
+export interface RootSyncOptions {
+  /** false = 本根完全不参与云同步（云端已有副本保留不动）。缺省 = 同步。 */
+  enabled?: boolean;
+  /**
+   * 扩展名白名单模式：default = 内置 DEFAULT_SYNCABLE_EXTS；
+   * custom = 使用 extensions 列表（**替换式**——列表即完整白名单，
+   * 内置四类也要重新勾上）。归一：custom 且列表为空 → 回落 default。
+   */
+  extensionMode?: "default" | "custom";
+  /** custom 模式的扩展名白名单（小写、不含点前缀，如 ["md","png"]）。 */
+  extensions?: string[];
+  /**
+   * 树形勾选排除的目录（相对根的 posix 路径，如 ["assets", "notes/drafts"]）。
+   * 匹配语义：relPath 等于该项或以其 + "/" 为前缀即排除。归一：拒 `..`、
+   * 空段、反斜杠；去重。
+   */
+  excludedDirs?: string[];
+  /**
+   * 高级通配排除规则（每行一条）。含 `*` 的模式为叶子锚定匹配（`*` 段内
+   * 通配、`**` 跨段）：`*.tmp` 排除任意层级的 .tmp 文件、`temp/**` 排除
+   * temp 目录全部内容；不含 `*` 的字面模式为目录语义（任意层级的同名
+   * 目录及其内容）：`node_modules`、`notes/drafts`。归一：trim、去空行、
+   * 去重，条数 ≤64、单条 ≤256 字符。
+   */
+  excludePatterns?: string[];
+}
+
+/**
  * 云同步设置（v4.12）。默认全关——本地优先红线：不开启就零网络、零行为
  * 变化。密钥按 D4 明文随 mditor.json 存本机（与 aiApiKey 同一惯例），UI
  * 必须明示并建议最小权限子账号。
@@ -148,6 +183,21 @@ export interface SyncSettings {
    */
   remoteDirs: Record<string, string>;
   /**
+   * 每工作区根的同步范围覆盖（v5.3，见 RootSyncOptions；键 = 工作区根路径，
+   * 与 remoteDirs 同一键空间）。缺省键 = 全默认行为。过滤配置**不**折进
+   * remoteFingerprint——范围变更由引擎矩阵自然收敛（范围外条目 clearRecord），
+   * 避免改一条规则触发全库首同步冲突副本风暴。
+   */
+  rootOptions: Record<string, RootSyncOptions>;
+  /**
+   * 待清除云端副本队列（v5.3；键 = 工作区根路径，值 = 相对根的 posix
+   * relPath 列表）。来源：同步范围对话框里用户显式确认「同时删除云端
+   * 副本」。引擎在该根下次同步的 purge 阶段执行（用户已确认，不受批量
+   * 删除保险拦截）；删除成功的条目由 trigger 经 onPurged 移除，失败的
+   * 留在队列下轮重试。归一：消毒 relPath、去重，每根条数上限 2000。
+   */
+  pendingPurges: Record<string, string[]>;
+  /**
    * 同步方向（v5.2）：bidirectional = 双向合并（默认，既有行为）；
    * uploadOnly = 仅上传（本地为备份源——本地改动/删除传播到云端，
    * 远端改动被忽略）；downloadOnly = 仅下载（云端为准——远端改动
@@ -170,6 +220,36 @@ export type SyncDirection = "bidirectional" | "uploadOnly" | "downloadOnly";
 
 /** 冲突胜者策略（v5.2）：resolveConflict 内容不同分支的胜者判定。 */
 export type ConflictPolicy = "newestWins" | "localFirst" | "remoteFirst";
+
+/* 按工作区的文件树显示选项（v5.3）                                            */
+/* -------------------------------------------------------------------------- */
+
+/** 文件树显示粒度的笔记类型（md 家族四扩展名归一类；见 tauriFs.NOTE_KIND_EXTS）。 */
+export type NoteKind = "md" | "html" | "pdf" | "docx";
+
+/**
+ * 单个工作区根的文件树显示选项（v5.3）。全部字段可缺省——缺省 = 全部笔记
+ * 类型照常显示（既有行为零变化）。仅作用于文件树的显示/打开入口；全局
+ * 搜索、QuickSwitcher、RAG 索引与删除收集不受影响（范围见 CHANGELOG）。
+ */
+export interface WorkspaceOptions {
+  /**
+   * 文件树显示的笔记类型（**替换式**：列表即完整集合，缺省四类也要重新
+   * 勾上）。归一：白名单子集 + 去重；空表或全选四类 → 剔除键（等价默认）。
+   */
+  fileTypes?: NoteKind[];
+}
+
+/**
+ * PI2（应用内打印）：打印偏好——对话框每次确认时回写、下次打开作为初始值。
+ * lastPrinter 为上次选用的打印机名（下拉预选；不存在则回落默认打印机）。
+ */
+export interface PrintPrefs {
+  paper: "A4" | "Letter" | "A3";
+  orientation: "portrait" | "landscape";
+  marginMm: number;
+  lastPrinter: string | null;
+}
 
 export interface Settings {
   theme: Theme;
@@ -256,6 +336,13 @@ export interface Settings {
    * 路径任何阶段失败自动回退 raster 完成导出并状态栏告知。
    */
   exportPdfMode: "vector" | "raster";
+  /**
+   * PI2（应用内打印）：打印偏好记忆——打印对话框（PrintDialog）每次确认
+   * 时回写，下次打开作为初始值（Word 同款「记住上次打印设置」）。打印参数
+   * 不再与导出设置共用：排版（纸张/方向/边距）属打印会话决策，在对话框里
+   * 即时改即时重排预览。值域归一见 store.ts migrateSettings。
+   */
+  printPrefs: PrintPrefs;
   /**
    * 公式自动编号（v4.6，默认关）：开启后展示公式（$$...$$ / ```math）在静
    * 态渲染（AI 面板/批注预览）与导出（HTML/PDF/DOCX/复制富文本）中按序自
@@ -352,6 +439,12 @@ export interface Settings {
    * tree (VS Code "Remove from Workspace" style). Managed/restoreable in 设置.
    */
   excludedPaths: string[];
+  /**
+   * 每工作区根的文件树显示选项（v5.3，见 WorkspaceOptions；键 = 工作区根
+   * 路径，与 sync.rootOptions 同一键空间惯例）。缺省键 = 全部类型照常
+   * 显示。移除工作区不清理 stale 键（与 sync 各键一致，重添即恢复配置）。
+   */
+  workspaceOptions: Record<string, WorkspaceOptions>;
   /**
    * 全库索引（知识功能地基，v4.7）：扫描 workspace 全部 .md 维护内存索引
    * （标题/大纲/双链/标签），供 Ctrl+P 快速切换、反链面板、标签过滤、闪卡

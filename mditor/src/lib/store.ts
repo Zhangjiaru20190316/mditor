@@ -10,10 +10,15 @@
 
 import { getAdapter } from "../platform";
 import { DEFAULT_SETTINGS } from "../defaults";
-import { normalizeSyncSettings } from "../settingsNormalize";
+import { normalizeSyncSettings, normalizeWorkspaceOptions } from "../settingsNormalize";
 import type { AiModelConfig, RecentFile, Settings } from "../types";
 import { normalizeStoredWorkspaces } from "./workspaces";
 import { sysEmit } from "./sysDebug";
+import {
+  PDF_MARGIN_CHOICES,
+  PDF_PAPER_IDS,
+  type PdfPaperId,
+} from "./pdfPaperValues";
 
 // ---- S2：密钥系统凭据存储（keychain）----------------------------------------
 //
@@ -176,6 +181,35 @@ function migrateSettings(s: Settings, raw: Partial<Settings>): Settings {
   // v4.12 云同步：sync 子对象幂等归一（缺失补默认 / prefix 规范化 / 非法
   // interval 归 10）。纯数据操作，鸿蒙运行同样无副作用。
   s.sync = normalizeSyncSettings(s.sync);
+
+  // v5.3 按工作区文件树类型：workspaceOptions 逐键归一（白名单子集、空表
+  // 或全选剔键）。纯数据操作。
+  s.workspaceOptions = normalizeWorkspaceOptions(s.workspaceOptions);
+
+  // PI2（应用内打印）：printPrefs 子对象幂等归一——PR 轮 printChannel 已随
+  // 外部通道整体退役（多余键从持久化中清除）；纸张/方向/边距值域校验（手改
+  // mditor.json 的非法值回落默认），lastPrinter 只接受字符串。值域取自
+  // lib/pdfPaperValues（零依赖轻量模块——与 exportPdfPipeline 单一事实源，
+  // 加纸张/边距档位不再三处漂移）。
+  {
+    const rawPrefs = s.printPrefs as Partial<Settings["printPrefs"]> | undefined;
+    s.printPrefs = {
+      paper: PDF_PAPER_IDS.includes(rawPrefs?.paper as PdfPaperId)
+        ? (rawPrefs?.paper as PdfPaperId)
+        : "A4",
+      orientation: rawPrefs?.orientation === "landscape" ? "landscape" : "portrait",
+      marginMm: (PDF_MARGIN_CHOICES as readonly number[]).includes(
+        Number(rawPrefs?.marginMm)
+      )
+        ? Number(rawPrefs?.marginMm)
+        : 15,
+      lastPrinter:
+        typeof rawPrefs?.lastPrinter === "string" && rawPrefs.lastPrinter
+          ? rawPrefs.lastPrinter
+          : null,
+    };
+    delete (s as Partial<Settings> & { printChannel?: unknown }).printChannel;
+  }
 
   // No stored model list: seed from legacy flat fields if the user configured
   // anything (non-empty baseUrl or model).

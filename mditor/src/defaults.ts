@@ -7,6 +7,7 @@ import type {
   AiModelConfig,
   AiProviderPreset,
   FontPreset,
+  NoteKind,
   S3ProviderPreset,
   Settings,
   SyncSettings,
@@ -130,6 +131,12 @@ export const SYNC_PROVIDER_IDS: ReadonlySet<string> = new Set<string>(
   SYNC_PROVIDERS.map((p) => p.id as string)
 );
 
+/**
+ * 笔记类型全集（v5.3 文件树按工作区选类型）：与 tauriFs.NOTE_KIND_EXTS
+ * 的键一一对应；归一层白名单与 UI chips 共用。顺序即 UI 显示顺序。
+ */
+export const NOTE_KINDS: readonly NoteKind[] = ["md", "html", "pdf", "docx"];
+
 /** 云同步默认值：全关、无凭证——默认零网络行为。 */
 export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
   enabled: false,
@@ -146,6 +153,8 @@ export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
   autoSyncIntervalMin: 10,
   syncOnStart: true,
   remoteDirs: {},
+  rootOptions: {},
+  pendingPurges: {},
   syncDirection: "bidirectional",
   conflictPolicy: "newestWins",
 };
@@ -213,6 +222,8 @@ export const DEFAULT_SETTINGS: Settings = {
   exportPdfRasterScale: 2,
   // RV 轮：矢量导出默认开启（文字可选中/复制/搜索、缩放锐利、体积小）。
   exportPdfMode: "vector",
+  // PI2（应用内打印）：打印偏好默认（A4 / 纵向 / 15mm / 未记忆打印机）。
+  printPrefs: { paper: "A4", orientation: "portrait", marginMm: 15, lastPrinter: null },
   mathAutoNumber: false,
   mathMacros: "",
   memoryGuard: true,
@@ -277,6 +288,7 @@ export const DEFAULT_SETTINGS: Settings = {
     },
   ],
   excludedPaths: [],
+  workspaceOptions: {},
   vaultIndexEnabled: true,
   wikiLinksEnabled: true,
   bibliographyPath: "",
