@@ -32,6 +32,7 @@ import { TabsBar } from "./components/TabsBar";
 import { WorkspaceSearch } from "./components/WorkspaceSearch";
 import { TemplateModal } from "./components/TemplateModal";
 import { LinkDialog } from "./components/LinkDialog";
+import { WorkspaceFileDialog } from "./components/WorkspaceFileDialog";
 import { renderTemplate, type DocTemplate } from "./lib/templates";
 import type { SearchHit } from "./lib/workspaceSearch";
 import {
@@ -60,7 +61,7 @@ import { resolveCodeLines, highlightCodeLines } from "./lib/codeAnno";
 import { findHeadingLine } from "./lib/outline";
 import { buildAnnotationMessages, chatStream, isAiConfigured } from "./lib/ai";
 import { normalizeAnchorText } from "./lib/anchorSearch";
-import { baseName, pickFolder, dirOf, MD_EXT_RE, HTML_FILTERS } from "./lib/tauriFs";
+import { baseName, pickFolder, dirOf, MD_EXT_RE, HTML_FILTERS, resolveTreeExts } from "./lib/tauriFs";
 import {
   isHtmlNote,
   isHtmlTab,
@@ -146,8 +147,8 @@ import {
 import { countWords } from "./lib/textStats";
 import { isBigDoc } from "./lib/memory";
 import { motionEnabled } from "./lib/motion";
-import type { FlatHeading, OutlineNode, Settings, TabItem } from "./types";
-import { EMPTY_MARKS, isDarkTheme } from "./defaults";
+import type { FlatHeading, NoteKind, OutlineNode, Settings, TabItem } from "./types";
+import { EMPTY_MARKS, isDarkTheme, NOTE_KINDS } from "./defaults";
 import type { EditorSettings } from "./types";
 
 type SidebarTab = "tree" | "outline" | "recent" | "annotations" | "search" | "links";
@@ -188,6 +189,11 @@ const DevAlerts = lazy(() =>
 // 构建中被静态替换为 false，整个挂载点连同 lazy chunk 一并被摇掉）。
 const HtmlNoteSpike = lazy(() =>
   import("./dev/htmlNoteSpike").then((m) => ({ default: m.HtmlNoteSpike }))
+);
+// PI2：自研打印对话框（具名导出，lazy 适配 default；对话框内容源链
+// mammoth/pdfjs/PDF 管线全部懒加载，首屏 chunk 零增量）。
+const PrintDialog = lazy(() =>
+  import("./components/PrintDialog").then((m) => ({ default: m.PrintDialog }))
 );
 
 /** 路径 → 标签匹配键（Windows 大小写不敏感 + 分隔符归一）。 */
@@ -279,6 +285,13 @@ function App() {
   const [recentWs, setRecentWs] = useState<string[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // v5.3 工作区文件类型对话框：null = 关闭。add/replace = 选完文件夹待确认
+  // （确认后才真正入工作区，取消 = 中止添加）；edit = 文件树根区「类型」
+  // 按钮，确认即时写设置。
+  const [wsFileDialog, setWsFileDialog] = useState<{
+    mode: "add" | "replace" | "edit";
+    folder: string;
+  } | null>(null);
   // EX U1：PDF 导出进度（自研管线自有进度 UI；null = 无导出在进行）。
   const [pdfProg, setPdfProg] = useState<{
     ctrl: AbortController;
@@ -1707,6 +1720,14 @@ function App() {
     () => new Set(settingsApi.settings.excludedPaths ?? []),
     [settingsApi.settings.excludedPaths]
   );
+  // v5.3 每根文件树类型集合（FileTree 经 readDirLevel 的 allowed 参数消费；
+  // memo 保证引用稳定，类型未变的 settings 更新不会触发整树重读）。
+  const treeExtsByRoot = useMemo(() => {
+    const opts = settingsApi.settings.workspaceOptions;
+    const out: Record<string, ReadonlySet<string> | undefined> = {};
+    for (const r of workspaces) out[r] = resolveTreeExts(opts[r]?.fileTypes);
+    return out;
+  }, [workspaces, settingsApi.settings.workspaceOptions]);
   const handleExclude = useCallback((path: string) => {
     // Functional update: consecutive excludes must chain off the LATEST list,
     // not a ref snapshot (the same lost-update race update() now guards against).
@@ -1739,6 +1760,16 @@ function App() {
   // 设置变化（开关/自动/间隔/启动同步）→ 销毁重建触发器。
   const syncTriggerRef = useRef<import("./lib/sync/trigger").SyncTrigger | null>(null);
   const syncSettings = settingsApi.settings.sync;
+  // PI2 铁律 2：启动 best-effort 清理 48h 前的打印临时件（appDataDir/print/，
+  // 含 PR 轮遗留 .html/.pdf 与本轮 job-*/ 目录；失败在模块内 console.warn）。
+  // 仅 main 窗口执行（对齐下方 sync effect 的 label 门控——doc-* 子窗口各自
+  // 挂载会重复扫盘）。
+  useEffect(() => {
+    if (getAdapter().app.window.label !== "main") return;
+    void import("./lib/printJob")
+      .then((m) => m.cleanupOldPrintFiles())
+      .catch(() => undefined);
+  }, []);
   useEffect(() => {
     if (getAdapter().app.window.label !== "main") return;
     if (!syncSettings.enabled) return;
@@ -1754,6 +1785,20 @@ function App() {
           const name = syncDirNamesRef.current.get(p);
           return name ? { path: p, remoteDir: name } : p;
         }),
+      // v5.3 每根同步范围：purge 阶段成功删除的副本从待清除队列移除并落盘
+      // （失败的条目留在队列，引擎下轮重试）。update 为 useCallback 稳定引用，
+      // 装配闭包捕获安全；函数式更新保证与其它写设置路径不互相覆盖。
+      onPurged: (root, purged) => {
+        void settingsApi.update((prev) => {
+          const rest = (prev.sync.pendingPurges[root] ?? []).filter(
+            (p) => !purged.includes(p)
+          );
+          const pendingPurges = { ...prev.sync.pendingPurges };
+          if (rest.length > 0) pendingPurges[root] = rest;
+          else delete pendingPurges[root];
+          return { sync: { ...prev.sync, pendingPurges } };
+        });
+      },
     });
     return () => {
       syncTriggerRef.current?.dispose();
@@ -2249,8 +2294,18 @@ function App() {
     [flashStatus]
   );
 
+  // v5.3 写入某根的文件树类型配置（替换式；全选四类 = 默认 → 删键）。
+  const applyWorkspaceFileTypes = useCallback((root: string, kinds: NoteKind[]) => {
+    void settingsRef.current.update((prev) => {
+      const next = { ...prev.workspaceOptions };
+      if (kinds.length >= NOTE_KINDS.length) delete next[root];
+      else next[root] = { fileTypes: kinds };
+      return { workspaceOptions: next };
+    });
+  }, []);
+
   const addWorkspaceRoot = useCallback(
-    async (folder: string) => {
+    async (folder: string, kinds?: NoteKind[]) => {
       const cur = workspacesRef.current;
       const next = dedupeRoots([...cur, folder]);
       if (next.length === cur.length) {
@@ -2260,6 +2315,8 @@ function App() {
       workspacesRef.current = next;
       setWsList(next);
       if (!(await persistWorkspaces(next, cur))) return;
+      // v5.3：类型选择非默认时写入配置（全选 = 不写键，行为零变化）。
+      if (kinds) applyWorkspaceFileTypes(folder, kinds);
       // 最近列表属尽力而为：失败不回滚工作区（主持久化已成功）。
       await pushRecentWorkspace(folder).catch((e) => noteOpError("recent-ws-push", e));
       refreshRecentWs();
@@ -2267,12 +2324,12 @@ function App() {
       setSidebarTab("tree");
       flashStatus(`已添加 ${baseName(folder)}`);
     },
-    [flashStatus, persistWorkspaces, refreshRecentWs]
+    [applyWorkspaceFileTypes, flashStatus, persistWorkspaces, refreshRecentWs]
   );
 
   // 替换整个工作区为单个根（多根时先确认；磁盘不受影响）。
   const replaceWorkspace = useCallback(
-    async (folder: string) => {
+    async (folder: string, kinds?: NoteKind[]) => {
       const cur = workspacesRef.current;
       if (cur.length >= 2) {
         const ok = await confirmDialog(
@@ -2283,12 +2340,13 @@ function App() {
       workspacesRef.current = [folder];
       setWsList([folder]);
       if (!(await persistWorkspaces([folder], cur))) return;
+      if (kinds) applyWorkspaceFileTypes(folder, kinds);
       await pushRecentWorkspace(folder).catch((e) => noteOpError("recent-ws-push", e));
       refreshRecentWs();
       setSidebarOpen(true);
       setSidebarTab("tree");
     },
-    [persistWorkspaces, refreshRecentWs]
+    [applyWorkspaceFileTypes, persistWorkspaces, refreshRecentWs]
   );
 
   // 移除一个根（文件树区头的 ×）。不确认 —— 磁盘不动，重挂即可，VS Code 同款。
@@ -2311,17 +2369,89 @@ function App() {
     [removeWorkspaceRoot]
   );
 
+  // v5.3：根区头部「类型」按钮 → 编辑模式对话框（确认即时写设置）。
+  const handleEditFileTypes = useCallback((root: string) => {
+    setWsFileDialog({ mode: "edit", folder: root });
+  }, []);
+
+  // v5.3：选完文件夹先弹类型选择（默认全选，确认才入工作区；取消 = 中止）。
   const addFolderFromDialog = useCallback(async () => {
     const f = await pickFolder();
-    if (f) await addWorkspaceRoot(f);
-  }, [addWorkspaceRoot]);
+    if (f) setWsFileDialog({ mode: "add", folder: f });
+  }, []);
 
   const replaceFolderFromDialog = useCallback(async () => {
     const f = await pickFolder();
-    if (f) await replaceWorkspace(f);
-  }, [replaceWorkspace]);
+    if (f) setWsFileDialog({ mode: "replace", folder: f });
+  }, []);
 
   // ----- export & clipboard helpers -----
+  /** doExport 的 md 预处理段抽取（PR 轮 M2，DE 轮 buildDocx 同款手法）：getHTML
+   *  → 减配补渲染 → 块公式 → 双链/引用/闪卡剥离 → ctx。导出与打印（doPrint）
+   *  共用同一序列——导出行为零变化的回归锚点（exporter.test / 手测清单）。
+   *  rasterizeMath 仅 docx 导出走（Word 渲染不了 KaTeX 布局）；打印两通道均
+   *  保留矢量标记（与 HTML/PDF 导出同一保真边界）。 */
+  const buildExportContext = useCallback(
+    async (
+      o?: { rasterizeMath?: boolean }
+    ): Promise<import("./lib/exporter").ExportContext | null> => {
+      const ed = editorRef.current;
+      if (!ed) return null;
+      let html = ed.getHTML();
+      // v4.6：块级公式修复——编辑器把公式块序列化为 <pre data-language=
+      // "LaTeX"> 原始源码，导出前再渲染为 KaTeX HTML。DOCX/复制富文本场景
+      // Word 渲染不了 KaTeX 布局，公式栅格化为图片；HTML/PDF 保留矢量标记
+      // （CSS 由 collectThemeCss 一并带走）。EX 阶段五起 PNG 走离屏工厂
+      // （与 PDF/HTML 同源 HTML），同样纳入预处理——RC-6（懒渲染占位入图）
+      // 的结构性修复。
+      {
+        const { renderBlockMath, rasterizeFormulas, renderDegradedMath } =
+          await import("./lib/exportMath");
+        // EX Fix-D4（RC-5）：减配档（大文档性能模式 + 超阈值）下编辑器关闭
+        // 公式特性，getHTML() 把公式序列化为 $/$$ 源码文本——renderBlockMath
+        // 只认 <pre data-language="LaTeX">，匹配不到这种形态，PDF/HTML/DOCX
+        // 全是裸源码。导出前补渲染为与非减配档同形的 KaTeX 标记（后续
+        // renderBlockMath 对残存 pre 照常处理，DOCX 栅格化消费同样式节点）。
+        // 仅减配档调用：普通文档的合法 $ 字面不受影响。
+        if (ed.isBigDoc()) {
+          try {
+            html = renderDegradedMath(html).html;
+          } catch {
+            /* 补渲染失败保留原样（源码可见） */
+          }
+        }
+        const r = renderBlockMath(html);
+        html = r.html;
+        if (o?.rasterizeMath && r.hasMath) {
+          html = await rasterizeFormulas(html, (done, total) =>
+            flashStatus(`正在渲染公式 ${done}/${total}…`, 60_000)
+          );
+        }
+        // v4.7 双链降级（铁律 5）：编辑器标记 → 标准相对链接 / 样式化纯文本。
+        try {
+          html = resolveWikiLinksInHtml(html, fileApi.doc.path);
+        } catch {
+          /* 降级失败保留原标记（仍可读） */
+        }
+        // v4.7 模块 3 引用降级（铁律 6）：chip → 编号纯文本 + References 标题
+        // 下注入自动生成的文献表（无文献配置时保留原文形态）。
+        try {
+          html = resolveCitationsForExport(html);
+        } catch {
+          /* 降级失败保留 chip 文本（仍可读） */
+        }
+        // v4.7 模块 4 闪卡降级（铁律 6）：卡片容器 → 普通 blockquote。
+        try {
+          html = degradeFlashcardsInHtml(html);
+        } catch {
+          /* 降级失败保留卡片容器（内容仍可读） */
+        }
+      }
+      return { html, css: collectThemeCss(), docPath: fileApi.doc.path };
+    },
+    [fileApi.doc.path, flashStatus]
+  );
+
   const doExport = useCallback(
     async (kind: "html" | "pdf" | "png" | "docx" | "latex") => {
       const ed = editorRef.current;
@@ -2349,58 +2479,8 @@ function App() {
         }
         return;
       }
-      let html = ed.getHTML();
-      // v4.6：块级公式修复——编辑器把公式块序列化为 <pre data-language=
-      // "LaTeX"> 原始源码，导出前再渲染为 KaTeX HTML。DOCX/复制富文本场景
-      // Word 渲染不了 KaTeX 布局，公式栅格化为图片；HTML/PDF 保留矢量标记
-      // （CSS 由 collectThemeCss 一并带走）。EX 阶段五起 PNG 走离屏工厂
-      // （与 PDF/HTML 同源 HTML），同样纳入预处理——RC-6（懒渲染占位入图）
-      // 的结构性修复。
-      {
-        const { renderBlockMath, rasterizeFormulas, renderDegradedMath } =
-          await import("./lib/exportMath");
-        // EX Fix-D4（RC-5）：减配档（大文档性能模式 + 超阈值）下编辑器关闭
-        // 公式特性，getHTML() 把公式序列化为 $/$$ 源码文本——renderBlockMath
-        // 只认 <pre data-language="LaTeX">，匹配不到这种形态，PDF/HTML/DOCX
-        // 全是裸源码。导出前补渲染为与非减配档同形的 KaTeX 标记（后续
-        // renderBlockMath 对残存 pre 照常处理，DOCX 栅格化消费同样式节点）。
-        // 仅减配档调用：普通文档的合法 $ 字面不受影响。
-        if (ed.isBigDoc()) {
-          try {
-            html = renderDegradedMath(html).html;
-          } catch {
-            /* 补渲染失败保留原样（源码可见） */
-          }
-        }
-        const r = renderBlockMath(html);
-        html = r.html;
-        if (kind === "docx" && r.hasMath) {
-          html = await rasterizeFormulas(html, (done, total) =>
-            flashStatus(`正在渲染公式 ${done}/${total}…`, 60_000)
-          );
-        }
-        // v4.7 双链降级（铁律 5）：编辑器标记 → 标准相对链接 / 样式化纯文本。
-        try {
-          html = resolveWikiLinksInHtml(html, fileApi.doc.path);
-        } catch {
-          /* 降级失败保留原标记（仍可读） */
-        }
-        // v4.7 模块 3 引用降级（铁律 6）：chip → 编号纯文本 + References 标题
-        // 下注入自动生成的文献表（无文献配置时保留原文形态）。
-        try {
-          html = resolveCitationsForExport(html);
-        } catch {
-          /* 降级失败保留 chip 文本（仍可读） */
-        }
-        // v4.7 模块 4 闪卡降级（铁律 6）：卡片容器 → 普通 blockquote。
-        try {
-          html = degradeFlashcardsInHtml(html);
-        } catch {
-          /* 降级失败保留卡片容器（内容仍可读） */
-        }
-      }
-      const css = collectThemeCss();
-      const ctx = { html, css, docPath: fileApi.doc.path };
+      const ctx = await buildExportContext({ rasterizeMath: kind === "docx" });
+      if (!ctx) return;
       const name =
         (fileApi.doc.path ? baseName(fileApi.doc.path) : "untitled").replace(
           MD_EXT_RE,
@@ -2497,9 +2577,64 @@ function App() {
         setPdfProg(null); // 结束即卸载（含异常路径——进度 UI 可回收）
       }
     },
-    // flashStatus 为稳定 useCallback（空依赖），列入只为满足 exhaustive-deps。
-    [fileApi.doc.path, settingsApi.settings, flashStatus]
+    // flashStatus 为稳定 useCallback（空依赖），列入只为满足 exhaustive-deps；
+    // buildExportContext 依赖（fileApi.doc.path, flashStatus）均已在内——
+    // doExport 身份随文档/主题变化的节奏与抽取前一致。
+    [fileApi.doc.path, settingsApi.settings, flashStatus, buildExportContext]
   );
+
+  // ----- PI2：打印（file_print / Ctrl+Shift+P → 应用内打印对话框）-----------
+  // 自研四层：PrintDialog（预览+设置）→ printJob（四 kind 内容源+GDI 作业）
+  // → Rust printing.rs 直打；不经系统浏览器/阅读器（铁律见 printJob.ts 头注）。
+  // 打印与只读/编辑态正交：只认 kind，不碰 isReadonlyTab/docEdit——编辑中的
+  // pdf/docx 也照常打印原文件。重活（mammoth/PDF 管线/pdfjs）全部在对话框
+  // 挂载后经懒加载链进入，首屏零增量（对齐 exporter 纪律）。
+  const [printReq, setPrintReq] =
+    useState<import("./components/PrintDialog").PrintDialogRequest | null>(null);
+  // 防重入：对话框开着（含打印进行中）时再次触发（Ctrl+Shift+P 穿透模态/
+  // pdf 视图打印按钮）只会替换 request prop——PrintDialog 的内容源准备
+  // effect 依赖 []，不响应 request 变化：标题换成新文档、实际打印的仍是
+  // 旧文档（所见非所打）。拒绝重触发并提示，关闭后自然解锁。
+  const printReqRef = useRef(printReq);
+  printReqRef.current = printReq;
+  const doPrint = useCallback(() => {
+    if (!getAdapter().capabilities.print) return; // harmony 保守关（键位 no-op）
+    if (printReqRef.current) {
+      flashStatus("打印对话框已打开（先关闭当前打印）", 5000);
+      return;
+    }
+    const tab = tabsRef.current.find((t) => t.key === activeKeyRef.current) ?? null;
+    const kind = tab?.kind ?? "md";
+    if (kind !== "md" && !tab?.path) {
+      flashStatus("该标签没有可打印的源文件", 5000);
+      return;
+    }
+    const stem =
+      (tab?.path ? baseName(tab.path) : tab?.name || "未命名").replace(
+        /\.[^.]+$/,
+        ""
+      ) || "未命名";
+    // md 的内容源与导出同序（buildExportContext 复用——预处理零漂移）；
+    // docx/html/pdf 的源准备在 PrintDialog 内（进度可视、可取消）。
+    setPrintReq({
+      kind,
+      stem,
+      path: tab?.path ?? null,
+      mdContextProvider: kind === "md" ? buildExportContext : null,
+    });
+  }, [buildExportContext, flashStatus]);
+
+  // doPrint 身份随文档变化（对齐 doExport 惯例），dispatchMenu 经 ref 转发取
+  // 最新实例。
+  const doPrintRef = useRef(doPrint);
+  doPrintRef.current = doPrint;
+
+  // PI2：pdf/docx 视图顶栏「打印」按钮（与菜单 file_print 同一条分发；经
+  // doPrintRef 读最新实例，本回调恒稳定——memo 视图不因打印接线重渲染）。
+  // caps.print 关闭的平台（harmony）不注入 → 按钮不渲染（不假成功）。
+  const printActiveTab = useCallback(() => {
+    doPrintRef.current();
+  }, []);
 
   const doCopyRich = useCallback(async () => {
     const ed = editorRef.current;
@@ -2566,6 +2701,7 @@ function App() {
     quitFallbackTimerRef,
     forceCloseRef,
     doExportRef,
+    doPrintRef,
     tabsRef,
     activeKeyRef,
     activateTabRef,
@@ -3480,6 +3616,8 @@ function App() {
                   excludedPaths={excludedSet}
                   onExclude={handleExclude}
                   onRemoveRoot={handleRemoveRoot}
+                  treeExtsByRoot={treeExtsByRoot}
+                  onEditFileTypes={handleEditFileTypes}
                 />
               </>
             ) : (
@@ -3622,6 +3760,7 @@ function App() {
             path={activeTabForTitle.path}
             onOpenExternal={openExternalNote}
             onConvertToMarkdown={convertDocNoteToMdStable}
+            onPrint={getAdapter().capabilities.print ? printActiveTab : undefined}
             editActive={isDocEditActive(activeTabForTitle)}
             onEnterEdit={enterDocEditMode}
             onExitEdit={exitDocEditMode}
@@ -3637,6 +3776,7 @@ function App() {
             path={activeTabForTitle.path}
             onOpenExternal={openExternalNote}
             onConvertToMarkdown={convertDocNoteToMdStable}
+            onPrint={getAdapter().capabilities.print ? printActiveTab : undefined}
             editActive={isDocEditActive(activeTabForTitle)}
             onEnterEdit={enterDocEditMode}
             onExitEdit={exitDocEditMode}
@@ -3814,6 +3954,22 @@ function App() {
         />
       )}
 
+      {/* PI2：自研打印对话框（应用内预览+直打；偏好记忆回写 settings）。 */}
+      {printReq && (
+        <Suspense fallback={null}>
+          <PrintDialog
+            request={printReq}
+            onClose={() => setPrintReq(null)}
+            prefs={settingsApi.settings.printPrefs}
+            onPrefsChange={(p) => {
+              void settingsApi.update({ printPrefs: p });
+            }}
+            flashStatus={flashStatus}
+            showAlert={showAlert}
+          />
+        </Suspense>
+      )}
+
       {/* V3.6：从模板新建 / 插入链接 弹窗 */}
       <TemplateModal
         open={templateOpen}
@@ -3826,6 +3982,25 @@ function App() {
         onConfirm={onInsertLinkConfirm}
         onClose={() => setLinkDialogOpen(false)}
       />
+
+      {/* v5.3 工作区文件类型选择：add/replace = 选完文件夹待确认（确认才入
+       *  工作区，取消 = 中止）；edit = 根区「类型」按钮，确认即时写设置。 */}
+      {wsFileDialog && (
+        <WorkspaceFileDialog
+          open
+          name={baseName(wsFileDialog.folder) || wsFileDialog.folder}
+          initialKinds={
+            settingsRef.current.settings.workspaceOptions[wsFileDialog.folder]?.fileTypes
+          }
+          onConfirm={(kinds) => {
+            const { mode, folder } = wsFileDialog;
+            if (mode === "add") void addWorkspaceRoot(folder, kinds);
+            else if (mode === "replace") void replaceWorkspace(folder, kinds);
+            else applyWorkspaceFileTypes(folder, kinds);
+          }}
+          onClose={() => setWsFileDialog(null)}
+        />
+      )}
 
       {/* HN 轮阶段 2：HTML 笔记 → Markdown（预览经 renderMarkdown 消毒管线） */}
       <HtmlToMdDialog

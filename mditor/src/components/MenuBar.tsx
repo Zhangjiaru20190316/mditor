@@ -92,6 +92,9 @@ function buildMenus(focusMode: boolean, theme: string, typewriter: boolean): Men
               item("file_export_latex", "导出 LaTeX (.tex)"),
             ]
           : []),
+        // PI2：打印笔记——应用内打印对话框（自研排版 + Rust GDI 直打，
+        // 全程不经外部程序）。harmony caps 保守关不渲染（types.ts print 注）。
+        ...(caps.print ? [item("file_print", "打印…", "Ctrl+Shift+P")] : []),
         sep(),
         item("app_exit", "退出"),
       ],

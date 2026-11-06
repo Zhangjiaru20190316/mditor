@@ -1013,6 +1013,19 @@ body.is-resizing .sidebar {
   color: var(--danger);
   background: var(--danger-soft);
 }
+/* 「类型」按钮（v5.3 按工作区选文件树类型）：与 × 同区头、同 hover 显隐，
+ * 但 hover 高亮用普通前景色（非危险色），宽度自适应文字。 */
+.ft-section-x.ft-section-kinds {
+  width: auto;
+  min-width: 20px;
+  padding: 0 5px;
+  font-size: var(--font-size-s);
+  line-height: 1;
+}
+.ft-section-x.ft-section-kinds:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg-muted) 12%, transparent);
+}
 /* checkbox in batch mode */
 .ft-check {
   flex: 0 0 auto;
@@ -4757,6 +4770,174 @@ html[data-motion="none"] *::after {
 }
 .sync-secret-hint {
   color: var(--fg-muted);
+}
+
+/* 同步范围对话框（v5.3 每根范围：文件类型 + 目录树勾选 + 排除规则）。 */
+.sync-scope-card {
+  width: min(560px, 92vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+.sync-scope-root {
+  font-size: var(--font-size-s);
+  color: var(--fg-muted);
+  margin-left: auto;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-scope-body {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 2px;
+}
+.sync-scope-enabled {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  cursor: pointer;
+}
+.sync-scope-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sync-scope-label {
+  font-weight: 600;
+  font-size: var(--font-size-s);
+}
+.sync-scope-exts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.sync-scope-chip,
+.wsfile-chip {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-muted);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: var(--font-size-s);
+  cursor: pointer;
+}
+.sync-scope-chip.on,
+.wsfile-chip.on {
+  border-color: var(--accent, var(--fg));
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+/* 工作区文件类型对话框（v5.3 按工作区选文件树类型）。 */
+.wsfile-card {
+  width: min(420px, 92vw);
+}
+.wsfile-root {
+  font-size: var(--font-size-s);
+  color: var(--fg-muted);
+  margin-left: auto;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wsfile-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wsfile-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* 设置 → 工作区：每根当前类型摘要。 */
+.wsfile-summary {
+  flex: 1;
+  font-size: var(--font-size-s);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-scope-ext-add {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex: 1;
+  min-width: 180px;
+}
+.sync-scope-ext-add input {
+  flex: 1;
+  min-width: 0;
+}
+.sync-scope-tree {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.sync-scope-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 8px 2px 4px;
+  min-height: 24px;
+}
+.sync-scope-row:hover {
+  background: color-mix(in srgb, var(--fg-muted) 6%, transparent);
+}
+.sync-scope-row.hidden-dir {
+  opacity: 0.55;
+}
+.sync-scope-twist {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+.sync-scope-twist-blank {
+  cursor: default;
+}
+.sync-scope-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sync-scope-tag {
+  font-size: var(--font-size-s);
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+.sync-scope-patterns {
+  width: 100%;
+  resize: vertical;
+  font-size: var(--font-size-s);
+}
+.sync-scope-confirm-text {
+  margin: 0;
+}
+.sync-scope-affected {
+  max-height: 160px;
+  overflow-y: auto;
+  margin: 0;
+  padding-left: 20px;
+  font-size: var(--font-size-s);
+  word-break: break-all;
+}
+.sync-scope-warn {
+  color: var(--danger, #c0392b);
 }
 
 /* 状态栏云同步指示器（v4.12；v5.2 进度环）：四态着色；syncing 时不再

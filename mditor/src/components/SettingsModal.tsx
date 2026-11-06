@@ -13,12 +13,15 @@ import type {
   AiModelConfig,
   AiProvider,
   MotionLevel,
+  NoteKind,
   QuickAction,
   QuickActionScope,
+  RootSyncOptions,
   Settings,
   SyncSettings,
   Theme,
   ThinkingStrength,
+  WorkspaceOptions,
 } from "../types";
 import {
   AI_PROVIDERS,
@@ -27,6 +30,7 @@ import {
   emptyAiModel,
   FONT_PRESETS,
   MONO_FONT_PRESETS,
+  NOTE_KINDS,
 } from "../defaults";
 import { testConnection } from "../lib/ai";
 import { fetchAppVersion } from "../lib/appVersion";
@@ -42,6 +46,8 @@ import {
 import { useDelayedUnmount } from "../hooks/useDelayedUnmount";
 import { CloseIcon, ChevronRightIcon, LogoIcon } from "./icons";
 import { FontPresetPicker } from "./FontPresetPicker";
+import { SyncScopeDialog } from "./SyncScopeDialog";
+import { WorkspaceFileDialog, KIND_LABELS } from "./WorkspaceFileDialog";
 
 /** 分区导航项（固定高度，供滑动指示条做等距 translateY 定位）。 */
 const SECTIONS = [
@@ -84,6 +90,46 @@ function setRemoteDir(
   delete rest[root];
   if (t === "") return rest;
   return { ...rest, [root]: t };
+}
+
+/** 写入某工作区的同步范围覆盖（v5.3）：undefined = 清除键（回退全默认）。 */
+function setRootOption(
+  map: Record<string, RootSyncOptions>,
+  root: string,
+  opts: RootSyncOptions | undefined
+): Record<string, RootSyncOptions> {
+  const next = { ...map };
+  if (opts) next[root] = opts;
+  else delete next[root];
+  return next;
+}
+
+/** 并入某工作区待清除云端副本队列（v5.3，去重；只在增长时写键）。 */
+function mergePendingPurges(
+  map: Record<string, string[]>,
+  root: string,
+  additions: string[]
+): Record<string, string[]> {
+  if (additions.length === 0) return map;
+  const merged = [...new Set([...(map[root] ?? []), ...additions])];
+  return { ...map, [root]: merged };
+}
+
+/**
+ * 写入某工作区根的文件树类型配置（v5.3）：kinds 为空或覆盖全部四类 =
+ * 默认行为 → 删除键；否则写入替换式列表。
+ */
+function setWorkspaceFileTypes(
+  map: Record<string, WorkspaceOptions>,
+  root: string,
+  kinds: NoteKind[]
+): Record<string, WorkspaceOptions> {
+  const next = { ...map };
+  if (kinds.length === 0 || kinds.length >= NOTE_KINDS.length) {
+    delete next[root];
+    return next;
+  }
+  return { ...next, [root]: { fileTypes: kinds } };
 }
 
 function isLocalhostEndpoint(endpoint: string): boolean {  const rest = endpoint.trim().toLowerCase().replace(/^http:\/\//, "");
@@ -164,6 +210,10 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
   const [syncTestOk, setSyncTestOk] = useState(false);
   const [showSk, setShowSk] = useState(false);
   const [showSyncAdvanced, setShowSyncAdvanced] = useState(false);
+  // v5.3：正在配置同步范围的工作区根（null = 同步范围对话框关闭）。
+  const [scopeRoot, setScopeRoot] = useState<string | null>(null);
+  // v5.3：正在配置文件树类型的工作区根（null = 文件类型对话框关闭）。
+  const [wsFileRoot, setWsFileRoot] = useState<string | null>(null);
   // v4.1 退场动效：关闭后保持挂载 240ms 播 .closing 动画再卸载。
   const mounted = useDelayedUnmount(open, EXIT_MS);
 
@@ -747,6 +797,13 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
                     完成导出并告知。「清晰度」档位只影响位图部分。
                   </span>
                 </Field>
+                <Field label="打印">
+                  <span className="hint">
+                    「打印…」（Ctrl+Shift+P）打开应用内打印对话框：打印机/
+                    纸张/方向/边距/份数/页码范围与分页预览一处完成，直送打印
+                    机，不经外部程序。对话框会记住上次的选择（含打印机）。
+                  </span>
+                </Field>
               </>
             )}
 
@@ -1035,6 +1092,38 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
 
             {section === 7 && (
               <>
+                {workspaces.length > 0 && (
+                  <FieldGroup label="文件树显示的笔记类型（按工作区）">
+                    {workspaces.map((ws) => {
+                      const kinds = draft.workspaceOptions[ws]?.fileTypes;
+                      const summary = !kinds || kinds.length === 0
+                        ? "全部"
+                        : kinds.map((k) => KIND_LABELS[k]).join(" · ");
+                      return (
+                        <span key={ws} className="sync-dir-row">
+                          <span className="sync-dir-path mono" title={ws}>
+                            {basename(toPosix(ws)) || ws}
+                          </span>
+                          <span className="wsfile-summary" title={ws}>
+                            {summary}
+                          </span>
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            onClick={() => setWsFileRoot(ws)}
+                          >
+                            文件类型…
+                          </button>
+                        </span>
+                      );
+                    })}
+                    <span className="hint">
+                      每个工作区可选文件树显示哪些笔记类型（Markdown/HTML/PDF/
+                      Word）；隐藏的类型不再出现在该工作区的文件树中，磁盘文件
+                      与全局搜索/索引行为不受影响。全部勾选 = 恢复默认。
+                    </span>
+                  </FieldGroup>
+                )}
                 <div className="excluded-hint">
                   以下项仅从文件树隐藏，磁盘文件未删除；点「恢复」可在文件树重新显示。
                 </div>
@@ -1336,7 +1425,7 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
                 </Field>
 
                 {workspaces.length > 0 && (
-                  <Field label="云端目录名（跨端配对）">
+                  <FieldGroup label="云端目录名与同步范围">
                     {workspaces.map((ws) => (
                       <span key={ws} className="sync-dir-row">
                         <span className="sync-dir-path mono" title={ws}>
@@ -1354,6 +1443,14 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
                             })
                           }
                         />
+                        <button
+                          type="button"
+                          className="btn-ghost sync-scope-btn"
+                          disabled={!syncSupported}
+                          onClick={() => setScopeRoot(ws)}
+                        >
+                          范围…
+                        </button>
                       </span>
                     ))}
                     <span className="hint">
@@ -1361,8 +1458,10 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
                       要与另一台设备（桌面 ↔ 鸿蒙）互相同步，两端的目录名必须一致：
                       两端挂载的文件夹名不同时，把其中一端改成与另一端相同即可配对。
                       仅一段、不含 /；改名后首轮按首同步全量重算，不会删除任何文件。
+                      「范围…」可按工作区自定义同步哪些文件类型、勾选参与同步的
+                      子文件夹与排除规则；被排除内容的云端副本默认保留。
                     </span>
-                  </Field>
+                  </FieldGroup>
                 )}
 
                 <Field label="同步方向">
@@ -1509,6 +1608,41 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
           <button className="btn-ghost" onClick={onClose}>取消</button>
           <button className="btn-primary" onClick={applyAll}>应用</button>
         </footer>
+
+        {/* v5.3 同步范围对话框（嵌套弹层；settings-card 的 stopPropagation
+         *  保证其背板点击不会连带关闭设置面板）。提交写入 draft，随「应用」
+         *  统一落盘；删除云端副本的新增项并入 pendingPurges。 */}
+        {scopeRoot !== null && (
+          <SyncScopeDialog
+            open
+            root={scopeRoot}
+            saved={draft.sync.rootOptions[scopeRoot]}
+            onCommit={(opts, purgeAdditions) => {
+              setSync({
+                rootOptions: setRootOption(draft.sync.rootOptions, scopeRoot, opts),
+                pendingPurges: mergePendingPurges(
+                  draft.sync.pendingPurges,
+                  scopeRoot,
+                  purgeAdditions
+                ),
+              });
+            }}
+            onClose={() => setScopeRoot(null)}
+          />
+        )}
+
+        {/* v5.3 工作区文件类型对话框（写入 draft，随「应用」统一落盘）。 */}
+        {wsFileRoot !== null && (
+          <WorkspaceFileDialog
+            open
+            name={basename(toPosix(wsFileRoot)) || wsFileRoot}
+            initialKinds={draft.workspaceOptions[wsFileRoot]?.fileTypes}
+            onConfirm={(kinds) => {
+              set("workspaceOptions", setWorkspaceFileTypes(draft.workspaceOptions, wsFileRoot, kinds));
+            }}
+            onClose={() => setWsFileRoot(null)}
+          />
+        )}
       </div>
     </div>
   );
@@ -1520,5 +1654,19 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="field-label">{label}</span>
       <span className="field-control">{children}</span>
     </label>
+  );
+}
+
+/**
+ * Field 的 div 变体（v5.3）：多控件/含按钮的分组用——`<label>` 的隐式
+ * 关联会把整段分组文本算进首个可关联控件的 accessible name（按钮嵌在
+ * label 里也是语义错误），样式与 Field 完全一致。
+ */
+function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="field">
+      <span className="field-label">{label}</span>
+      <span className="field-control">{children}</span>
+    </div>
   );
 }

@@ -56,6 +56,8 @@ export interface UseMenuCommandsDeps {
   doExportRef: MutableRefObject<
     (kind: "html" | "pdf" | "png" | "docx" | "latex") => Promise<void>
   >;
+  /** PI2：打印函数的 ref 转发（doPrint 身份不稳定，同 doExport 惯例）。 */
+  doPrintRef: MutableRefObject<() => void>;
   /** 标签表快照（Ctrl+Tab 轮换读取）。 */
   tabsRef: MutableRefObject<TabItem[]>;
   /** 活动标签 key（Ctrl+Tab / Ctrl+W 读取）。 */
@@ -113,6 +115,7 @@ export function useMenuCommands(deps: UseMenuCommandsDeps) {
     quitFallbackTimerRef,
     forceCloseRef,
     doExportRef,
+    doPrintRef,
     tabsRef,
     activeKeyRef,
     activateTabRef,
@@ -250,6 +253,12 @@ export function useMenuCommands(deps: UseMenuCommandsDeps) {
         break;
       case "file_export_latex":
         void doExportRef.current("latex");
+        break;
+      case "file_print":
+        // PI2：打印当前标签（App.doPrint → 应用内打印对话框 PrintDialog →
+        // lib/printJob）。caps.print 关闭的平台（harmony 保守关）菜单/键位
+        // 本就不出现，这里再守一道（不假成功）。
+        if (getAdapter().capabilities.print) doPrintRef.current();
         break;
       case "edit_insert_citation":
         setCiteOpen(true);
@@ -511,10 +520,13 @@ export function useMenuCommands(deps: UseMenuCommandsDeps) {
           dispatchMenuRef.current(e.shiftKey ? "file_open_folder" : "file_open");
           break;
         case "p":
-          // Ctrl+P：快速切换器（v4.7）。浏览器打印无默认快捷键冲突（Ctrl+P
-          // 在 WebView2 默认打印，编辑器场景统一让位给文件跳转）。
+          // Ctrl+P = 快速打开（v4.7 语义不动），Ctrl+Shift+P = 打印当前标签
+          // （file_print → PI2 应用内打印对话框，lib/printJob 铁律注）。
+          // preventDefault 同时拦下 WebView2 自带的 Ctrl+P 打印（旧注释的
+          // 「WebView2 默认打印」担忧由拦截消除）。
           e.preventDefault();
-          setQuickOpen(true);
+          if (e.shiftKey) dispatchMenuRef.current("file_print");
+          else setQuickOpen(true);
           break;
         case "\\":
           e.preventDefault();

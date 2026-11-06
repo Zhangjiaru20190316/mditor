@@ -59,8 +59,12 @@ interface Mounted {
   view: ReturnType<typeof render>;
 }
 
-/** 挂载打开态 SettingsModal，回调为 mock。 */
-function renderModal(settings: Settings = baseSettings(), workspace?: string): Mounted {
+/** 挂载打开态 SettingsModal，回调为 mock。workspaces 供逐根配置分区用。 */
+function renderModal(
+  settings: Settings = baseSettings(),
+  workspace?: string,
+  workspaces?: string[]
+): Mounted {
   const onClose = vi.fn<() => void>();
   const onChange = vi.fn<(patch: Partial<Settings>) => Promise<void>>(async () => undefined);
   const view = render(
@@ -68,6 +72,7 @@ function renderModal(settings: Settings = baseSettings(), workspace?: string): M
       open
       settings={settings}
       workspace={workspace ?? null}
+      workspaces={workspaces}
       onClose={onClose}
       onChange={onChange}
     />
@@ -337,6 +342,41 @@ describe("SettingsModal", () => {
     expect(screen.getByText("暂无已移除的项目")).toBeInTheDocument();
     clickApply();
     expect(appliedDraft(m).excludedPaths).toEqual([]);
+  });
+
+  it("工作区：每根文件类型行 + 对话框确认写 draft（应用落盘）", () => {
+    const settings = baseSettings({
+      workspaceOptions: { "C:/ws/pdf": { fileTypes: ["pdf"] } },
+    });
+    const m = renderModal(settings, "C:/ws", ["C:/ws/pdf", "C:/ws/notes"]);
+    gotoSection("工作区");
+    // 每根摘要行：已配置根显示类型名，未配置根显示「全部」。
+    expect(screen.getByText("PDF")).toBeInTheDocument();
+    expect(screen.getByText("全部")).toBeInTheDocument();
+    // 打开第一个根的对话框：预填 pdf；勾上 Word 后确认。
+    fireEvent.click(screen.getAllByRole("button", { name: "文件类型…" })[0]);
+    expect(screen.getByText("文件类型")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Word/ }));
+    fireEvent.click(screen.getByRole("button", { name: "确定" }));
+    clickApply();
+    expect(appliedDraft(m).workspaceOptions).toEqual({
+      "C:/ws/pdf": { fileTypes: ["pdf", "docx"] },
+    });
+  });
+
+  it("工作区：对话框全选确认 → 配置键删除（恢复默认）", () => {
+    const settings = baseSettings({
+      workspaceOptions: { "C:/ws/pdf": { fileTypes: ["pdf"] } },
+    });
+    const m = renderModal(settings, "C:/ws", ["C:/ws/pdf"]);
+    gotoSection("工作区");
+    fireEvent.click(screen.getByRole("button", { name: "文件类型…" }));
+    fireEvent.click(screen.getByRole("button", { name: /Markdown/ }));
+    fireEvent.click(screen.getByRole("button", { name: /HTML/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Word/ }));
+    fireEvent.click(screen.getByRole("button", { name: "确定" }));
+    clickApply();
+    expect(appliedDraft(m).workspaceOptions).toEqual({});
   });
 
   it("知识功能：RAG 开关联动嵌入字段显隐，引用样式切换，.bib 浏览走 adapter", async () => {
