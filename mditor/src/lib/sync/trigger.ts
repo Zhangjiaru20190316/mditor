@@ -32,6 +32,9 @@ const OFFLINE_THRESHOLD = 2;
  * 同步根：字符串 = 旧形态（远端目录名取根 basename）；对象形态可覆盖远端
  * 目录名——鸿蒙虚拟根 /Docs/ws-N 的 basename 是设备本地 token，两端键空间
  * 按构造不相交，平台层须传真实文件夹名实现「同名工作区」跨设备配对。
+ * v5.3.1：覆盖值支持多段子路径（「笔记/cmc」）——设备目录可直接配对桌面
+ * 主工作区内的子目录键空间（此前只能配对「同名根/专属根」，专属根关闭
+ * 即静默分叉）。
  */
 export type SyncRootSpec = string | { path: string; remoteDir?: string };
 

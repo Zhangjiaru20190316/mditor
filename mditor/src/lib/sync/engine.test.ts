@@ -400,13 +400,25 @@ describe("远端目录名覆盖（键收敛：鸿蒙 token → 真实文件夹�
     expect(resolveRemoteDir("/Docs/ws-1", "C语言")).toBe("C语言");
     expect(resolveRemoteDir("/Docs/ws-1", "")).toBe("ws-1");
     expect(resolveRemoteDir("/Docs/ws-1", "  ")).toBe("ws-1");
-    expect(resolveRemoteDir("/Docs/ws-1", "a/b")).toBe("ws-1");
     expect(resolveRemoteDir("/Docs/ws-1", "..")).toBe("ws-1");
+    // v5.3.1：多段子路径合法（设备 ↔ 桌面主工作区子目录配对）。
+    expect(resolveRemoteDir("/Docs/ws-1", "a/b")).toBe("a/b");
+    expect(resolveRemoteDir("/Docs/ws-1", "/笔记/cmc/")).toBe("笔记/cmc");
+  });
+
+  it("resolveRemoteDir：穿越与退化段整体回退（段级消毒）", () => {
+    expect(resolveRemoteDir("/Docs/ws-1", "a//b")).toBe("ws-1");
+    expect(resolveRemoteDir("/Docs/ws-1", "a/./b")).toBe("ws-1");
+    expect(resolveRemoteDir("/Docs/ws-1", "a/../b")).toBe("ws-1");
+    expect(resolveRemoteDir("/Docs/ws-1", "../笔记")).toBe("ws-1");
+    expect(resolveRemoteDir("/Docs/ws-1", "笔记/..")).toBe("ws-1");
   });
 
   it("fullPrefixOf：覆盖与回退同源（引擎与指纹共用推导）", () => {
     expect(fullPrefixOf("mditor/", "C:/ws/notes")).toBe("mditor/notes/");
     expect(fullPrefixOf("mditor/", "/Docs/ws-1", "C语言")).toBe("mditor/C语言/");
+    // v5.3.1：子路径配对 → 桌面主工作区的子树键空间。
+    expect(fullPrefixOf("mditor/", "/Docs/ws-1", "笔记/cmc")).toBe("mditor/笔记/cmc/");
   });
 
   it("remoteDir 覆盖上传/下载前缀（同名配对两视角共用 mditor/<真实名>/）", async () => {

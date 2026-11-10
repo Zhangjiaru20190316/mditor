@@ -448,17 +448,22 @@ export interface PlannedOp {
 }
 
 /**
- * 远端目录名解析：remoteDir 覆盖值经消毒（去首尾 /、拒内部 / 与 ..、空回退），
+ * 远端目录名解析：remoteDir 覆盖值经消毒（去首尾 /、逐段拒空/./..、空回退），
  * 未提供时回退根路径 basename（桌面语义，键空间规则与 v4.12 兼容）。
+ * v5.3.1：允许多段子路径（如「笔记/cmc」）——设备目录与桌面主工作区的
+ * 子目录配对（此前拒内部 /，两端键空间只能配对到「专属根」，专属根关闭
+ * 即静默分叉）。段级消毒保证绝不产生穿越（.. 被整体回退）。
  */
 export function resolveRemoteDir(root: string, remoteDir?: string): string {
   const fallback = basename(toPosix(root));
   if (remoteDir === undefined) return fallback;
   const s = remoteDir.trim().replace(/^\/+|\/+$/g, "");
-  if (s.length === 0 || s.includes("/") || s.split("/").some((seg) => seg === "..")) {
+  if (s.length === 0) return fallback;
+  const segs = s.split("/");
+  if (segs.some((seg) => seg === "" || seg === "." || seg === "..")) {
     return fallback;
   }
-  return s;
+  return segs.join("/");
 }
 
 /** 桶内完整前缀（恒以 / 结尾）。引擎与 trigger（指纹计算）共用同一推导。 */
