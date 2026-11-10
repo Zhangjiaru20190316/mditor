@@ -12,7 +12,12 @@
 
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "./defaults";
-import { normalizeSyncSettings, normalizeWorkspaceOptions, pickEditorSettings } from "./settingsNormalize";
+import {
+  normalizeExternalLinkOptions,
+  normalizeSyncSettings,
+  normalizeWorkspaceOptions,
+  pickEditorSettings,
+} from "./settingsNormalize";
 import type { Settings } from "./types";
 
 describe("normalizeSyncSettings（v4.12 云同步设置幂等归一）", () => {
@@ -304,5 +309,77 @@ describe("normalizeWorkspaceOptions（v5.3 文件树按工作区选类型）", (
       "E:\\ws\\a": { fileTypes: ["pdf", "md"] },
     });
     expect(normalizeWorkspaceOptions(once)).toEqual(once);
+  });
+});
+
+describe("normalizeExternalLinkOptions（v5.3.x 外部关联）", () => {
+  it("undefined / 非对象 → 空对象；空覆盖整键剔除", () => {
+    expect(normalizeExternalLinkOptions(undefined)).toEqual({});
+    expect(normalizeExternalLinkOptions("boom")).toEqual({});
+    expect(normalizeExternalLinkOptions({ "E:\ws\a": {} })).toEqual({});
+    expect(normalizeExternalLinkOptions({ "E:\ws\a": null })).toEqual({});
+  });
+
+  it("根级 enabled:true 与全选四类等价默认 → 剔除；false 与子集保留", () => {
+    const out = normalizeExternalLinkOptions({
+      a: { enabled: true },
+      b: { enabled: false },
+      c: { fileTypes: ["md", "html", "pdf", "docx"] },
+      d: { fileTypes: ["md", "pdf"] },
+    });
+    expect(out).toEqual({
+      b: { enabled: false },
+      d: { fileTypes: ["md", "pdf"] },
+    });
+  });
+
+  it("文件夹级显式 true 与全选四类是覆盖语义 → 保留（与根级不同）", () => {
+    const out = normalizeExternalLinkOptions({
+      root: {
+        enabled: false,
+        folders: {
+          resume: { enabled: true },
+          all: { fileTypes: ["md", "html", "pdf", "docx"] },
+          mixed: { enabled: false, fileTypes: ["md"] },
+        },
+      },
+    });
+    expect(out.root?.folders).toEqual({
+      resume: { enabled: true },
+      all: { fileTypes: ["md", "html", "pdf", "docx"] },
+      mixed: { enabled: false, fileTypes: ["md"] },
+    });
+  });
+
+  it("文件夹键消毒：反斜杠 posix 化、拒 .. 与空段、空规则剔除", () => {
+    const out = normalizeExternalLinkOptions({
+      root: {
+        folders: {
+          "assets\\sub": { enabled: false },
+          "..\\escape": { enabled: false },
+          "a//b": { enabled: false },
+          empty: {},
+          bad: "nope",
+        },
+      },
+    });
+    expect(out.root?.folders).toEqual({
+      "assets/sub": { enabled: false },
+    });
+  });
+
+  it("非法 fileTypes 值过滤（大小写敏感白名单 + 去重，同 workspaceOptions 先例）；空表剔除字段", () => {
+    const out = normalizeExternalLinkOptions({
+      root: { fileTypes: ["PDF", "pdf", "md", "bogus", 42], folders: { x: { fileTypes: [] } } },
+    });
+    expect(out).toEqual({ root: { fileTypes: ["pdf", "md"] } });
+  });
+
+  it("文件夹规则数上限 512；幂等", () => {
+    const folders: Record<string, unknown> = {};
+    for (let i = 0; i < 600; i++) folders[`d${i}`] = { enabled: false };
+    const out = normalizeExternalLinkOptions({ root: { folders } });
+    expect(Object.keys(out.root?.folders ?? {}).length).toBe(512);
+    expect(normalizeExternalLinkOptions(out)).toEqual(out);
   });
 });

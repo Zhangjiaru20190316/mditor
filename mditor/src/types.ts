@@ -240,6 +240,42 @@ export interface WorkspaceOptions {
   fileTypes?: NoteKind[];
 }
 
+/* 外部关联——文件状态内外同步的按文件夹配置（v5.3.x）                          */
+/* -------------------------------------------------------------------------- */
+/**
+ * 单个文件夹的外部关联规则覆盖（v5.3.x）。全部字段缺省 = **继承父级**（就近
+ * 覆盖：任一字段显式设置即优先于父级，父级断开后子文件夹可单独恢复）。
+ * 三个消费方：文件树自动刷新（useTreeWatcher）、vaultIndex 增量重扫闸门、
+ * 打开文件的外部修改重载（useFileWatcher，断开时由 useFile 的保存前
+ * mtime/size 校验兜底，防止自动保存覆盖外部修改）。
+ */
+export interface FolderLinkRule {
+  /**
+   * 显式关联开关。缺省 = 继承父级；**显式 true 也必须保留**——它是「从被
+   * 断开的父级恢复」的唯一表达（与根级 enabled:true 等价默认可剔除不同）。
+   */
+  enabled?: boolean;
+  /**
+   * 生效文件类型（**替换式**子集）。缺省 = 继承父级；**显式全选四类也必须
+   * 保留**——表达「覆盖父级的子集，恢复对全部类型反应」。
+   */
+  fileTypes?: NoteKind[];
+}
+
+/**
+ * 单个工作区根的外部关联配置（v5.3.x；键 = 工作区根路径，同一键空间惯例）。
+ * 缺省键 = 全部关联、全部类型（既有行为零变化；文件树自动刷新为新增默认
+ * 能力）。配置不参与云同步引擎 / remoteFingerprint，两套语义互不相干。
+ */
+export interface RootLinkOptions {
+  /** 本根关联开关。缺省 = 关联（根级显式 true 等价默认，归一剔除）。 */
+  enabled?: boolean;
+  /** 本根生效类型（替换式）。缺省 = 全部四类（根级全选等价默认，归一剔除）。 */
+  fileTypes?: NoteKind[];
+  /** 子文件夹显式覆盖；键 = 相对根的 posix 目录路径（归一拒 `..` 等）。 */
+  folders?: Record<string, FolderLinkRule>;
+}
+
 /**
  * PI2（应用内打印）：打印偏好——对话框每次确认时回写、下次打开作为初始值。
  * lastPrinter 为上次选用的打印机名（下拉预选；不存在则回落默认打印机）。
@@ -445,6 +481,14 @@ export interface Settings {
    * 显示。移除工作区不清理 stale 键（与 sync 各键一致，重添即恢复配置）。
    */
   workspaceOptions: Record<string, WorkspaceOptions>;
+  /**
+   * 外部关联按工作区配置（v5.3.x，见 RootLinkOptions；键 = 工作区根路径，
+   * 同一键空间惯例）。缺省键 = 全部关联 + 全部类型：打开文件外部修改重载
+   * 与索引增量更新维持既有行为，文件树自动刷新为新增默认能力。移除工作区
+   * 不清理 stale 键（重添即恢复配置）。断开的文件夹：树不自动刷新、索引
+   * 增量不更新、打开文件不自动重载；保存前 mtime/size 校验兜底防覆盖。
+   */
+  externalLinkOptions: Record<string, RootLinkOptions>;
   /**
    * 全库索引（知识功能地基，v4.7）：扫描 workspace 全部 .md 维护内存索引
    * （标题/大纲/双链/标签），供 Ctrl+P 快速切换、反链面板、标签过滤、闪卡

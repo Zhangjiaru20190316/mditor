@@ -63,6 +63,7 @@ const SETTING_KEYS = [
   "aiQuickActions",
   "excludedPaths",
   "workspaceOptions",
+  "externalLinkOptions",
   "vaultIndexEnabled",
   "wikiLinksEnabled",
   "bibliographyPath",

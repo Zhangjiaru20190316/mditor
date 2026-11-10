@@ -289,6 +289,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ],
   excludedPaths: [],
   workspaceOptions: {},
+  externalLinkOptions: {},
   vaultIndexEnabled: true,
   wikiLinksEnabled: true,
   bibliographyPath: "",

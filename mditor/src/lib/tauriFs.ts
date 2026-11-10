@@ -60,6 +60,18 @@ export const NOTE_KIND_EXTS: Record<NoteKind, ReadonlySet<string>> = {
 };
 
 /**
+ * 文件名 → 笔记类型（v5.3.x 外部关联用）：扩展名命中哪个类型的集合就归哪
+ * 类；非四类扩展名（.png 等）返回 null。大小写不敏感。
+ */
+export function kindOfName(name: string): NoteKind | null {
+  const ext = extname(name).toLowerCase();
+  for (const k of NOTE_KINDS) {
+    if (NOTE_KIND_EXTS[k].has(ext)) return k;
+  }
+  return null;
+}
+
+/**
  * 类型子集 → 文件树过滤用的扩展名并集。undefined / 空表 / 覆盖全部四类
  * → 返回 undefined（= 不过滤，readDirLevel 走既有三谓词并集，既有行为
  * 零变化）。白名单外的类型忽略。

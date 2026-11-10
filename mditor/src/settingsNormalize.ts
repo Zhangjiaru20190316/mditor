@@ -3,13 +3,24 @@
 // 类型在 types.ts）。纯数据操作，鸿蒙运行同样无副作用。
 
 import { DEFAULT_SYNC_SETTINGS, NOTE_KINDS, SYNC_PROVIDER_IDS } from "./defaults";
-import type { EditorSettings, NoteKind, RootSyncOptions, Settings, SyncSettings, WorkspaceOptions } from "./types";
+import type {
+  EditorSettings,
+  FolderLinkRule,
+  NoteKind,
+  RootLinkOptions,
+  RootSyncOptions,
+  Settings,
+  SyncSettings,
+  WorkspaceOptions,
+} from "./types";
 
 /** v5.3 每根范围配置的容量上限（UI 校验提示与归一逻辑共用）。 */
 export const SYNC_EXCLUDED_DIRS_MAX = 512;
 export const SYNC_EXCLUDE_PATTERNS_MAX = 64;
 export const SYNC_EXCLUDE_PATTERN_LEN_MAX = 256;
 export const SYNC_PURGE_LIST_MAX = 2000;
+/** v5.3.x 每根外部关联配置的文件夹规则数上限。 */
+export const SYNC_LINK_FOLDERS_MAX = 512;
 
 /**
  * relPath 消毒（v5.3 共用）：posix 化（反斜杠 → /）、去首尾 /、拒空段、
@@ -191,6 +202,68 @@ export function normalizeWorkspaceOptions(
     }
     if (seen.size === 0 || seen.size === NOTE_KINDS.length) continue;
     out[k] = { fileTypes: [...seen] as NoteKind[] };
+  }
+  return out;
+}
+
+/**
+ * 外部关联逐键归一（v5.3.x，migrateSettings 每次加载都会跑）。
+ * 与 workspaceOptions 的「全选剔键」不同：
+ *  - 根级 enabled:true / 全选四类 = 等价默认 → 剔除（缺省即关联 + 全部）；
+ *  - **文件夹级** enabled:true 与全选四类 = 显式覆盖语义（从被断开的父级
+ *    恢复 / 覆盖父级子集回全部）→ **必须保留**。
+ * 文件夹键复用 sanitizeSyncRelPath 消毒（拒 `..`、反斜杠、控制字符）；
+ * 空规则、空 folders、空对象逐层剔键。幂等。
+ */
+export function normalizeExternalLinkOptions(
+  raw: unknown
+): Record<string, RootLinkOptions> {
+  // fileTypes 白名单子集 + 去重；keepAll = 文件夹级全选保留、根级剔除。
+  const cleanKinds = (v: unknown, keepAll: boolean): NoteKind[] | undefined => {
+    if (!Array.isArray(v)) return undefined;
+    const seen = new Set<string>();
+    for (const t of v) {
+      if (typeof t === "string" && (NOTE_KINDS as readonly string[]).includes(t) && !seen.has(t)) {
+        seen.add(t);
+      }
+    }
+    if (seen.size === 0) return undefined;
+    if (seen.size === NOTE_KINDS.length && !keepAll) return undefined;
+    return [...seen] as NoteKind[];
+  };
+
+  const normalizeFolderRule = (v: unknown): FolderLinkRule | undefined => {
+    if (!v || typeof v !== "object") return undefined;
+    const r = v as Partial<FolderLinkRule>;
+    const out: FolderLinkRule = {};
+    // 文件夹级显式 true/false 都有意义（true = 从断开的父级恢复），均保留。
+    if (r.enabled === true || r.enabled === false) out.enabled = r.enabled;
+    const kinds = cleanKinds(r.fileTypes, true);
+    if (kinds) out.fileTypes = kinds;
+    return Object.keys(out).length > 0 ? out : undefined;
+  };
+
+  const out: Record<string, RootLinkOptions> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!v || typeof v !== "object") continue;
+    const r = v as Partial<RootLinkOptions>;
+    const o: RootLinkOptions = {};
+    if (r.enabled === false) o.enabled = false; // 根级显式 true 等价默认，剔除
+    const kinds = cleanKinds(r.fileTypes, false);
+    if (kinds) o.fileTypes = kinds;
+    if (r.folders && typeof r.folders === "object") {
+      const folders: Record<string, FolderLinkRule> = {};
+      for (const [dir, rule] of Object.entries(r.folders as Record<string, unknown>)) {
+        if (Object.keys(folders).length >= SYNC_LINK_FOLDERS_MAX) break;
+        const p = sanitizeSyncRelPath(dir);
+        if (p === null) continue;
+        const nr = normalizeFolderRule(rule);
+        if (nr) folders[p] = nr;
+      }
+      if (Object.keys(folders).length > 0) o.folders = folders;
+    }
+    if (Object.keys(o).length > 0) out[k] = o;
   }
   return out;
 }

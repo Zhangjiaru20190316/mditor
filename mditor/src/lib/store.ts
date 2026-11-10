@@ -10,7 +10,11 @@
 
 import { getAdapter } from "../platform";
 import { DEFAULT_SETTINGS } from "../defaults";
-import { normalizeSyncSettings, normalizeWorkspaceOptions } from "../settingsNormalize";
+import {
+  normalizeExternalLinkOptions,
+  normalizeSyncSettings,
+  normalizeWorkspaceOptions,
+} from "../settingsNormalize";
 import type { AiModelConfig, RecentFile, Settings } from "../types";
 import { normalizeStoredWorkspaces } from "./workspaces";
 import { sysEmit } from "./sysDebug";
@@ -185,6 +189,10 @@ function migrateSettings(s: Settings, raw: Partial<Settings>): Settings {
   // v5.3 按工作区文件树类型：workspaceOptions 逐键归一（白名单子集、空表
   // 或全选剔键）。纯数据操作。
   s.workspaceOptions = normalizeWorkspaceOptions(s.workspaceOptions);
+
+  // v5.3.x 外部关联：externalLinkOptions 逐键归一（文件夹键消毒、根级默认
+  // 剔键、文件夹级显式覆盖保留）。纯数据操作。
+  s.externalLinkOptions = normalizeExternalLinkOptions(s.externalLinkOptions);
 
   // PI2（应用内打印）：printPrefs 子对象幂等归一——PR 轮 printChannel 已随
   // 外部通道整体退役（多余键从持久化中清除）；纸张/方向/边距值域校验（手改
