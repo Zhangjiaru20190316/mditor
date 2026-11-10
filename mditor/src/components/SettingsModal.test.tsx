@@ -379,6 +379,27 @@ describe("SettingsModal", () => {
     expect(appliedDraft(m).workspaceOptions).toEqual({});
   });
 
+  it("工作区：外部关联每根行 + 对话框确认写 draft（应用落盘）", () => {
+    const settings = baseSettings({
+      externalLinkOptions: {
+        "C:/ws/pdf": { folders: { frozen: { enabled: false } } },
+      },
+    });
+    const m = renderModal(settings, "C:/ws", ["C:/ws/pdf", "C:/ws/notes"]);
+    gotoSection("工作区");
+    // 每根摘要：已配置根显示自定义计数，未配置根显示「关联」。
+    expect(screen.getByText("关联 · 1 个子文件夹自定义")).toBeInTheDocument();
+    expect(screen.getByText("关联")).toBeInTheDocument();
+    // 打开第一个根的对话框，直接确定（无改动 → 原样回传），应用落盘。
+    fireEvent.click(screen.getAllByRole("button", { name: "关联…" })[0]);
+    expect(screen.getByRole("dialog", { name: "外部关联：pdf" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确定" }));
+    clickApply();
+    expect(appliedDraft(m).externalLinkOptions).toEqual({
+      "C:/ws/pdf": { folders: { frozen: { enabled: false } } },
+    });
+  });
+
   it("知识功能：RAG 开关联动嵌入字段显隐，引用样式切换，.bib 浏览走 adapter", async () => {
     const m = renderModal();
     gotoSection("知识功能");

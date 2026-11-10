@@ -86,6 +86,27 @@ function makeInScope(opts: RootSyncOptions | undefined): (rel: string) => boolea
   return (rel: string) => isSyncableRelPath(rel, exts) && !isExcludedRelPath(rel, exclude);
 }
 
+/**
+ * 编辑态的有效范围摘要（对话框摘要条 v5.3.1）：当前草稿一眼可读——
+ * 类型模式 / 排除目录数 / 规则数。纯函数便于锚定。
+ */
+function summarizeDraft(
+  extMode: "default" | "custom",
+  extSet: Set<string>,
+  excluded: Set<string>,
+  patterns: readonly string[]
+): string {
+  const parts: string[] = [];
+  parts.push(
+    extMode === "custom"
+      ? `自定义类型 ${extSet.size} 项（${[...extSet].sort().slice(0, 6).join(", ")}${extSet.size > 6 ? "…" : ""}）`
+      : "默认类型（md / html / pdf / docx）"
+  );
+  if (excluded.size > 0) parts.push(`排除 ${excluded.size} 个文件夹`);
+  if (patterns.length > 0) parts.push(`${patterns.length} 条规则`);
+  return parts.join(" · ");
+}
+
 export function SyncScopeDialog({ open, root, saved, onCommit, onClose }: Props) {
   const [enabled, setEnabled] = useState(true);
   const [extMode, setExtMode] = useState<"default" | "custom">("default");
@@ -325,6 +346,13 @@ export function SyncScopeDialog({ open, root, saved, onCommit, onClose }: Props)
               关闭后本根完全不参与同步（云端已有副本保留不动，本地文件不受影响）。
             </span>
 
+            <div className={`sync-scope-summary${enabled ? "" : " off"}`} aria-live="polite">
+              {enabled
+                ? summarizeDraft(extMode, extSet, excluded, validPatterns)
+                : "已停用——下方配置不参与同步"}
+            </div>
+
+            <div className={`sync-scope-rest${enabled ? "" : " disabled"}`}>
             <div className="sync-scope-block">
               <span className="sync-scope-label">同步文件类型</span>
               <div className="seg" role="radiogroup" aria-label="文件类型模式">
@@ -418,6 +446,7 @@ export function SyncScopeDialog({ open, root, saved, onCommit, onClose }: Props)
                   </strong>
                 )}
               </span>
+            </div>
             </div>
           </div>
         ) : (

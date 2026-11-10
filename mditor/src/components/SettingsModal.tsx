@@ -16,6 +16,7 @@ import type {
   NoteKind,
   QuickAction,
   QuickActionScope,
+  RootLinkOptions,
   RootSyncOptions,
   Settings,
   SyncSettings,
@@ -48,6 +49,7 @@ import { CloseIcon, ChevronRightIcon, LogoIcon } from "./icons";
 import { FontPresetPicker } from "./FontPresetPicker";
 import { SyncScopeDialog } from "./SyncScopeDialog";
 import { WorkspaceFileDialog, KIND_LABELS } from "./WorkspaceFileDialog";
+import { ExternalLinkDialog } from "./ExternalLinkDialog";
 
 /** 分区导航项（固定高度，供滑动指示条做等距 translateY 定位）。 */
 const SECTIONS = [
@@ -132,6 +134,45 @@ function setWorkspaceFileTypes(
   return { ...next, [root]: { fileTypes: kinds } };
 }
 
+/** 写入某工作区的外部关联配置（v5.3.x）：undefined = 清除键（回退全默认）。 */
+function setExternalLinkOptions(
+  map: Record<string, RootLinkOptions>,
+  root: string,
+  opts: RootLinkOptions | undefined
+): Record<string, RootLinkOptions> {
+  const next = { ...map };
+  if (opts) next[root] = opts;
+  else delete next[root];
+  return next;
+}
+
+/** 外部关联每根行的摘要文案（v5.3.x）。 */
+function externalLinkSummary(opts: RootLinkOptions | undefined): string {
+  if (opts?.enabled === false) return "已断开";
+  const parts: string[] = [];
+  if (opts?.fileTypes && opts.fileTypes.length < NOTE_KINDS.length) {
+    parts.push(opts.fileTypes.map((k) => KIND_LABELS[k]).join("+"));
+  }
+  const folders = Object.keys(opts?.folders ?? {}).length;
+  if (folders > 0) parts.push(`${folders} 个子文件夹自定义`);
+  return parts.length > 0 ? `关联 · ${parts.join(" · ")}` : "关联";
+}
+
+/** 云同步范围每根行的摘要文案（v5.3.1）：不开对话框也能一眼看到覆盖状态。 */
+function rootSyncSummary(o: RootSyncOptions | undefined): string {
+  if (!o) return "默认全同步";
+  if (o.enabled === false) return "已停用";
+  const parts: string[] = [];
+  if (o.extensionMode === "custom") {
+    parts.push(`自定义类型 ${o.extensions?.length ?? 0} 项`);
+  }
+  const dirs = o.excludedDirs?.length ?? 0;
+  if (dirs > 0) parts.push(`排除 ${dirs} 个文件夹`);
+  const pats = o.excludePatterns?.length ?? 0;
+  if (pats > 0) parts.push(`${pats} 条规则`);
+  return parts.length > 0 ? parts.join(" · ") : "默认全同步";
+}
+
 function isLocalhostEndpoint(endpoint: string): boolean {  const rest = endpoint.trim().toLowerCase().replace(/^http:\/\//, "");
   if (rest === endpoint.trim().toLowerCase()) return false; // 无 http:// 前缀
   const host = rest.split(/[:/]/)[0] ?? "";
@@ -214,6 +255,8 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
   const [scopeRoot, setScopeRoot] = useState<string | null>(null);
   // v5.3：正在配置文件树类型的工作区根（null = 文件类型对话框关闭）。
   const [wsFileRoot, setWsFileRoot] = useState<string | null>(null);
+  // v5.3.x：正在配置外部关联的工作区根（null = 外部关联对话框关闭）。
+  const [linkRoot, setLinkRoot] = useState<string | null>(null);
   // v4.1 退场动效：关闭后保持挂载 240ms 播 .closing 动画再卸载。
   const mounted = useDelayedUnmount(open, EXIT_MS);
 
@@ -1124,6 +1167,33 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
                     </span>
                   </FieldGroup>
                 )}
+                {workspaces.length > 0 && (
+                  <FieldGroup label="外部文件关联（按工作区）">
+                    {workspaces.map((ws) => (
+                      <span key={ws} className="sync-dir-row">
+                        <span className="sync-dir-path mono" title={ws}>
+                          {basename(toPosix(ws)) || ws}
+                        </span>
+                        <span className="wsfile-summary" title={ws}>
+                          {externalLinkSummary(draft.externalLinkOptions[ws])}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          onClick={() => setLinkRoot(ws)}
+                        >
+                          关联…
+                        </button>
+                      </span>
+                    ))}
+                    <span className="hint">
+                      外部关联 = 磁盘上（其他程序）的文件变化自动反映到文件树、
+                      索引与打开的文档。「关联…」可按文件夹细分：子文件夹默认
+                      继承父级、可单独断开或恢复，并能限定生效的文件类型；断开
+                      的文件夹打开文件保存时有外部修改校验，不会静默覆盖。
+                    </span>
+                  </FieldGroup>
+                )}
                 <div className="excluded-hint">
                   以下项仅从文件树隐藏，磁盘文件未删除；点「恢复」可在文件树重新显示。
                 </div>
@@ -1443,6 +1513,12 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
                             })
                           }
                         />
+                        <span
+                          className="sync-scope-tag sync-scope-summary-tag"
+                          title="当前同步范围（「范围…」内可改）"
+                        >
+                          {rootSyncSummary(draft.sync.rootOptions[ws])}
+                        </span>
                         <button
                           type="button"
                           className="btn-ghost sync-scope-btn"
@@ -1456,10 +1532,11 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
                     <span className="hint">
                       每个工作区同步到「前缀/云端目录名/」下，默认取根目录名（占位符）。
                       要与另一台设备（桌面 ↔ 鸿蒙）互相同步，两端的目录名必须一致：
-                      两端挂载的文件夹名不同时，把其中一端改成与另一端相同即可配对。
-                      仅一段、不含 /；改名后首轮按首同步全量重算，不会删除任何文件。
-                      「范围…」可按工作区自定义同步哪些文件类型、勾选参与同步的
-                      子文件夹与排除规则；被排除内容的云端副本默认保留。
+                      两端挂载的文件夹名不同时，把其中一端改成与另一端相同即可配对；
+                      也可用多段子路径（如「笔记/cmc」）直接配对另一端某工作区的
+                      子目录。段内不得为空或 . / ..；改名后首轮按首同步全量重算，
+                      不会删除任何文件。「范围…」可按工作区自定义同步哪些文件类型、
+                      勾选参与同步的子文件夹与排除规则；被排除内容的云端副本默认保留。
                     </span>
                   </FieldGroup>
                 )}
@@ -1641,6 +1718,20 @@ export function SettingsModal({ open, settings, workspace, workspaces = [], onCl
               set("workspaceOptions", setWorkspaceFileTypes(draft.workspaceOptions, wsFileRoot, kinds));
             }}
             onClose={() => setWsFileRoot(null)}
+          />
+        )}
+        {linkRoot !== null && (
+          <ExternalLinkDialog
+            open
+            root={linkRoot}
+            saved={draft.externalLinkOptions[linkRoot]}
+            onCommit={(opts) => {
+              set(
+                "externalLinkOptions",
+                setExternalLinkOptions(draft.externalLinkOptions, linkRoot, opts)
+              );
+            }}
+            onClose={() => setLinkRoot(null)}
           />
         )}
       </div>
