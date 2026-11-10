@@ -1,6 +1,112 @@
 # Changelog
 
 
+## 5.3.1（2026-11-10）：外部关联按文件夹配置 + 同步范围 UI 优化 + 公式首滚修复 + remoteDir 多段子路径
+
+### 外部关联：文件状态内外同步按文件夹配置（2026-11-07，v5.3.x）
+
+「工作区与外部（磁盘/其他程序）的文件状态同步」此前三块行为全部无配置：
+打开文件的外部修改重载（useFileWatcher）、全库索引增量（vaultIndex 递归监听）、
+文件树刷新（**完全不监听磁盘**，仅手动 ↻）。本轮统一为**每个文件夹可单独配
+置的「外部关联」开关 + 生效文件类型**（`Settings.externalLinkOptions:
+Record<根, RootLinkOptions{ enabled?, fileTypes?, folders?: Record<相对目录,
+FolderLinkRule{ enabled?, fileTypes? }> }>`），**子文件夹缺省继承父级、显式
+设置就近覆盖**（父断开后子文件夹可单独恢复；文件夹级显式 `true` 与全选四类
+是覆盖语义，归一层保留——与根级/ workspaceOptions 的「等价默认剔键」不同）。
+
+- **消费方三处（同一份解析 `lib/externalLink.ts`）**：① 文件树自动刷新
+  （新 hook `useTreeWatcher`：每根递归 `fs.watch` → `shouldReactToChange`
+  过滤 → 400ms 防抖 → `refreshAll`——补齐缺失能力，默认行为唯一新增项）；
+  ② vaultIndex 增量闸门（`setLinkFilter`：断开的文件夹不触发增量重扫；
+  **只闸增量**——全量 rebuild 与 noteSaved 不过滤，QuickSwitcher 的发现性
+  不受损）；③ 打开文件订阅门（`shouldWatch`：断开/类型外不订阅重载）。
+  事件分类：四类笔记扩展名按生效类型过滤；无扩展名视为目录（结构性变化恒
+  反应）；`.` 隐藏项与其余扩展名（.png 等）恒忽略。
+- **保存防护（关重载后必须兜底）**：断开文件夹中打开的文件失去 watcher
+  保护，`useFile` 写盘前做内容级比对（磁盘 vs 基线内容；基线 = 磁盘装载点/
+  自身写盘成功/外部重载，脏标签快照恢复 fail-open 并自愈）——外部已改即
+  冲突：自动保存/后台流程静默跳过 + 状态栏提示「Ctrl+S 可确认覆盖」，手动
+  保存弹确认框后可覆盖。关联文件夹的文件零变化（watcher 即保护）。
+- **入口**：文件树目录右键「断开/恢复外部关联」（快捷开关，label 随有效态）
+  +「外部关联设置…」（`ExternalLinkDialog`：根开关/根类型/懒加载目录树三态
+  + 选中文件夹规则详情，继承父级/关联/断开 × 继承/全部/自定义；无确认页——
+  断开无破坏性后果）；设置 → 工作区 每根行「关联…」（随「应用」落盘）。
+  监听无 watch 能力的平台静默跳过（回到手动刷新），失败软降级 sysEmit。
+  归一 `normalizeExternalLinkOptions`（文件夹键复用 `sanitizeSyncRelPath`，
+  容量上限 512 条/根）。锚点：`externalLink.test.ts`（级联/反应判定/切换
+  往返）、`useTreeWatcher.test.tsx`、`useFile.saveGuard.test.ts`、
+  `useFileWatcher.test.tsx`、`ExternalLinkDialog.test.tsx`、`FileTree.test.tsx`
+  （右键菜单）、`SettingsModal.test.tsx`、`vaultIndex.test.ts`（闸门）。
+
+### 同步范围规则界面 UI 优化（2026-11-10）
+
+同步范围对话框（设置 → 云同步 → 每根「范围…」）信息密度优化：① 顶部新增
+**状态摘要条**（accent 淡底胶囊，`aria-live`）——当前草稿一眼可读：「默认类型
+（md / html / pdf / docx） · 排除 2 个文件夹 · 1 条规则」/「自定义类型 N 项
+（png, csv…）」/「已停用——下方配置不参与同步」；② 根开关停用时下方三个配置
+区整组**置灰且不可交互**（`.sync-scope-rest.disabled`：本轮本就不生效，编辑
+是无效功）；③ 相邻区块细分隔线、卡片 560→600px 略加宽（外部关联对话框同款
+体系跟随受益）。设置 → 云同步 每根行新增**范围摘要**（「默认全同步」/「自定义
+类型 N 项 · 排除 M 个文件夹」/「已停用」，`rootSyncSummary`）——不开对话框
+也能看到覆盖状态；超长省略、title 全文。
+
+### 云同步 remoteDir 支持多段子路径配对（v5.3.1）
+
+`resolveRemoteDir` 此前拒内部 `/`，设备目录只能配对到「同名根/专属根」——
+专属根关闭即静默分叉（两端键空间不相交）。现允许多段子路径（如「笔记/cmc」）
+直接配对桌面主工作区内的子目录键空间；段级消毒（逐段拒空/./..，整体回退
+fallback）保证绝不产生穿越。
+
+### 公式块「首次滑到必闪刷」输入全类型收口（R13）——滚动条拖拽 / 键盘滚动 / 跳转落点 / 开档首滚全剖面预挂载
+
+症状口：用户终检（2026-11-08）「第一次滑动到公式块时肯定公式块刷新」「不够无感」「要求
+提前刷新渲染好」。开发报告：`docs/large-doc-first-scroll-formula-flash-report.md`（归因
+实锤链 → 改动清单 → 门禁表 → 遗留）；探针 `perf/tmp-r13/probe-inputs.mjs` + 测量产物
+`perf/results/r13-inputs-*.json` ×4。
+
+### 根因（阶段 0 输入臂矩阵实锤，非猜测）
+
+R10–R12 只修了 wheel/touch 驱动剖面——`blockPreMount` 的 sweep 只由 wheel/touchmove 唤醒，
+而**滚动条拖拽、PgDn/End/方向键、目录/查找/恢复等程序化滚动完全不产生这两类事件**：
+冷块只能走 IO 原路径（cv 档布局延迟派发），挂载完成落进视口 = 占位→成品换装可见。
+基线探针（解题技巧档 24 块级公式）：滚动条拖拽剖面 2/3（上/下拖）、真实滚动条 1、
+PgDn 4、End 落点 2 可见，五臂 premount sweeps 全 0；快滚（900px×12）另有 perFrame=1
+限速追不上的残差 1。与「第一次滑动到公式块肯定刷新」完全吻合——大文档日常翻页用的
+恰是滚动条和键盘。
+
+### 修复（主线 = 用户拍板方向「提前渲染好」）
+
+- **驱动源扩展**（`blockPreMount.ts`）：window capture scroll 监听（只认宿主滚动体），
+  scrollTop 差分推方向/步进——一切输入类型统一进预测带路径；自写 premount-comp 补偿登记
+  期望值抑制（不污染方向）；enable 时种子差分基线 + 无基线首事件防御（开档/恢复首写直达
+  跳落点路径）；平滑大纲跳转以增量事件沿途逐帧预挂。行内侧 `lazyInlineMath.ts` 同款盲区
+  同修（scroll 驱动预测扫描 + 大位移同步直绘带；**绝不 mark()**——程序化补偿写不能被误判
+  成"用户在滚动"，R1b ready 23→10 回落教训）。
+- **跳落点例外（「打开即渲染」口径）**：单次 |ΔscrollTop| ≥ max(480, 半视口) 判为跳转
+  （PgDn/End/瞬时目录跳转/恢复梯子首写），rAF 内把落点视口内冷块当帧挂完——scroll 事件在
+  rendering update 的 run-scroll-steps 派发、rAF 批在 paint 前执行，**首帧即成品**；视口内
+  挂载不做高度补偿（生长只推下方内容）；恢复梯子在飞（data-smooth-jump）时上方冷块让位。
+- **无输入闲置兜底**：武装后常驻 idle 轮询（300ms 起指数退避至 2.5s），视口 ±800px 双侧带
+  冷块按帧预算清零——开档/恢复后无输入窗口、AI 写入的新公式块都在用户第一滚之前挂完；
+  带宽刻意 = IO rootMargin 保鲜窗（挂载块恒 intersecting 不被 teardown，**无挂拆 churn**），
+  预挂 ≠ 永挂（teardown 15s 冻高回收照常）。
+- **限速自适应**：perFrame=1 → 帧预算制（单帧累计挂载 ≥8ms 或 6 块即停，首块必挂），
+  快滚簇一帧多挂追平。
+- **档位门重审 + 防护**：武装位点从 cv 档放宽到一切 CodeMirror/Latex 特性激活档
+  （`!isBigDoc`；降级档无 code-block 组件空转）；sv 模式（rich 面仅 hidden、实例常驻）与
+  零矩形块双防护——隐藏子树 gBCR 全 0 会被带判定误收并 15s 挂拆循环。
+- **ABAB 语义保留**：`__blockPreMountCfg={on:false}` 回 IO-only 旧行为（cfg-off 对照臂
+  sweeps=0 实证）；stats 只增不破（scrollMarks / idleSweeps / idleMounted /
+  landingRenders / landingMounted）。
+
+### 验证（R10 口径 + paint 感知修正，全输入臂）
+
+修复后 8 臂换装可见（真实口径）全 **0**（基线 2/3/1/4/2/0/1/1*；cfg-off 对照
+2/3/1/1/**7**——fastWheel 关臂 7 vs 开臂 0 即限速修复净效果）；上拖臂 premount-comp 补偿
+3/3 在位；p95 帧间隔 6.1–6.3ms 持平；R12 可比口径（wheel 臂）大位移帧 0。vitest 全量
+1459 绿（blockPreMount 10→20 例、lazyInlineMath 41→44 例）+ tsc / eslint / build 绿。
+
+
 ## 5.3.0（2026-11-03）：打印笔记（PI2）——应用内打印全自研，四格式一入口，不经任何外部程序
 
 任务书：`docs/prompt-print-notes.md`（PR 轮）+ 用户重设计指令（2026-11-03：
