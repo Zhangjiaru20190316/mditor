@@ -236,6 +236,50 @@ describe("VaultIndexManager", () => {
     expect(idx.entry("C:/v/a.md")).toBeNull();
   });
 
+  it("外部关联闸门：滤网拒绝的路径不进重扫队列；noteSaved 不受滤网影响（v5.3.x）", async () => {
+    const files = new Map<string, string>([
+      ["C:/v/a.md", "# 甲"],
+      ["C:/v/frozen/b.md", "# 乙"],
+    ]);
+    const { io } = makeIO(files);
+    let watchHandler: ((ev: { type: { kind?: string }; paths: string[] }) => void) | null =
+      null;
+    io.watch = async (_d, cb) => {
+      watchHandler = cb;
+      return () => undefined;
+    };
+    const idx = new VaultIndexManager(io);
+    await idx.setRootsAndWait(["C:/v"]);
+
+    // 滤网：断开 frozen 子树（模仿 App 注入 shouldReactToChange 的部分形态；
+    // 事件路径为平台原生分隔符，与真实滤网一样需自行归一）。
+    idx.setLinkFilter(
+      (p) => !p.toLowerCase().replace(/\\/g, "/").includes("/frozen/")
+    );
+
+    // 断开目录内的外部修改 → 索引保持旧内容。
+    files.set("C:/v/frozen/b.md", "# 乙改");
+    watchHandler!({ type: { kind: "modify" }, paths: ["C:\\v\\frozen\\b.md"] });
+    await vi.advanceTimersByTimeAsync(700);
+    expect(idx.entry("C:/v/frozen/b.md")?.title).toBe("乙");
+
+    // 关联目录内的外部修改 → 正常增量。
+    files.set("C:/v/a.md", "# 甲改");
+    watchHandler!({ type: { kind: "modify" }, paths: ["C:\\v\\a.md"] });
+    await vi.advanceTimersByTimeAsync(700);
+    expect(idx.entry("C:/v/a.md")?.title).toBe("甲改");
+
+    // noteSaved（自身保存）刻意不过滤：断开目录内自己编辑的内容保持新鲜。
+    idx.noteSaved("C:/v/frozen/b.md", "# 乙自写");
+    expect(idx.entry("C:/v/frozen/b.md")?.title).toBe("乙自写");
+
+    // 滤网置空 → 恢复既有行为。
+    idx.setLinkFilter(null);
+    watchHandler!({ type: { kind: "modify" }, paths: ["C:\\v\\frozen\\b.md"] });
+    await vi.advanceTimersByTimeAsync(700);
+    expect(idx.entry("C:/v/frozen/b.md")?.title).toBe("乙改");
+  });
+
   it("反链查询：按文件名匹配来源 + 上下文片段", async () => {
     const files = new Map<string, string>([
       ["C:/v/甲.md", "# 甲\n\n见 [[乙]] 说明。"],

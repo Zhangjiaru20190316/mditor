@@ -14,6 +14,8 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { openMd, saveMd, saveMdAs, baseName } from "../lib/tauriFs";
 import { pushRecent } from "../lib/store";
 import { invalidatePrefetch } from "../lib/filePrefetch";
+import { getAdapter } from "../platform";
+import { confirmDialog } from "../lib/dialogs";
 import type { DocState } from "../types";
 
 export interface FileApi {
@@ -59,8 +61,14 @@ export interface FileApi {
    * autosave so the periodic write doesn't deserialize→rewrite the whole
    * mditor.json every tick (the path is already recent from open/saveAs).
    * Returns false if the buffer has no path (caller must have a path).
+   *
+   * v5.3.x 外部关联保存防护：文件处于断开外部关联的文件夹（无 watcher
+   * 保护）时，写盘前比对磁盘内容与基线内容——外部已改即冲突：
+   *  - 缺省（自动保存/后台流程）：跳过写入返回 false（调用方自行提示）；
+   *  - confirmOnConflict=true（手动保存）：弹确认框，确认后覆盖保存。
+   * 关联文件夹的文件不做任何校验（watcher 即保护，既有行为零变化）。
    */
-  writeOnly: (getContent: () => string) => Promise<boolean>;
+  writeOnly: (getContent: () => string, confirmOnConflict?: boolean) => Promise<boolean>;
   saveAs: (getContent: () => string) => Promise<boolean>;
   /** Mark the buffer dirty (called by the editor on input). */
   markDirty: () => void;
@@ -81,7 +89,16 @@ export interface FileApi {
   updatePath: (oldPath: string, newPath: string) => void;
 }
 
-export function useFile(): FileApi {
+/** useFile 选项（v5.3.x 外部关联保存防护）。 */
+export interface UseFileOptions {
+  /**
+   * 该路径是否需要保存前外部修改校验（App 传入稳定回调：文件所在文件夹
+   * 断开外部关联 → true）。缺省/返回 false = 既有行为零变化。
+   */
+  shouldGuardWrite?: (path: string) => boolean;
+}
+
+export function useFile(opts?: UseFileOptions): FileApi {
   const [doc, setDoc] = useState<DocState>({
     path: null,
     content: "",
@@ -96,6 +113,38 @@ export function useFile(): FileApi {
   docRef.current = doc;
   const onLoadedRef = useRef(onLoaded);
   onLoadedRef.current = onLoaded;
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
+  /**
+   * 基线内容 = 最近一次「已确认与磁盘一致」的缓冲区内容（磁盘装载点 /
+   * 自身写盘成功 / 外部重载）。保存防护据此判定磁盘是否被外部改动过。
+   * null = 未知（脏标签快照恢复等）→ 校验 fail-open（放行写入，见
+   * prewriteCheck 注释；本次成功写盘后基线即重建）。
+   */
+  const baselineContentRef = useRef<string | null>(null);
+
+  /**
+   * 写盘前校验（v5.3.x，仅断开外部关联的文件走这里）。内容级比对（无
+   * mtime 时钟精度问题）：磁盘 === 将写内容 → same（无意义写盘可跳过）；
+   * 磁盘 === 基线 → ok；其余（含读取失败，如被删除）→ conflict。
+   */
+  const prewriteCheck = useCallback(
+    async (path: string, content: string): Promise<"ok" | "same" | "conflict"> => {
+      try {
+        const disk = await getAdapter().fs.readTextFile(path);
+        if (disk === content) return "same";
+        const baseline = baselineContentRef.current;
+        // 基线未知（脏标签快照恢复）→ fail-open（与既有 watch 启动失败的
+        // 场景同待遇）：外部改动兜不住，但不至于把自动保存永久堵死；本次
+        // 成功写盘后基线即重建，后续外部改动恢复防护。
+        if (baseline === null || disk === baseline) return "ok";
+        return "conflict";
+      } catch {
+        return "conflict";
+      }
+    },
+    []
+  );
 
   const setOnLoaded = useCallback(
     (cb: ((content: string, tabKey: string | null) => void) | null) => {
@@ -107,6 +156,7 @@ export function useFile(): FileApi {
   const newDoc = useCallback((tabKey?: string | null) => {
     const next = { path: null, content: "", dirty: false };
     docRef.current = next; // 同步可读（见 docPathSync 注释）
+    baselineContentRef.current = null;
     setDoc(next);
     onLoadedRef.current?.("", tabKey ?? null);
   }, []);
@@ -115,6 +165,7 @@ export function useFile(): FileApi {
     async (path: string, content: string, tabKey?: string | null) => {
       const next = { path, content, dirty: false };
       docRef.current = next; // 同步可读（见 docPathSync 注释）——编辑器载入在同一 tick 内读 docPath
+      baselineContentRef.current = content; // 磁盘刚读出的内容即基线（v5.3.x）
       setDoc(next);
       // CRITICAL ORDERING: push the content into the editor BEFORE awaiting the
       // recent-list IPC chain. pushRecent does loadRecent + set + save (three
@@ -142,6 +193,9 @@ export function useFile(): FileApi {
   const showDoc = useCallback((d: DocState, tabKey?: string | null) => {
     const next = { path: d.path, content: d.content, dirty: d.dirty };
     docRef.current = next; // 同步可读（见 docPathSync 注释）
+    // 干净快照 = 快照时点的磁盘内容 → 可作基线；脏快照含未保存编辑，基线
+    // 未知（置 null，校验 fail-open；见 baselineContentRef 注释）。
+    baselineContentRef.current = d.dirty ? null : d.content;
     setDoc(next);
     onLoadedRef.current?.(d.content, tabKey ?? null);
   }, []);
@@ -167,6 +221,7 @@ export function useFile(): FileApi {
       const live = getContent();
       const next = { ...docRef.current, path, content: live, dirty: live !== content };
       docRef.current = next; // 同步可读（见 docPathSync 注释）
+      baselineContentRef.current = content; // 刚写盘的内容即新路径基线
       setDoc(next);
       await pushRecent({
         path,
@@ -200,7 +255,19 @@ export function useFile(): FileApi {
       const d = docRef.current;
       if (!d.path) return saveAs(getContent);
       const content = getContent();
+      // v5.3.x 保存防护（断开外部关联的文件）：冲突时确认覆盖。
+      if (optsRef.current?.shouldGuardWrite?.(d.path)) {
+        const verdict = await prewriteCheck(d.path, content);
+        if (verdict === "conflict") {
+          const ok = await confirmDialog(
+            "文件已被外部程序修改。\n确定覆盖磁盘上的版本并保存？",
+            "Mditor"
+          );
+          if (!ok) return false;
+        }
+      }
       await saveMd(d.path, content);
+      baselineContentRef.current = content;
       invalidatePrefetch(d.path);
       settleAfterWrite(getContent, content, d.content);
       await pushRecent({
@@ -210,7 +277,7 @@ export function useFile(): FileApi {
       });
       return true;
     },
-    [saveAs, settleAfterWrite]
+    [saveAs, settleAfterWrite, prewriteCheck]
   );
 
   // Lightweight disk write for autosave: skip the recent-list churn. The path
@@ -218,16 +285,38 @@ export function useFile(): FileApi {
   // store every 30s is pure waste — and over a long editing session that steady
   // IPC/JSON churn is a leading cause of webview memory growth.
   const writeOnly = useCallback(
-    async (getContent: () => string) => {
+    async (getContent: () => string, confirmOnConflict?: boolean) => {
       const d = docRef.current;
       if (!d.path) return false;
       const content = getContent();
+      // v5.3.x 保存防护（断开外部关联的文件，无 watcher 保护）：磁盘被外部
+      // 改动 → 缺省静默跳过（自动保存/后台流程），confirmOnConflict=true
+      // （手动保存）弹确认后覆盖。「same」= 磁盘已是将写内容，免写直接收尾。
+      if (optsRef.current?.shouldGuardWrite?.(d.path)) {
+        const verdict = await prewriteCheck(d.path, content);
+        if (verdict === "conflict") {
+          if (confirmOnConflict) {
+            const ok = await confirmDialog(
+              "文件已被外部程序修改。\n确定覆盖磁盘上的版本并保存？",
+              "Mditor"
+            );
+            if (!ok) return false;
+          } else {
+            return false;
+          }
+        } else if (verdict === "same") {
+          baselineContentRef.current = content;
+          settleAfterWrite(getContent, content, d.content);
+          return true;
+        }
+      }
       await saveMd(d.path, content);
+      baselineContentRef.current = content;
       invalidatePrefetch(d.path);
       settleAfterWrite(getContent, content, d.content);
       return true;
     },
-    [settleAfterWrite]
+    [settleAfterWrite, prewriteCheck]
   );
 
   const markDirty = useCallback(() => {
@@ -243,6 +332,7 @@ export function useFile(): FileApi {
     // 文件会把缓存里的过期版本当作最新（v3.9.1）。
     const path = docRef.current.path;
     if (path) invalidatePrefetch(path);
+    baselineContentRef.current = content; // 重载内容即新基线（v5.3.x）
     setDoc((d) => ({ ...d, content, dirty: false }));
   }, []);
 

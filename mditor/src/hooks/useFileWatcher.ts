@@ -36,6 +36,12 @@ interface Options {
   onStatus?: (msg: string, kind: "sync" | "warn") => void;
   /** When true (during an autosave write), incoming events are ignored. */
   isSavingRef: React.MutableRefObject<boolean>;
+  /**
+   * v5.3.x 外部关联订阅判定（App 稳定回调，读 ref）：false → 不订阅监听
+   * （断开的文件夹 / 类型不在生效集合）。仅影响订阅决策——useFile 的保存
+   * 前校验在写盘时实时判定，安全性不依赖本订阅是否在位。
+   */
+  shouldWatch?: (path: string) => boolean;
 }
 
 /** Cheap structural signature so we don't hold two big strings to compare. */
@@ -61,6 +67,13 @@ export function useFileWatcher(opts: Options) {
   useEffect(() => {
     const { path } = optsRef.current;
     if (!path) {
+      lastSavedSigRef.current = null;
+      return;
+    }
+    // v5.3.x 外部关联：断开的文件夹（或类型不在生效集合）不订阅。
+    // shouldWatch 是 App 稳定回调（读 ref），配置变化不重触发本 effect——
+    // 订阅决策随打开文件刷新；写盘安全由 useFile 的保存前校验实时兜底。
+    if (optsRef.current.shouldWatch && !optsRef.current.shouldWatch(path)) {
       lastSavedSigRef.current = null;
       return;
     }

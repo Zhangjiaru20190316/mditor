@@ -329,6 +329,19 @@ export class VaultIndexManager {
   shouldYield: () => boolean = () => false;
   /** 功能开关（关闭时不扫描不监听，仅保留已有内存索引）。 */
   enabled = true;
+  /**
+   * 外部关联闸门（v5.3.x）：非 null 时，watch 事件路径先过这道滤网——
+   * 断开的文件夹（或类型不在生效集合）不触发增量重扫。只闸监听增量：
+   * 全量 rebuild 与 noteSaved（自身保存）不受影响（QuickSwitcher/搜索的
+   * 发现性不因「断开外部关联」受损；自身编辑的索引新鲜度保持）。不触发
+   * rewatch/rebuild——与 setRoots 对 excluded 的处理同理，重挂纯属 churn。
+   */
+  private linkFilter: ((path: string) => boolean) | null = null;
+
+  /** 注入/清除外部关联闸门（App 在 externalLinkOptions 变化时调用）。 */
+  setLinkFilter(fn: ((path: string) => boolean) | null): void {
+    this.linkFilter = fn;
+  }
 
   constructor(io: VaultIndexIO = tauriIO) {
     this.io = io;
@@ -451,6 +464,9 @@ export class VaultIndexManager {
     const kind = ev.type?.kind ?? "any";
     if (kind !== "modify" && kind !== "create" && kind !== "remove" && kind !== "any") return;
     for (const p of ev.paths) {
+      // v5.3.x 外部关联闸门：断开的文件夹（或类型不在生效集合）不触发增量
+      // 重扫。滤网由 App 注入（lib/externalLink.shouldReactToChange）。
+      if (this.linkFilter && !this.linkFilter(p)) continue;
       // HN 轮：HTML 笔记同享监听增量（rescanFile 内按扩展名走 stat-only 分支）。
       const ext = extname(p).toLowerCase();
       if (!MD_EXTS.has(ext) && !isHtmlNote(p)) continue;
