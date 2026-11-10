@@ -55,12 +55,15 @@ import {
   collectMdPathsFromDisk,
   type TreeNode,
 } from "../lib/tauriFs";
-import { join, basename } from "../lib/path-shim";
+import { join, basename, toPosix } from "../lib/path-shim";
 import {
   isUnderRoot as isUnderPath,
   samePathFold as samePath,
   rootOf,
 } from "../lib/workspaces";
+import { resolveLinkScope } from "../lib/externalLink";
+import { useTreeWatcher } from "../hooks/useTreeWatcher";
+import type { RootLinkOptions } from "../types";
 import { prefetchFile } from "../lib/filePrefetch";
 import { confirmDialog } from "../lib/dialogs";
 import {
@@ -145,6 +148,15 @@ interface Props {
   treeExtsByRoot?: Record<string, ReadonlySet<string> | undefined>;
   /** v5.3：根区头部「类型」按钮——打开该根的文件类型选择对话框。 */
   onEditFileTypes?: (root: string) => void;
+  /**
+   * v5.3.x 外部关联配置（键 = 根路径；缺省键 = 全关联全类型）。消费两处：
+   * useTreeWatcher 的事件滤网 + 目录右键菜单的「断开/恢复外部关联」label。
+   */
+  externalLinkOptions?: Record<string, RootLinkOptions>;
+  /** v5.3.x：目录右键「外部关联设置…」——App 打开该根的关联对话框。 */
+  onExternalLinkSettings?: (dir: string) => void;
+  /** v5.3.x：目录右键快捷切换外部关联（toggleFolderRule 在 App 侧落盘）。 */
+  onToggleExternalLink?: (dir: string) => void;
 }
 
 interface MenuState {
@@ -153,7 +165,7 @@ interface MenuState {
   node: TreeNode;
 }
 
-export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOpenNewWindow, onConvertToMarkdown, onChanged, excludedPaths, onExclude, onRemoveRoot, treeExtsByRoot, onEditFileTypes }: Props) {
+export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOpenNewWindow, onConvertToMarkdown, onChanged, excludedPaths, onExclude, onRemoveRoot, treeExtsByRoot, onEditFileTypes, externalLinkOptions, onExternalLinkSettings, onToggleExternalLink }: Props) {
   // T4: lazy tree state — dir path → loaded children, the expanded set, and the
   // set of dirs whose children are currently being read (for a "…" placeholder).
   const [childrenMap, setChildrenMap] = useState<Map<string, TreeNode[]>>(new Map());
@@ -197,6 +209,13 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
   onRemoveRootRef.current = onRemoveRoot;
   const onEditFileTypesRef = useRef(onEditFileTypes);
   onEditFileTypesRef.current = onEditFileTypes;
+  const onExternalLinkSettingsRef = useRef(onExternalLinkSettings);
+  onExternalLinkSettingsRef.current = onExternalLinkSettings;
+  const onToggleExternalLinkRef = useRef(onToggleExternalLink);
+  onToggleExternalLinkRef.current = onToggleExternalLink;
+  /** v5.3.x 外部关联配置镜像（右键菜单与 hook 读活值）。 */
+  const externalLinkRef = useRef(externalLinkOptions);
+  externalLinkRef.current = externalLinkOptions;
   const excludedPathsRef = useRef(excludedPaths);
   excludedPathsRef.current = excludedPaths;
   // v5.3 每根类型集合镜像（稳定回调读活值）+ 变更键（重载 effect 依赖用
@@ -208,6 +227,13 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
   const allowedFor = useCallback((dir: string): ReadonlySet<string> | undefined => {
     const root = rootOf(dir, rootsRef.current);
     return root ? treeExtsRef.current?.[root] : undefined;
+  }, []);
+  /** v5.3.x：目录的有效外部关联态（右键菜单 label 用）；无根 → true（既有默认）。 */
+  const dirLinkEnabledFor = useCallback((dir: string): boolean => {
+    const root = rootOf(dir, rootsRef.current);
+    if (!root) return true;
+    const rel = toPosix(dir.slice(root.length)).replace(/^\/+/, "");
+    return resolveLinkScope(externalLinkRef.current?.[root], rel).enabled;
   }, []);
   // Ref mirrors of the lazy-map state, read inside stable callbacks/effects.
   const childrenMapRef = useRef(childrenMap);
@@ -320,6 +346,11 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
     window.addEventListener("mditor:vault-mutated", handler);
     return () => window.removeEventListener("mditor:vault-mutated", handler);
   }, [refreshAll]);
+
+  // v5.3.x 外部关联：关联子树的文件系统事件 → 400ms 防抖 → 全层刷新。
+  // 事件滤网（shouldReactToChange）在 hook 内；断开的文件夹不触发刷新，
+  // 手动 ↻ 仍可见。无 watch 能力平台 hook 内静默跳过（回到既有行为）。
+  useTreeWatcher({ roots, externalLinkOptions, onBatch: refreshAll });
 
   // ---- initial load + reload all loaded levels when roots/excludedPaths change
   // Always (re)load EVERY root's top level and refresh any previously-loaded
@@ -1033,6 +1064,13 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
             onNewFolder: (dir) => void createItem("folder", dir),
             onCopyPath: copyPath,
             onExclude: excludeNode,
+            onExternalLinkSettings: onExternalLinkSettings
+              ? (d) => onExternalLinkSettingsRef.current?.(d)
+              : undefined,
+            onToggleExternalLink: onToggleExternalLink
+              ? (d) => onToggleExternalLinkRef.current?.(d)
+              : undefined,
+            dirLinkEnabled: dirLinkEnabledFor(menu.node.path),
           })}
         />
       )}
@@ -1364,6 +1402,11 @@ interface TreeMenuCallbacks {
   onNewFolder: (dir: string) => void;
   onCopyPath: (path: string) => void;
   onExclude: (node: TreeNode) => void;
+  /** v5.3.x 外部关联：目录菜单专用（文件菜单不显示）。 */
+  onExternalLinkSettings?: (dir: string) => void;
+  onToggleExternalLink?: (dir: string) => void;
+  /** 右键目录的有效关联态（快捷项 label 随之切换）。 */
+  dirLinkEnabled: boolean;
 }
 
 /** Build the typed entry list for the shared ContextMenu shell. Each entry
@@ -1384,6 +1427,19 @@ function treeMenuEntries(node: TreeNode, cb: TreeMenuCallbacks): CtxEntry[] {
         mkSep("s1"),
         mkItem("rename", "重命名", () => cb.onRename(node.path)),
         mkItem("copy", "复制路径", () => void cb.onCopyPath(node.path)),
+        // v5.3.x 外部关联：快捷开关（label 随有效态）+ 完整设置入口。
+        ...(cb.onToggleExternalLink
+          ? [
+              mkItem(
+                "toggle-link",
+                cb.dirLinkEnabled ? "断开外部关联" : "恢复外部关联",
+                () => cb.onToggleExternalLink?.(node.path)
+              ),
+            ]
+          : []),
+        ...(cb.onExternalLinkSettings
+          ? [mkItem("link-settings", "外部关联设置…", () => cb.onExternalLinkSettings?.(node.path))]
+          : []),
         mkItem("exclude", "从工作区移除", () => cb.onExclude(node)),
         mkSep("s2"),
         mkItem("delete", "删除", () => void cb.onDelete(node), true),

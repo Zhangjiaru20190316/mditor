@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { FileTree } from "./FileTree";
+import type { RootLinkOptions } from "../types";
 
 // 懒加载夹具：两级目录树（vi.hoisted 与 vi.mock 一同提升，工厂可引用）。
 //   C:/ws            （工作区根）
@@ -194,5 +195,68 @@ describe("FileTree 键盘可达（roving tabindex + 方向键导航）", () => {
     fireEvent.keyDown(a, { key: "Enter" });
     expect(onOpen).not.toHaveBeenCalled();
     await waitFor(() => expect(a.classList.contains("ft-selected")).toBe(true));
+  });
+});
+
+/* ---- v5.3.x 外部关联：目录右键菜单 --------------------------------------- */
+
+describe("FileTree 外部关联菜单（v5.3.x）", () => {
+  async function mountWithLink(opts?: Record<string, RootLinkOptions>) {
+    const onToggleExternalLink = vi.fn();
+    const onExternalLinkSettings = vi.fn();
+    render(
+      <FileTree
+        roots={[ROOT]}
+        activePath={null}
+        onOpen={vi.fn()}
+        excludedPaths={new Set()}
+        externalLinkOptions={opts}
+        onToggleExternalLink={onToggleExternalLink}
+        onExternalLinkSettings={onExternalLinkSettings}
+      />
+    );
+    await waitFor(() => expect(rows()).toHaveLength(3));
+    return { onToggleExternalLink, onExternalLinkSettings };
+  }
+  const openMenuFor = (name: string) => {
+    const row = rows().find((r) => r.textContent?.includes(name));
+    if (!row) throw new Error(`row ${name} not found`);
+    fireEvent.contextMenu(row);
+  };
+
+  it("回调未传入 → 菜单不出现外部关联条目（既有菜单零变化）", async () => {
+    // 刻意不传两个回调（App 未接线时的既有用法）。
+    render(
+      <FileTree roots={[ROOT]} activePath={null} onOpen={vi.fn()} excludedPaths={new Set()} />
+    );
+    await waitFor(() => expect(rows()).toHaveLength(3));
+    openMenuFor("notes");
+    expect(screen.queryByText("断开外部关联")).toBeNull();
+    expect(screen.queryByText("外部关联设置…")).toBeNull();
+    expect(screen.getByText("从工作区移除")).toBeInTheDocument();
+  });
+
+  it("默认关联：快捷项「断开外部关联」→ 回调目录绝对路径；设置入口同", async () => {
+    const m = await mountWithLink(undefined);
+    openMenuFor("notes");
+    fireEvent.click(screen.getByText("断开外部关联"));
+    expect(m.onToggleExternalLink).toHaveBeenCalledWith("C:/ws/notes");
+    openMenuFor("notes");
+    fireEvent.click(screen.getByText("外部关联设置…"));
+    expect(m.onExternalLinkSettings).toHaveBeenCalledWith("C:/ws/notes");
+  });
+
+  it("断开的文件夹：快捷项翻转为「恢复外部关联」", async () => {
+    await mountWithLink({ "C:/ws": { folders: { notes: { enabled: false } } } });
+    openMenuFor("notes");
+    expect(screen.getByText("恢复外部关联")).toBeInTheDocument();
+  });
+
+  it("子级显式恢复（父级断开）：快捷项显示「断开外部关联」", async () => {
+    await mountWithLink({
+      "C:/ws": { enabled: false, folders: { notes: { enabled: true } } },
+    });
+    openMenuFor("notes");
+    expect(screen.getByText("断开外部关联")).toBeInTheDocument();
   });
 });

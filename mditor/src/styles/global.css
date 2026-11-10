@@ -4772,9 +4772,10 @@ html[data-motion="none"] *::after {
   color: var(--fg-muted);
 }
 
-/* 同步范围对话框（v5.3 每根范围：文件类型 + 目录树勾选 + 排除规则）。 */
+/* 同步范围对话框（v5.3 每根范围：文件类型 + 目录树勾选 + 排除规则；
+ * v5.3.1 UI 优化：卡片加宽、状态摘要条、停用置灰、区块分隔线）。 */
 .sync-scope-card {
-  width: min(560px, 92vw);
+  width: min(600px, 92vw);
   max-height: 86vh;
   display: flex;
   flex-direction: column;
@@ -4805,6 +4806,36 @@ html[data-motion="none"] *::after {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+/* v5.3.1：相邻区块细分隔线（不作用于 wrapper 的首个区块）。 */
+.sync-scope-block + .sync-scope-block {
+  border-top: 1px solid color-mix(in srgb, var(--fg-muted) 12%, transparent);
+  padding-top: 10px;
+}
+/* v5.3.1：当前编辑态的有效范围摘要条（accent 淡底胶囊；停用转警示灰）。 */
+.sync-scope-summary {
+  align-self: flex-start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--accent, #4a90d9) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, #4a90d9) 22%, transparent);
+  color: var(--fg);
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: var(--font-size-s);
+}
+.sync-scope-summary.off {
+  background: color-mix(in srgb, var(--fg-muted) 8%, transparent);
+  border-color: color-mix(in srgb, var(--fg-muted) 20%, transparent);
+  color: var(--fg-muted);
+}
+/* v5.3.1：根开关停用 → 下方配置整组置灰且不可交互（本轮本就不生效）。 */
+.sync-scope-rest.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+  user-select: none;
 }
 .sync-scope-label {
   font-weight: 600;
@@ -4920,6 +4951,13 @@ html[data-motion="none"] *::after {
   color: var(--fg-muted);
   flex-shrink: 0;
 }
+/* v5.3.1：设置区云同步每根行的范围摘要（复用 tag 字号；超长省略）。 */
+.sync-scope-summary-tag {
+  max-width: 34%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .sync-scope-patterns {
   width: 100%;
   resize: vertical;
@@ -4938,6 +4976,45 @@ html[data-motion="none"] *::after {
 }
 .sync-scope-warn {
   color: var(--danger, #c0392b);
+}
+
+/* 外部关联对话框（v5.3.x）：复用 .sync-scope-* 体系，仅补名称按钮化、
+ * 选中行高亮与详情块样式。 */
+.sync-scope-row.selected {
+  background: color-mix(in srgb, var(--accent, #4a90d9) 12%, transparent);
+}
+.elink-name {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.elink-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--fg-muted) 22%, transparent);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.elink-detail-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.elink-detail-label {
+  width: 3em;
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  font-size: var(--font-size-s);
 }
 
 /* 状态栏云同步指示器（v4.12；v5.2 进度环）：四态着色；syncing 时不再

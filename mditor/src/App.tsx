@@ -33,6 +33,7 @@ import { WorkspaceSearch } from "./components/WorkspaceSearch";
 import { TemplateModal } from "./components/TemplateModal";
 import { LinkDialog } from "./components/LinkDialog";
 import { WorkspaceFileDialog } from "./components/WorkspaceFileDialog";
+import { ExternalLinkDialog } from "./components/ExternalLinkDialog";
 import { renderTemplate, type DocTemplate } from "./lib/templates";
 import type { SearchHit } from "./lib/workspaceSearch";
 import {
@@ -133,7 +134,12 @@ import {
   loadRecentWorkspaces,
   pushRecentWorkspace,
 } from "./lib/store";
-import { dedupeRoots, samePathFold } from "./lib/workspaces";
+import { dedupeRoots, samePathFold, rootOf } from "./lib/workspaces";
+import {
+  shouldReactToChange,
+  shouldWatchPath,
+  toggleFolderRule,
+} from "./lib/externalLink";
 import { assembleSyncTrigger } from "./lib/sync/trigger";
 import { dismissSplash } from "./lib/splash";
 import { takeHealSnapshot } from "./lib/session";
@@ -239,7 +245,23 @@ function pngStageView(
 
 function App() {
   const settingsApi = useSettings();
-  const fileApi = useFile();
+  // v5.3.x 外部关联：稳定判定回调（读 ref 活值；须在 useFile 之前声明）。
+  const getLinkOpts = useCallback(
+    () => settingsRef.current.settings.externalLinkOptions,
+    []
+  );
+  const shouldWatchFile = useCallback(
+    (p: string) => shouldWatchPath(p, workspacesRef.current, getLinkOpts),
+    [getLinkOpts]
+  );
+  const fileApi = useFile({
+    // 保存防护：文件所在文件夹未被监听（断开外部关联/类型不在生效集合）
+    // 时，写盘前校验磁盘是否被外部改动（useFile.writeOnly/save 消费）。
+    shouldGuardWrite: useCallback(
+      (p: string) => !shouldWatchPath(p, workspacesRef.current, getLinkOpts),
+      [getLinkOpts]
+    ),
+  });
   const editorRef = useRef<EditorHandle>(null);
   const aiPanelRef = useRef<AiPanelHandle>(null);
 
@@ -1753,6 +1775,16 @@ function App() {
     vaultIndex.setRoots(workspaces, excludedSet);
   }, [workspaces, excludedSet, settingsApi.settings.vaultIndexEnabled]);
 
+  // v5.3.x 外部关联：vaultIndex 增量重扫闸门——断开的文件夹（或类型不在
+  // 生效集合）不触发 watch 增量。滤网经 ref 读活值，配置变化无需重装；
+  // 全量 rebuild 与 noteSaved（自身保存）不受影响（发现性保持）。
+  useEffect(() => {
+    vaultIndex.setLinkFilter((p) =>
+      shouldReactToChange(p, workspacesRef.current, getLinkOpts)
+    );
+    return () => vaultIndex.setLinkFilter(null);
+  }, [getLinkOpts]);
+
   // ---- 云同步引擎装配（v4.12，§5.5 / §7.5.2）--------------------------------
   // 仅 main 窗口装配（D8：全部自动触发与 sync-request 监听都在引擎里）；
   // browser 预览零装配——assembleSyncTrigger 入口判 isSyncSupported() 直接返回 null，
@@ -2303,6 +2335,33 @@ function App() {
       return { workspaceOptions: next };
     });
   }, []);
+
+  // ---- v5.3.x 外部关联：对话框状态与快捷开关 --------------------------------
+  const [linkDialog, setLinkDialog] = useState<{ root: string; dir: string | null } | null>(null);
+  /** 目录右键「外部关联设置…」：定位到该目录所属根并预选它。 */
+  const handleLinkSettings = useCallback((dir: string) => {
+    const root = rootOf(dir, workspacesRef.current);
+    if (!root) return;
+    const rel = toPosix(dir.slice(root.length)).replace(/^\/+/, "");
+    setLinkDialog({ root, dir: rel === "" ? null : rel });
+  }, []);
+  /** 目录右键快捷切换（toggleFolderRule 纯函数落盘；根级开关不走这里）。 */
+  const handleToggleLink = useCallback(
+    (dir: string) => {
+      const root = rootOf(dir, workspacesRef.current);
+      if (!root) return;
+      const rel = toPosix(dir.slice(root.length)).replace(/^\/+/, "");
+      if (rel === "") return;
+      void settingsRef.current.update((prev) => {
+        const next = toggleFolderRule(prev.externalLinkOptions[root], rel);
+        const map = { ...prev.externalLinkOptions };
+        if (next) map[root] = next;
+        else delete map[root];
+        return { externalLinkOptions: map };
+      });
+    },
+    []
+  );
 
   const addWorkspaceRoot = useCallback(
     async (folder: string, kinds?: NoteKind[]) => {
@@ -3618,6 +3677,9 @@ function App() {
                   onRemoveRoot={handleRemoveRoot}
                   treeExtsByRoot={treeExtsByRoot}
                   onEditFileTypes={handleEditFileTypes}
+                  externalLinkOptions={settingsApi.settings.externalLinkOptions}
+                  onExternalLinkSettings={handleLinkSettings}
+                  onToggleExternalLink={handleToggleLink}
                 />
               </>
             ) : (
@@ -3739,6 +3801,7 @@ function App() {
           onHeadings={handleHeadings}
           onAutosaved={onAutosaved}
           onWatcherStatus={onWatcherStatus}
+          shouldWatchFile={shouldWatchFile}
           onModeChange={setEditMode}
         />
         {/* HN 轮：html 标签的活动视图（编辑器经 data-readonly-view 隐藏；卸载
@@ -3999,6 +4062,27 @@ function App() {
             else applyWorkspaceFileTypes(folder, kinds);
           }}
           onClose={() => setWsFileDialog(null)}
+        />
+      )}
+
+      {/* v5.3.x 外部关联：文件树目录右键「外部关联设置…」入口。确认即时写
+       *  设置（settingsApi.update 直写持久化，树监听/索引闸门经活值引用即时
+       *  生效）。 */}
+      {linkDialog && (
+        <ExternalLinkDialog
+          open
+          root={linkDialog.root}
+          saved={settingsRef.current.settings.externalLinkOptions[linkDialog.root]}
+          initialDir={linkDialog.dir}
+          onCommit={(opts) => {
+            void settingsRef.current.update((prev) => {
+              const map = { ...prev.externalLinkOptions };
+              if (opts) map[linkDialog.root] = opts;
+              else delete map[linkDialog.root];
+              return { externalLinkOptions: map };
+            });
+          }}
+          onClose={() => setLinkDialog(null)}
         />
       )}
 

@@ -201,6 +201,11 @@ interface Props {
   onAutosaved?: () => void;
   /** Status-line flash from the file watcher ("已从外部同步" etc). */
   onWatcherStatus?: (msg: string, kind: "sync" | "warn") => void;
+  /**
+   * v5.3.x 外部关联订阅判定（App 稳定回调）：false → useFileWatcher 不订阅
+   * （断开的文件夹 / 类型不在生效集合）。缺省 = 全部订阅（既有行为）。
+   */
+  shouldWatchFile?: (path: string) => boolean;
   /** Fires with the active mode after the editor (re)builds, for StatusBar. */
   onModeChange?: (m: EditMode) => void;
   /** P11：编辑器 ready 翻真时回调（重建也会再触发——等待队列语义见 App）。
@@ -218,7 +223,7 @@ const EDITOR_ID = "mditor-editor";
 // imperative handle below still refreshes on editor rebuilds as before.
 export const Editor = memo(
   forwardRef<EditorHandle, Props>(function Editor(
-    { settings, fileApi, onInput, onHeadings, onAutosaved, onWatcherStatus, onModeChange, onReady },
+    { settings, fileApi, onInput, onHeadings, onAutosaved, onWatcherStatus, shouldWatchFile, onModeChange, onReady },
     ref
   ) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -673,6 +678,7 @@ export const Editor = memo(
     },
     onStatus: onWatcherStatus,
     isSavingRef,
+    shouldWatch: shouldWatchFile,
   });
 
   // Autosave.
@@ -690,6 +696,10 @@ export const Editor = memo(
         const ok = await fileApi.writeOnly(() => content);
         if (ok) {
           watcherApi.noteSaved(content);
+        } else if (fileApi.docPathSync()) {
+          // v5.3.x 保存防护拦截（断开外部关联的文件夹被外部改动）：静默
+          // 跳过写入必须让用户知道——否则未持久化的编辑会被悄悄丢掉。
+          onWatcherStatus?.("文件已被外部修改，自动保存已暂停（Ctrl+S 可确认覆盖）", "warn");
         }
         return ok;
       } finally {
@@ -704,7 +714,8 @@ export const Editor = memo(
     isSavingRef.current = true;
     try {
       const content = handle.editor?.getValue() ?? getContentRef.current() ?? "";
-      const ok = await fileApi.writeOnly(() => content);
+      // 手动保存：外部修改冲突时弹确认（用户显式按键，可覆盖）。
+      const ok = await fileApi.writeOnly(() => content, true);
       if (ok) watcherApi.noteSaved(content);
       return ok;
     } finally {
