@@ -50,6 +50,15 @@
 //    作为输入时间戳的单一来源（渲染泵静止门与预热让路窗口共用，预热模块
 //    不得另挂一份监听）。
 //
+// R13 输入盲区同修：wheel/touch 打点覆盖不了滚动条拖拽、键盘滚动
+// （PgDn/End/方向键）与程序化滚动（目录跳转/查找定位/恢复梯子）——这些
+// 剖面只有宿主 scroll 事件。新增 scroll 监听（capture/passive，只认宿主滚
+// 动体）做补充驱动：方向由差分符号推、步进记 noteScrollStep、预测扫描
+// scheduleProactiveSweep(true) 绕过静止门（scroll 本身即"位置在变"），大
+// 位移（≥max(480, 半视口)，跳落点剖面）复用 Fix-A' 同步直绘带。纪律不
+// 变：scroll 驱动绝不 mark()（程序化补偿写也会触发 scroll，误记会把补偿
+// 窗判成滚动中——R1b ready 23→10 回落教训）；渲染仍全部经泵的帧预算。
+//
 // 等价性（红线判定，R1 反向判据）：
 //  * Ctrl+F 计数走 markdown 源串（SearchBar regex），与 DOM 无关——恒等价；
 //    window.find 侧占位文本=公式源码，与 KaTeX MathML annotation 同样可命中。
@@ -174,6 +183,8 @@ let userInputHooked = false;
 let scrollDir: 0 | 1 | -1 = 0;
 /** 上一次 touchmove 的 Y：touch 无 deltaY，用相邻两次位移符号推方向。 */
 let lastTouchY: number | null = null;
+/** R13：宿主 scrollTop 差分基线（scroll 驱动预测扫描用；null = 首事件建基线）。 */
+let lastScrollY: number | null = null;
 /** R10 Fix-A：最近滚轮/触摸步进幅度（px，取近 5 次最大值）——快滚步进可
  *  一步穿越整个预测带（1200px 步进 vs 800px 带），带前沿按步进自适应外扩
  *  让元素提前一步入队（泵在进带/进视口帧渲染，几何上仍视口外完成）。 */
@@ -224,6 +235,8 @@ const pumpStats = {
   syncNow: 0,
   /** R10 Fix-A' 观测：jump 组命中但降级（未命中缓存/上滚无盒/超上限）。 */
   syncDefer: 0,
+  /** R13 观测：scroll 事件驱动的预测扫描排程次数（滚动条拖拽/键滚/程序化滚动剖面）。 */
+  scrollDriven: 0,
 };
 
 /** 泵统计快照（按需 O(队列长度)；探针轮询用，泵帧内不调用）。 */
@@ -246,6 +259,7 @@ export function getMathPumpStats(): {
   lastIoEnterAt: number;
   proactiveSweeps: number;
   proactiveActivated: number;
+  scrollDriven: number;
 } {
   const now = performance.now();
   let live = 0;
@@ -281,6 +295,7 @@ export function __resetRenderPumpForTest(): void {
   lastUserInputAt = -Infinity;
   scrollDir = 0;
   lastTouchY = null;
+  lastScrollY = null;
   recentSteps.length = 0;
   stepMargin = 0;
   for (const k of Object.keys(pumpStats) as (keyof typeof pumpStats)[]) pumpStats[k] = 0;
@@ -341,6 +356,40 @@ function hookUserInputOnce(): void {
     (e: KeyboardEvent) => {
       mark();
       if (KEY_SCROLL_KEYS.has(e.key)) scrollDir = 0;
+    },
+    { capture: true, passive: true }
+  );
+  // R13：滚动条拖拽 / 键盘滚动 / 程序化滚动（目录跳转、查找定位、恢复梯
+  // 子）都不产生 wheel/touch——宿主 scroll 事件是这些输入剖面的公共信号，
+  // 作为预测式扫描的补充驱动源。只做方向差分 + 扫描排程，**绝不 mark()**：
+  // 程序化 scrollTop 写入（prewarm-comp/premount-comp 高度补偿、恢复梯子）
+  // 同样触发 scroll，把它记成"用户输入"会把整个补偿窗误判成滚动中，公式
+  // 被门回占位态（R1b 实测 ready 23→10 回落，头注纪律）。scrollDir 由差分
+  // 符号推（键滚 keydown 无方向 → 此处补上真实方向）。大位移（跳落点，
+  // ≥max(480, 半视口)）复用 Fix-A' 同步直绘带：缓存命中的视口沿条目当帧
+  // 画完，冷条目入队走泵帧预算。
+  window.addEventListener(
+    "scroll",
+    (e: Event) => {
+      if (!lazyEnabled) return;
+      const host = document.querySelector<HTMLElement>(".mditor-editor-host");
+      if (!host) return;
+      const t = e.target;
+      if (t !== host && t !== document && t !== document.scrollingElement) return;
+      const y = host.scrollTop;
+      if (lastScrollY === null || y === lastScrollY) {
+        lastScrollY = y;
+        return;
+      }
+      const dy = y - lastScrollY;
+      lastScrollY = y;
+      scrollDir = dy > 0 ? 1 : -1;
+      noteScrollStep(Math.abs(dy));
+      pumpStats.scrollDriven++;
+      if (Math.abs(dy) >= Math.max(480, host.clientHeight * 0.5)) {
+        proactiveSweepSync(Math.abs(dy));
+      }
+      scheduleProactiveSweep(true);
     },
     { capture: true, passive: true }
   );
@@ -620,13 +669,16 @@ export function proactiveSweep(): number {
   return activated;
 }
 
-/** 滚动输入驱动的扫描排程（rAF 合并；静止门内不扫——静止补绘路径已全量）。 */
-function scheduleProactiveSweep(): void {
+/** 滚动输入驱动的扫描排程（rAF 合并；静止门内不扫——静止补绘路径已全量。
+ *  R13 force：scroll 事件驱动例外——滚动条拖拽/程序化滚动没有 wheel/touch
+ *  打点，scroll 事件本身就是"位置在变"的凭据，静止门对它放行；泵侧消费
+ *  纪律不变（IO 入队 + 预测激活的条目按静止/滚动各自的帧预算渲染）。 */
+function scheduleProactiveSweep(force = false): void {
   if (sweepScheduled) return;
   sweepScheduled = true;
   window.requestAnimationFrame(() => {
     sweepScheduled = false;
-    if (scrollQuiet(performance.now())) return;
+    if (!force && scrollQuiet(performance.now())) return;
     proactiveSweep();
   });
 }

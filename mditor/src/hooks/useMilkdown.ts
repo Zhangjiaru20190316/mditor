@@ -711,9 +711,12 @@ export function useMilkdown(opts: Options): MilkdownHandle {
       const big = isBigDoc(seed);
       // R1：按体量（不经设置开关）决定行内公式是否懒渲染——重建时重估。
       setLazyMathBySize(seed);
-      // R11 E-a 块级预挂载：与行内懒渲染同点位按 cv 档启用（2026-10-20 拍板
-      // 默认开启；window.__blockPreMountCfg={on:false} 为测量基线臂专用关闭）。
-      setBlockPreMountEnabled(isBigDocCv(seed));
+      // R11 E-a 块级预挂载（2026-10-20 拍板默认开启；window.__blockPreMountCfg
+      // ={on:false} 为测量基线臂专用关闭）。R13 档位门重审：cv 档判据收窄为
+      // ！isBigDoc——CodeMirror/Latex 特性激活的一切档位（含默认档）都武装，
+      // 非滚轮输入（滚动条拖拽/键滚/程序化跳转）的公式块首到闪刷才能全覆盖
+      //（降级档 big=true 无 code-block 组件，armed 亦空转）。
+      setBlockPreMountEnabled(!big);
       bigDocRef.current = big;
       setBigDoc(big);
       const cv = isBigDocCv(seed);
@@ -1243,7 +1246,9 @@ export function useMilkdown(opts: Options): MilkdownHandle {
           // 整篇载入：优先解析缓存（阶段 1 命中 → 零解析），未命中原地解析
           // 并回填缓存。suppress 包住两条路径，避免程序化载入被当作用户输入。
           setLazyMathBySize(md);
-          setBlockPreMountEnabled(cvDocRef.current);
+          // R13：块级预挂载档位 = CodeMirror/Latex 特性激活档（建实例位点的
+          // ！big 同语义；cv 档判据不再作为门）。
+          setBlockPreMountEnabled(!bigDocRef.current);
           suppressRef.current = true;
           loadMarkdownFull(crepe, md);
           suppressRef.current = false;

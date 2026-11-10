@@ -15,6 +15,7 @@ import {
   __resetRenderPumpForTest,
   __resetProactiveSweepForTest,
   getMathPumpStats,
+  msSinceUserInput,
   SCROLL_HIT_PAINT_CAP,
 } from "./lazyInlineMath";
 import { renderToStringCached } from "./katexCache";
@@ -1152,6 +1153,108 @@ describe("R10 Fix-A'：wheel 同步微扫（jump 组同步直绘）", () => {
     advance(500);
     flushFrames(4); // 静止补绘兜底
     expect(tv.dom.classList.contains("mditor-math-inline-ready")).toBe(true);
+    host.remove();
+    tv.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+});
+
+describe("R13：scroll 驱动预测扫描（滚动条拖拽/键滚/程序化滚动剖面）", () => {
+  /** 滚动条拖拽剖面：宿主 scrollTop 步进 + scroll 事件（无 wheel/touch）。 */
+  function fireHostScroll(host: HTMLElement, to: number): void {
+    host.scrollTop = to;
+    host.dispatchEvent(new Event("scroll"));
+  }
+
+  it("scroll 步进驱动：静止门放行（force），方向由差分推，带内行内激活并渲染", () => {
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    __resetProactiveSweepForTest();
+    msSinceUserInput(); // 安装输入钩子（wheel/touch/scroll）但不打点
+    const host = document.createElement("div");
+    host.className = "mditor-editor-host";
+    const pm = document.createElement("div");
+    pm.className = "ProseMirror";
+    host.appendChild(pm);
+    document.body.appendChild(host);
+    stubRect(host, { top: 0, bottom: 600, height: 600 });
+    // 预测带内（视口底 600 之下 650~900）：IO 未回调，靠 scroll 驱动预测激活
+    const b = document.createElement("p");
+    stubRect(b, { top: 650, bottom: 900, height: 250 });
+    const tv = makeView("k_r13_drag_band");
+    b.appendChild(tv.dom);
+    stubRect(tv.dom, { top: 650, bottom: 900, height: 250 });
+    pm.appendChild(b);
+    fireHostScroll(host, 0); // 建差分基线
+    fireHostScroll(host, 300); // 拖拽步进 +300：dir=down + 强制扫描排程
+    flushFrames(3); // 强制扫描 rAF + 泵帧（冻结时钟 → 静止补绘全量渲染）
+    expect(tv.dom.classList.contains("mditor-math-inline-ready")).toBe(true);
+    const st = getMathPumpStats();
+    expect(st.scrollDriven).toBe(1);
+    expect(st.proactiveActivated).toBeGreaterThanOrEqual(1);
+    host.remove();
+    tv.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+
+  it("scroll 驱动绝不 mark()：渲染经静止补绘路径完成（补偿窗不被误判成滚动中）", () => {
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    __resetProactiveSweepForTest();
+    msSinceUserInput();
+    const host = document.createElement("div");
+    host.className = "mditor-editor-host";
+    const pm = document.createElement("div");
+    pm.className = "ProseMirror";
+    host.appendChild(pm);
+    document.body.appendChild(host);
+    stubRect(host, { top: 0, bottom: 600, height: 600 });
+    const b = document.createElement("p");
+    stubRect(b, { top: 650, bottom: 900, height: 250 });
+    const tv = makeView("l_r13_nomark");
+    b.appendChild(tv.dom);
+    stubRect(tv.dom, { top: 650, bottom: 900, height: 250 });
+    pm.appendChild(b);
+    fireHostScroll(host, 0);
+    fireHostScroll(host, 200);
+    flushFrames(3);
+    // 输入时间戳仍是 -Infinity（从未 mark）：渲染只可能来自静止补绘路径。
+    expect(msSinceUserInput()).toBe(Infinity);
+    expect(tv.dom.classList.contains("mditor-math-inline-ready")).toBe(true);
+    expect(getMathPumpStats().quietFrames).toBeGreaterThanOrEqual(1);
+    host.remove();
+    tv.destroy();
+    useRealPumpTimers();
+    setLazyInlineMathEnabled(false);
+  });
+
+  it("大位移 scroll（跳落点）：Fix-A' 同步直绘带激活视口沿条目（缓存命中当帧画）", () => {
+    usePumpTimers();
+    setLazyInlineMathEnabled(true);
+    __resetProactiveSweepForTest();
+    msSinceUserInput();
+    const host = document.createElement("div");
+    host.className = "mditor-editor-host";
+    const pm = document.createElement("div");
+    pm.className = "ProseMirror";
+    host.appendChild(pm);
+    document.body.appendChild(host);
+    stubRect(host, { top: 0, bottom: 600, height: 600 });
+    // 视口沿块（200~400）：dy=900 的跳落点对称 jumpSpan 覆盖
+    const b = document.createElement("p");
+    stubRect(b, { top: 200, bottom: 400, height: 200 });
+    const tv = makeView("m_r13_landing");
+    b.appendChild(tv.dom);
+    stubRect(tv.dom, { top: 200, bottom: 400, height: 200 });
+    pm.appendChild(b);
+    renderToStringCached("m_r13_landing", false); // 预热缓存（同步直绘只做命中路径）
+    fireHostScroll(host, 0);
+    fireHostScroll(host, 900); // End/目录跳转剖面：+900 ≥ max(480, 半视口)
+    // scroll 事件内同步微扫（proactiveSweepSync）：jump 组命中 → 当帧已画
+    expect(tv.dom.classList.contains("mditor-math-inline-ready")).toBe(true);
+    expect(getMathPumpStats().proactiveActivated).toBeGreaterThanOrEqual(1);
     host.remove();
     tv.destroy();
     useRealPumpTimers();
