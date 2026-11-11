@@ -81,9 +81,8 @@ function matchSegment(pattern: string, seg: string): boolean {
   if (pattern === "*") return true;
   if (!pattern.includes("*")) return pattern === seg;
   const parts = pattern.split("*");
-  let idx = 0;
   if (!seg.startsWith(parts[0])) return false;
-  idx = parts[0].length;
+  let idx = parts[0].length;
   for (let i = 1; i < parts.length - 1; i++) {
     const found = seg.indexOf(parts[i], idx);
     if (found === -1) return false;

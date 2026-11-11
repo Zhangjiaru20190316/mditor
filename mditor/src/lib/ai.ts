@@ -762,10 +762,6 @@ export function agentChatStream(opts: AgentChatStreamOptions): AgentStreamHandle
   const cleanup = () => {
     unlistenFns.splice(0).forEach((fn) => fn());
   };
-  const detach = (fn: UnlistenFn) => {
-    if (settled) fn();
-    else unlistenFns.push(fn);
-  };
 
   let resolveP!: (r: AgentStreamResult) => void;
   let rejectP!: (e: Error) => void;
@@ -787,55 +783,69 @@ export function agentChatStream(opts: AgentChatStreamOptions): AgentStreamHandle
     rejectP(new Error(err));
   };
 
-  getAdapter().app.listen<StreamChunkEvent>("ai_stream_chunk", (ev) => {
-    if (ev.payload.id !== requestId || settled || cancelled) return;
-    if (ev.payload.delta) {
-      content += ev.payload.delta;
-      onChunk?.(ev.payload.delta);
+  // E3 同款确定性顺序（v5.3.2 前为 chatStream 已修的旧模式）：监听注册是
+  // 异步的，不等注册完成就 invoke，注册前到达的 chunk / tool_calls 丢失
+  // ——tool_calls 丢失会让 Agent 循环误判「无工具调用」提前收尾，60ms
+  // 宽限窗救不了「事件早于注册」的时序。先 await 全部注册，再启动后端。
+  void (async () => {
+    const noop: UnlistenFn = () => undefined;
+    const regs = await Promise.all([
+      getAdapter().app.listen<StreamChunkEvent>("ai_stream_chunk", (ev) => {
+        if (ev.payload.id !== requestId || settled || cancelled) return;
+        if (ev.payload.delta) {
+          content += ev.payload.delta;
+          onChunk?.(ev.payload.delta);
+        }
+      }),
+      onReasoning
+        ? getAdapter().app.listen<StreamReasoningEvent>("ai_stream_reasoning", (ev) => {
+            if (ev.payload.id !== requestId || settled || cancelled) return;
+            if (ev.payload.delta) {
+              reasoning += ev.payload.delta;
+              onReasoning(ev.payload.delta);
+            }
+          })
+        : Promise.resolve(noop),
+      // 聚合完成的工具调用（仅 finish_reason=="tool_calls" / 收尾安全网发射
+      // 一次，先于 done 事件到达）：覆盖式记录——单轮至多一批。
+      getAdapter().app.listen<StreamToolCallsEvent>("ai_stream_tool_calls", (ev) => {
+        if (ev.payload.id !== requestId || settled || cancelled) return;
+        toolCalls = Array.isArray(ev.payload.tool_calls) ? ev.payload.tool_calls : [];
+      }),
+      getAdapter().app.listen<StreamDoneEvent>("ai_stream_done", (ev) => {
+        if (ev.payload.id !== requestId || settled || cancelled) return;
+        settleOk();
+      }),
+      getAdapter().app.listen<StreamErrorEvent>("ai_stream_error", (ev) => {
+        if (ev.payload.id !== requestId || settled || cancelled) return;
+        sysEmit("ai:stream-fail", `AI 流式错误：${ev.payload.error.slice(0, 160)}`, {
+          level: "error",
+          data: { requestId, error: ev.payload.error.slice(0, 300), model: m.model },
+        });
+        settleErr(ev.payload.error);
+      }),
+    ]);
+    // 注册期间已被取消/收尾：立即摘除，不留监听泄漏。
+    if (settled || cancelled) {
+      regs.forEach((fn) => fn());
+      return;
     }
-  }).then(detach);
-  if (onReasoning) {
-    getAdapter().app.listen<StreamReasoningEvent>("ai_stream_reasoning", (ev) => {
-      if (ev.payload.id !== requestId || settled || cancelled) return;
-      if (ev.payload.delta) {
-        reasoning += ev.payload.delta;
-        onReasoning(ev.payload.delta);
-      }
-    }).then(detach);
-  }
-  // 聚合完成的工具调用（仅 finish_reason=="tool_calls" / 收尾安全网发射一次，
-  // 先于 done 事件到达）：覆盖式记录——单轮至多一批。
-  getAdapter().app.listen<StreamToolCallsEvent>("ai_stream_tool_calls", (ev) => {
-    if (ev.payload.id !== requestId || settled || cancelled) return;
-    toolCalls = Array.isArray(ev.payload.tool_calls) ? ev.payload.tool_calls : [];
-  }).then(detach);
-  getAdapter().app.listen<StreamDoneEvent>("ai_stream_done", (ev) => {
-    if (ev.payload.id !== requestId || settled || cancelled) return;
-    settleOk();
-  }).then(detach);
-  getAdapter().app.listen<StreamErrorEvent>("ai_stream_error", (ev) => {
-    if (ev.payload.id !== requestId || settled || cancelled) return;
-    sysEmit("ai:stream-fail", `AI 流式错误：${ev.payload.error.slice(0, 160)}`, {
-      level: "error",
-      data: { requestId, error: ev.payload.error.slice(0, 300), model: m.model },
-    });
-    settleErr(ev.payload.error);
-  }).then(detach);
+    unlistenFns.push(...regs);
 
-  // Kick off the backend（tools 仅在有值时携带——None 时 Rust 不发送该字段）。
-  getAdapter().app.invoke("ai_chat_stream", {
-    baseUrl: m.baseUrl,
-    apiKey: m.apiKey,
-    model: m.model,
-    provider: m.provider,
-    thinkingStrength: settings.aiThinkingStrength,
-    messages,
-    temperature: settings.aiTemperature,
-    maxTokens: settings.aiMaxTokens || undefined,
-    topP: settings.aiTopP,
-    tools: tools && tools.length > 0 ? tools : undefined,
-    requestId,
-  })
+    // Kick off the backend（tools 仅在有值时携带——None 时 Rust 不发送该字段）。
+    getAdapter().app.invoke("ai_chat_stream", {
+      baseUrl: m.baseUrl,
+      apiKey: m.apiKey,
+      model: m.model,
+      provider: m.provider,
+      thinkingStrength: settings.aiThinkingStrength,
+      messages,
+      temperature: settings.aiTemperature,
+      maxTokens: settings.aiMaxTokens || undefined,
+      topP: settings.aiTopP,
+      tools: tools && tools.length > 0 ? tools : undefined,
+      requestId,
+    })
     .then(() => {
       // done 事件是权威收尾信号；invoke 先落地（事件竞速丢失）时延迟一拍
       // 兜底 resolve——留 60ms 让已发射的 tool_calls/chunk 事件先进入监听器。
@@ -857,6 +867,7 @@ export function agentChatStream(opts: AgentChatStreamOptions): AgentStreamHandle
       });
       settleErr(String(e));
     });
+  })();
 
   return {
     cancel: () => {

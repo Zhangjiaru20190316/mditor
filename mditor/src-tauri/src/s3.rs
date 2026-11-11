@@ -389,6 +389,7 @@ async fn put_bytes(
 /// 回规范元数据供 manifest。
 #[command]
 pub async fn s3_upload_file(
+    app: tauri::AppHandle,
     cfg: S3Config,
     key: String,
     local_path: String,
@@ -398,6 +399,10 @@ pub async fn s3_upload_file(
     if local_path.trim().is_empty() {
         return Err(err("006", "本地文件路径为空"));
     }
+    // SECURITY (Q9)：上传源先过圈禁——否则被攻破的渲染进程可配攻击者
+    // 桶后借本命令外传任意本地文件（凭据、浏览器 profile 等）。合法源
+    // （工作区 + appData 暂存区）均在授权面内。
+    crate::commands::ensure_fs_path_confined(&app, std::path::Path::new(&local_path))?;
     // 先 stat 校验大小再读（避免把超限大文件整个读进内存）。
     let meta = tokio::fs::metadata(&local_path)
         .await
@@ -423,6 +428,7 @@ pub async fn s3_upload_file(
 /// 可免二次请求。
 #[command]
 pub async fn s3_download_file(
+    app: tauri::AppHandle,
     cfg: S3Config,
     key: String,
     dest_path: String,
@@ -431,6 +437,10 @@ pub async fn s3_download_file(
     if dest_path.trim().is_empty() {
         return Err(err("006", "目标文件路径为空"));
     }
+    // SECURITY (Q9)：落盘目标先过圈禁——否则任意路径可写（含启动目录
+    // 持久化、覆盖其他应用配置）。合法目标（工作区 + appData 暂存区）
+    // 均在授权面内。
+    crate::commands::ensure_fs_path_confined(&app, std::path::Path::new(&dest_path))?;
     let store = build_store(&cfg)?;
     let path = StorePath::parse(&key)
         .map_err(|e| err("006", format!("对象 key 非法：{e}")))?;
@@ -471,16 +481,26 @@ pub async fn s3_download_file(
                 .map_err(|e| err("006", format!("创建目标目录失败：{e}")))?;
         }
     }
-    let tmp = format!("{}.mditor-tmp", dest_path);
+    // v5.3.2：临时文件改随机后缀（pid + 自增序列）——固定 .mditor-tmp 在
+    // 并发下载同一目标时互踩；Windows 上 rename 到已存在目标会失败，兜底
+    // 改为 copy 覆盖（旧实现先 remove 旧文件再 rename，remove 成功而 rename
+    // 再失败则新旧皆失，是有真实触发面的数据丢失窗口）。
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let tmp = format!(
+        "{}.{}.{}.tmp",
+        dest_path,
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let landed = async {
         tokio::fs::write(&tmp, &bytes)
             .await
             .map_err(|e| err("006", format!("写入临时文件失败：{e}")))?;
         if tokio::fs::rename(&tmp, dest).await.is_err() {
-            let _ = tokio::fs::remove_file(dest).await;
-            tokio::fs::rename(&tmp, dest)
+            tokio::fs::copy(&tmp, dest)
                 .await
                 .map_err(|e| err("006", format!("落盘失败：{e}")))?;
+            let _ = tokio::fs::remove_file(&tmp).await;
         }
         Ok::<(), String>(())
     };

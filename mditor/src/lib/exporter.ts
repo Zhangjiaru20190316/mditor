@@ -284,7 +284,11 @@ export function markMissingImages(
   for (const m of missing) {
     const esc = m.src.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const re = new RegExp(`<img\\b[^>]*\\bsrc="${esc}"[^>]*>`, "gi");
-    const label = `${shortSrc(m.src)}——${STATUS_LABEL[m.status]}${m.detail ? `：${m.detail}` : ""}`;
+    // v5.3.2：label 过 escapeHtml——detail 来自异常消息（含本地文件路径，
+    // 文件名可被命名为含 HTML 的形态），工厂渲染路径不引入未转义注入。
+    const label = escapeHtml(
+      `${shortSrc(m.src)}——${STATUS_LABEL[m.status]}${m.detail ? `：${m.detail}` : ""}`
+    );
     out = out.replace(
       re,
       `<span style="display:block;border:1.5px dashed currentColor;border-radius:6px;padding:18px 14px;margin:8px 0;opacity:.75;text-align:center;font-size:.9em">🖼 图片未包含（${label}）</span>`

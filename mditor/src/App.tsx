@@ -514,15 +514,21 @@ function App() {
         const curKey = activeKeyRef.current;
         const curIsReadonly = isReadonlyTab(tabsRef.current.find((t) => t.key === curKey));
         if (!curIsReadonly) {
-          const curContent = curDoc.dirty ? getCurrentContent() : curDoc.content;
+          let curContent = curDoc.dirty ? getCurrentContent() : curDoc.content;
           let curDirty = curDoc.dirty;
           if (curDoc.dirty && curDoc.path) {
+            let ok = false;
             try {
-              await fileApiRef.current.writeOnly(() => curContent);
-              curDirty = false;
+              ok = await fileApiRef.current.writeOnly(() => curContent);
             } catch {
               /* 写失败：保留脏快照，切回来还在 */
             }
+            // v5.3.2 数据丢失修复：ok=false（保存防护跳过）= 未落盘，脏快照
+            // 不得清干净（否则切回时重读磁盘旧版，编辑静默丢失）；await 窗口
+            // 内的新击键以实时缓冲区重算快照兜底。
+            const live = getCurrentContent();
+            curDirty = !ok || live !== curContent;
+            curContent = live;
           }
           setTabs((ts) =>
             ts.map((t) =>
@@ -546,15 +552,24 @@ function App() {
       const curDoc = fileApiRef.current.doc;
       const curKey = activeKeyRef.current;
       // 干净标签免序列化（同 snapshotActiveTab）：只有脏时才 getMarkdown()。
-      const curContent = curDoc.dirty ? getCurrentContent() : curDoc.content;
+      let curContent = curDoc.dirty ? getCurrentContent() : curDoc.content;
       let curDirty = curDoc.dirty;
       if (curDoc.dirty && curDoc.path) {
+        let ok = false;
         try {
-          await fileApiRef.current.writeOnly(() => curContent);
-          curDirty = false;
+          ok = await fileApiRef.current.writeOnly(() => curContent);
         } catch {
           /* 写失败：保留脏快照，切回来还在 */
         }
+        // v5.3.2 数据丢失修复（P0 双保险）：① ok=false（保存防护跳过/确认
+        // 拒绝）= 未落盘，脏快照不得清干净——否则切回时重读磁盘旧版，编辑
+        // 静默丢失；② 本函数 await 链较长（writeOnly 的 prewriteCheck + 大
+        // 文档 prepareDoc 数百 ms），窗口内的新击键既不在提交快照里、也即将
+        // 被新标签覆写——以实时缓冲区重算快照（settleAfterWrite 已在 useFile
+        // 侧保脏，这里是标签快照侧的对应修复）。
+        const live = getCurrentContent();
+        curDirty = !ok || live !== curContent;
+        curContent = live;
       }
       let content = target.content;
       if (target.path && !target.dirty) {
@@ -703,13 +718,25 @@ function App() {
       }
       if (dirty && target.path && !opts?.migrated) {
         try {
+          let wrote = true;
           if (isActive) {
-            await fileApiRef.current.writeOnly(() => content);
+            wrote = await fileApiRef.current.writeOnly(() => content);
           } else {
             const { saveMd } = await import("./lib/tauriFs");
             await saveMd(target.path, content);
           }
-          dirty = false;
+          if (wrote) {
+            dirty = false;
+          } else {
+            // v5.3.2：writeOnly 返回 false = 保存防护跳过（文件被外部修改，
+            // 静默策略未落盘）——与写失败同权重，让用户显式决定是否弃改关闭，
+            // 绝不静默丢（E1 同哲学）。
+            const ok = await confirmDialog(
+              `「${target.name}」未保存（文件已被外部程序修改，自动保存已跳过）。关闭将丢失本地修改。确认关闭？`
+            );
+            if (!ok) return;
+            dirty = false;
+          }
         } catch (e) {
           // E1：保存失败绝不能静默丢数据——记录 + 让用户显式决定是否弃改关闭。
           noteOpError("close-tab-save", e);
@@ -790,16 +817,21 @@ function App() {
       }
       if (dirty && path) {
         try {
-          if (isActive) await fa.writeOnly(() => content);
+          let wrote = true;
+          if (isActive) wrote = await fa.writeOnly(() => content);
           else {
             const { saveMd } = await import("./lib/tauriFs");
             await saveMd(path, content);
           }
-          dirty = false;
+          // v5.3.2：wrote=false（保存防护跳过）= 未落盘——保脏迁移，新窗
+          // 里仍是脏缓冲（关窗确认会兜底），不得谎报干净。
+          dirty = !wrote;
         } catch {
           /* 落盘失败：保脏迁移（内容不丢，新窗里仍是脏缓冲） */
         }
       }
+      // 迁移载荷取实时缓冲区：writeOnly 的 await 窗口内新击键不能落在旧快照外。
+      if (dirty && isActive && !isReadonlyTab(target)) content = getCurrentContent();
       const scrollTop = isActive
         ? (document.querySelector<HTMLElement>(".mditor-editor-host")?.scrollTop ?? 0)
         : 0;
@@ -848,7 +880,10 @@ function App() {
         if (!d.dirty) continue;
         if (d.path) {
           try {
-            await fa.writeOnly(() => getCurrentContent());
+            const ok = await fa.writeOnly(() => getCurrentContent());
+            // v5.3.2：ok=false（保存防护跳过）= 未落盘——与写失败同权重，
+            // 置标记交由关闭确认兜底，绝不静默丢用户内容。
+            if (!ok) savedFailed = true;
           } catch {
             /* 写盘失败：置标记走「无处安放/写失败」最终确认，绝不静默丢用户内容 */
             savedFailed = true;

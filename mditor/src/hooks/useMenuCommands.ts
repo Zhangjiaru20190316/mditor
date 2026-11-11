@@ -206,14 +206,21 @@ export function useMenuCommands(deps: UseMenuCommandsDeps) {
           void saveDocEditTabRef.current();
           break;
         }
-        // 乐观反馈：立即提示「已保存」，不等待落盘；失败时覆盖为「保存失败」。
+        // 乐观反馈：立即提示「已保存」，不等待落盘；失败/未落盘时覆盖提示。
         // 保存成功后把内存内容推进全库索引（单文件增量，铁律 4）。
         flashStatus("已保存");
         {
           const saved = editorRef.current?.getValue() ?? "";
           const savedPath = fa.doc.path;
           fa.save(() => saved)
-            .then(() => {
+            .then((ok) => {
+              // v5.3.2：save 返回 false = 未落盘（未命名文档另存被取消 /
+              // 保存防护冲突且用户拒绝覆盖）——不得推进索引与云同步（会把
+              // 未落盘内容当已保存状态），并收回乐观的「已保存」提示。
+              if (!ok) {
+                flashStatus("未保存（已取消或已拒绝覆盖）", 5000);
+                return;
+              }
               if (savedPath) vaultIndex.noteSaved(savedPath, saved);
               // v4.12 云同步：保存成功链路挂防抖触发（autoSync 关闭时 no-op）。
               syncTriggerRef.current?.onSaved();

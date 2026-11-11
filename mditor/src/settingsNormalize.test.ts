@@ -316,8 +316,8 @@ describe("normalizeExternalLinkOptions（v5.3.x 外部关联）", () => {
   it("undefined / 非对象 → 空对象；空覆盖整键剔除", () => {
     expect(normalizeExternalLinkOptions(undefined)).toEqual({});
     expect(normalizeExternalLinkOptions("boom")).toEqual({});
-    expect(normalizeExternalLinkOptions({ "E:\ws\a": {} })).toEqual({});
-    expect(normalizeExternalLinkOptions({ "E:\ws\a": null })).toEqual({});
+    expect(normalizeExternalLinkOptions({ "E:\\ws\\a": {} })).toEqual({});
+    expect(normalizeExternalLinkOptions({ "E:\\ws\\a": null })).toEqual({});
   });
 
   it("根级 enabled:true 与全选四类等价默认 → 剔除；false 与子集保留", () => {

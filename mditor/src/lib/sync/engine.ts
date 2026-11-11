@@ -683,6 +683,39 @@ export async function syncWorkspace(
     });
   };
 
+  // ---- 6a 前：D1 批量删除保险（v5.3.2 前移到任何副作用之前）------------
+  // 一轮的云端删除超过已跟踪文件的 10% 且 ≥5 个 ⇒ 最可能是 prefix/桶指错
+  // 或本地库被整体移走，而不是用户真的删了整库。立即中止：不执行任何
+  // 删除、不落盘清单（崩溃安全点唯一，旧清单原样保留）。v5.3.2 起判定
+  // 挪到执行阶段之前——旧位置在 6d，冲突/下载/上传的副作用已经发生而
+  // 清单回滚，下轮基于旧清单重放会凭空多出冲突副本。≥5 的下限避免小库
+  // 「3 个文件删 1 个」的正常操作被误伤。
+  const deletes = ops.filter((o) => o.action === "deleteRemote" || o.action === "clearRecord");
+  {
+    const destructive = deletes.filter((o) => o.action !== "clearRecord");
+    const tracked = Object.keys(manifest.files).length;
+    if (tracked > 0 && destructive.length >= 5 && destructive.length / tracked > 0.1) {
+      const pct = Math.round((destructive.length / tracked) * 100);
+      // D1 逃生门（v5.1.1）：真实的大批删除（用户清理库）此前会每轮被此保险
+      // 拦下且清单不落盘 → 永久死锁。手动同步轮次经 confirmMassDelete 征求
+      // 用户确认；未提供钩子（自动轮次）或拒绝 → 维持原有纯拦截语义。
+      const allowed = hooks.confirmMassDelete
+        ? await hooks.confirmMassDelete({ root, count: destructive.length, tracked })
+        : false;
+      if (allowed) {
+        summary.notes.push(`已确认放行云端批量删除：${destructive.length}/${tracked}（${pct}%）。`);
+      } else {
+        summary.notes.push(
+          `已中止同步：本轮将删除云端 ${destructive.length}/${tracked} 个副本（${pct}%；本地文件不受影响）。` +
+            `若确认这些删除有效，请手动触发同步（点击状态栏云图标）并在确认框中选择「删除」；` +
+            `若非本意，多为同步前缀/桶配置变更所致，请核对云同步设置。云端文件未被改动。`
+        );
+        hooks.onState({ phase: "finalize", done, total: ops.length });
+        return { summary, firstSync, aborted: "mass-delete", purged, purgeFailed };
+      }
+    }
+  }
+
   // ---- 6a. 冲突（串行——副本命名与双侧内容强相关，避免交错）----
   const conflicts = ops.filter((o) => o.action === "conflict");
   for (const op of conflicts) {
@@ -734,36 +767,6 @@ export async function syncWorkspace(
   tick();
 
   // ---- 6d. 删除（串行；v5.1.2 起仅云端删除——引擎已无本地删除路径）----
-  const deletes = ops.filter((o) => o.action === "deleteRemote" || o.action === "clearRecord");
-  // D1 批量删除保险（v5.1.2 起只约束 deleteRemote）：一轮的云端删除超过已
-  // 跟踪文件的 10% 且 ≥5 个 ⇒ 最可能是 prefix/桶指错或本地库被整体移走，
-  // 而不是用户真的删了整库。立即中止：不执行任何删除、不落盘清单（崩溃
-  // 安全点唯一，旧清单原样保留），notes 里给出数量与比例。≥5 的下限避免
-  // 小库「3 个文件删 1 个」的正常操作被误伤。
-  {
-    const destructive = deletes.filter((o) => o.action !== "clearRecord");
-    const tracked = Object.keys(manifest.files).length;
-    if (tracked > 0 && destructive.length >= 5 && destructive.length / tracked > 0.1) {
-      const pct = Math.round((destructive.length / tracked) * 100);
-      // D1 逃生门（v5.1.1）：真实的大批删除（用户清理库）此前会每轮被此保险
-      // 拦下且清单不落盘 → 永久死锁。手动同步轮次经 confirmMassDelete 征求
-      // 用户确认；未提供钩子（自动轮次）或拒绝 → 维持原有纯拦截语义。
-      const allowed = hooks.confirmMassDelete
-        ? await hooks.confirmMassDelete({ root, count: destructive.length, tracked })
-        : false;
-      if (allowed) {
-        summary.notes.push(`已确认放行云端批量删除：${destructive.length}/${tracked}（${pct}%）。`);
-      } else {
-        summary.notes.push(
-          `已中止同步：本轮将删除云端 ${destructive.length}/${tracked} 个副本（${pct}%；本地文件不受影响）。` +
-            `若确认这些删除有效，请手动触发同步（点击状态栏云图标）并在确认框中选择「删除」；` +
-            `若非本意，多为同步前缀/桶配置变更所致，请核对云同步设置。云端文件未被改动。`
-        );
-        hooks.onState({ phase: "finalize", done, total: ops.length });
-        return { summary, firstSync, aborted: "mass-delete", purged, purgeFailed };
-      }
-    }
-  }
   for (const op of deletes) {
     tick(op.relPath);
     try {
@@ -794,6 +797,8 @@ export async function syncWorkspace(
       tick(raw);
       try {
         // D7 同款防线：purge 名单来自持久化设置，执行删除前再核一遍路径。
+        // （\x00-\x1f 是刻意的：拒绝键中的控制字符，防云端键注入。）
+        // eslint-disable-next-line no-control-regex
         if (raw.split("/").includes("..") || raw.includes("\\") || /[\x00-\x1f]/.test(raw)) {
           throw new Error("非法路径");
         }
@@ -861,8 +866,33 @@ async function resolveConflict(op: PlannedOp, ctx: ConflictCtx): Promise<void> {
   const local = localMap.get(key);
   const remote = remoteMap.get(key);
 
+  // 落盘前脏检测（doDownload 的 D4/D5 守卫同款）：冲突解析自带网络+流式
+  // 比对窗口（毫秒到秒级），期间用户保存的本地版本不得被 rename/覆盖
+  // 进副本。脏则跳过整个冲突处理，留待下轮（旧实现只在普通下载路径有
+  // 守卫，冲突分支无提示挤走窗口期保存的内容）。
+  const localDirtySinceScan = async (): Promise<boolean> => {
+    const abs = absOf(root, key);
+    const fresh = await io.statLocal(abs).catch(() => null);
+    const scanned = localMap.get(key);
+    if (fresh && !scanned) return true; // D4：窗口期新建
+    return (
+      !!fresh &&
+      !!scanned &&
+      fresh.mtimeMs > scanned.mtimeMs &&
+      !sameSecond(fresh.mtimeMs, scanned.mtimeMs)
+    );
+  };
+  const skipDirty = (reason: string): void => {
+    ctx.hooks.warn(`脏文件跳过冲突处理（${reason}，未被远端覆盖，下轮重试）：${key}`);
+    summary.skipped++;
+  };
+
   // 不可达兜底格：单侧缺失按存在侧收编；双侧缺失清记录。
   if (!local && remote) {
+    if (await localDirtySinceScan()) {
+      skipDirty("扫描后本地新建");
+      return;
+    }
     await downloadAs(key, remote, ctx);
     summary.downloaded++;
     return;
@@ -885,6 +915,10 @@ async function resolveConflict(op: PlannedOp, ctx: ConflictCtx): Promise<void> {
     // 分支 1：内容相同 → 无副本，新者覆盖另一侧。
     if (same) {
       if (remoteEpochMs(remote.lastModified) > local.mtimeMs) {
+        if (await localDirtySinceScan()) {
+          skipDirty("内容比对期间本地又保存");
+          return;
+        }
         await downloadAs(key, remote, ctx, staged);
         summary.downloaded++;
       } else {
@@ -940,6 +974,10 @@ async function resolveConflict(op: PlannedOp, ctx: ConflictCtx): Promise<void> {
       await uploadAs(key, local, ctx);
     } else {
       // 远端胜：本地旧内容改名为冲突副本并上传；远端内容（暂存）落为正主。
+      if (await localDirtySinceScan()) {
+        skipDirty("冲突判定期间本地又保存");
+        return;
+      }
       await io.renameLocal(absOf(root, key), copyAbs);
       const copyStat = (await io.statLocal(copyAbs).catch(() => null)) ?? {
         mtimeMs: Date.now(),

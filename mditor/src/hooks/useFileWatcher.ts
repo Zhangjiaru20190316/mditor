@@ -7,7 +7,7 @@
 //
 // Self-trigger avoidance: autosave writes to the very file we watch, which
 // fires a modify event back at us. We suppress any event whose disk contents
-// equal the buffer we just wrote (tracked via lastSavedSignatureRef). We also
+// equal the buffer we just wrote (tracked via lastSavedRef). We also
 // debounce rapid coalesced events (some editors write in several passes).
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
@@ -23,8 +23,7 @@ interface Options {
   dirty: boolean;
   /**
    * Read the current editor content. Used to detect whether an external
-   * change actually differs (avoid reloads / prompts when content is equal)
-   * and to feed the signature check.
+   * change actually differs (avoid reloads / prompts when content is equal).
    */
   getContent: () => string;
   /**
@@ -44,37 +43,29 @@ interface Options {
   shouldWatch?: (path: string) => boolean;
 }
 
-/** Cheap structural signature so we don't hold two big strings to compare. */
-function signature(s: string): number {
-  let h = s.length;
-  // sample every Nth char so cost stays O(1)-ish for big files
-  const n = s.length;
-  const step = Math.max(1, Math.floor(n / 4096));
-  for (let i = 0; i < n; i += step) {
-    h = (h * 31 + s.charCodeAt(i)) | 0;
-  }
-  return h;
-}
-
 export function useFileWatcher(opts: Options) {
   // Keep the latest opts without re-subscribing the watcher on every render.
   const optsRef = useRef(opts);
   optsRef.current = opts;
   // Last content WE wrote to disk (autosave / save). Events whose disk content
   // matches this are our own writes echoing back — ignore them.
-  const lastSavedSigRef = useRef<number | null>(null);
+  // v5.3.2：由采样哈希改为完整内容引用——采样签名碰撞（改在采样点之间且
+  // 长度不变）会把真实外部修改误判为自己的回写并静默跳过。引用不复制
+  // 字符串（noteSaved 持有的本就是已存在的串），全量比较只在外部事件
+  // 触发时发生，频率低。
+  const lastSavedRef = useRef<string | null>(null);
 
   useEffect(() => {
     const { path } = optsRef.current;
     if (!path) {
-      lastSavedSigRef.current = null;
+      lastSavedRef.current = null;
       return;
     }
     // v5.3.x 外部关联：断开的文件夹（或类型不在生效集合）不订阅。
     // shouldWatch 是 App 稳定回调（读 ref），配置变化不重触发本 effect——
     // 订阅决策随打开文件刷新；写盘安全由 useFile 的保存前校验实时兜底。
     if (optsRef.current.shouldWatch && !optsRef.current.shouldWatch(path)) {
-      lastSavedSigRef.current = null;
+      lastSavedRef.current = null;
       return;
     }
     let cancelled = false;
@@ -93,8 +84,8 @@ export function useFileWatcher(opts: Options) {
       if (o.isSavingRef.current) return; // we're mid-write
       try {
         const disk = await getAdapter().fs.readTextFile(o.path!);
-        // 1) ignore our own autosave echo
-        if (lastSavedSigRef.current != null && signature(disk) === lastSavedSigRef.current) {
+        // 1) ignore our own autosave echo（v5.3.2 起全量比较，杜绝采样碰撞漏判）
+        if (lastSavedRef.current != null && disk === lastSavedRef.current) {
           return;
         }
         // 2) ignore no-op (disk already matches what's on screen)
@@ -112,7 +103,7 @@ export function useFileWatcher(opts: Options) {
             return;
           }
         }
-        lastSavedSigRef.current = signature(disk);
+        lastSavedRef.current = disk;
         o.onReload(disk);
         o.onStatus?.("已从外部同步", "sync");
       } catch (err) {
@@ -185,7 +176,7 @@ export function useFileWatcher(opts: Options) {
    * 避免上层把 watcherApi 写进依赖数组时引发不必要的重运行。
    */
   const noteSaved = useCallback((content: string) => {
-    lastSavedSigRef.current = signature(content);
+    lastSavedRef.current = content;
   }, []);
 
   return useMemo(() => ({ noteSaved }), [noteSaved]);

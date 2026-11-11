@@ -294,7 +294,7 @@ export function SyncScopeDialog({ open, root, saved, onCommit, onClose }: Props)
       onClose();
       return;
     }
-    let manifestFiles: string[] = [];
+    let manifestFiles: string[];
     try {
       const m = await readManifest(root);
       manifestFiles = m ? Object.keys(m.files) : [];

@@ -98,4 +98,23 @@ describe("tauri.conf.json CSP 配置（打包版公式渲染命门）", () => {
       expect(workerSrc, label).toContain("blob:");
     }
   });
+
+  // v5.3.2：default-src 不覆盖的三个文档级指令显式钉死（防配置回退）：
+  // base-uri（<base> 劫持相对 URL 解析）、form-action（表单外发数据）、
+  // object-src（<object>/<applet> 插件加载）。应用无合法用例，一律 'none'。
+  it("base-uri / form-action / object-src 全部 'none'（default-src 不覆盖的三指令）", () => {
+    for (const [label, csp] of [
+      ["tauri.conf.json", conf.app?.security?.csp ?? ""],
+      ["index.html meta", metaCsp],
+    ] as const) {
+      for (const dir of ["base-uri", "form-action", "object-src"]) {
+        const d = csp
+          .split(";")
+          .map((x) => x.trim())
+          .find((x) => x.startsWith(dir));
+        expect(d, `${label}/${dir}`).toBeDefined();
+        expect(d, `${label}/${dir}`).toContain("'none'");
+      }
+    }
+  });
 });

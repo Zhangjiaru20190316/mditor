@@ -108,11 +108,17 @@ mod imp {
             };
         }
         let cred = unsafe { &*cred_out };
-        let bytes = unsafe {
-            std::slice::from_raw_parts(cred.CredentialBlob, cred.CredentialBlobSize as usize)
+        // v5.3.2：空 blob（外部工具改写后残留的 0 长度凭据）CredentialBlob
+        // 可能为 null——from_raw_parts(null, 0) 是 UB，先释放再按空串返回。
+        let value = if cred.CredentialBlob.is_null() || cred.CredentialBlobSize == 0 {
+            Ok(String::new())
+        } else {
+            let bytes = unsafe {
+                std::slice::from_raw_parts(cred.CredentialBlob, cred.CredentialBlobSize as usize)
+            };
+            String::from_utf8(bytes.to_vec())
+                .map_err(|_| "凭据内容非 UTF-8（可能被外部工具改写）".to_string())
         };
-        let value = String::from_utf8(bytes.to_vec())
-            .map_err(|_| "凭据内容非 UTF-8（可能被外部工具改写）".to_string());
         unsafe { CredFree(cred_out as *const core::ffi::c_void) };
         value.map(Some)
     }

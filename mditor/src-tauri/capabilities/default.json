@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main + doc window capability: dialog + fs (read/write/watch anywhere) + store + shell-open. v4.8 多窗口：windows 覆盖 main 与 doc-*（不改则新窗口所有 invoke 失败）；增补 destroy（非最后一窗只能 destroy 自己）与 set-title（窗口标题同步）两项必需权限。PI2 打印改应用内 GDI 直打后不经 shell-open；openExternal 仅「用系统应用打开」/外链使用，其唯一值闸门是 tauri.conf.json plugins.shell.open 正则（plugin-shell 2.3.5 的 open 命令只校验该配置正则，本文件 url/path 条目为声明性 scope）；打印临时目录读写由 fs 侧 $APPDATA/** 覆盖。",
+  "description": "Main + doc window capability: dialog + fs (read/write/watch anywhere) + store + shell-open. v4.8 多窗口：windows 覆盖 main 与 doc-*（不改则新窗口所有 invoke 失败）；增补 destroy（非最后一窗只能 destroy 自己）与 set-title（窗口标题同步）两项必需权限。PI2 打印改应用内 GDI 直打后不经 shell-open；openExternal 仅「用系统应用打开」/外链使用，其唯一值闸门是 tauri.conf.json plugins.shell.open 正则（plugin-shell 2.3.5 的 open 命令只校验该配置正则，本文件 url/path 条目为声明性 scope）；打印临时目录读写由 fs 侧 $APPDATA/** 覆盖。v5.3.2：fs:allow-remove 收窄到 $APPDATA/**（打印作业/清单 tmp 清理）——$DOCUMENT 永久删除原语移除，工作区删除一律走后端圈禁的 trash_file（可恢复）。",
   "windows": ["main", "doc-*"],
   "permissions": [
     "core:default",
@@ -45,7 +45,9 @@
     "fs:allow-exists",
     "fs:allow-stat",
     "fs:allow-mkdir",
-    "fs:allow-remove",
+    { "identifier": "fs:allow-remove", "allow": [
+      { "path": "$APPDATA/**" }
+    ] },
     "fs:allow-read-dir",
     "fs:allow-rename",
     "fs:allow-unwatch",

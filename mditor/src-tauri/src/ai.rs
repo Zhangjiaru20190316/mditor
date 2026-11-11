@@ -306,6 +306,9 @@ pub async fn ai_embed(
     } else {
         format!("{}/embeddings", base_url)
     };
+    // S3 防线对齐 send_request：端点校验前置——失败则请求不发出、api_key
+    // 不附带（此前 ai_embed 漏接：密钥可经明文 http 发往任意主机）。
+    validate_ai_endpoint(&endpoint)?;
     let body = serde_json::json!({ "model": model, "input": input });
     let mut req = client
         .post(&endpoint)
@@ -725,6 +728,34 @@ pub(crate) fn http() -> &'static reqwest::Client {
     HTTP.get_or_init(|| {
         reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+            // SSRF 防线（重定向臂）：validate_ai_endpoint / validate_image_url
+            // 只校验首跳 URL——reqwest 默认跟随最多 10 次重定向（含跨主机与
+            // https→http 降级），公网端点 302 跳 169.254.169.254 / 127.0.0.1 /
+            // 私网即可绕过首跳校验。这里在 client 层逐跳复检：内网/环回/链路
+            // 本地一律拒绝跟随，https→http 降级拒绝（防同主机降级后
+            // Authorization 明文裸奔），跳数上限 3。
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() >= 3 {
+                    return attempt.error("too many redirects");
+                }
+                let url = attempt.url();
+                if url.scheme() == "http"
+                    && attempt
+                        .previous()
+                        .iter()
+                        .any(|u| u.scheme() == "https")
+                {
+                    return attempt.error("https→http downgrade blocked");
+                }
+                let host = url.host_str().unwrap_or_default();
+                if is_loopback_host(host)
+                    || is_link_local_host(host)
+                    || host_ip(host).map(is_private_ip).unwrap_or(false)
+                {
+                    return attempt.error("redirect to internal address blocked");
+                }
+                attempt.follow()
+            }))
             // Only fails if the TLS backend fails to initialise — nothing
             // sensible to degrade to, so crash loudly at first use.
             .build()

@@ -283,6 +283,12 @@ pub fn grant_fs_scope(
         }
         let path = std::path::PathBuf::from(p);
         let (scope, is_dir) = scope_targets(&path);
+        // SECURITY：递归授权目标不得是文件系统根/盘符根（`C:/`、`/`）——
+        // 否则一次调用即整盘读写，静态 capability 的 scope 形同虚设。S1 的
+        // 设计意图是「用户显式选择的文件夹」，对话框不可能返回盘符根。
+        if is_dir && is_fs_root_grant(&scope) {
+            return Err(format!("拒绝授权文件系统根/盘符根目录：{p}"));
+        }
         if is_dir {
             app.fs_scope()
                 .allow_directory(&scope, true)
@@ -316,6 +322,14 @@ fn scope_targets(path: &Path) -> (std::path::PathBuf, bool) {
         Some(parent) if parent.parent().is_some() => (parent.to_path_buf(), true),
         _ => (path.to_path_buf(), false),
     }
+}
+
+/// 递归授权目标是否为文件系统根/盘符根（纯函数，供测试）：`C:/`、`C:`、
+/// `/` 的 parent() 均为 None；普通目录（`C:/Users`、UNC `//server/share`）
+/// 均放行。被攻破的渲染进程直接 invoke grant_fs_scope("C:/") 即整盘授权
+/// ——静态 capability 的 scope 形同虚设，故根目录一律拒绝。
+fn is_fs_root_grant(scope: &Path) -> bool {
+    scope.parent().is_none()
 }
 
 // ---- 回收站删除（v4.9 Agent 删除红线：trash > rm——删除必须可恢复）----------
@@ -363,8 +377,10 @@ fn is_fs_path_confined(p: &Path, app_data: &Path, scope_allows: impl Fn(&Path) -
     inside_app_data || scope_allows(p)
 }
 
-/// 两条文件原语命令的统一前置校验；错误文案风格随文件内既有中文 Err。
-fn ensure_fs_path_confined(app: &tauri::AppHandle, p: &Path) -> Result<(), String> {
+/// 文件原语命令的统一前置校验；错误文案风格随文件内既有中文 Err。
+/// （v5.3.2 起供 s3.rs 的 s3_upload_file / s3_download_file 与本文件
+/// local_files_equal 复用——Q9 纪律覆盖所有动本地盘的命令。）
+pub(crate) fn ensure_fs_path_confined(app: &tauri::AppHandle, p: &Path) -> Result<(), String> {
     use tauri_plugin_fs::FsExt;
     let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let scope = app.fs_scope();
@@ -545,7 +561,16 @@ pub async fn create_doc_window(
 /// 分块流式比对（256KB，零大内存），读盘放到阻塞线程池避免卡 async
 /// runtime（对齐 append_log 先例）。任一文件不可读 → Err。
 #[command]
-pub async fn local_files_equal(a: String, b: String) -> Result<bool, String> {
+pub async fn local_files_equal(
+    app: tauri::AppHandle,
+    a: String,
+    b: String,
+) -> Result<bool, String> {
+    // SECURITY (Q9)：两端路径先过圈禁（合法调用方只有云同步的「appData
+    // 暂存区 vs 工作区文件」比对，均在授权面内）——否则本命令是被攻破
+    // 渲染进程的任意文件内容等值 oracle。
+    ensure_fs_path_confined(&app, Path::new(&a))?;
+    ensure_fs_path_confined(&app, Path::new(&b))?;
     let ma = fs::metadata(&a).map_err(|e| format!("读取文件信息失败：{e}"))?;
     let mb = fs::metadata(&b).map_err(|e| format!("读取文件信息失败：{e}"))?;
     if !ma.is_file() || !mb.is_file() {
@@ -606,13 +631,18 @@ pub async fn local_copy_file(
     }
     ensure_fs_path_confined(&app, Path::new(&from))?;
     ensure_fs_path_confined(&app, Path::new(&to))?;
-    if let Some(parent) = Path::new(&to).parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
+    // 阻塞 IO 放阻塞线程池（对齐同文件 local_files_equal / append_log）。
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(parent) = Path::new(&to).parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
+            }
         }
-    }
-    fs::copy(&from, &to).map_err(|e| format!("复制文件失败：{e}"))?;
-    Ok(())
+        fs::copy(&from, &to).map_err(|e| format!("复制文件失败：{e}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("复制任务失败：{e}"))?
 }
 
 #[cfg(test)]
@@ -814,5 +844,24 @@ mod tests {
         let (scope, is_dir) = scope_targets(Path::new("/a.md"));
         assert_eq!(scope, Path::new("/a.md"));
         assert!(!is_dir);
+    }
+
+    /// v5.3.2 安全回归：grant_fs_scope 递归授权目标拒绝文件系统根/盘符根
+    /// ——被攻破的渲染进程不得借 invoke 把授权面放大到整盘。
+    #[test]
+    fn fs_root_grants_are_rejected() {
+        #[cfg(windows)]
+        {
+            assert!(is_fs_root_grant(Path::new("C:/")));
+            assert!(is_fs_root_grant(Path::new("C:\\\\")));
+            assert!(is_fs_root_grant(Path::new("D:")));
+        }
+        assert!(is_fs_root_grant(Path::new("/")));
+        // 普通目录放行（含用户目录层级与 UNC 共享根——后者授权面由
+        // scope_targets 的既有语义约束）。
+        #[cfg(windows)]
+        assert!(!is_fs_root_grant(Path::new("C:/Users")));
+        assert!(!is_fs_root_grant(Path::new("/home")));
+        assert!(!is_fs_root_grant(Path::new("E:/笔记/电工电子")));
     }
 }

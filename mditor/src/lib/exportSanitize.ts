@@ -14,7 +14,10 @@
 //   * href/src/xlink:href 的 javascript: / vbscript: 协议
 // DOMParser 解析本身不执行脚本，处理过程安全；幂等（重复调用无变化）。
 
-/** 确定禁止的标签：脚本执行 / 任意页面嵌入 / 文档基准劫持。 */
+/** 确定禁止的标签：脚本执行 / 任意页面嵌入 / 文档基准劫持。
+ * v5.3.2 增补 SVG SMIL 动画标签（animate/set/animateMotion 等）：SMIL 可把
+ * <a> 的 href 逐帧动画成 javascript: URL（values 属性注入），是 on* 清洗
+ * 与 URL_ATTRS 都拦不住的执行向量。导出内容无合法 SMIL 用例。 */
 const DENY_TAGS = new Set([
   "script",
   "iframe",
@@ -23,12 +26,19 @@ const DENY_TAGS = new Set([
   "base",
   "meta",
   "link",
+  "animate",
+  "set",
+  "animatemotion",
+  "animatetransform",
+  "animatecolor",
 ]);
 
-const URL_ATTRS = new Set(["href", "src", "xlink:href"]);
+const URL_ATTRS = new Set(["href", "src", "xlink:href", "formaction"]);
 
 function isDangerousUrl(value: string): boolean {
-  return /^\s*(javascript|vbscript):/i.test(value);
+  // v5.3.2 补面：data:text/html（可携带脚本的 data 载荷，单击即执行）。
+  // data:image/* 是导出管线的合法载荷（内联图片），不放行 text/html 不会被误伤。
+  return /^\s*(javascript|vbscript):/i.test(value) || /^\s*data:text\/html/i.test(value);
 }
 
 /**
