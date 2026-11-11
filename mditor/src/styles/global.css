@@ -4869,7 +4869,18 @@ html[data-motion="none"] *::after {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-right: 2px;
+  /* v5.3.3：补横向内边距——本体直接挂在 .modal-card（无自身 padding）下，
+   * 此前漏给 18px，导致提示/标签/分段按钮全部贴死卡片边缘被裁。 */
+  padding: 16px 18px;
+}
+/* 弹层内裸 .hint（不在 .field-control 上下文）此前完全无样式，按正文字号
+ * 深色渲染——与标签挤成一坨。对齐 .field-control .hint 的小字弱化。 */
+.sync-scope-body .hint,
+.wsfile-body .hint {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+  line-height: 1.6;
 }
 .sync-scope-enabled {
   display: flex;
@@ -4956,6 +4967,8 @@ html[data-motion="none"] *::after {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* 同 sync-scope-body：直接挂 .modal-card 下，需自带内边距。 */
+  padding: 16px 18px;
 }
 .wsfile-chips {
   display: flex;

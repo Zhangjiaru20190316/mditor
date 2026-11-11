@@ -50,6 +50,9 @@
   --glass-border: rgba(255, 255, 255, 0.08);
   --glass-highlight: rgba(255, 255, 255, 0.06);
   --glass-fallback-bg: #252526;
+  /* v5.3.3 光晕调参（暗色）：暗底上彩色光晕更醒目，提透一档 */
+  --glow-strong: color-mix(in srgb, var(--accent) 52%, transparent);
+  --glow-soft: color-mix(in srgb, var(--accent) 26%, transparent);
   color-scheme: dark;
 }
 

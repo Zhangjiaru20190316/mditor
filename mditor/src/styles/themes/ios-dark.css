@@ -62,6 +62,10 @@
   --statusbar-glass: rgba(28, 28, 30, 0.88);
   --ai-glass: rgba(28, 28, 30, 0.88);
 
+  /* v5.3.3 光晕调参（暗色）：OLED 纯黑上系统蓝光晕最醒目，提透一档 */
+  --glow-strong: color-mix(in srgb, var(--accent) 55%, transparent);
+  --glow-soft: color-mix(in srgb, var(--accent) 28%, transparent);
+
   color-scheme: dark;
 }
 

@@ -1,6 +1,38 @@
 # Changelog
 
 
+## 5.3.3（2026-11-12）：弹层样式收口 + 光晕/渐变令牌
+
+### 弹层样式收口（ExternalLinkDialog / SyncScopeDialog）
+
+- **分段按钮类名补 `seg-btn`**：两个对话框内 `.seg` 分段按钮此前只挂 `active`
+  （无 `seg-btn` 基线类），选中态之外完全裸奔；全部对齐全局 `.seg-btn` 范式。
+- **`sync-scope-body` / `wsfile-body` 补自身内边距**：两容器直接挂在
+  `.modal-card`（无自身 padding）下，此前漏给 18px——提示/标签/分段按钮
+  全部贴死卡片边缘被裁。统一 `padding: 16px 18px`。
+- **弹层内裸 `.hint` 补样式**：不在 `.field-control` 上下文的 hint 此前完全
+  无样式（正文字号深色渲染，与标签挤成一坨），对齐 `.field-control .hint`
+  的小字弱化（`--font-size-xs` + `--fg-muted`）。
+
+### 光晕/渐变令牌（光影质感增强）
+
+- **新令牌 `--glow-strong` / `--glow-soft` / `--grad-accent`**：全部由
+  `--accent` 经 `color-mix` 派生——主题换 accent 自动换光晕/渐变，亮色主题
+  零逐主题定义；暗色主题（dark / claude-dark / ios-dark）在主题文件尾覆盖
+  为更透档（暗底上彩色光晕更醒目）。
+- **三类挂光**：主按钮族（`.btn-solid/.btn-primary/.sb-primary/.ai-send` 等
+  10 个选择器）accent 纵向渐变 + 顶部内高光 + hover 外晕绽开；`background-
+  image` 叠加纯色底之上，不支持 `color-mix` 的内核整条 var() 求值失败回落
+  纯色，形态独立成立。
+- **纪律**：光晕遵守全库「box-shadow 不参与 transition」——静态换档，颜色
+  过渡仍由既有规则承担，本区不声明 transition。
+
+### 版本
+
+- 三处版本号同步 5.3.3（package.json / tauri.conf.json / Cargo.toml +
+  Cargo.lock）；门禁 tsc / eslint 0 错误 / vitest 1460 全绿。
+
+
 ## 5.3.2（2026-11-11）：全面安全审查修复 + 保存链路数据丢失收口 + UI 动效/光影打磨
 
 ### 安全（双路审查：Rust 后端 + 前端核心，P0/P1 全修）

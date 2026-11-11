@@ -269,14 +269,14 @@ export function ExternalLinkDialog({ open, root, saved, initialDir, onCommit, on
             <div className="seg" role="radiogroup" aria-label="生效类型模式">
               <button
                 type="button"
-                className={rootKindMode === "all" ? "active" : ""}
+                className={rootKindMode === "all" ? "seg-btn active" : "seg-btn"}
                 onClick={() => setRootKindMode("all")}
               >
                 全部类型
               </button>
               <button
                 type="button"
-                className={rootKindMode === "custom" ? "active" : ""}
+                className={rootKindMode === "custom" ? "seg-btn active" : "seg-btn"}
                 onClick={() => setRootKindMode("custom")}
               >
                 自定义
@@ -355,8 +355,8 @@ export function ExternalLinkDialog({ open, root, saved, initialDir, onCommit, on
                         (v === "inherit" && selRule?.enabled === undefined) ||
                         (v === "on" && selRule?.enabled === true) ||
                         (v === "off" && selRule?.enabled === false)
-                          ? "active"
-                          : ""
+                          ? "seg-btn active"
+                          : "seg-btn"
                       }
                       onClick={() =>
                         setSelRule({ enabled: v === "inherit" ? undefined : v === "on" })
@@ -387,7 +387,7 @@ export function ExternalLinkDialog({ open, root, saved, initialDir, onCommit, on
                       <button
                         key={v}
                         type="button"
-                        className={mode === v ? "active" : ""}
+                        className={mode === v ? "seg-btn active" : "seg-btn"}
                         onClick={() =>
                           setSelRule({
                             fileTypes:

@@ -22,6 +22,8 @@
  * --glass-border / --glass-highlight / --glass-fallback-bg，及（iOS 主题）
  * --titlebar-glass 等 chrome 半透明 tint。存量五主题调参克制
  * （tint 透明度 0.86~0.92），iOS 两套全档表达。
+ * v5.3.3 光晕/渐变令牌（--glow-strong / --glow-soft / --grad-accent）由
+ * --accent 派生自动随主题，仅暗色主题覆盖为更透档（见各主题文件尾）。
  */
 
 :root {
@@ -60,6 +62,22 @@
   --shadow: var(--elev-1);
   --shadow-md: var(--elev-3);
   --shadow-lg: var(--elev-4);
+
+  /* ── 光晕与渐变（v5.3.3 光影质感增强）────────────────────────────────
+     全部由 --accent 在使用处派生（color-mix，与 global.css 既有用法同
+     前提）：主题换 accent 自动换光晕/渐变，亮色主题无需逐主题定义；
+     暗色主题在 themes/*.css 覆盖为更透档（暗底上彩色光晕更醒目）。
+     光晕遵守全库「box-shadow 不参与 transition」纪律——静态换档。 */
+  --glow-strong: color-mix(in srgb, var(--accent) 38%, transparent); /* hover/主按钮外晕 */
+  --glow-soft: color-mix(in srgb, var(--accent) 16%, transparent); /* 常驻柔晕/焦点晕 */
+  /* 主按钮渐变：顶部提亮 + 底部微沉的纵向立体感（白字对比不受影响：
+     顶部仅混 12% 白） */
+  --grad-accent: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 88%, #fff) 0%,
+    var(--accent) 60%,
+    color-mix(in srgb, var(--accent) 90%, #000) 100%
+  );
 }
 
 /* ════════════════ 1. 悬浮 overlay：glass-regular（§2.3 角色表） ═══════════
@@ -286,4 +304,154 @@ html[data-motion="lively"] .anno-item:active,
 html[data-motion="lively"] .ai-quick-btn:active,
 html[data-motion="lively"] .qs-item:active {
   transform: scale(0.97);
+}
+
+/* ════════════════ 6. 光晕与渐变（v5.3.3 光影质感增强） ═══════════════════
+ * 主按钮 / 选中态 / 指示条三类挂光。令牌（--glow-strong / --glow-soft /
+ * --grad-accent）全部由 --accent 派生（见 :root），主题换色自动跟随；
+ * 遵守全库「box-shadow 不参与 transition」纪律——光晕为静态换档，
+ * 颜色过渡仍由 B13 既有规则承担，本区不声明 transition（避免整体覆盖
+ * 既有过渡白名单）。 */
+
+/* 6.1 主按钮：accent 纵向渐变 + 顶部内高光 + 落影柔晕；hover 外晕绽开。
+ * background-image 叠在既有 background-color 之上（不支持 color-mix 的
+ * 内核整条 var() 求值失败 → 回落纯色底，形态独立成立）。 */
+.btn-solid,
+.btn-primary,
+.sb-primary,
+.ctx-input-ok,
+.sb-empty button,
+.ai-send,
+.ai-mode-switch button.on,
+.sel-btn.primary,
+.diff-apply,
+.ai-followup-actions .ai-followup-send {
+  background-image: var(--grad-accent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 1px 3px var(--glow-soft);
+}
+.btn-solid:hover:not(:disabled),
+.btn-primary:hover:not(:disabled),
+.sb-primary:hover:not(:disabled),
+.ctx-input-ok:hover:not(:disabled),
+.sb-empty button:hover:not(:disabled),
+.ai-send:hover:not(:disabled),
+.ai-mode-switch button.on:hover:not(:disabled),
+.sel-btn.primary:hover:not(:disabled),
+.diff-apply:hover:not(:disabled),
+.ai-followup-actions .ai-followup-send:hover:not(:disabled) {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 2px 6px var(--glow-soft),
+    0 4px 16px var(--glow-strong);
+}
+/* 键盘焦点：外圈亮晕包住 outline（含 inset 高光的完整栈，不丢质感） */
+.btn-solid:focus-visible,
+.btn-primary:focus-visible,
+.sb-primary:focus-visible,
+.ctx-input-ok:focus-visible,
+.sb-empty button:focus-visible,
+.ai-send:focus-visible,
+.sel-btn.primary:focus-visible,
+.diff-apply:focus-visible,
+.ai-followup-actions .ai-followup-send:focus-visible {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 0 0 4px var(--glow-soft);
+}
+/* 排除：空态「最近工作区」是 ghost 次级钮（.sb-empty .sb-recent-ws-item
+ * 抬特异性压掉 .sb-empty button 的主按钮底），渐变/光晕一并退出 */
+.sb-empty .sb-recent-ws-item {
+  background-image: none;
+  box-shadow: none;
+}
+
+/* 6.1.1 胶囊组容器解裁切：.seg / .ai-mode-switch 原 overflow:hidden 会把
+ * 选中钮外晕连同 hover 底一起裁掉。解除后由首尾段自带同心圆角（外圆角
+ * −1px 边框宽）维持胶囊外观，hover/active 底色与光晕完整呈现。 */
+.seg,
+.ai-mode-switch {
+  overflow: visible;
+}
+.seg-btn:first-child {
+  border-radius: calc(var(--radius-m) - 1px) 0 0 calc(var(--radius-m) - 1px);
+}
+.seg-btn:last-child {
+  border-radius: 0 calc(var(--radius-m) - 1px) calc(var(--radius-m) - 1px) 0;
+}
+.ai-mode-switch button:first-child {
+  border-radius: calc(var(--radius-l) - 1px) 0 0 calc(var(--radius-l) - 1px);
+}
+.ai-mode-switch button:last-child {
+  border-radius: 0 calc(var(--radius-l) - 1px) calc(var(--radius-l) - 1px) 0;
+}
+
+/* 6.2 选中态光晕：与 accent 字色同一光源感。无边框选中钮挂「内圈细 ring +
+ * 柔和外晕」；自带 accent 边的选中钮只挂外晕（避免与边框叠成双线）——
+ * 分段控件 / 侧栏切换钮 / 工作区开关 / RAG 开关 */
+.seg-btn.active,
+.sb-tabs button.active {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent),
+    0 1px 8px var(--glow-soft);
+}
+.ws-toggle.active,
+.ai-rag-toggle.on {
+  box-shadow: 0 1px 8px var(--glow-soft);
+}
+
+/* 6.3 指示条族：accent 渐变 + 微光晕（标签激活条 / 设置导航条 / 脏点） */
+.tabbar-tab.active::after {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 55%, transparent) 0%,
+    var(--accent) 45%,
+    color-mix(in srgb, var(--accent) 70%, #fff) 100%
+  );
+  box-shadow: 0 0 6px var(--glow-soft);
+}
+.settings-nav-ind {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 82%, #fff) 0%,
+    var(--accent) 100%
+  );
+  box-shadow: 0 0 8px var(--glow-soft);
+}
+.tabbar-tab-close .tabbar-tab-dot {
+  box-shadow: 0 0 6px var(--glow-soft);
+}
+
+/* 6.4 进度条：accent 横向渐变（左亮右沉，行进方向光感） */
+.export-progress-fill {
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 78%, #fff) 0%,
+    var(--accent) 100%
+  );
+}
+
+/* 6.5 输入框焦点晕：accent 边框 + 柔和外晕（覆盖 global.css 原子组的
+ * 仅变边框；同组选择器对齐，后载胜出） */
+.input:focus,
+.ctx-input:focus,
+.ws-input:focus,
+.link-input:focus,
+.sb-input:focus,
+.sel-input:focus,
+.ai-input:focus,
+.ai-followup-input:focus,
+.ai-prompt-area:focus,
+.anno-edit-area:focus,
+.anno-item-edit:focus,
+.model-name:focus,
+.model-provider:focus,
+.model-baseurl:focus,
+.model-key:focus,
+.model-name-id:focus,
+.field-control input[type="text"]:focus,
+.field-control input[type="number"]:focus,
+.field-control select:focus {
+  box-shadow: 0 0 0 3px var(--glow-soft);
 }

@@ -358,14 +358,14 @@ export function SyncScopeDialog({ open, root, saved, onCommit, onClose }: Props)
               <div className="seg" role="radiogroup" aria-label="文件类型模式">
                 <button
                   type="button"
-                  className={extMode === "default" ? "active" : ""}
+                  className={extMode === "default" ? "seg-btn active" : "seg-btn"}
                   onClick={() => setExtMode("default")}
                 >
                   跟随默认
                 </button>
                 <button
                   type="button"
-                  className={extMode === "custom" ? "active" : ""}
+                  className={extMode === "custom" ? "seg-btn active" : "seg-btn"}
                   onClick={() => setExtMode("custom")}
                 >
                   自定义
