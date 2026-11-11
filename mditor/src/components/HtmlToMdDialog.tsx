@@ -5,6 +5,7 @@
 import { memo, useEffect, useState } from "react";
 import { getAdapter } from "../platform";
 import { convertHtmlToMarkdown } from "../lib/htmlToMarkdown";
+import { useDelayedUnmount } from "../hooks/useDelayedUnmount";
 import { MarkdownText } from "./MarkdownText";
 import type { Theme } from "../types";
 
@@ -48,7 +49,9 @@ export const HtmlToMdDialog = memo(function HtmlToMdDialog({
     };
   }, [open, path]);
 
-  if (!open) return null;
+  // v5.3.2：收编进模态动效体系——退场保挂 240ms 播 .closing（此前瞬现瞬灭）。
+  const mounted = useDelayedUnmount(open, 240);
+  if (!mounted) return null;
 
   const save = async () => {
     if (state.kind !== "done" || !path) return;
@@ -70,7 +73,11 @@ export const HtmlToMdDialog = memo(function HtmlToMdDialog({
   };
 
   return (
-    <div className="htm-overlay" role="dialog" aria-label="转为 Markdown">
+    <div
+      className={`htm-overlay${!open ? " closing" : ""}`}
+      role="dialog"
+      aria-label="转为 Markdown"
+    >
       <div className="htm-dialog">
         <div className="htm-head">
           <span className="htm-title">转为 Markdown</span>

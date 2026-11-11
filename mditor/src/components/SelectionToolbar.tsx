@@ -17,6 +17,7 @@
 // position, selection text, open submenu) changes.
 
 import { memo, useEffect, useRef, useState } from "react";
+import { useDelayedUnmount } from "../hooks/useDelayedUnmount";
 import type { QuickAction } from "../types";
 import { HighlightIcon, TextColorIcon, ChevronRightIcon, CloseIcon, LinkIcon } from "./icons";
 
@@ -153,6 +154,8 @@ export const SelectionToolbar = memo(function SelectionToolbar({
   getActiveMarks,
 }: Props) {
   const [visible, setVisible] = useState(false);
+  // v5.3.2 退场保挂：选区消失后保挂 140ms 播 .closing（此前瞬灭）；重开即时恢复。
+  const mounted = useDelayedUnmount(visible, 140);
   const [pos, setPos] = useState<Pos>({ top: 0, left: 0, flipDown: false });
   const [selection, setSelection] = useState("");
   const [activeMarks, setActiveMarks] = useState<ActiveMarks>({
@@ -381,7 +384,7 @@ export const SelectionToolbar = memo(function SelectionToolbar({
     setLinkUrl("");
   };
 
-  if (!visible) return null;
+  if (!mounted) return null;
 
   // Apply a formatting toggle (bold/highlight/color) and refresh the active
   // state. Unlike the AI `dispatch`, this does NOT hide the toolbar — the user
@@ -468,7 +471,7 @@ export const SelectionToolbar = memo(function SelectionToolbar({
   return (
     <div
       ref={rootRef}
-      className={`sel-toolbar${pos.flipDown ? " flip-down" : ""}`}
+      className={`sel-toolbar${pos.flipDown ? " flip-down" : ""}${!visible ? " closing" : ""}`}
       style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
       onMouseDown={(e) => e.preventDefault()} // keep the editor selection while clicking
     >

@@ -54,6 +54,9 @@ interface Props {
   y: number;
   entries: CtxEntry[];
   onClose: () => void;
+  /** v5.3.2 退场播放态（调用方经 useExitGhost 保挂快照）：退场中禁 Esc
+   *  监听（菜单已逻辑关闭）并挂 .closing 播淡出缩收。 */
+  closing?: boolean;
 }
 
 /** Clamp a point so a w×h box anchored at it stays inside the viewport. */
@@ -74,7 +77,7 @@ const EST_SEP_H = 7;
 const EST_INPUT_H = 36;
 const EST_W = 220;
 
-export function ContextMenu({ x, y, entries, onClose }: Props) {
+export function ContextMenu({ x, y, entries, onClose, closing }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState(() => {
     let h = 8; // padding
@@ -100,14 +103,16 @@ export function ContextMenu({ x, y, entries, onClose }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [x, y]);
 
-  // Close on Escape; the backdrop handles click-away.
+  // Close on Escape; the backdrop handles click-away. 退场播放中不注册
+  // （菜单已逻辑关闭，Esc 应落到下层——如退出焦点模式）。
   useEffect(() => {
+    if (closing) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, closing]);
 
   // The scale-in animation should grow out of the corner nearest the cursor:
   // when the menu got pushed left/up by the clamp, anchor bottom-right instead
@@ -121,7 +126,7 @@ export function ContextMenu({ x, y, entries, onClose }: Props) {
   // menu is truly viewport-fixed and aligns with the click position.
   return createPortal(
     <div
-      className="ctx-menu-backdrop"
+      className={`ctx-menu-backdrop${closing ? " closing" : ""}`}
       onMouseDown={(e) => {
         // Click-away close (mousedown feels more immediate than click, and
         // avoids the "click leaked into the page after close" feel).
@@ -139,7 +144,7 @@ export function ContextMenu({ x, y, entries, onClose }: Props) {
     >
       <div
         ref={menuRef}
-        className="ctx-menu"
+        className={`ctx-menu${closing ? " closing" : ""}`}
         style={{
           left: pos.left,
           top: pos.top,

@@ -23,6 +23,7 @@ import { useMilkdown } from "../hooks/useMilkdown";
 import { useAnnotationMarkers, stampAnnotationMarkers } from "../hooks/useAnnotationMarkers";
 import { useFile } from "../hooks/useFile";
 import { useAutosave } from "../hooks/useAutosave";
+import { useExitGhost } from "../hooks/useDelayedUnmount";
 import { useFileWatcher } from "../hooks/useFileWatcher";
 import { useMemoryGuard } from "../hooks/useMemoryGuard";
 import { BlockContextMenu } from "./BlockContextMenu";
@@ -759,6 +760,8 @@ export const Editor = memo(
   const [blockMenu, setBlockMenu] = useState<{ x: number; y: number; info: BlockInfo } | null>(
     null
   );
+  // v5.3.2 弹层退场：关闭后保挂快照 140ms 播 .closing（此前瞬灭）。
+  const blockMenuGhost = useExitGhost(blockMenu, 140);
 
   // 右键 → 解析点击处的块并弹菜单。目标进入 .ProseMirror（且非输入框）即
   // preventDefault：块解析失败只是不弹菜单，绝不让 WebView2 原生菜单从编辑
@@ -1299,13 +1302,14 @@ export const Editor = memo(
         placeholder="开始书写…  (源码模式 · Ctrl+S 保存，Ctrl+F 查找)"
       />
       {/* 块级右键菜单：portal 到 body，Editor 仅承载状态与命令桥接 */}
-      {blockMenu && handle.editor && (
+      {blockMenuGhost && handle.editor && (
         <BlockContextMenu
-          x={blockMenu.x}
-          y={blockMenu.y}
-          info={blockMenu.info}
+          x={blockMenuGhost.x}
+          y={blockMenuGhost.y}
+          info={blockMenuGhost.info}
           facade={handle.editor}
           onClose={closeBlockMenu}
+          closing={blockMenu === null}
           onOpenExternal={(u) => void openExternal(u)}
           onReplaceImage={(p) => void replaceImage(p)}
         />

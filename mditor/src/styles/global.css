@@ -84,6 +84,9 @@
   --shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.12);
   --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.16);
+  /* 模态遮罩（v5.3.2 起为主题变量）：暗色画布上固定黑遮罩亮度差不足
+     （ios-dark 纯黑画布近乎失效），深色主题覆盖为更深、暖色主题带暖调。 */
+  --scrim: rgba(0, 0, 0, 0.35);
   /* z-index 阶梯：值与改造前完全一致（只命名，不重排）。
      编辑器内部小件 → 贴边/浮层 → 铬层 → 菜单族 → 模态族 → 全屏/拖放。 */
   --z-inline: 5; /* 容器内 sticky 工具栏 / resizer 沟槽 / 行内入口 */
@@ -440,6 +443,27 @@ button:not(:disabled):active {
 }
 .chevron.open {
   transform: rotate(90deg);
+}
+
+/* v5.3.2 文件树子树展开入场：展开 = group <ul> 整体挂载——容器级单动画
+ * （每次展开一次，避免数百 li 各自入场）；收起即时卸载无退场（与折叠箭头
+ * 旋转同步即可，180ms 内视觉连续）。lively 档换 spring 轻微过冲。 */
+.ft-root ul[role="group"] {
+  animation: ft-group-in var(--dur-base) var(--ease-out) both;
+}
+@keyframes ft-group-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+html[data-motion="lively"] .ft-root ul[role="group"] {
+  animation-duration: 260ms;
+  animation-timing-function: var(--ease-spring);
 }
 
 /* ---------- sidebar ---------- */
@@ -907,6 +931,18 @@ body.is-resizing .sidebar {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex-shrink: 0;
+  /* v5.3.2：通知条入场动效（sb-status-auto 同款淡入下滑；此前瞬现） */
+  animation: ft-notice-in var(--dur-base) var(--ease-out) both;
+}
+@keyframes ft-notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .ft-batchbar {
   display: flex;
@@ -1093,6 +1129,29 @@ body.is-resizing .sidebar {
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+/* v5.3.2 弹层退场（右键菜单 / 菜单栏下拉 / 块菜单共享壳）：淡出缩收镜像
+   各自入场（ctx-menu 的 transform-origin 内联设置，退场沿同锚点收回）；
+   退场期背板与菜单禁指针——残影绝不拦截下层点击。组件侧经 useExitGhost
+   保挂快照 140ms。 */
+.ctx-menu.closing,
+.mb-dropdown.closing {
+  animation: menu-pop-out var(--dur-exit) var(--ease-in) both;
+  pointer-events: none;
+}
+.ctx-menu-backdrop.closing,
+.mb-backdrop.closing {
+  pointer-events: none;
+}
+@keyframes menu-pop-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96);
   }
 }
 .ctx-menu-item {
@@ -2035,7 +2094,7 @@ html[data-motion="none"] .main.is-switching .mditor-editor-host {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4454,6 +4513,22 @@ body {
     transform: scale(1);
   }
 }
+/* v5.3.2 选区工具条退场：镜像 sel-in 的缩收淡出（组件经 useDelayedUnmount
+   保挂 140ms）；退场期禁指针。 */
+.sel-toolbar.closing {
+  animation: sel-out var(--dur-exit) var(--ease-in) both;
+  pointer-events: none;
+}
+@keyframes sel-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
 
 /* B8. 列表项 hover：圆角底色过渡（左侧指示条由激活/选中态的 ::before 承担） */
 .ft-row,
@@ -5477,6 +5552,18 @@ html[data-motion="none"] .sb-sync-breathe .sb-sync-cloud {
   height: 2px;
   border-radius: 999px;
   background: var(--accent);
+  /* v5.3.2：激活指示条从中心弹性生长（切标签时旧条消失、新条 pop 定住） */
+  animation: tab-ind-in var(--dur-base) var(--ease-spring) backwards;
+}
+@keyframes tab-ind-in {
+  from {
+    transform: scaleX(0.25);
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
 }
 .tabbar-tab-icon {
   flex: 0 0 auto;
@@ -5507,23 +5594,44 @@ html[data-motion="none"] .sb-sync-breathe .sb-sync-cloud {
   background: var(--border);
   color: var(--fg);
 }
-/* 脏标签：默认显示圆点，hover 交换为 ×（浏览器惯例） */
-.tabbar-tab-close.dirty .tabbar-tab-dot {
-  display: block;
+/* 脏标签：默认显示圆点，hover 交换为 ×（浏览器惯例）。
+ * v5.3.2：display 硬切换 → opacity/scale 交叉淡化（圆点弹入、hover 弹出，
+ * ×侧只动 opacity+scale 不影响布局——二者本就同位叠放）。 */
+.tabbar-tab-close svg,
+.tabbar-tab-close .tabbar-tab-dot {
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-spring);
+}
+.tabbar-tab-close .tabbar-tab-dot {
   position: absolute;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--accent);
+  animation: tab-dot-in var(--dur-base) var(--ease-spring) backwards;
+}
+@keyframes tab-dot-in {
+  from {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 .tabbar-tab-close.dirty svg {
-  display: none;
+  opacity: 0;
+  transform: scale(0.5);
 }
 .tabbar-tab-close.dirty:hover .tabbar-tab-dot {
-  display: none;
+  opacity: 0;
+  transform: scale(0.4);
 }
 .tabbar-tab-close.dirty:hover svg {
-  display: block;
+  opacity: 1;
+  transform: scale(1);
 }
 
 /* ---------- 拖放 .md 提示层 ---------- */
@@ -6291,11 +6399,36 @@ blockquote.md-flashcard {
   color: var(--fg-muted);
 }
 .fc-back {
-  display: none;
-  border-top: 1px dashed var(--border);
+  /* v5.3.2 翻面 Q 弹化：display 硬切换 → max-height 展开（field-collapse
+   * 同款技术；全局 box-sizing: border-box 已置，收起态高度真归零）。 */
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  border-top: 1px dashed transparent;
+  transition:
+    max-height 340ms var(--ease-sheet),
+    opacity 220ms var(--ease-out),
+    border-color 340ms var(--ease-out);
 }
 .fc-card.flipped .fc-back {
-  display: block;
+  max-height: 640px;
+  opacity: 1;
+  border-top-color: var(--border);
+}
+/* 卡片本体弹跳：微缩 → 轻微 3D 后仰过冲 → 回正（spring 收尾定住）。 */
+.fc-card.flipped {
+  animation: fc-flip-pop 360ms var(--ease-spring);
+}
+@keyframes fc-flip-pop {
+  0% {
+    transform: scale(0.985);
+  }
+  40% {
+    transform: perspective(900px) rotateX(2.4deg) scale(1.006);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 .fc-card.flipped .fc-front .fc-text {
   opacity: 0.55;
@@ -6500,16 +6633,22 @@ span.mditor-math-inline-lazy.mditor-math-inline-ready {
   transition: opacity 120ms ease-out;
 }
 
-/* ---------- 导出进度对话框（EX 轮 U1：自研 PDF 管线自有进度 UI）--------- */
+/* ---------- 导出进度对话框（EX 轮 U1：自研 PDF 管线自有进度 UI）---------
+ * v5.3.2 收编进模态动效体系：z 档/遮罩/进退场与 .modal-backdrop 同款
+ * （此前瞬现瞬灭、层级与遮罩硬编码）。 */
 .export-progress-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000; /* 悬浮于编辑器与侧栏之上（模态层级与设置面板同档） */
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--bg) 55%, transparent);
-  backdrop-filter: blur(2px);
+  background: var(--scrim);
+  animation: modal-bg-in var(--dur-base) var(--ease-out) both;
+}
+.export-progress-overlay.closing {
+  animation: modal-bg-out var(--dur-exit) var(--ease-in) both;
+  pointer-events: none;
 }
 .export-progress-card {
   width: 320px;
@@ -6521,6 +6660,11 @@ span.mditor-math-inline-lazy.mditor-math-inline-ready {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  animation: modal-card-in var(--dur-base) var(--ease-out) both;
+  will-change: transform, opacity;
+}
+.export-progress-overlay.closing .export-progress-card {
+  animation: modal-card-out var(--dur-exit) var(--ease-in) both;
 }
 .export-progress-title {
   font-weight: 600;
@@ -6554,9 +6698,11 @@ span.mditor-math-inline-lazy.mditor-math-inline-ready {
 }
 .export-progress-fill {
   height: 100%;
-  border-radius: 3px;
   background: var(--accent, var(--fg));
-  transition: width 120ms ease-out;
+  /* v5.3.2：width → scaleX（合成器友好，不触 layout）；父容器 overflow +
+   * 圆角裁切，右端圆角由父级呈现。 */
+  transform-origin: left center;
+  transition: transform 200ms var(--ease-out);
 }
 .export-progress-count {
   font-size: 12px;
@@ -7141,16 +7287,22 @@ span.mditor-math-inline-lazy.mditor-math-inline-ready {
   vertical-align: 1px;
 }
 
-/* ---------- 转为 Markdown 对话框（HN 轮阶段 2） ---------- */
-
+/* ---------- 转为 Markdown 对话框（HN 轮阶段 2） ----------
+ * v5.3.2 收编进模态动效体系：遮罩/z 档/进退场曲线与 .modal-backdrop 同款
+ * （此前零动效、层级与圆角硬编码）。 */
 .htm-overlay {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.32);
+  background: var(--scrim);
+  animation: modal-bg-in var(--dur-base) var(--ease-out) both;
+}
+.htm-overlay.closing {
+  animation: modal-bg-out var(--dur-exit) var(--ease-in) both;
+  pointer-events: none;
 }
 
 .htm-dialog {
@@ -7158,12 +7310,17 @@ span.mditor-math-inline-lazy.mditor-math-inline-ready {
   flex-direction: column;
   width: min(760px, calc(100vw - 64px));
   height: min(560px, calc(100vh - 96px));
-  background: var(--bg);
+  background: var(--card-bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
+  animation: modal-card-in var(--dur-base) var(--ease-out) both;
+  will-change: transform, opacity;
+}
+.htm-overlay.closing .htm-dialog {
+  animation: modal-card-out var(--dur-exit) var(--ease-in) both;
 }
 
 .htm-head {

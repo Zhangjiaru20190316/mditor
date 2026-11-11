@@ -40,6 +40,7 @@
   --shadow: var(--elev-1);
   --shadow-md: var(--elev-3);
   --shadow-lg: var(--elev-4);
+  --scrim: rgba(58, 47, 32, 0.4); /* 暖纸遮罩 */
   /* v5 玻璃调参（克制档：overlay 轻玻璃，chrome 不透明） */
   --glass-tint: rgba(250, 243, 224, 0.92);
   --glass-tint-modal: rgba(250, 243, 224, 0.92);

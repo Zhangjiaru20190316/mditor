@@ -47,6 +47,7 @@
   --shadow: var(--elev-1);
   --shadow-md: var(--elev-3);
   --shadow-lg: var(--elev-4);
+  --scrim: rgba(0, 0, 0, 0.6); /* 纯黑画布：遮罩取最深，层次靠卡片浮起 */
 
   /* ── 玻璃调参（§2.3 全档表达，暗色配方） ── */
   --glass-tint: rgba(44, 44, 46, 0.72); /* 悬浮 overlay（tertiary 底） */

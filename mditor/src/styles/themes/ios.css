@@ -49,6 +49,7 @@
   --shadow: var(--elev-1);
   --shadow-md: var(--elev-3);
   --shadow-lg: var(--elev-4);
+  --scrim: rgba(0, 0, 0, 0.25); /* iOS 惯例轻遮罩 */
 
   /* ── 玻璃调参（§2.3 全档表达） ── */
   --glass-tint: rgba(255, 255, 255, 0.72); /* 悬浮 overlay */

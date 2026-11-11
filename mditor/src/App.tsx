@@ -4043,14 +4043,12 @@ function App() {
 
       <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
 
-      {/* EX U1：导出进度（自有 UI，可取消；结束即卸载）。 */}
-      {pdfProg && (
-        <ExportProgressDialog
-          title={pdfProg.title}
-          progress={pdfProg.view}
-          onCancel={() => pdfProg.ctrl.abort()}
-        />
-      )}
+      {/* EX U1：导出进度（自有 UI，可取消；v5.3.2 常挂 + null 即退场动效）。 */}
+      <ExportProgressDialog
+        title={pdfProg?.title ?? ""}
+        progress={pdfProg ? pdfProg.view : null}
+        onCancel={() => pdfProg?.ctrl.abort()}
+      />
 
       {/* PI2：自研打印对话框（应用内预览+直打；偏好记忆回写 settings）。 */}
       {printReq && (

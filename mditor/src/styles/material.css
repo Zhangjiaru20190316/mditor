@@ -94,8 +94,11 @@
   border-radius: var(--radius-l);
 }
 
-/* ════════════════ 2. 模态：glass-thick + 蒙层轻 blur（§2.3） ═══════════ */
-.modal-card {
+/* ════════════════ 2. 模态：glass-thick + 蒙层轻 blur（§2.3） ═══════════
+ * v5.3.2：htm-dialog / export-progress-card 两员收编（此前游离体系外）。 */
+.modal-card,
+.htm-dialog,
+.export-progress-card {
   background: var(--glass-tint-modal);
   border: 1px solid var(--glass-border);
   -webkit-backdrop-filter: var(--glass-thick);
@@ -106,7 +109,9 @@
 /* 蒙层在既有暗化之上加 blur(8px) 提升沉浸。性能取舍：模态存在期才有这一
  * 层全屏 blur（瞬时、同屏仅 1 个模态），关闭即随 DOM 卸载——护栏「禁止
  * 常驻全屏 blur」不破。弱核（老 ArkWeb）可由下方 @supports 回退兜底。 */
-.modal-backdrop {
+.modal-backdrop,
+.htm-overlay,
+.export-progress-overlay {
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
 }
@@ -125,12 +130,16 @@
   .anno-diag,
   .sel-toolbar,
   .qs-panel,
-  .modal-card {
+  .modal-card,
+  .htm-dialog,
+  .export-progress-card {
     background: var(--glass-fallback-bg);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-  .modal-backdrop {
+  .modal-backdrop,
+  .htm-overlay,
+  .export-progress-overlay {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
@@ -180,6 +189,8 @@
   .sb-status,
   .ai-panel,
   .modal-card,
+  .htm-dialog,
+  .export-progress-card,
   .qs-panel,
   .sel-toolbar,
   .popover,
@@ -203,6 +214,16 @@
 /* QuickSwitcher：iOS sheet 曲线弹入（无过冲、丝滑止动）+ 轻微上移。 */
 html[data-motion="lively"] .qs-panel {
   animation: qs-panel-in-lively 0.3s var(--ease-sheet) both;
+}
+/* v5.3.2：收编的两员模态（htm-dialog / export-progress-card）lively 档
+ * 弹簧入场（与 .modal-card 的 modal-card-in-spring 同款）。 */
+html[data-motion="lively"] .htm-dialog,
+html[data-motion="lively"] .export-progress-card {
+  animation: modal-card-in-spring 0.32s var(--ease-spring) both;
+}
+html[data-motion="lively"] .htm-overlay.closing .htm-dialog,
+html[data-motion="lively"] .export-progress-overlay.closing .export-progress-card {
+  animation: modal-card-out var(--dur-exit) var(--ease-in) both;
 }
 /* 退场优先：显式压过入场规则，保证 .closing 淡出走 --ease-in（对齐
    global.css 中 modal-card 的同型处理）。 */

@@ -1,6 +1,106 @@
 # Changelog
 
 
+## 5.3.2（2026-11-11）：全面安全审查修复 + 保存链路数据丢失收口 + UI 动效/光影打磨
+
+### 安全（双路审查：Rust 后端 + 前端核心，P0/P1 全修）
+
+**Rust（威胁模型 = 渲染进程被攻破，对齐项目 Q9/S3 纪律）：**
+
+- **P0 `ai_embed` 补端点校验**：embeddings 请求此前不经 `validate_ai_endpoint`
+  ——被攻破的 webview 可把 API Key 经明文 http 发往任意主机（含内网元数据
+  服务）。与 `ai_chat` 的 send_request 防线对齐：校验失败请求不发出、密钥
+  不附带。
+- **P0 `s3_upload_file` / `s3_download_file` 接入 Q9 路径圈禁**：此前只查
+  空串——攻击者桶凭证 + `invoke` 即可外传任意本地文件（凭据/浏览器
+  profile），或任意路径写入（启动目录持久化）。两命令加 `AppHandle` +
+  `ensure_fs_path_confined`（提升为 pub(crate)）；合法路径（工作区 +
+  appData 暂存区）本就在授权面内，功能零变化。
+- **P1 共享 reqwest client 逐跳重定向防线**：首跳校验后 302 跳内网可绕过
+  `validate_image_url`/`validate_ai_endpoint`（重定向后字节回传 = 内网读取
+  原语）。client 层 redirect policy：内网/环回/链路本地逐跳拒绝、https→http
+  降级拒绝（防同主机降级后 Authorization 裸奔）、跳数上限 3。
+- **P1 `grant_fs_scope` 拒绝文件系统根/盘符根**：`invoke("grant_fs_scope",
+  ["C:/"])` 此前即整盘递归授权。新增纯函数 `is_fs_root_grant` + 单测。
+- **P1 `fs:allow-remove` 收窄至 `$APPDATA/**`**：`$DOCUMENT` 永久删除原语
+  从 capability 移除（工作区删除统一走后端圈禁的 trash_file，可恢复）；
+  print 清理与 sync manifest tmp 清理不受影响。
+- **P1 `local_files_equal` 双端圈禁**（任意文件等值 oracle 收口）；
+  `local_copy_file` 阻塞 IO 包 spawn_blocking（对齐同文件先例）。
+- **P2**：S3 下载 tmp 改随机后缀（pid+序列，并发同目标互不踩）+ rename 失败
+  走 copy 兜底（旧实现 remove 成功后 rename 再失败 = 新旧皆失）；`CredReadW`
+  空 blob null 指针 UB 提前返回；CSP 补 `base-uri/form-action/object-src
+  'none'`（tauri.conf.json + index.html 双镜像 + `tauriCspConfig.test.ts` 钉）。
+
+**前端（保存链路数据丢失收口）：**
+
+- **P0 `writeOnly` 返回值五处调用点全部核实**：false = 未落盘（保存防护
+  跳过/确认拒绝）此前被当成功——App.tsx 五处（activateTab×2/closeTab/
+  moveToNewWindow/flushDirtyTabs）分别处理：切标签保脏快照、关标签走确认
+  框、迁移保脏、关窗置 savedFailed 兜底。Editor.tsx 既有正确范式铺开。
+- **P0 activateTab 写盘窗口击键丢失**：await 链（prewriteCheck + 大文档
+  prepareDoc 数百 ms）期间的新击键不在提交快照、又被新标签覆写——写盘后
+  以实时缓冲区重算标签快照（settleAfterWrite 已在 useFile 侧保脏，本次补
+  齐快照侧）。
+- **P1 同步引擎**：冲突分支（远端胜 rename+覆盖 / 内容相同下载 / 单侧收编）
+  补 doDownload 同款 D4/D5 脏文件守卫——比对窗口内保存的本地版本不再被
+  无提示挤进副本；**D1 批量删除保险前移到任何副作用之前**（旧位置在 6d，
+  冲突/上传已执行而清单回滚，下轮重放会凭空多出冲突副本）。
+- **P1 `agentChatStream` 监听注册竞态**：E3 范式重写（先 await 全部 listen
+  再 invoke）——tool_calls 丢失会让 Agent 循环误判无工具调用提前收尾。
+- **P1 `file_save` 谎报已保存**：save 返回 false（另存取消/拒绝覆盖）时
+  收回「已保存」提示且不推进索引/云同步（未落盘内容不再被当已保存状态）。
+- **P2**：useFileWatcher 回写判别由采样哈希改全量比较（采样点之间且等长的
+  外部修改不再被误判为自己的回写）；导出消毒补 SMIL 动画标签
+  （animate/set 系——`values` 属性可把 href 动画成 javascript:）、
+  `formaction`、`data:text/html`；markMissingImages 标签过 escapeHtml
+  （文件名可含 HTML 的注入面）。
+
+### UI：动效 Q 弹化 + 光影质感（三档动效/玻璃体系全量收编）
+
+- **`--scrim` 主题化**（模态遮罩）：固定 `rgba(0,0,0,0.35)` 在暗色画布上
+  亮度差不足（ios-dark 纯黑近乎失效）。六主题调参：dark 0.55 / ios-dark
+  0.6 / claude 暖棕 / sepia 暖纸 / ios 轻遮罩 0.25。CDP 实测 claude 主题
+  解析为 `rgba(45,35,25,0.45)`。
+- **两个裸奔对话框收编**：HtmlToMdDialog、ExportProgressDialog 此前零动效
+  + 层级/遮罩/圆角硬编码——进退场吃 modal-bg-in/modal-card-in 同款曲线，
+  z 档/遮罩归位 `--z-modal`/`--scrim`，玻璃层（glass-thick + tint-modal +
+  elev-4 + blur 蒙层 + squircle + lively spring 入场）全部编入 material.css
+  四个分组；导出进度条 width 过渡改 `scaleX`（transform-origin left，不再
+  触 layout）。
+- **弹层退场族**（此前「入场 120ms、退场 0ms」半成品）：新增
+  `useExitGhost` 快照钩子（useDelayedUnmount 的值快照版），右键菜单壳
+  （FileTree/RecentList/TabsBar/Editor 块菜单四个调用点）、菜单栏下拉
+  （内部 closingIdx 快照）、选区工具栏（自持 visible）全部接 140ms
+  `.closing` 退场（menu-pop-out/sel-out 镜像入场曲线，transform-origin 沿
+  锚点收回）；退场期背板与菜单禁指针——残影绝不拦截下层点击，Esc 不再被
+  残影吃掉。遗留：批注弹层（anno-popover）退场需连带 ghost 化 active 派生
+  态，收益/复杂度比低，暂缓。
+- **闪卡翻面 Q 弹化**：display 硬切换 → max-height 展开（field-collapse
+  同款，ease-sheet 340ms）+ 卡片 spring 弹跳（scale 0.985 → 3D 后仰
+  rotateX(2.4°) 过冲 → 回正，lively 弹性曲线 360ms）。
+- **标签栏**：激活指示条从中心弹性生长（scaleX 0.25→1 + spring，切标签
+  旧条消失新条 pop 定住）；脏点 ↔ × 由 display 硬切改 opacity/scale 交叉
+  淡化（圆点弹入 tab-dot-in，hover 双向弹性过渡）。
+- **文件树**：子树展开 = group ul 整体挂载——容器级单动画淡入下移
+  （ft-group-in，lively 档 spring 轻过冲；每次展开一次动画，避免数百 li
+  各自入场）；ft-notice 通知条补淡入下滑（此前全项目最静止的元素）。
+- **PrintDialog 令牌化**：内嵌 CSS 孤岛 ~20 处硬编码色收编主题令牌
+  （card-bg/fg/fg-muted/border/hover/accent/danger/success/bg/shadow/
+  scrim，全部带浅色 fallback）；纸面恒白（打印预览语义不随主题变暗），
+  桌台底走 --bg——暗色主题下 chrome 面板/输入框/按钮全部正确染色。
+
+### 验证
+
+- 门禁全绿：tsc / vitest 1460（+1 CSP 钉）/ eslint 0 error / cargo test 36
+  + clippy / vite build。
+- UI 动效状态机 CDP 实测（perf/tmp-ui-assert.mjs，dev 实例 + claude 主题）：
+  --scrim 主题解析 ✓、下拉 .closing 60ms 仍在播 menu-pop-out + 禁指针 ✓、
+  退场播完卸载 ✓、模态遮罩 scrim + blur(8px) ✓、七个新 keyframes 编译进
+  运行时 ✓；截图产物 perf/results/ui-smoke/*.png。
+- ESLint 7 error 清零（含 engine.ts 控制字符正则的刻意豁免注释）。
+
+
 ## 5.3.1（2026-11-10）：外部关联按文件夹配置 + 同步范围 UI 优化 + 公式首滚修复 + remoteDir 多段子路径
 
 ### 外部关联：文件状态内外同步按文件夹配置（2026-11-07，v5.3.x）

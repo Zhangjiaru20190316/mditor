@@ -982,14 +982,14 @@ export function PrintDialog({
 
 const PRINT_DIALOG_CSS = `
 .printdlg-overlay { position: fixed; inset: 0; z-index: 9000; display: flex;
-  align-items: center; justify-content: center; background: rgba(15, 18, 25, 0.5);
+  align-items: center; justify-content: center; background: var(--scrim, rgba(15, 18, 25, 0.5));
   font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
   animation: printdlg-bg-in var(--dur-base, 220ms) var(--ease-out, ease-out) both; }
 .printdlg-overlay.closing { animation: printdlg-bg-out var(--dur-exit, 160ms)
   var(--ease-in, ease-in) both; pointer-events: none; }
 .printdlg-panel { display: flex; flex-direction: column; width: min(960px, calc(100vw - 48px));
-  height: min(700px, calc(100vh - 64px)); background: #ffffff; color: #1f2430;
-  border-radius: 12px; box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35); overflow: hidden;
+  height: min(700px, calc(100vh - 64px)); background: var(--card-bg, #ffffff); color: var(--fg, #1f2430);
+  border-radius: 12px; box-shadow: var(--shadow-lg, 0 18px 60px rgba(0, 0, 0, 0.35)); overflow: hidden;
   animation: printdlg-panel-in var(--dur-base, 220ms) var(--ease-out, ease-out) both;
   will-change: transform, opacity; }
 .printdlg-overlay.closing .printdlg-panel { animation: printdlg-panel-out
@@ -1001,45 +1001,46 @@ const PRINT_DIALOG_CSS = `
 @keyframes printdlg-panel-out { from { opacity: 1; transform: scale(1) translateY(0); }
   to { opacity: 0; transform: scale(0.97) translateY(6px); } }
 .printdlg-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px;
-  border-bottom: 1px solid #e5e7ec; flex: none; }
+  border-bottom: 1px solid var(--border, #e5e7ec); flex: none; }
 .printdlg-title { font-size: 15px; font-weight: 600; }
-.printdlg-sub { font-size: 12px; color: #6b7280; overflow: hidden; text-overflow: ellipsis;
+.printdlg-sub { font-size: 12px; color: var(--fg-muted, #6b7280); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
 .printdlg-iconbtn { margin-left: auto; border: none; background: transparent; font-size: 14px;
-  color: #6b7280; cursor: pointer; padding: 4px 8px; border-radius: 6px;
+  color: var(--fg-muted, #6b7280); cursor: pointer; padding: 4px 8px; border-radius: 6px;
   transition: background-color var(--dur-fast, 120ms) var(--ease-out, ease-out),
     color var(--dur-fast, 120ms) var(--ease-out, ease-out); }
-.printdlg-iconbtn:hover { background: #f1f2f6; color: #1f2430; }
+.printdlg-iconbtn:hover { background: var(--hover, #f1f2f6); color: var(--fg, #1f2430); }
 .printdlg-body { display: flex; flex: 1; min-height: 0; }
 .printdlg-side { width: 268px; flex: none; padding: 14px 16px; overflow-y: auto;
-  border-right: 1px solid #e5e7ec; display: flex; flex-direction: column; gap: 12px; }
+  border-right: 1px solid var(--border, #e5e7ec); display: flex; flex-direction: column; gap: 12px; }
 .printdlg-field { display: flex; flex-direction: column; gap: 5px; }
-.printdlg-label { font-size: 12px; color: #4b5563; display: flex; align-items: center; gap: 6px; }
-.printdlg-refresh { border: 1px solid #d5d8e0; background: #fff; border-radius: 5px;
-  font-size: 12px; line-height: 1; padding: 2px 5px; cursor: pointer; color: #4b5563;
+.printdlg-label { font-size: 12px; color: var(--fg-muted, #4b5563); display: flex; align-items: center; gap: 6px; }
+.printdlg-refresh { border: 1px solid var(--border, #d5d8e0); background: var(--card-bg, #fff); border-radius: 5px;
+  font-size: 12px; line-height: 1; padding: 2px 5px; cursor: pointer; color: var(--fg-muted, #4b5563);
   transition: background-color var(--dur-fast, 120ms) var(--ease-out, ease-out); }
-.printdlg-refresh:hover { background: #f1f2f6; }
+.printdlg-refresh:hover { background: var(--hover, #f1f2f6); }
 .printdlg-side select, .printdlg-side input[type="number"], .printdlg-side input[type="text"] {
-  font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid #d5d8e0;
-  border-radius: 6px; background: #fff; color: #1f2430; width: 100%; box-sizing: border-box;
+  font: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid var(--border, #d5d8e0);
+  border-radius: 6px; background: var(--bg, #fff); color: var(--fg, #1f2430); width: 100%; box-sizing: border-box;
   transition: border-color var(--dur-fast, 120ms) var(--ease-out, ease-out),
     box-shadow var(--dur-fast, 120ms) var(--ease-out, ease-out); }
 .printdlg-side select:focus-visible, .printdlg-side input:focus-visible {
-  outline: none; border-color: #3b6fd4; box-shadow: 0 0 0 3px rgba(59, 111, 212, 0.18); }
-.printdlg-side select:disabled, .printdlg-side input:disabled { background: #f3f4f6; color: #9ca3af; }
-.printdlg-static { font-size: 13px; color: #6b7280; padding: 6px 0; }
-.printdlg-error { color: #b91c1c; }
+  outline: none; border-color: var(--accent, #3b6fd4); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #3b6fd4) 18%, transparent); }
+.printdlg-side select:disabled, .printdlg-side input:disabled { background: var(--hover, #f3f4f6); color: var(--fg-muted, #9ca3af); }
+.printdlg-static { font-size: 13px; color: var(--fg-muted, #6b7280); padding: 6px 0; }
+.printdlg-error { color: var(--danger, #b91c1c); }
 .printdlg-row { display: flex; gap: 14px; }
 .printdlg-radio { display: flex; align-items: center; gap: 5px; font-size: 13px; cursor: pointer; }
 .printdlg-range-input { margin-top: 2px; }
-.printdlg-field-error { font-size: 12px; color: #b91c1c; }
-.printdlg-field-ok { font-size: 12px; color: #15803d; }
-.printdlg-sep { border: none; border-top: 1px solid #e5e7ec; margin: 2px 0; }
-.printdlg-note { font-size: 12px; color: #8a919e; line-height: 1.5; }
-.printdlg-preview { flex: 1; min-width: 0; overflow-y: auto; background: #e8eaef;
+.printdlg-field-error { font-size: 12px; color: var(--danger, #b91c1c); }
+.printdlg-field-ok { font-size: 12px; color: var(--success, #15803d); }
+.printdlg-sep { border: none; border-top: 1px solid var(--border, #e5e7ec); margin: 2px 0; }
+.printdlg-note { font-size: 12px; color: var(--fg-muted, #8a919e); line-height: 1.5; }
+.printdlg-preview { flex: 1; min-width: 0; overflow-y: auto; background: var(--bg, #e8eaef);
   display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 24px;
   position: relative; }
-.printdlg-page { position: relative; background: #fff; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+/* 纸面恒白（打印预览语义，不随主题变暗）；桌台底走 --bg、纸影走 --shadow。 */
+.printdlg-page { position: relative; background: #fff; box-shadow: var(--shadow, 0 2px 10px rgba(0, 0, 0, 0.18));
   flex: none; animation: printdlg-page-in var(--dur-base, 220ms) var(--ease-out, ease-out) both; }
 @keyframes printdlg-page-in { from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: none; } }
@@ -1053,8 +1054,8 @@ html[data-motion="lively"] .printdlg-page:nth-child(n + 4) { animation-delay: 75
   animation: printdlg-canvas-in var(--dur-fast, 120ms) var(--ease-out, ease-out) both; }
 @keyframes printdlg-canvas-in { from { opacity: 0; } to { opacity: 1; } }
 .printdlg-page-num { position: absolute; right: -8px; bottom: -20px; font-size: 11px;
-  color: #6b7280; background: #e8eaef; padding: 0 4px; }
-.printdlg-pages-foot { font-size: 12px; color: #6b7280; padding: 6px 0 2px; }
+  color: var(--fg-muted, #6b7280); background: var(--bg, #e8eaef); padding: 0 4px; }
+.printdlg-pages-foot { font-size: 12px; color: var(--fg-muted, #6b7280); padding: 6px 0 2px; }
 .printdlg-notices { position: sticky; top: 0; z-index: 3; display: flex;
   flex-direction: column; gap: 4px; width: 100%; pointer-events: none; }
 .printdlg-notice { font-size: 12px; color: #92400e; background: #fef3c7;
@@ -1068,27 +1069,27 @@ html[data-motion="lively"] .printdlg-page:nth-child(n + 4) { animation-delay: 75
 .printdlg-center { margin: auto; display: flex; flex-direction: column; align-items: center;
   gap: 12px; max-width: 420px; text-align: center; }
 .printdlg-spinner { width: 26px; height: 26px; border-radius: 50%;
-  border: 3px solid #d5d8e0; border-top-color: #4a7dcc; animation: printdlg-spin 0.9s linear infinite; }
+  border: 3px solid var(--border, #d5d8e0); border-top-color: var(--accent, #4a7dcc); animation: printdlg-spin 0.9s linear infinite; }
 @keyframes printdlg-spin { to { transform: rotate(360deg); } }
-.printdlg-center-note { font-size: 13px; color: #4b5563; }
-.printdlg-fail-title { font-size: 14px; font-weight: 600; color: #b91c1c; }
-.printdlg-fail-detail { font-size: 12px; color: #6b7280; word-break: break-all; }
+.printdlg-center-note { font-size: 13px; color: var(--fg-muted, #4b5563); }
+.printdlg-fail-title { font-size: 14px; font-weight: 600; color: var(--danger, #b91c1c); }
+.printdlg-fail-detail { font-size: 12px; color: var(--fg-muted, #6b7280); word-break: break-all; }
 .printdlg-footer { display: flex; align-items: center; gap: 12px; padding: 10px 16px;
-  border-top: 1px solid #e5e7ec; flex: none; }
-.printdlg-footnote { font-size: 12px; color: #6b7280; flex: 1; min-width: 0;
+  border-top: 1px solid var(--border, #e5e7ec); flex: none; }
+.printdlg-footnote { font-size: 12px; color: var(--fg-muted, #6b7280); flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .printdlg-actions { display: flex; gap: 8px; flex: none; }
 .printdlg-btn { font: inherit; font-size: 13px; padding: 7px 16px; border-radius: 7px;
-  border: 1px solid #d5d8e0; background: #fff; color: #1f2430; cursor: pointer;
+  border: 1px solid var(--border, #d5d8e0); background: var(--card-bg, #fff); color: var(--fg, #1f2430); cursor: pointer;
   transition: background-color var(--dur-fast, 120ms) var(--ease-out, ease-out),
     border-color var(--dur-fast, 120ms) var(--ease-out, ease-out),
     transform var(--dur-fast, 120ms) var(--ease-out, ease-out); }
-.printdlg-btn:hover:not(:disabled) { background: #f1f2f6; }
+.printdlg-btn:hover:not(:disabled) { background: var(--hover, #f1f2f6); }
 .printdlg-btn:active:not(:disabled) { transform: scale(0.98); }
-.printdlg-btn:disabled { color: #9ca3af; cursor: not-allowed; }
-.printdlg-btn:focus-visible { outline: 2px solid #3b6fd4; outline-offset: 1px; }
-.printdlg-primary { background: #3b6fd4; border-color: #3b6fd4; color: #fff; }
-.printdlg-primary:hover:not(:disabled) { background: #3360bd; }
+.printdlg-btn:disabled { color: var(--fg-muted, #9ca3af); cursor: not-allowed; }
+.printdlg-btn:focus-visible { outline: 2px solid var(--accent, #3b6fd4); outline-offset: 1px; }
+.printdlg-primary { background: var(--accent, #3b6fd4); border-color: var(--accent, #3b6fd4); color: #fff; }
+.printdlg-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent, #3b6fd4) 88%, #000); }
 /* lively 档增强（惰性前缀，balanced/none 零开销；none/reduced-motion 由
    global.css 通配 kill switch 压为瞬时）：面板 iOS sheet 曲线止动 + 侧栏
    字段逐项上浮级联（25ms/项、封顶 100ms，对齐设置模态惯例）。 */

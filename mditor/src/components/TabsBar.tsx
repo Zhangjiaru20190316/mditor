@@ -18,6 +18,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import type { TabItem } from "../types";
 import { CloseIcon, MarkdownFileIcon, HtmlFileIcon, PdfFileIcon, DocxFileIcon } from "./icons";
 import { ContextMenu, type CtxEntry } from "./ContextMenu";
+import { useExitGhost } from "../hooks/useDelayedUnmount";
 import { isHtmlTab } from "../lib/htmlNote";
 import { isPdfTab, isDocxTab } from "../lib/docNote";
 
@@ -56,6 +57,8 @@ export const TabsBar = memo(function TabsBar({
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; key: string } | null>(
     null
   );
+  // v5.3.2 弹层退场：关闭后保挂快照 140ms 播 .closing（此前瞬灭）。
+  const ctxGhost = useExitGhost(ctxMenu, 140);
 
   useEffect(() => {
     const prev = prevTabsRef.current;
@@ -90,13 +93,13 @@ export const TabsBar = memo(function TabsBar({
 
   if (tabs.length < 2 && ghosts.length === 0) return null;
 
-  const ctxEntries: CtxEntry[] = ctxMenu
+  const ctxEntries: CtxEntry[] = ctxGhost
     ? [
         {
           kind: "item",
           key: "move-window",
           label: "移到新窗口",
-          fn: () => onMoveToNewWindow(ctxMenu.key),
+          fn: () => onMoveToNewWindow(ctxGhost.key),
         },
       ]
     : [];
@@ -152,12 +155,13 @@ export const TabsBar = memo(function TabsBar({
           </button>
         </div>
       ))}
-      {/* v4.8：标签右键「移到新窗口」 */}
-      {ctxMenu && (
+      {/* v4.8：标签右键「移到新窗口」（退场快照经 ctxGhost 保挂） */}
+      {ctxGhost && (
         <ContextMenu
-          x={ctxMenu.x}
-          y={ctxMenu.y}
+          x={ctxGhost.x}
+          y={ctxGhost.y}
           entries={ctxEntries}
+          closing={ctxMenu === null}
           onClose={() => setCtxMenu(null)}
         />
       )}

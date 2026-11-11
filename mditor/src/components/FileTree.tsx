@@ -48,6 +48,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { ContextMenu } from "./ContextMenu";
+import { useExitGhost } from "../hooks/useDelayedUnmount";
 import type { CtxEntry } from "./ContextMenu";
 import {
   readDirLevel,
@@ -174,6 +175,8 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
   const [batchMode, setBatchMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // v5.3.2 弹层退场：关闭后保挂快照 140ms 播 .closing（此前瞬灭）。
+  const menuGhost = useExitGhost(menu, 140);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // 多根分区折叠状态（根路径集合）：折叠只是不渲染该区行，childrenMap/
@@ -1049,12 +1052,13 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
       </div>
 
       {/* ---- right-click context menu ---- */}
-      {menu && (
+      {menuGhost && (
         <ContextMenu
-          x={menu.x}
-          y={menu.y}
+          x={menuGhost.x}
+          y={menuGhost.y}
           onClose={closeMenu}
-          entries={treeMenuEntries(menu.node, {
+          closing={menu === null}
+          entries={treeMenuEntries(menuGhost.node, {
             onOpen: openFile,
             onOpenNewWindow: (p) => onOpenNewWindowRef.current?.(p),
             onConvertToMarkdown: (p) => onConvertToMdRef.current?.(p),
@@ -1070,7 +1074,7 @@ export const FileTree = memo(function FileTree({ roots, activePath, onOpen, onOp
             onToggleExternalLink: onToggleExternalLink
               ? (d) => onToggleExternalLinkRef.current?.(d)
               : undefined,
-            dirLinkEnabled: dirLinkEnabledFor(menu.node.path),
+            dirLinkEnabled: dirLinkEnabledFor(menuGhost.node.path),
           })}
         />
       )}

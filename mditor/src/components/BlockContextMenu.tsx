@@ -31,6 +31,8 @@ interface Props {
   onOpenExternal: (url: string) => void;
   /** 「更换图片」：弹文件选择框 → 持久化 → 写回图片节点。 */
   onReplaceImage: (pos: number) => void;
+  /** v5.3.2 退场播放态（Editor 经 useExitGhost 保挂快照）：透传给壳。 */
+  closing?: boolean;
 }
 
 const KIND_LABEL: Record<BlockKind, string> = {
@@ -77,6 +79,7 @@ export function BlockContextMenu({
   onClose,
   onOpenExternal,
   onReplaceImage,
+  closing,
 }: Props) {
   // 「编辑链接」把菜单就地切换为一行输入框（回车提交，清空 = 移除链接）。
   const [linkEdit, setLinkEdit] = useState(false);
@@ -229,6 +232,7 @@ export function BlockContextMenu({
         x={x}
         y={y}
         onClose={onClose}
+        closing={closing}
         entries={[
           {
             kind: "input",
@@ -245,5 +249,5 @@ export function BlockContextMenu({
     );
   }
 
-  return <ContextMenu x={x} y={y} entries={entries} onClose={onClose} />;
+  return <ContextMenu x={x} y={y} entries={entries} onClose={onClose} closing={closing} />;
 }

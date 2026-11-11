@@ -12,6 +12,7 @@ import { baseName } from "../lib/tauriFs";
 import type { RecentFile } from "../types";
 import { MarkdownFileIcon } from "./icons";
 import { ContextMenu, type CtxEntry } from "./ContextMenu";
+import { useExitGhost } from "../hooks/useDelayedUnmount";
 
 interface Props {
   onOpen: (path: string) => void;
@@ -27,6 +28,9 @@ export const RecentList = memo(function RecentList({ onOpen, refreshKey, onOpenN
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; path: string } | null>(
     null
   );
+  // v5.3.2 弹层退场：关闭后保挂快照 140ms 播 .closing（此前瞬灭）。
+  // 钩子须在下方 items 空态 early return 之前（Rules of Hooks）。
+  const ctxGhost = useExitGhost(ctxMenu, 140);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,13 +49,13 @@ export const RecentList = memo(function RecentList({ onOpen, refreshKey, onOpenN
     return <div className="rc-empty">暂无最近文件</div>;
   }
 
-  const ctxEntries: CtxEntry[] = ctxMenu
+  const ctxEntries: CtxEntry[] = ctxGhost
     ? [
         {
           kind: "item",
           key: "open-new-window",
           label: "在新窗口打开",
-          fn: () => onOpenNewWindow?.(ctxMenu.path),
+          fn: () => onOpenNewWindow?.(ctxGhost.path),
         },
       ]
     : [];
@@ -78,11 +82,12 @@ export const RecentList = memo(function RecentList({ onOpen, refreshKey, onOpenN
         </li>
       ))}
       {/* v4.8：条目右键「在新窗口打开」 */}
-      {ctxMenu && (
+      {ctxGhost && (
         <ContextMenu
-          x={ctxMenu.x}
-          y={ctxMenu.y}
+          x={ctxGhost.x}
+          y={ctxGhost.y}
           entries={ctxEntries}
+          closing={ctxMenu === null}
           onClose={() => setCtxMenu(null)}
         />
       )}

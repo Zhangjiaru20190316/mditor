@@ -42,6 +42,8 @@
   --shadow: var(--elev-1);
   --shadow-md: var(--elev-3);
   --shadow-lg: var(--elev-4);
+  /* v5.3.2 模态遮罩：暗色画布需更深才有亮度差 */
+  --scrim: rgba(0, 0, 0, 0.55);
   /* v5 玻璃调参（克制档：overlay 轻玻璃，chrome 不透明） */
   --glass-tint: rgba(37, 37, 38, 0.88);
   --glass-tint-modal: rgba(37, 37, 38, 0.88);

@@ -165,10 +165,15 @@ function buildMenus(focusMode: boolean, theme: string, typewriter: boolean): Men
 
 export const MenuBar = memo(function MenuBar({ focusMode, theme, typewriter, onDispatch }: Props) {
   const [open, setOpen] = useState<number | null>(null);
+  // v5.3.2 下拉退场快照：关闭后保住最后展开的菜单索引 140ms 播 .closing
+  // （此前瞬灭）；重开/切换即时接管渲染。
+  const [closingIdx, setClosingIdx] = useState<number | null>(null);
   // 下拉层视口坐标（fixed + 钳制），展开 / 切换菜单时按按钮 rect 重算。
   const [pos, setPos] = useState({ left: 0, top: 0 });
   const btnRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const openRef = useRef<number | null>(null);
+  openRef.current = open;
 
   // 全部条目里只有 4 条动态（专注模式勾选 + 3 个主题圆点），其余全静态
   // —— 用 useMemo 把结构稳定下来，仅 focusMode/theme 变化时重建，pos/open 等
@@ -179,14 +184,25 @@ export const MenuBar = memo(function MenuBar({ focusMode, theme, typewriter, onD
   );
   // keydown 副作用实际只用到条目数量（导航循环取模），抽出为原始值依赖。
   const menuCount = menus.length;
-  const close = useCallback(() => setOpen(null), []);
+  const close = useCallback(() => {
+    // 关闭 = 记退场快照再清 open（下拉保挂 140ms 播 .closing）。
+    if (openRef.current !== null) setClosingIdx(openRef.current);
+    setOpen(null);
+  }, []);
+
+  // 退场快照到期回收。
+  useEffect(() => {
+    if (closingIdx === null) return;
+    const t = window.setTimeout(() => setClosingIdx(null), 140);
+    return () => window.clearTimeout(t);
+  }, [closingIdx]);
 
   const activate = useCallback(
     (entry: Extract<MenuEntry, { kind: "item" }>) => {
-      setOpen(null);
+      close();
       onDispatch(entry.id);
     },
-    [onDispatch]
+    [onDispatch, close]
   );
 
   // 展开时定位下拉层：锚在按钮下方，按估算尺寸钳制进视口。
@@ -234,7 +250,7 @@ export const MenuBar = memo(function MenuBar({ focusMode, theme, typewriter, onD
         case "Escape":
           e.preventDefault();
           e.stopImmediatePropagation();
-          setOpen(null);
+          close();
           break;
         case "ArrowLeft":
           e.preventDefault();
@@ -255,13 +271,13 @@ export const MenuBar = memo(function MenuBar({ focusMode, theme, typewriter, onD
         case "Tab":
         case "Alt":
           e.preventDefault();
-          setOpen(null);
+          close();
           break;
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, menuCount]);
+  }, [open, menuCount, close]);
 
   return (
     <nav className="mb" aria-label="应用菜单">
@@ -283,21 +299,26 @@ export const MenuBar = memo(function MenuBar({ focusMode, theme, typewriter, onD
         </button>
       ))}
 
-      {open !== null &&
+      {(open ?? closingIdx) !== null &&
         createPortal(
           <>
             {/* 点击外部关闭：背板从标题栏下缘开始，标题栏上的菜单按钮保持可点
-                （点击相邻菜单 = 直接切换，无需先关再开）。 */}
+                （点击相邻菜单 = 直接切换，无需先关再开）。退场中背板禁指针。 */}
             <div
-              className="mb-backdrop"
+              className={`mb-backdrop${open === null ? " closing" : ""}`}
               onMouseDown={close}
               onContextMenu={(e) => {
                 e.preventDefault();
                 close();
               }}
             />
-            <div className="mb-dropdown" role="menu" style={pos} ref={dropdownRef}>
-              {menus[open].entries.map((entry, j) =>
+            <div
+              className={`mb-dropdown${open === null ? " closing" : ""}`}
+              role="menu"
+              style={pos}
+              ref={dropdownRef}
+            >
+              {menus[(open ?? closingIdx)!].entries.map((entry, j) =>
                 entry.kind === "sep" ? (
                   <div key={`sep-${j}`} className="mb-sep" />
                 ) : (
