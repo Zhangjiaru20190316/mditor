@@ -2565,8 +2565,16 @@ function App() {
           ) || "untitled";
         try {
           flashStatus("正在导出 LaTeX…", 60_000);
-          await exportLatexFile(ed.getValue(), `${name}.tex`, name);
+          const r = await exportLatexFile(ed.getValue(), `${name}.tex`, name);
+          if (r.path === null) {
+            flashStatus("已取消导出", 5000);
+            return;
+          }
           flashStatus("导出完成");
+          // 未解析引用键等告警透出（此前只进 console——MC 轮 P2）。
+          if (r.warnings.length > 0) {
+            void showAlert(r.warnings.join("\n"), "LaTeX 导出告警", "warning");
+          }
         } catch (e) {
           flashStatus("导出失败", 5000);
           void showAlert(`导出失败：${String(e)}`, "Mditor", "error");
@@ -2596,6 +2604,10 @@ function App() {
           );
           flashStatus("正在导出…", 60_000);
           const out = await exportHtml(ctx, `${name}.html`, { inlineImages: inline });
+          if (out.path === null) {
+            flashStatus("已取消导出", 5000);
+            return;
+          }
           if (inline) missing = out.missing; // 保留引用模式不列报（文档化语义）
         } else if (kind === "pdf") {
           // EX 阶段四：自研管线全量落地——零 OS 打印对话框，自有进度 UI
@@ -2619,6 +2631,10 @@ function App() {
               mode: settingsApi.settings.exportPdfMode,
               textLayer: true,
             });
+            if (out.path === null) {
+              flashStatus("已取消导出", 5000);
+              return;
+            }
             missing = out.missing;
             // RV 轮：矢量路径失败 → 管线已自动回退位图完成导出；如实告知。
             const fb = out.meta?.vectorFallback;
@@ -2631,6 +2647,10 @@ function App() {
         } else if (kind === "docx") {
           flashStatus("正在导出…", 60_000);
           const out = await exportDocx(ctx, `${name}.docx`);
+          if (out.path === null) {
+            flashStatus("已取消导出", 5000);
+            return;
+          }
           missing = out.missing;
         } else if (kind === "png") {
           // EX 阶段五：离屏工厂路径（RC-6 修复）——不再截实时 DOM（懒渲染
@@ -2650,6 +2670,10 @@ function App() {
               signal: ctrl.signal,
               onProgress: push,
             });
+            if (out.path === null) {
+              flashStatus("已取消导出", 5000);
+              return;
+            }
             missing = out.missing;
           } finally {
             setPdfProg(null);

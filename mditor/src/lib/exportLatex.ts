@@ -16,6 +16,7 @@ import remarkMath from "remark-math";
 import { asRemarkPlugin } from "./pluginCast";
 import { remarkCitation } from "./remarkCitation";
 import { remarkWikiLink } from "./remarkWikiLink";
+import { remarkFlash } from "./remarkFlash";
 import { parseFigureAttr, parseTableCaption } from "./figureNumbering";
 import { buildReferences, formatReference, isReferencesHeadingText } from "./citation";
 import { bibliography } from "./bibliography";
@@ -46,12 +47,17 @@ interface MdastNode {
 let processor: ReturnType<typeof buildTexProcessor> | null = null;
 
 function buildTexProcessor() {
+  // remarkFlash 与静态管线（remarkPipeline）同源注册：编辑器序列化把闪卡
+  // 写回 `:::flash … :::` 原文，不接插件时标记按 CommonMark 并进段落——
+  // `:::flash` 字面与卡内 setext 陷阱（`问题？\n---` 成 H2）全部漏进 .tex，
+  // 下方 case "flashcard" 的引用块降级即成死代码（MC 轮 P1 定罪）。
   return unified()
     .use(remarkParse)
     .use(remarkGfm)
     .use(remarkMath)
     .use(asRemarkPlugin(remarkCitation))
-    .use(asRemarkPlugin(remarkWikiLink));
+    .use(asRemarkPlugin(remarkWikiLink))
+    .use(asRemarkPlugin(remarkFlash));
 }
 
 function getProcessor() {
@@ -90,26 +96,48 @@ function texFromMarkdownLite(s: string): string {
 
 // ---- 行内节点 ----------------------------------------------------------------
 
-function inlineNodes(nodes: MdastNode[] | undefined): string {
-  if (!nodes) return "";
-  return nodes.map(inlineNode).join("");
+/** 行内发射上下文：标题是移动参数（moving argument），\verb 不能出现
+ *  （XeLaTeX + hyperref 直接编译失败——MC 轮 P2）；mixed 标记图文混排段
+ *  （行内图按宽度约束而非 1em 高，截图可读）。 */
+interface InlineCtx {
+  inHeading?: boolean;
+  mixed?: boolean;
 }
 
-function inlineNode(node: MdastNode): string {
+/** \href 的 URL 参数转义：hyperref 对 URL 参数只认 `\%`/`\#` 转义形态，
+ *  文本宏（\textasciitilde{} 等）会成为 URL 的一部分——含 `~` 的链接直接
+ *  损坏。反斜杠/空格先行百分号编码，再做 %/# 转义。 */
+function texUrlEscape(u: string): string {
+  return u
+    .replace(/\\/g, "%5C")
+    .replace(/%/g, "\\%")
+    .replace(/#/g, "\\#")
+    .replace(/ /g, "%20");
+}
+
+function inlineNodes(nodes: MdastNode[] | undefined, ctx?: InlineCtx): string {
+  if (!nodes) return "";
+  return nodes.map((n) => inlineNode(n, ctx)).join("");
+}
+
+function inlineNode(node: MdastNode, ctx?: InlineCtx): string {
   switch (node.type) {
     case "text":
       return texWithRefs(String(node.value ?? ""));
     case "emphasis":
-      return `\\emph{${inlineNodes(node.children)}}`;
+      return `\\emph{${inlineNodes(node.children, ctx)}}`;
     case "strong":
-      return `\\textbf{${inlineNodes(node.children)}}`;
+      return `\\textbf{${inlineNodes(node.children, ctx)}}`;
     case "delete":
-      return `\\sout{${inlineNodes(node.children)}}`;
+      return `\\sout{${inlineNodes(node.children, ctx)}}`;
     case "inlineCode": {
       const v = String(node.value ?? "");
-      // \verb 定界符避开内容字符；内容含全部候选时退回 \texttt 转义。
-      for (const d of ["|", "!", "#", "=", "+", "~"]) {
-        if (!v.includes(d)) return `\\verb${d}${v}${d}`;
+      // 标题（移动参数）禁 \verb：定界内容不可靠，恒走 \texttt 转义。
+      if (!ctx?.inHeading) {
+        // \verb 定界符避开内容字符；内容含全部候选时退回 \texttt 转义。
+        for (const d of ["|", "!", "#", "=", "+", "~"]) {
+          if (!v.includes(d)) return `\\verb${d}${v}${d}`;
+        }
       }
       return `\\texttt{${texEscape(v)}}`;
     }
@@ -119,9 +147,13 @@ function inlineNode(node: MdastNode): string {
       // 行内位置的块公式（少见）——按展示公式处理。
       return displayMath(String(node.value ?? ""));
     case "link":
-      return `\\href{${texEscape(String(node.url ?? ""))}}{${inlineNodes(node.children)}}`;
+      return `\\href{${texUrlEscape(String(node.url ?? ""))}}{${inlineNodes(node.children, ctx)}}`;
     case "image":
-      // 行内小图：不含 figure 环境的 includegraphics。
+      // 行内图：图文混排段按宽度约束（1em 高会把截图压到字号高度不可读——
+      // MC 轮 P2）；纯文字流里的小图保持 1em。
+      if (ctx?.mixed) {
+        return `\\includegraphics[width=0.5\\linewidth]{${texEscape(String(node.url ?? ""))}}`;
+      }
       return `\\includegraphics[height=1em]{${texEscape(String(node.url ?? ""))}}`;
     case "break":
       return "\\\\";
@@ -140,7 +172,7 @@ function inlineNode(node: MdastNode): string {
     case "html":
       return ""; // 原生 HTML 不进 LaTeX
     default:
-      return inlineNodes(node.children) || texEscape(String(node.value ?? ""));
+      return inlineNodes(node.children, ctx) || texEscape(String(node.value ?? ""));
   }
 }
 
@@ -193,12 +225,36 @@ function headingLevelCmd(depth: number): string {
   }
 }
 
+/** verbatim 块：内容含字面 `\end{verbatim}` 时环境会被提前终止（LaTeX
+ *  教程类文档完全可达），后续代码裸漏为 LaTeX 源码流——拆段发射，终止符
+ *  经 \verb 桥接（MC 轮 P2）。 */
+function verbatimBlock(src: string): string {
+  const TERM = "\\end{verbatim}";
+  if (!src.includes(TERM)) {
+    return `\\begin{verbatim}\n${src}\n\\end{verbatim}\n`;
+  }
+  const parts = src.split(TERM);
+  let out = "";
+  for (let i = 0; i < parts.length; i++) {
+    if (i > 0) out += `\\verb|${TERM}|\n`;
+    out += `\\begin{verbatim}\n${parts[i]}\n\\end{verbatim}\n`;
+  }
+  return out;
+}
+
 function blockNode(node: MdastNode, i: number, siblings: MdastNode[]): string {
   switch (node.type) {
     case "heading": {
-      const text = inlineNodes(node.children);
+      // 标题是移动参数：行内 \verb 禁用（InlineCtx.inHeading）。
+      const text = inlineNodes(node.children, { inHeading: true });
       const depth = node.depth ?? 1;
-      if (isReferencesHeadingText(plainText(node))) return theBibliography();
+      if (isReferencesHeadingText(plainText(node))) {
+        // 空文献表（无条目或无可解析引用）不再吞掉用户手写的标题本身
+        // （MC 轮 P1：返回空串曾使整个标题块从产物消失）。
+        const bib = theBibliography();
+        if (bib) return bib;
+        return `\\${headingLevelCmd(depth)}*{${text}}\n`;
+      }
       const cmd = headingLevelCmd(depth);
       return `\\${cmd}{${text}}`;
     }
@@ -210,7 +266,7 @@ function blockNode(node: MdastNode, i: number, siblings: MdastNode[]): string {
       return `${inlineNodes(kids)}\n`;
     }
     case "code":
-      return `\\begin{verbatim}\n${String(node.value ?? "")}\n\\end{verbatim}\n`;
+      return verbatimBlock(String(node.value ?? ""));
     case "math":
       return `${displayMath(String(node.value ?? ""))}\n`;
     case "thematicBreak":
@@ -281,8 +337,9 @@ function figureBlock(para: MdastNode, i: number, siblings: MdastNode[]): string 
     }
   }
   if (imgs.length !== 1 || inlineRest.length > 0) {
-    // 多图/图文混排：不做 figure 环境，行内 includegraphics。
-    return `${inlineNodes(kids)}\n`;
+    // 多图/图文混排：不做 figure 环境，行内 includegraphics（mixed 上下文
+    // → 宽度约束，截图可读）。
+    return `${inlineNodes(kids, { mixed: true })}\n`;
   }
   const img = imgs[0];
   const caption = String(img.alt ?? "").trim();
@@ -341,7 +398,10 @@ function tableBlock(table: MdastNode, i: number, siblings: MdastNode[]): string 
 function theBibliography(): string {
   const entries = bibliography.all();
   const keysInOrder = citedKeys;
-  const refs = buildReferences(entries, keysInOrder, "numeric");
+  // 与 HTML 导出/静态渲染同源取用户样式（author-year 用户的编号/排序语义
+  // 不再被静默改写——thebibliography 环境本身即编号形态，author-year 退
+  // 数值但排序与出现序一致）。
+  const refs = buildReferences(entries, keysInOrder, bibliography.getStyle());
   if (refs.length === 0) return "";
   const items = refs
     .map((r) => `\\bibitem{${texEscape(r.key)}} ${texFromMarkdownLite(formatReference(r.entry))}`)
@@ -399,6 +459,9 @@ export function markdownToLatex(md: string, docTitle?: string): LatexResult {
   headingShift = titleUsed ? 1 : 0;
 
   // 表格 caption 段的消费：紧邻表格的 `: cap {#tbl:id}` 段不再独立输出。
+  // 图片属性段（`{#fig:id}` 自成一段、被前段图片的 figure 环境消费为
+  // \label）同款跳过——此前残段会以转义文本 `\{\#fig:...\}` 漏进正文
+  // （MC 轮 P1，与 isTableCaptionOf 对称）。
   const emitted: string[] = [];
   const src = titleUsed ? kids.slice(1) : kids;
   for (let i = 0; i < src.length; i++) {
@@ -408,7 +471,8 @@ export function markdownToLatex(md: string, docTitle?: string): LatexResult {
     if (
       node.type === "paragraph" &&
       ((prev?.type === "table" && isTableCaptionOf(node, prev)) ||
-        (next?.type === "table" && isTableCaptionOf(node, next)))
+        (next?.type === "table" && isTableCaptionOf(node, next)) ||
+        isFigureAttrOf(node, prev))
     ) {
       continue;
     }
@@ -444,6 +508,32 @@ ${body}\\end{document}
 function isTableCaptionOf(para: MdastNode, table: MdastNode): boolean {
   const cap = parseTableCaption(plainText(para));
   return !!cap?.id && !!table.align;
+}
+
+/** 段落是否为前一图片段的独立 `{#fig:id}` 属性段（figureBlock 会把它消费
+ *  为 \label——判定条件与 figureBlock 的消费条件逐项对称：前段恰一图、
+ *  无其他行内内容、自身无内联属性；本段单文本且解析为 fig 属性）。 */
+function isFigureAttrOf(para: MdastNode, imgPara: MdastNode | undefined): boolean {
+  if (imgPara?.type !== "paragraph") return false;
+  const kids = imgPara.children ?? [];
+  let imgs = 0;
+  let rest = 0;
+  let ownAttr = false;
+  for (const k of kids) {
+    if (k.type === "image") imgs++;
+    else {
+      rest++;
+      if (k.type === "text") {
+        const a = parseFigureAttr(String(k.value ?? ""));
+        if (a?.kind === "fig") ownAttr = true;
+      }
+    }
+  }
+  if (imgs !== 1 || rest > 0 || ownAttr) return false; // 前段非 figure 消费形态
+  const pKids = para.children ?? [];
+  if (pKids.length !== 1 || pKids[0]?.type !== "text") return false;
+  const attr = parseFigureAttr(String(pKids[0].value ?? ""));
+  return attr?.kind === "fig";
 }
 
 // 供测试直接访问纯函数层。

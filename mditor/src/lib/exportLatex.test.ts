@@ -162,3 +162,52 @@ describe("markdownToLatex（语法降级，铁律 6）", () => {
     expect(tex.trimEnd().endsWith("\\end{document}")).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// MC 轮回归锚定：闪卡语法不再漏进 .tex / 独立 {#fig:id} 属性段不泄漏 /
+// 空文献表不吞 References 标题 / verbatim 自终止符拆段 / 标题内禁 verb /
+// href 的 URL 参数不做文本宏转义。
+// ---------------------------------------------------------------------------
+describe("markdownToLatex（MC 轮导出正确性回归）", () => {
+  it("闪卡 :::flash 语法 → 引用块降级（标记不漏进 .tex）", () => {
+    const { tex } = markdownToLatex("前文\n\n:::flash\n问题是什么？\n---\n答案\n:::\n\n后文\n");
+    expect(tex).not.toContain(":::flash");
+    expect(tex).not.toContain(":::");
+    expect(tex).toContain("\\begin{quote}");
+  });
+
+  it("图片下一段的独立 {#fig:id} 属性段被 figure 消费，不再泄漏转义残文本", () => {
+    const { tex } = markdownToLatex("![实验图](fig.png)\n\n{#fig:exp}\n\n正文 @fig:exp 引用\n");
+    expect(tex).toContain("\\label{fig:exp}");
+    expect(tex).not.toContain("\\{\\#fig:exp\\}");
+  });
+
+  it("空文献表：References 标题保留（不再被吞）", () => {
+    bibliography.loadText("C:/fake/empty.bib", "");
+    const { tex } = markdownToLatex("# 标题\n\n正文\n\n## References\n\n后文\n");
+    expect(tex).toContain("References");
+    expect(tex).not.toContain("\\begin{thebibliography}");
+  });
+
+  it("代码块含字面 verbatim 终止符：拆段发射不提前终止", () => {
+    const term = "\\end{verbatim}";
+    const src = "```\n前段\n" + term + "\n后段\n```\n";
+    const { tex } = markdownToLatex(src);
+    const opens = tex.match(/\\begin\{verbatim\}/g) ?? [];
+    expect(opens.length).toBe(2);
+    expect(tex).toContain("\\verb|" + term + "|");
+    expect(tex).toContain("后段");
+  });
+
+  it("标题内的行内代码禁 verb（移动参数），走 texttt", () => {
+    const { tex } = markdownToLatex("# 标题\n\n## 用法 `foo --bar`\n");
+    expect(tex).not.toMatch(/\\(?:sub)*section\{[^}]*\\verb/);
+    expect(tex).toContain("\\texttt{foo --bar}");
+  });
+
+  it("链接 URL 参数：波浪号与空格不损坏（不做文本宏转义）", () => {
+    const { tex } = markdownToLatex("[用户页](https://x.example/~user/a%20b#c)\n");
+    expect(tex).toContain("\\href{https://x.example/~user/a\\%20b\\#c}");
+    expect(tex).not.toContain("textasciitilde");
+  });
+});

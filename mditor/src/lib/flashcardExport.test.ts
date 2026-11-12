@@ -31,6 +31,30 @@ describe("degradeFlashcardsInHtml", () => {
     expect(out).toContain("<p>中</p>");
   });
 
+  it("嵌套闪卡（MC 轮 P1）：内卡不重复输出、无孤立 </div>、外卡后半不重放", () => {
+    // 旧缺陷形态：单趟遍历在内卡（start < last）上重入——内卡内容重复、
+    // 外卡后半（<p>D</p>）重复输出且残留孤立 </div>。
+    const html =
+      `<p>A</p>` +
+      `<div class="md-flashcard" data-flashcard="1">` +
+      `<p>B</p>` +
+      `<div class="md-flashcard" data-flashcard="1"><p>C</p></div>` +
+      `<p>D</p>` +
+      `</div>` +
+      `<p>E</p>`;
+    const out = degradeFlashcardsInHtml(html);
+    // 内外都降级为 blockquote，各一次。
+    expect((out.match(/<blockquote class="md-flashcard">/g) ?? []).length).toBe(2);
+    expect(out).not.toContain("data-flashcard");
+    expect(out).not.toContain("<div");
+    // 内容零重复零丢失：B/C/D/E 各恰好一次，顺序保持。
+    for (const frag of ["<p>A</p>", "<p>B</p>", "<p>C</p>", "<p>D</p>", "<p>E</p>"]) {
+      expect((out.match(new RegExp(frag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length).toBe(1);
+    }
+    expect(out.indexOf("<p>B</p>")).toBeLessThan(out.indexOf("<p>C</p>"));
+    expect(out.indexOf("<p>C</p>")).toBeLessThan(out.indexOf("<p>D</p>"));
+  });
+
   it("无闪卡 → 原样返回", () => {
     const src = "<p>普通内容</p>";
     expect(degradeFlashcardsInHtml(src)).toBe(src);

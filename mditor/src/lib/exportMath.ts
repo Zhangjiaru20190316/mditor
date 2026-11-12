@@ -119,6 +119,12 @@ export function renderBlockMath(html: string): BlockMathResult {
  * 为 PNG <img>（DOCX / 复制富文本用——Word 无法渲染 KaTeX 的 CSS 布局）。
  * 单个公式失败保留原标记；Word 页面白底，公式文字强制深色（暗色主题下导
  * 出不至于得到一片空白）。onProgress 用于导出进度提示。
+ *
+ * MC 轮 Fix-B：栅格化窗口改墨迹盒——KaTeX vlist 零高盒/行内高公式栈的墨迹
+ * 越出布局盒（offsetWidth/Height 只量布局盒，实测行内高公式墨迹越盒上方
+ * 24px/下方 14px），SVG foreignObject 对窗口外内容硬裁剪，按布局盒出图会
+ * 削掉公式上下沿。做法：外包裹一层带内边距的 inline-block 壳，把壳撑到
+ * 「布局盒 ∪ 墨迹盒 + 护量」再出图（对 modern-screenshot 完全透明）。
  */
 export async function rasterizeFormulas(
   html: string,
@@ -138,13 +144,24 @@ export async function rasterizeFormulas(
     );
     if (nodes.length === 0) return html;
     const { domToPng } = await import("modern-screenshot");
+    const { inkRectOf, INK_PAD_PX } = await import("./exportInk");
     let done = 0;
     for (const node of nodes) {
       node.style.color = "#111111"; // 白底文档里的公式文字
-      const w = Math.max(1, Math.round(node.offsetWidth));
-      const h = Math.max(1, Math.round(node.offsetHeight));
+      const wrap = document.createElement("span");
+      wrap.style.cssText = "display:inline-block;";
+      node.replaceWith(wrap);
+      wrap.appendChild(node);
       try {
-        const dataUrl = await domToPng(node, {
+        const ink = inkRectOf(node);
+        const box = node.getBoundingClientRect();
+        const pad = (gap: number): number => Math.max(0, gap) + INK_PAD_PX;
+        wrap.style.padding = `${pad(box.top - (ink?.top ?? box.top))}px ${pad((ink?.right ?? box.right) - box.right)}px ${pad((ink?.bottom ?? box.bottom) - box.bottom)}px ${pad(box.left - (ink?.left ?? box.left))}px`;
+        // 壳尺寸：rect.border 盒优先（jsdom 无布局时 offsetWidth 恒 0）。
+        const wr = wrap.getBoundingClientRect();
+        const w = Math.max(1, Math.round(wr.width || wrap.offsetWidth));
+        const h = Math.max(1, Math.round(wr.height || wrap.offsetHeight));
+        const dataUrl = await domToPng(wrap, {
           scale: 3, // 3 倍采样：打印/缩放仍清晰
           backgroundColor: "#ffffff",
           width: w,
@@ -156,9 +173,9 @@ export async function rasterizeFormulas(
         img.width = w;
         img.height = h;
         img.style.verticalAlign = "middle";
-        node.replaceWith(img);
+        wrap.replaceWith(img);
       } catch {
-        /* 单式栅格化失败：保留 KaTeX HTML（Word 里近似线性展示） */
+        wrap.replaceWith(node); /* 单式栅格化失败：保留 KaTeX HTML（Word 里近似线性展示） */
       }
       done++;
       onProgress?.(done, nodes.length);

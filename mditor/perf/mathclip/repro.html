@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>公式导出截断复现</title>
+<style>
+body { font-family: sans-serif; padding: 20px; }
+#out { white-space: pre-wrap; font: 12px monospace; background: #f6f6f6; padding: 12px; }
+button { font-size: 16px; padding: 6px 18px; }
+</style>
+</head>
+<body>
+<h3>公式导出截断复现（真实布局）</h3>
+<button id="run">运行诊断</button>
+<div id="out">waiting…</div>
+<script type="module">
+import katex from "katex";
+import { renderInFactory } from "/src/lib/exportRenderFactory.ts";
+import { measureBlocks, collectPatchPlan } from "/src/lib/exportPdfPipeline.ts";
+import { paginateBlocks } from "/src/lib/exportPaginator.ts";
+
+// A4 纵向 15mm 边距的版心（PDF 管线同款数学）
+const MARGIN = (15 * 72) / 25.4;
+const CW = Math.round((595.28 - 2 * MARGIN) / 0.75);
+const CH = Math.round((841.89 - 2 * MARGIN) / 0.75);
+
+const block = (latex) =>
+  `<div class="md-math-block">${katex.renderToString(latex, { displayMode: true, throwOnError: false })}</div>`;
+const inline = (latex) =>
+  `<span data-type="math_inline" data-value="${latex}">${katex.renderToString(latex, { throwOnError: false })}</span>`;
+
+const TALL = String.raw`\sum_{i=1}^{n}\frac{\sqrt[3]{a_i^2+b_i}}{\displaystyle\prod_{j=1}^{m}(x_j-\mu_j)^{2j}}=\lim_{t\to\infty}\frac{\int_0^t e^{-s^2}\,ds}{\sqrt{\pi t}}`;
+const WIDE = String.raw`f(x)=a_0+a_1x+a_2x^2+a_3x^3+a_4x^4+a_5x^5+a_6x^6+a_7x^7+a_8x^8+a_9x^9+a_{10}x^{10}+\cdots+a_{n}x^{n}+O(x^{n+1})\quad\text{where } n \text{ is very large}`;
+const TALLINLINE = String.raw`\sqrt{\dfrac{\sum_{k=1}^{K}(y_k-\hat y_k)^2}{K}}`;
+// 行盒分裂候选：分子/分母文字行之间隔着分数线（无文本）、cases/aligned 多行
+const GAPFRAC = String.raw`\frac{\partial^2 u}{\partial t^2}=\frac{\partial^2 u}{\partial x^2}+\frac{\partial^2 u}{\partial y^2}\qquad \text{where } u(x,y,t) \text{ solves the wave equation in two spatial dimensions}`;
+const ALIGNED = String.raw`\begin{aligned} \nabla\cdot\mathbf{E} &= \frac{\rho}{\varepsilon_0} \\ \nabla\cdot\mathbf{B} &= 0 \\ \nabla\times\mathbf{E} &= -\frac{\partial\mathbf{B}}{\partial t} \\ \nabla\times\mathbf{B} &= \mu_0\mathbf{J}+\mu_0\varepsilon_0\frac{\partial\mathbf{E}}{\partial t} \end{aligned}`;
+
+const paras = (n, tag) => Array.from({ length: n }, (_, i) => `<p>${tag} 第 ${i + 1} 段：这是一段用来填充版心高度的正文文字，使后面的公式块恰好跨越分页刀口位置。</p>`).join("\n");
+
+// 结构：填充段(把公式推到页界附近) → 各形态公式 → 行内高公式段
+const FILL = Number(new URLSearchParams(location.search).get("fill") ?? "9");
+const html = [
+  paras(FILL, "前部"),
+  block(TALL),
+  paras(2, "间"),
+  block(GAPFRAC),
+  paras(2, "间"),
+  block(ALIGNED),
+  paras(6, "中部"),
+  block(WIDE),
+  `<p>行内高公式测试：测量误差为 ${inline(TALLINLINE)}，其值应当完整出现在导出产物中，上下不应被削掉。</p>`,
+  paras(20, "尾部"),
+].join("\n");
+
+// 与工厂文档同源的 CSS 环境最小面：KaTeX 字体（vite 会解析 import）
+import "katex/dist/katex.min.css";
+
+const run = async () => {
+  const out = document.getElementById("out");
+  out.textContent = "running…";
+  // 与 App 的 collectThemeCss 同源：收集本页（vite 注入的 KaTeX css）规则
+  let css = "";
+  for (const sheet of Array.from(document.styleSheets)) {
+    try {
+      if (!sheet.href || sheet.href.includes("/assets/")) {
+        for (const rule of Array.from(sheet.cssRules)) css += rule.cssText + "\n";
+      }
+    } catch { /* skip */ }
+  }
+  const handle = await renderInFactory(html, {
+    contentWidthPx: CW,
+    css,
+    title: "mathclip-repro",
+    maxImageHeightPx: CH,
+  });
+  const report = { CW, CH, checks: {} };
+  try {
+    const doc = handle.doc;
+    const content = handle.content;
+
+    // —— 检查 C：超宽公式溢出版心（修复后应为 false：工厂已缩放归一）——
+    report.checks.wide = {
+      contentScrollWidth: content.scrollWidth,
+      contentClientWidth: content.clientWidth,
+      overflowsContent: content.scrollWidth > CW,
+      scaledCount: content.querySelectorAll(".katex-display > .katex[style*='scale']").length,
+    };
+
+    // —— 检查 A：分页刀口是否落进块级公式 ——
+    const blocks = measureBlocks(handle);
+    const paginated = paginateBlocks(blocks, CH);
+    // 找出 .md-math-block 的块 id（measureBlocks 前先标记 DOM 顺序）
+    const kids = Array.from(content.children);
+    const mathKidIdx = kids.map((k, i) => (k.classList?.contains("md-math-block") ? i : -1)).filter((i) => i >= 0);
+    const mathBlockIds = mathKidIdx;
+    const splitMath = [];
+    for (const p of paginated.pages) {
+      for (const s of p.segments) {
+        if (mathBlockIds.includes(s.blockId) && s.clipTop > 0.5) {
+          splitMath.push({ page: paginated.pages.indexOf(p), blockId: s.blockId, clipTop: Math.round(s.clipTop), clipBottom: Math.round(s.clipBottom) });
+        }
+      }
+    }
+    // 跨页段计数：同一 math block 出现在 >1 页
+    const pagesPerMath = {};
+    for (const p of paginated.pages)
+      for (const s of p.segments)
+        if (mathBlockIds.includes(s.blockId)) pagesPerMath[s.blockId] = (pagesPerMath[s.blockId] ?? 0) + 1;
+    // 公式块的行盒（刀口候选）
+    const mathLines = mathKidIdx.map((i) => ({
+      blockId: i,
+      lines: (blocks[i].lines ?? []).map((l) => [Math.round(l.top), Math.round(l.top + l.height)]),
+      keepTogether: !!blocks[i].keepTogether,
+      height: Math.round(blocks[i].height),
+    }));
+    report.checks.pagination = {
+      pages: paginated.stats.pages,
+      mathBlockCount: mathBlockIds.length,
+      mathBlocksSplitAcrossPages: Object.entries(pagesPerMath).filter(([, n]) => n > 1),
+      segmentsWithClipTop: splitMath,
+      mathLines,
+    };
+
+    // —— 检查 B：补丁矩形是否覆盖实际墨迹矩形（修复后 anyClipped=false）——
+    const plan = collectPatchPlan(handle);
+    const base = content.getBoundingClientRect();
+    const inkUnion = (el) => {
+      // 真实墨迹面：文本 run 的 Range 矩形 + svg（sqrt 等矢量件）。
+      let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+      const add = (rc) => {
+        if (rc.width <= 0 && rc.height <= 0) return;
+        l = Math.min(l, rc.left); t = Math.min(t, rc.top);
+        r = Math.max(r, rc.right); b = Math.max(b, rc.bottom);
+      };
+      const walker = doc.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      const rng = doc.createRange();
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!(node.data ?? "").trim()) continue;
+        const p = node.parentElement;
+        if (!p || p.closest(".katex-mathml")) continue;
+        rng.selectNodeContents(node);
+        for (const rc of Array.from(rng.getClientRects())) add(rc);
+      }
+      for (const s of el.querySelectorAll("svg")) add(s.getBoundingClientRect());
+      if (el.namespaceURI?.includes("svg")) add(el.getBoundingClientRect());
+      return { l, t, r, b };
+    };
+    const allPatches = [...plan.blockPatches, ...plan.inlinePatches].map((p) => ({
+      x1: p.x, y1: p.y, x2: p.x + p.w, y2: p.y + p.h,
+    }));
+    const patchGaps = [];
+    for (const el of content.querySelectorAll(".katex-display, span[data-type='math_inline'] .katex")) {
+      const ink = inkUnion(el);
+      // 该墨迹盒（content 坐标）是否被任一补丁完全覆盖
+      const il = ink.l - base.left, it = ink.t - base.top, ir = ink.r - base.left, ib = ink.b - base.top;
+      const covered = allPatches.some((p) => p.x1 <= il + 0.5 && p.x2 >= ir - 0.5 && p.y1 <= it + 0.5 && p.y2 >= ib - 0.5);
+      patchGaps.push({
+        label: el.classList.contains("katex-display") ? "display" : "inline",
+        inkW: Math.round(ir - il),
+        inkH: Math.round(ib - it),
+        coveredByPatch: covered,
+      });
+    }
+    report.checks.patchInk = {
+      inlinePatchCount: plan.inlinePatches.length,
+      blockPatchCount: plan.blockPatches.length,
+      gaps: patchGaps,
+      anyClipped: patchGaps.some((g) => !g.coveredByPatch),
+    };
+
+    out.textContent = JSON.stringify(report, null, 2);
+    window.__MATHCLIP__ = report;
+  } finally {
+    // 不销毁：便于 CDP 直接检查工厂 DOM
+  }
+};
+document.getElementById("run").addEventListener("click", run);
+
+// —— E2E：真跑 PDF 管线，dump 页 PNG（视觉验收用）。raster 模式整页位图
+// （矢量模式的 onPagePng 只是「位图层视图」，矢量文字不进图）+ 补白底色，
+// 页图 = 最终视觉。——
+const e2e = async () => {
+  const { runPdfPipeline } = await import("/src/lib/exportPdfPipeline.ts");
+  const pages = [];
+  const fullCss = css() + "\nhtml,body{background:#ffffff;color:#111111;}\n#mditor-export-content{color:#111;background:#fff;}\n";
+  const bytes = await runPdfPipeline(html, fullCss, {
+    mode: "raster",
+    onProgress: () => {},
+    onPagePng: (i, dataUrl) => { pages[i] = dataUrl; },
+  });
+  window.__PAGES__ = pages;
+  window.__PDF_BYTES_LEN__ = bytes.length;
+  return { pages: pages.length, bytes: bytes.length };
+};
+const css = () => {
+  let c = "";
+  for (const sheet of Array.from(document.styleSheets)) {
+    try {
+      if (!sheet.href || sheet.href.includes("/assets/")) {
+        for (const rule of Array.from(sheet.cssRules)) c += rule.cssText + "\n";
+      }
+    } catch { /* skip */ }
+  }
+  return c;
+};
+window.__runE2E = e2e;
+window.__runMathClip = run;
+</script>
+</body>
+</html>

@@ -35,23 +35,37 @@ function earliest(html: string, from: number, needles: string[]): { idx: number;
   return best;
 }
 
-/** 把导出 HTML 里的闪卡容器降级为 blockquote；无闪卡时原样返回。 */
+/** 把导出 HTML 里的闪卡容器降级为 blockquote；无闪卡时原样返回。
+ *
+ * 嵌套闪卡（PM schema 允许 block 嵌套，deepAssemble 显式支持）：matchAll
+ * 的匹配位置在外卡替换后落在已消费区间内——单趟遍历若照常处理，内卡会被
+ * 二次降级、外卡后半内容重复输出且残留孤立 `</div>`（MC 轮 P1 定罪：全部
+ * 富格式导出路径共用本函数）。改为多趟归一：每趟只处理互不嵌套的最外层，
+ * 内卡随趟数逐层降级，直到无闪卡容器（深度上限 10 防御）。 */
 export function degradeFlashcardsInHtml(html: string): string {
-  if (!html.includes("md-flashcard")) return html;
-  let out = "";
-  let last = 0;
-  for (const m of html.matchAll(FLASH_OPEN_RE)) {
-    const start = m.index ?? 0;
-    const closeEnd = findMatchingDivClose(html, start);
-    if (closeEnd < 0) continue; // 配对失败：保留原容器（仍可读）
-    out += html.slice(last, start);
-    // 容器内容原样保留，只换外壳；末尾补一个空行分隔后续块。
-    out += `<blockquote class="md-flashcard">${html.slice(
-      start + m[0].length,
-      closeEnd - "</div>".length
-    )}</blockquote>`;
-    last = closeEnd;
+  let cur = html;
+  for (let pass = 0; pass < 10; pass++) {
+    if (!cur.includes("md-flashcard")) return cur;
+    let out = "";
+    let last = 0;
+    let replaced = false;
+    for (const m of cur.matchAll(FLASH_OPEN_RE)) {
+      const start = m.index ?? 0;
+      if (start < last) continue; // 嵌套内卡：留待下一趟（当前是外卡内容原文）
+      const closeEnd = findMatchingDivClose(cur, start);
+      if (closeEnd < 0) continue; // 配对失败：保留原容器（仍可读）
+      out += cur.slice(last, start);
+      // 容器内容原样保留，只换外壳。
+      out += `<blockquote class="md-flashcard">${cur.slice(
+        start + m[0].length,
+        closeEnd - "</div>".length
+      )}</blockquote>`;
+      last = closeEnd;
+      replaced = true;
+    }
+    if (!replaced) return cur; // 只剩配对失败的残卡：不再循环
+    out += cur.slice(last);
+    cur = out;
   }
-  out += html.slice(last);
-  return out;
+  return cur;
 }

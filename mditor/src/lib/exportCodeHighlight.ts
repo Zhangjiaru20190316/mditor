@@ -20,18 +20,32 @@ export interface HljsLike {
 }
 
 /** HTML 实体解码（导出序列化器输出的 code 文本 → highlight.js 纯文本入参）。
- *  命名实体（XML 五件套）+ 十进制/十六进制数字实体；解码顺序保证 &amp;lt;
- *  两层转义不被拆穿。无实体时返回原串。 */
+ *  命名实体（XML 五件套）+ 十进制/十六进制数字实体。单趟正则解码：多趟
+ *  逐名替换时 `&#38;lt;` 会先解出 `&` 拼成 `&lt;` 再被命名趟二次解码（MC
+ *  轮 P2）——单趟下每个实体只消费一次，`&amp;lt;` → `&lt;` 字面保持。 */
 export function decodeHtmlEntities(s: string): string {
   if (!s.includes("&")) return s;
-  return s
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => safeFromCodePoint(parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_, d) => safeFromCodePoint(parseInt(d, 10)))
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&(?:apos|nbsp);/g, (m) => (m === "&apos;" ? "'" : "\u00a0"))
-    .replace(/&amp;/g, "&");
+  return s.replace(
+    /&(?:#x([0-9a-f]+);|#(\d+);|lt;|gt;|quot;|apos;|nbsp;|amp;)/gi,
+    (whole, hex: string, dec: string) => {
+      if (hex) return safeFromCodePoint(parseInt(hex, 16));
+      if (dec) return safeFromCodePoint(parseInt(dec, 10));
+      switch (whole.toLowerCase()) {
+        case "&lt;":
+          return "<";
+        case "&gt;":
+          return ">";
+        case "&quot;":
+          return '"';
+        case "&apos;":
+          return "'";
+        case "&nbsp;":
+          return "\u00a0";
+        default:
+          return "&"; // &amp;
+      }
+    }
+  );
 }
 
 function safeFromCodePoint(cp: number): string {

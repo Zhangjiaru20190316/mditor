@@ -75,38 +75,11 @@ function headingText(inner: string): string {
   return inner.replace(/<[^>]+>/g, "").trim();
 }
 
-/** 诸 needle 在 html 中自 from 起最早出现的位置（-1 = 无）。 */
-function earliest(html: string, from: number, needles: string[]): { idx: number; len: number } {
-  let best = { idx: -1, len: 0 };
-  for (const n of needles) {
-    const i = html.indexOf(n, from);
-    if (i >= 0 && (best.idx < 0 || i < best.idx)) best = { idx: i, len: n.length };
-  }
-  return best;
-}
-
-/** 找到平衡的列表闭合位置（从 `<ul`/`<ol` 起点起，嵌套计数）。 */
-function findListEnd(html: string, start: number): number {
-  let depth = 0;
-  let i = start;
-  for (;;) {
-    const open = earliest(html, i, ["<ul", "<ol"]);
-    const close = earliest(html, i, ["</ul>", "</ol>"]);
-    if (close.idx < 0) return -1;
-    if (open.idx >= 0 && open.idx < close.idx) {
-      depth++;
-      i = open.idx + open.len;
-    } else {
-      depth--;
-      if (depth <= 0) return close.idx + close.len;
-      i = close.idx + close.len;
-    }
-  }
-}
-
 /**
- * 在 References/参考文献 标题下注入自动生成的文献表；标题后已有列表则
- * 原位替换（显式标记处「自动生成」语义，与静态渲染一致）。无文献配置时
+ * 在 References/参考文献 标题下注入自动生成的文献表。替换范围与静态渲染
+ * （remarkCitation.injectReferences）对齐：标题 → 下一同级/更高级标题之间
+ * 的旧内容（含手写占位列表/段落）整体由生成表替换——此前只替换紧邻列表，
+ * 「生成表 + 手写内容」会在导出产物里重复并列（MC 轮 P2）。无文献配置时
  * 原样返回。
  */
 export function injectReferencesHtml(html: string, keysInOrder: string[]): string {
@@ -123,16 +96,17 @@ export function injectReferencesHtml(html: string, keysInOrder: string[]): strin
   for (const m of html.matchAll(HEADING_RE)) {
     if (!isReferencesHeadingText(headingText(m[2]))) continue;
     const after = (m.index ?? 0) + m[0].length;
-    // 跳过空白，若紧随的是列表则原位替换，否则直接插入。
-    let i = after;
-    while (i < html.length && /\s/.test(html[i])) i++;
-    if (html.startsWith("<ul", i) || html.startsWith("<ol", i)) {
-      const listEnd = findListEnd(html, i);
-      if (listEnd > i) {
-        return html.slice(0, i) + listHtml + html.slice(listEnd);
+    const depth = Number(m[1]);
+    // 下一同级/更高级标题（静态渲染同语义）：span 终点。
+    let end = html.length;
+    for (const h of html.matchAll(HEADING_RE)) {
+      const hi = h.index ?? 0;
+      if (hi >= after && Number(h[1]) <= depth) {
+        end = hi;
+        break;
       }
     }
-    return html.slice(0, after) + `\n${listHtml}\n` + html.slice(after);
+    return html.slice(0, after) + `\n${listHtml}\n` + html.slice(end);
   }
   return html;
 }

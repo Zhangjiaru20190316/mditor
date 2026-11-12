@@ -45,6 +45,7 @@ import {
   patchesToPagePlacements,
   type PatchSource,
 } from "./exportVectorPatch";
+import { inkRectOf, padAndClampInkRect, type InkRect } from "./exportInk";
 
 // 纸张/边距值域单一事实源已抽至零依赖模块（store.ts 首屏路径共用）；此处
 // re-export 维持既有导入方（PrintDialog/exporter 等）不动。
@@ -517,7 +518,7 @@ async function runPdfPipelineOnce(
 
     // ---- 2. 块测量 ----
     t0 = performance.now();
-    const blocks = measureBlocks(handle);
+    const blocks = measureBlocks(handle, { contentHeightPx });
     t.measure = performance.now() - t0;
     progress({ stage: "measure", done: blocks.length, total: blocks.length });
 
@@ -758,7 +759,10 @@ function guardLineUnits(units: SplitLine[]): SplitLine[] {
   });
 }
 
-export function measureBlocks(handle: RenderFactoryHandle): MeasuredBlock[] {
+export function measureBlocks(
+  handle: RenderFactoryHandle,
+  o?: { contentHeightPx?: number }
+): MeasuredBlock[] {
   const content = handle.content;
   const doc = handle.doc;
   const base = content.getBoundingClientRect();
@@ -831,6 +835,21 @@ export function measureBlocks(handle: RenderFactoryHandle): MeasuredBlock[] {
       // 墨迹顶：行盒首顶可为负（vlist 上伸越盒）；表格行首顶 ≥0。
       m.inkTop = Math.min(top, top + first);
       m.coverBottom = Math.max(top + rect.height, top + last);
+    }
+    // MC 轮 Fix-A：块级公式（div.md-math-block）原子分页——display 公式是
+    // 单一视觉单元，vlist 行盒之间的 2px 级缝隙（aligned/cases 实测）会让
+    // 分页刀口落进公式内部（跨页切成两半）。行盒仍照常测量（Pass-2 的
+    // inkTop/coverBottom 墨迹链对公式块同样成立——墨迹可越出 border 盒），
+    // keepTogether 只是禁止刀口落进块内。高于一页的极端公式放行按行切分
+    // （完整性优先：整块推下页必然溢出页底丢内容）。
+    if (
+      el.classList.contains("md-math-block") &&
+      units &&
+      units.length > 0 &&
+      (o?.contentHeightPx === undefined ||
+        m.coverBottom - m.inkTop <= o.contentHeightPx)
+    ) {
+      m.keepTogether = true;
     }
     return m;
   });
@@ -1067,10 +1086,54 @@ export interface PatchPlan {
 
 /** 补丁计划采集（纯 DOM 读，无副作用）。图片分类：顶层 image-block（分页
  *  keepTogether，永不跨页）且 png/jpeg data URL → 原生嵌入；其余（行内嵌
- *  入/不可嵌入格式）→ 所在块整块补丁承载。 */
+ *  入/不可嵌入格式）→ 所在块整块补丁承载。
+ *
+ * MC 轮 Fix-B：补丁矩形改用「元素盒 ∪ 子树墨迹盒」（exportInk）——KaTeX
+ *  vlist 零高盒/行内公式栈的墨迹越出布局盒（实测块公式上方 5px、行内高
+ *  公式上方 24px/下方 14px），按布局盒裁剪会削掉笔画（导出公式「截取不
+ *  全」的直接根因之一）。仅对含 .katex/svg 的补丁做墨迹并集（纯 pre 代码
+ *  块墨迹不越盒，跳过逐文本节点扫描的耗时）；横向钳制在版心内与 chunk
+ *  位图可见域一致（cropPatch 的 clamp 不再产生裁小画大的错位拉伸）。 */
 export function collectPatchPlan(handle: RenderFactoryHandle): PatchPlan {
   const content = handle.content;
   const base = content.getBoundingClientRect();
+  const contentW = base.width;
+  /** 元素盒 ∪ 墨迹盒（含护量/钳制）；无墨迹子树退纯元素盒。selfVector =
+   *  元素自身即矢量件（行内补丁的 .katex/.katex-display/svg——querySelector
+   *  只查后代，自身匹配必须显式给）。 */
+  const inkAwareRect = (
+    el: HTMLElement,
+    rect: { left: number; top: number; right: number; bottom: number; width: number; height: number },
+    selfVector = false
+  ): { x: number; y: number; w: number; h: number } => {
+    const hasVector = selfVector || !!el.querySelector?.(".katex, svg");
+    if (!hasVector) {
+      return { x: rect.left - base.left, y: rect.top - base.top, w: rect.width, h: rect.height };
+    }
+    const ink = inkRectOf(el);
+    const union: InkRect | null = ink
+      ? {
+          left: Math.min(rect.left, ink.left),
+          top: Math.min(rect.top, ink.top),
+          right: Math.max(rect.right, ink.right),
+          bottom: Math.max(rect.bottom, ink.bottom),
+        }
+      : null;
+    if (!union) {
+      return { x: rect.left - base.left, y: rect.top - base.top, w: rect.width, h: rect.height };
+    }
+    // 先换 content 相对坐标再钳制/护量（padAndClampInkRect 的输入约定）——
+    // 工厂 content 视口原点可为非 0（HX P-α 语义），视口坐标直传会整体偏移。
+    return padAndClampInkRect(
+      {
+        left: union.left - base.left,
+        top: union.top - base.top,
+        right: union.right - base.left,
+        bottom: union.bottom - base.top,
+      },
+      contentW
+    );
+  };
   const rasterBlocks = new Set<Element>();
   const patchEls = new Set<Element>();
   const blockPatches: PatchSource[] = [];
@@ -1108,12 +1171,7 @@ export function collectPatchPlan(handle: RenderFactoryHandle): PatchPlan {
       // 不可嵌入（gif/webp/引用失败占位前的原始形态）→ 整块补丁。
       rasterBlocks.add(el);
       patchEls.add(el);
-      blockPatches.push({
-        x: rect.left - base.left,
-        y: rect.top - base.top,
-        w: rect.width,
-        h: rect.height,
-      });
+      blockPatches.push(inkAwareRect(el, rect));
       continue;
     }
     const inScope =
@@ -1124,12 +1182,7 @@ export function collectPatchPlan(handle: RenderFactoryHandle): PatchPlan {
     if (inScope) {
       rasterBlocks.add(el);
       patchEls.add(el);
-      blockPatches.push({
-        x: rect.left - base.left,
-        y: rect.top - base.top,
-        w: rect.width,
-        h: rect.height,
-      });
+      blockPatches.push(inkAwareRect(el, rect));
     }
   }
   // 行内补丁：.katex（非 display 内部）、.katex-display、独立 svg——不在
@@ -1155,14 +1208,13 @@ export function collectPatchPlan(handle: RenderFactoryHandle): PatchPlan {
       continue;
     }
     patchEls.add(el);
-    const r = el.getBoundingClientRect();
-    if (r.width > 0 && r.height > 0) {
-      inlinePatches.push({
-        x: r.left - base.left,
-        y: r.top - base.top,
-        w: r.width,
-        h: r.height,
-      });
+    const selfVector =
+      el.classList.contains("katex") ||
+      el.classList.contains("katex-display") ||
+      el.tagName === "SVG";
+    const r = inkAwareRect(el, el.getBoundingClientRect(), selfVector);
+    if (r.w > 0 && r.h > 0) {
+      inlinePatches.push(r);
     }
   }
   return {

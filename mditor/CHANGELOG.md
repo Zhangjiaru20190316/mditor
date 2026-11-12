@@ -1,6 +1,98 @@
 # Changelog
 
 
+## 5.3.4（2026-11-12）：导出公式截断根治 + 导出链全面正确性修复（MC 轮）
+
+### 根因定罪（Edge headless 真实布局复现，`perf/mathclip/`，证据入 `perf/mathclip/results/`）
+
+以 A4/15mm 版心（680px）+ KaTeX 多形态公式夹具在真实浏览器跑工厂/分页/
+补丁测量面，三个「公式截取不全」根因全部坐实：
+
+- **超宽公式被光栅窗口硬裁**：KaTeX display 公式是 `white-space:nowrap` 块，
+  实测 1083px 公式在 680 版心下溢出 403px——PDF/PNG 工厂窗口
+  `overflow:hidden` 直接把溢出段裁掉（长推导/长多项式右侧整段消失）；
+- **公式补丁矩形缺墨迹**：KaTeX vlist 零高盒墨迹越出布局盒（实测块公式
+  上方 5px、行内高公式上方 24px/下方 14px），矢量模式的补丁按布局盒
+  `getBoundingClientRect` 裁剪——∑ 上下限顶部/行内高公式上下沿被削；
+- **aligned/cases 行盒 2px 缝**：多行公式的行盒之间存在 2px 级间隙，分页
+  刀口可落进公式内部（跨页切成两半）。
+
+### 修复（PDF/PNG/DOCX 三链同修）
+
+- **墨迹盒测量 `lib/exportInk.ts`（新）**：子树真实墨迹联合矩形（文本 run
+  的 Range 矩形 + svg 盒，跳过隐藏 MathML 与 pstrut 撑高件）+ 护量/版心
+  钳制，补丁/栅格化/缩放归一三处共用；
+- **超宽公式缩放归一（Fix-C）**：工厂资源就绪后把宽于版心的 display 公式
+  transform 缩放恰入版心（水平居中 + 高度补偿防重叠；行内超宽锚左下角缩
+  进行盒），PDF/PNG 共用，且在任何测量之前落定——坐标面全链一致。版心内
+  公式零改动；超宽代码行同病同修（工厂内 `pre` 按字符回行、表格/svg 钳
+  版心——无滚动媒体面不存在横向滚动语义，HTML 导出保留滚动不注入）；
+- **补丁矩形墨迹化（Fix-B）**：`collectPatchPlan` 对含 `.katex`/svg 的补丁
+  取「元素盒 ∪ 墨迹盒 + 3px 护量」（横向钳版心防裁小画大错位）；行内补丁
+  的自身匹配补齐（`.katex`/`.katex-display`/svg 自身即矢量件，querySelector
+  只查后代）。纯 `pre` 块保持元素盒原语义（零墨迹越盒、零开销）；
+- **公式块原子分页（Fix-A）**：`measureBlocks` 对 `div.md-math-block` 标记
+  keepTogether（行盒照常测量——墨迹链仍成立）；高于一页的极端公式放行按
+  行切分（完整性优先：整块推下页必然溢出页底丢内容）；
+- **DOCX 栅格化墨盒（Fix-B DOCX 面）**：`rasterizeFormulas` 的栅格化窗口
+  从布局盒 `offsetWidth/Height` 换为「布局盒 ∪ 墨迹盒 + 护量」的外包裹壳
+  （SVG foreignObject 对窗口外内容硬裁剪）——行内高公式上下沿不再被削。
+
+### 导出链全面审查（4×P1 + 7×P2，全部修复）
+
+**P1（导出产物内容丢失/错位）：**
+
+- **LaTeX 闪卡语法泄漏**：`buildTexProcessor` 漏注册 remarkFlash——编辑器
+  序列化回 `:::flash … ::>` 原文，`.tex` 里标记字面漏进正文、卡内 setext
+  陷阱（`问题？\n---` 成 H2），`case "flashcard"` 降级分支成死代码。补注册
+  （与静态管线同源）；
+- **LaTeX 图片属性段泄漏**：`{#fig:id}` 自成一段时被 figure 环境消费为
+  `\label`，但主循环不跳过该段——转义残文本 `\{\#fig:exp\}` 漏进正文。补
+  对称跳过（判定与 figureBlock 消费条件逐项对称）；
+- **嵌套闪卡内容重复**（HTML/PDF/PNG/DOCX 四路径共用）：单趟遍历在内卡
+  上重入——内卡二次降级、外卡后半内容重复输出且残留孤立 `</div>`。改多
+  趟归一（每趟处理互不嵌套的最外层，深度上限 10）；
+- **LaTeX 空文献表吞 References 标题**：无可解析引用时 theBibliography 返
+  回空串，用户手写的标题整块从产物消失。空表回退输出标题本身。
+
+**P2：**
+
+- LaTeX 标题内行内代码禁 `\verb`（移动参数，XeLaTeX+hyperref 编译失败）→
+  恒走 `\texttt` 转义；
+- LaTeX 代码块含字面 `\end{verbatim}` 时拆段发射（`verbatim*` 会显空格，
+  不用），终止符经 `\verb` 桥接；
+- LaTeX `\href` 的 URL 参数改专用转义（`~` 此前被文本宏转义损坏链接、空
+  格/反斜杠百分号编码、`%`/`#` 转义）；
+- LaTeX 图文混排段的行内图从 `height=1em` 改宽度约束（截图不再被压到字
+  号高度不可读）；thebibliography 排序改用用户文献样式（与 HTML 导出同源）；
+- **引用表替换区间与静态渲染对齐**：References 标题 → 下一同级/更高级标
+  题之间的旧内容整体由生成表替换（此前只替换紧邻列表，「生成表 + 手写
+  内容」重复并列）；
+- PNG 管线背景兜底修复：computed 透明串 `rgba(0,0,0,0)` 是真值，旧 `||`
+  兜底永不命中——透明/解析失败一律退白底；
+- 代码高亮实体解码改单趟正则（多趟逐名替换时 `&#38;lt;` 双重解码）；
+- **导出取消不再谎报「导出完成」**：五格式分支检查 pickSaveFile 取消态，
+  改报「已取消导出」；LaTeX 未解析引用键告警从 console 提升到 UI 弹窗。
+
+### 验证
+
+- 单测 +23（exportInk 16 + exportLatex 6 + 闪卡嵌套 1），全量 1483/1483 绿
+  （基线 1460）；tsc / eslint 0 错误（7 个 warning 全部为既有）；`npm run
+  build` 通过；
+- 真浏览器复验（Edge headless + CDP，`perf/mathclip/run.mjs`）：版心归一
+  680=680（缩放 2 处）、4 公式块全部原子化、5 公式墨迹全部被补丁真实覆盖；
+  E2E 跑通完整 PDF 管线出页图，像素级验收（公式笔画无削、无页缘切越、无
+  重叠/缺失）；
+- 期间单测抓住两个实现 bug 并修正：补丁坐标基准（视口坐标未换算 content
+  相对即钳制——工厂 content 视口原点非 0 时补丁整体偏移）、行内补丁自身
+  匹配缺失。
+
+### 版本
+
+- 三处版本号同步 5.3.4（package.json / tauri.conf.json / Cargo.toml +
+  Cargo.lock）。
+
+
 ## 5.3.3（2026-11-12）：弹层样式收口 + 光晕/渐变令牌
 
 ### 弹层样式收口（ExternalLinkDialog / SyncScopeDialog）

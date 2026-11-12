@@ -1,0 +1,110 @@
+{
+  "CW": 680,
+  "CH": 1009,
+  "checks": {
+    "wide": {
+      "contentScrollWidth": 1083,
+      "contentClientWidth": 680,
+      "wideKatexHtmlWidth": 680,
+      "overflowsContent": true
+    },
+    "pagination": {
+      "pages": 4,
+      "mathBlockCount": 4,
+      "mathBlocksSplitAcrossPages": [],
+      "segmentsWithClipTop": [],
+      "mathLines": [
+        {
+          "blockId": 21,
+          "lines": [
+            [
+              0,
+              99
+            ]
+          ],
+          "keepTogether": false,
+          "height": 112
+        },
+        {
+          "blockId": 24,
+          "lines": [
+            [
+              0,
+              54
+            ]
+          ],
+          "keepTogether": false,
+          "height": 65
+        },
+        {
+          "blockId": 27,
+          "lines": [
+            [
+              0,
+              72
+            ],
+            [
+              74,
+              173
+            ]
+          ],
+          "keepTogether": false,
+          "height": 180
+        },
+        {
+          "blockId": 34,
+          "lines": [
+            [
+              0,
+              31
+            ]
+          ],
+          "keepTogether": false,
+          "height": 43
+        }
+      ]
+    },
+    "patchInk": {
+      "inlinePatchCount": 3,
+      "blockPatchCount": 2,
+      "gaps": [
+        {
+          "label": "display",
+          "inkAboveRect": 5,
+          "inkBelowRect": -1,
+          "inkLeftOfRect": -193,
+          "inkRightOfRect": -194
+        },
+        {
+          "label": "display",
+          "inkAboveRect": 3,
+          "inkBelowRect": 1,
+          "inkLeftOfRect": -2,
+          "inkRightOfRect": 64
+        },
+        {
+          "label": "display",
+          "inkAboveRect": 6,
+          "inkBelowRect": 5,
+          "inkLeftOfRect": -239,
+          "inkRightOfRect": -239
+        },
+        {
+          "label": "display",
+          "inkAboveRect": 3,
+          "inkBelowRect": 0,
+          "inkLeftOfRect": 0,
+          "inkRightOfRect": 403
+        },
+        {
+          "label": "inline",
+          "inkAboveRect": 24,
+          "inkBelowRect": 14,
+          "inkLeftOfRect": 0,
+          "inkRightOfRect": 0
+        }
+      ],
+      "anyClipped": true
+    }
+  }
+}

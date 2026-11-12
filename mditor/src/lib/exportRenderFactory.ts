@@ -19,6 +19,7 @@
 
 import { sanitizeExportHtml } from "./exportSanitize";
 import { EXPORT_PROSE_CSS } from "./exportProseCss";
+import { inkRectOf } from "./exportInk";
 
 /** 资源就绪总上限（文档化超时策略：超时不是失败，是「显式带清单继续」）。 */
 export const FACTORY_READY_TIMEOUT_MS = 20_000;
@@ -71,6 +72,15 @@ export function buildFactoryDocumentHtml(
        钳制在版心内（无尺寸属性的 svg 自然宽度可超出版心溢出页缘）。 */
 img, video { max-height: ${o.maxImageHeightPx}px; max-width: 100%; }`
     : `\nimg, video { max-width: 100%; }`;
+  // MC 轮 Fix-C（无滚动媒体面）：PDF/PNG 工厂没有横向滚动条——超宽内容
+  // 溢出版心即被光栅窗口（overflow:hidden）硬裁（代码长行右侧丢失）。
+  // 代码块按字符回行（HTML 导出保留 overflow:auto 滚动语义，不注入此段）；
+  // 表格钳在版心内（单元格 anywhere 换行允许挤压）；svg 同步钳宽。
+  const noScrollMedia = `
+.vditor-reset pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: visible; }
+.vditor-reset table { max-width: 100%; }
+.vditor-reset th, .vditor-reset td { overflow-wrap: anywhere; }
+.vditor-reset svg { max-width: 100%; }`;
   return `<!DOCTYPE html>
 <html lang="zh-CN" data-theme="${theme}">
 <head>
@@ -84,7 +94,7 @@ ${EXPORT_PROSE_CSS}
 html { background: var(--bg); }
 html, body { margin: 0; padding: 0; }
 body { width: ${o.contentWidthPx}px; }
-#mditor-export-content { width: ${o.contentWidthPx}px; }${clamp}
+#mditor-export-content { width: ${o.contentWidthPx}px; }${clamp}${noScrollMedia}
 @media print {
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
 }
@@ -100,6 +110,85 @@ ${eager}
 
 function escapeAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+// ---------------------------------------------------------------------------
+// MC 轮 Fix-C：超宽公式缩放归一（布局后处理）。
+//
+// KaTeX display 公式是 white-space:nowrap 的块（katex.css .katex-display >
+// .katex）——比版心宽的长公式（长推导/长多项式）向右溢出版心，工厂光栅
+// 窗口 overflow:hidden 直接把溢出段裁掉（实测 680 版心下 1083px 公式右侧
+// 丢失 403px），PDF/PNG 一律「公式截取不全」。归一：实测公式墨迹盒（含
+// 分数线/svg），宽于版心时 transform 缩放恰入版心（display 缩放后水平居
+// 中、高度补偿防与后文重叠；行内公式锚左下角缩进行盒）。在资源就绪后、
+// 任何测量（分页/补丁/文本素材）之前执行——全链坐标面自动一致。
+// ---------------------------------------------------------------------------
+
+/**
+ * 把 content 内超出版心宽的公式缩放进版心。display 公式缩放后墨迹盒
+ * 恰占满版心宽并居中；行内公式锚定自身墨迹盒左下角缩小。返回缩放数
+ * （0 = 无需缩放）。读全部量完再统一写样式（避免读写交错反复回流）。
+ */
+export function normalizeOverwideMath(content: HTMLElement): number {
+  const contentRect = content.getBoundingClientRect();
+  const cw = contentRect.width;
+  if (!(cw > 0)) return 0;
+  const jobs: Array<{ inner: HTMLElement; ox: number; oy: number; dx: number; dy: number; k: number; heightHost: HTMLElement | null; newHeight: number }> = [];
+  // Pass 1（读）：display 公式。
+  for (const display of Array.from(content.querySelectorAll<HTMLElement>(".katex-display"))) {
+    const inner = display.querySelector<HTMLElement>(":scope > .katex");
+    if (!inner) continue;
+    const ink = inkRectOf(display);
+    if (!ink) continue;
+    const inkW = ink.right - ink.left;
+    if (!(inkW > cw)) continue;
+    const k = cw / inkW;
+    if (!(k > 0) || k >= 1) continue;
+    const box = display.getBoundingClientRect();
+    const inkCx = (ink.left + ink.right) / 2;
+    jobs.push({
+      inner,
+      // 变换原点 = 墨迹盒中上（元素局部坐标）：缩放不动墨迹盒顶与水平中点
+      ox: inkCx - box.left,
+      oy: ink.top - box.top,
+      // 平移把墨迹盒顶对齐 display 盒顶（吸收 vlist 上溢）、水平中点对齐版心中线
+      dx: contentRect.left + cw / 2 - inkCx,
+      dy: Math.max(0, box.top - ink.top),
+      k,
+      heightHost: display,
+      newHeight: Math.ceil((ink.bottom - ink.top) * k + 1),
+    });
+  }
+  // Pass 1（读）：行内公式（不在 display 内的 .katex）。
+  for (const el of Array.from(content.querySelectorAll<HTMLElement>(".katex"))) {
+    if (el.closest(".katex-display")) continue;
+    const ink = inkRectOf(el);
+    if (!ink) continue;
+    const inkW = ink.right - ink.left;
+    if (!(inkW > cw)) continue;
+    const k = cw / inkW;
+    if (!(k > 0) || k >= 1) continue;
+    const box = el.getBoundingClientRect();
+    jobs.push({
+      inner: el,
+      ox: ink.left - box.left,
+      oy: ink.bottom - box.bottom, // 锚墨迹盒左下（元素局部坐标）
+      dx: box.left - ink.left,
+      dy: box.bottom - ink.bottom,
+      k,
+      heightHost: null, // 行内：行盒不变（transform 不参与排版），墨迹缩进行盒内
+      newHeight: 0,
+    });
+  }
+  if (jobs.length === 0) return 0;
+  // Pass 2（写）：一次批量落地 + 单次强制回流。
+  for (const j of jobs) {
+    j.inner.style.transformOrigin = `${j.ox}px ${j.oy}px`;
+    j.inner.style.transform = `translate(${j.dx}px, ${j.dy}px) scale(${j.k})`;
+    if (j.heightHost) j.heightHost.style.height = `${j.newHeight}px`;
+  }
+  void content.scrollHeight;
+  return jobs.length;
 }
 
 /** awaitFactoryResources 可测试的最小图片面（HTMLImageElement 子集）。 */
@@ -285,6 +374,9 @@ export async function renderInFactory(
       abort,
     ]);
     timings.settle = performance.now() - ts0;
+    // MC 轮 Fix-C：超宽公式缩放归一——必须在测量（分页/补丁/文本素材）
+    // 之前落定，坐标面全链一致。
+    normalizeOverwideMath(handle.content);
     o.onProgress?.({ stage: "layout", done: 1, total: 1 });
     if (o.signal?.aborted) throw new DOMException("导出已取消", "AbortError");
     return handle;

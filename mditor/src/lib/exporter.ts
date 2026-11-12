@@ -790,20 +790,20 @@ export async function exportDocx(
  * 输入是 Markdown 源码（非编辑器 HTML）——公式源天然平移、[@key] → \cite、
  * 图表编号交给 LaTeX 计数器（\caption/\label/\ref）、References 标题处生成
  * thebibliography。产物面向 XeLaTeX + ctexart（含中文），见
- * lib/exportLatex.ts 头注。返回导出路径或 null（用户取消）。
+ * lib/exportLatex.ts 头注。返回导出路径（null = 用户取消）与告警清单
+ * （未解析引用键等——MC 轮 P2：此前只进 console，用户在 UI 无感知）。
  */
 export async function exportLatexFile(
   markdown: string,
   suggestedName = "untitled.tex",
   docTitle?: string
-): Promise<string | null> {
+): Promise<{ path: string | null; warnings: string[] }> {
   const path = await getAdapter().dialog.pickSaveFile(suggestedName, TEX_FILTER);
-  if (!path) return null;
+  if (!path) return { path: null, warnings: [] };
   const { markdownToLatex } = await import("./exportLatex");
   const { tex, warnings } = markdownToLatex(markdown, docTitle);
-  if (warnings.length > 0) console.warn("[mditor] LaTeX 导出告警：", warnings.join("；"));
   await getAdapter().fs.writeTextFile(path, tex);
-  return path;
+  return { path, warnings };
 }
 
 /** Coerce the lib's union return type into an ArrayBuffer we can write. */

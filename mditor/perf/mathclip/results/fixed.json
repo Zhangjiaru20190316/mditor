@@ -1,0 +1,105 @@
+{
+  "CW": 680,
+  "CH": 1009,
+  "checks": {
+    "wide": {
+      "contentScrollWidth": 680,
+      "contentClientWidth": 680,
+      "overflowsContent": false,
+      "scaledCount": 2
+    },
+    "pagination": {
+      "pages": 4,
+      "mathBlockCount": 4,
+      "mathBlocksSplitAcrossPages": [],
+      "segmentsWithClipTop": [],
+      "mathLines": [
+        {
+          "blockId": 21,
+          "lines": [
+            [
+              0,
+              99
+            ]
+          ],
+          "keepTogether": true,
+          "height": 112
+        },
+        {
+          "blockId": 24,
+          "lines": [
+            [
+              0,
+              50
+            ]
+          ],
+          "keepTogether": true,
+          "height": 64
+        },
+        {
+          "blockId": 27,
+          "lines": [
+            [
+              0,
+              72
+            ],
+            [
+              74,
+              173
+            ]
+          ],
+          "keepTogether": true,
+          "height": 180
+        },
+        {
+          "blockId": 34,
+          "lines": [
+            [
+              0,
+              21
+            ]
+          ],
+          "keepTogether": true,
+          "height": 34
+        }
+      ]
+    },
+    "patchInk": {
+      "inlinePatchCount": 3,
+      "blockPatchCount": 2,
+      "gaps": [
+        {
+          "label": "display",
+          "inkW": 293,
+          "inkH": 95,
+          "coveredByPatch": true
+        },
+        {
+          "label": "display",
+          "inkW": 680,
+          "inkH": 46,
+          "coveredByPatch": true
+        },
+        {
+          "label": "display",
+          "inkW": 203,
+          "inkH": 169,
+          "coveredByPatch": true
+        },
+        {
+          "label": "display",
+          "inkW": 680,
+          "inkH": 17,
+          "coveredByPatch": true
+        },
+        {
+          "label": "inline",
+          "inkW": 153,
+          "inkH": 60,
+          "coveredByPatch": true
+        }
+      ],
+      "anyClipped": false
+    }
+  }
+}

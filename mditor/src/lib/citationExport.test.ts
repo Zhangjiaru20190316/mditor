@@ -72,15 +72,17 @@ describe("injectReferencesHtml", () => {
     bibliography.loadText("C:/fake.bib", BIB_TEXT);
     bibliography.setStyle("numeric");
     const html = injectReferencesHtml(
-      `<h1>正文标题</h1><p>文</p><h2>References</h2><p>尾</p>`,
+      `<h1>正文标题</h1><p>文</p><h2>References</h2><p>尾</p><h1>次章</h1><p>次文</p>`,
       ["smith2020", "knuth1984"]
     );
     expect(html).toContain('<ol class="md-references">');
     expect(html).toContain("[1] Smith");
     expect(html).toContain("[2] Knuth");
-    // 注入点在标题之后、原文其余内容保留。
+    // 注入点在标题之后；替换区间 = 标题 → 下一同级/更高级标题（静态渲染
+    // remarkCitation 同语义——MC 轮对齐）。区间外的内容保留。
     expect(html.indexOf("<h2>References</h2>")).toBeLessThan(html.indexOf("<ol"));
-    expect(html).toContain("<p>尾</p>");
+    expect(html).not.toContain("<p>尾</p>"); // References 区间内占位内容被替换
+    expect(html).toContain("<h1>次章</h1><p>次文</p>"); // 区间外保留
   });
 
   it("标题后已有列表 → 原位替换（含嵌套列表）", () => {
@@ -91,7 +93,8 @@ describe("injectReferencesHtml", () => {
     );
     expect(html).not.toContain("旧2");
     expect(html).toContain("Knuth");
-    expect(html).toContain("<p>后文</p>");
+    // 替换区间到文末（无下一同级标题）：区间内手写占位（含列表后段落）一并替换。
+    expect(html).not.toContain("<p>后文</p>");
   });
 
   it("中文标题「参考文献」与无标记文档", () => {

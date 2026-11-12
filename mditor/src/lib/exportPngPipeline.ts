@@ -68,10 +68,18 @@ export async function runPngPipeline(
     const content = handle.content;
     const w = PNG_CONTENT_WIDTH_PX;
     const h = Math.max(1, Math.ceil(content.scrollHeight));
-    const bg =
-      o.backgroundColor ||
-      doc.defaultView?.getComputedStyle(doc.documentElement).backgroundColor ||
-      "#ffffff";
+    // 背景兜底：computed backgroundColor 无显式背景时是「真值透明串」
+    // rgba(0,0,0,0)——旧 || 兜底永不命中，直调方会得到透明底 PNG（MC 轮
+    // P2）。透明（或解析失败）一律退白底。
+    const computedBg = doc.defaultView?.getComputedStyle(doc.documentElement).backgroundColor;
+    const bgAlphaOpaque = /^rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)[,\s]+([\d.]+)\)$/.exec(
+      (computedBg ?? "").trim()
+    );
+    const opaqueBg =
+      bgAlphaOpaque && Number(bgAlphaOpaque[4]) >= 1
+        ? `rgb(${bgAlphaOpaque[1]},${bgAlphaOpaque[2]},${bgAlphaOpaque[3]})`
+        : null;
+    const bg = o.backgroundColor || opaqueBg || "#ffffff";
 
     // 画布预算（沿旧 exportPng：2x → 1x → fractional ≥0.2）。
     const fits = (s: number): boolean =>
