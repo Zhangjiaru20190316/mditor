@@ -35,10 +35,22 @@ const api = async (path, init = {}) => {
 const ref = await api(`/repos/${REPO}/git/ref/heads/main`);
 const remoteSha = ref.object.sha;
 const localMain = (await git("rev-parse", "main")).trim();
-const chain = (await git("rev-list", "--reverse", `${remoteSha}..${localMain}`))
-  .trim()
-  .split("\n")
-  .filter(Boolean);
+// 远端 tip 可能是 API 复刻 SHA（本地无此对象）——用 MDITOR_API_PUSH_BASE
+// 指定「已知已推送」的本地基准提交（缺省尝试直接 rev-list）。
+let chain;
+try {
+  chain = (await git("rev-list", "--reverse", `${remoteSha}..${localMain}`))
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+} catch (e) {
+  const base = process.env.MDITOR_API_PUSH_BASE;
+  if (!base) throw e;
+  chain = (await git("rev-list", "--reverse", `${base}..${localMain}`))
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+}
 console.log(`远端 ${remoteSha.slice(0, 7)} → 本地 ${localMain.slice(0, 7)}：${chain.length} 个提交待复刻`);
 
 // 已上传 blob 缓存（本地 SHA → 已确认）：同内容跨提交只传一次。
